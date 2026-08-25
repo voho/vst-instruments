@@ -178,8 +178,10 @@ from the amplified output back into the strings, scaled by the Resonance
 Depth parameter — with the amp or distortion up and the wheel raised, a held
 note regenerates into self-sustaining feedback, and a dry DI never can. The
 sustain pedal (CC 64) holds released strings; breath/CC 2 adds continuous
-bridge-hand pressure on top of the Mute Pressure parameter; CC 120/123 behave as
-All Sound Off and All Notes Off.
+bridge-hand pressure on top of the Mute Pressure parameter. While CC 2 is above
+zero, the engine status shows `CC2 MUTE +NN%`; the Mute Pressure knob remains
+the independent host parameter, so remembered controller pressure cannot hide
+behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
 
 ### Sound architecture
 

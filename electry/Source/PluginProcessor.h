@@ -116,6 +116,10 @@ public:
     {
         return playStyleKeysHold.load (std::memory_order_relaxed);
     }
+    int getMidiMutePressureForDisplay() const noexcept
+    {
+        return midiMutePressureForDisplay.load (std::memory_order_relaxed);
+    }
     double getCurrentSampleRateForDisplay() const noexcept
     {
         return displaySampleRate.load (std::memory_order_relaxed);
@@ -241,6 +245,10 @@ private:
         heldPlayStyleOrder {};
     std::uint64_t heldPlayStyleSequence = 0;
     bool sustainPedalDown = false;
+    // Raw CC2 is kept beside the other display-only atomics. The Mute Pressure
+    // knob shows the host parameter; this value makes its live MIDI addition
+    // visible without feeding UI state back into the engine.
+    std::atomic<int> midiMutePressureForDisplay { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
     std::array<std::atomic<std::uint32_t>,
                electry::ElectryEngine::stringCount> stringVisuals {};

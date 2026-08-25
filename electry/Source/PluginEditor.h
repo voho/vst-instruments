@@ -89,7 +89,9 @@ class ElectryStatusDisplay final : public juce::Component
 {
 public:
     void setStatus (int activeVoices, int sympatheticStrings, bool ready,
-                    double sampleRate, bool scheduleRepaint = true);
+                    double sampleRate, int midiMutePressure,
+                    bool scheduleRepaint = true);
+    juce::String getStatusText() const;
     void paint (juce::Graphics&) override;
 
 private:
@@ -97,6 +99,7 @@ private:
     int sympathetic = -1;
     bool isReady = false;
     double rate = 0.0;
+    int mutePressure = -1;
 };
 
 // Live eight-string fretboard. It shows which physical string carries every

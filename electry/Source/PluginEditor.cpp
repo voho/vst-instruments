@@ -582,17 +582,39 @@ void ElectryKnob::resized()
 
 void ElectryStatusDisplay::setStatus (int activeVoices, int sympatheticStrings,
                                       bool ready, double sampleRate,
+                                      int midiMutePressure,
                                       bool scheduleRepaint)
 {
+    midiMutePressure = juce::jlimit (0, 127, midiMutePressure);
     if (voices == activeVoices && sympathetic == sympatheticStrings
-        && isReady == ready && juce::approximatelyEqual (rate, sampleRate))
+        && isReady == ready && juce::approximatelyEqual (rate, sampleRate)
+        && mutePressure == midiMutePressure)
         return;
     voices = activeVoices;
     sympathetic = sympatheticStrings;
     isReady = ready;
     rate = sampleRate;
+    mutePressure = midiMutePressure;
+    setTitle (getStatusText());
     if (scheduleRepaint)
         repaint();
+}
+
+juce::String ElectryStatusDisplay::getStatusText() const
+{
+    if (! isReady)
+        return "ENGINE STANDBY";
+
+    juce::String status = juce::String (voices)
+                        + (voices == 1 ? " STRING" : " STRINGS");
+    if (sympathetic > 0)
+        status += " +" + juce::String (sympathetic) + " RING";
+    if (mutePressure > 0)
+        status += "  |  CC2 MUTE +" + juce::String (juce::roundToInt (
+            100.0f * static_cast<float> (mutePressure) / 127.0f)) + "%";
+    else if (rate > 0.0)
+        status += "  |  " + juce::String (rate / 1000.0, 1) + " kHz";
+    return status;
 }
 
 void ElectryStatusDisplay::paint (juce::Graphics& graphics)
@@ -603,22 +625,10 @@ void ElectryStatusDisplay::paint (juce::Graphics& graphics)
     graphics.setColour (colours::nickel.withAlpha (0.45f));
     graphics.drawRoundedRectangle (bounds.reduced (0.5f), 5.0f, 1.0f);
 
-    juce::String status;
-    if (! isReady)
-        status = "ENGINE STANDBY";
-    else
-    {
-        status = juce::String (voices) + (voices == 1 ? " STRING" : " STRINGS");
-        if (sympathetic > 0)
-            status += " +" + juce::String (sympathetic) + " RING";
-        if (rate > 0.0)
-            status += "  |  " + juce::String (rate / 1000.0, 1) + " kHz";
-    }
-
     graphics.setColour (isReady ? colours::accent : colours::dimText);
     graphics.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    graphics.drawText (status, getLocalBounds().reduced (8, 0),
-                       juce::Justification::centredLeft);
+    graphics.drawFittedText (getStatusText(), getLocalBounds().reduced (8, 0),
+                             juce::Justification::centredLeft, 1, 0.72f);
 }
 
 // ---------------------------------------------------------------------------
@@ -1113,7 +1123,8 @@ void ElectryAudioProcessorEditor::timerCallback()
     statusDisplay.setStatus (electryProcessor.getActiveVoiceCount(),
                              electryProcessor.getSympatheticStringCount(),
                              electryProcessor.isEngineReady(),
-                             electryProcessor.getCurrentSampleRateForDisplay());
+                             electryProcessor.getCurrentSampleRateForDisplay(),
+                             electryProcessor.getMidiMutePressureForDisplay());
     const int programId = electryProcessor.getCurrentProgram() + 1;
     if (factoryProgramSelector.getSelectedId() != programId)
         factoryProgramSelector.setSelectedId (programId, juce::dontSendNotification);

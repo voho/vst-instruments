@@ -1784,6 +1784,52 @@ void testResetAllControllersDispatch()
     }
 }
 
+void testMutePressureDisplayFeedback()
+{
+    ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    expect (processor.getMidiMutePressureForDisplay() == 0,
+            "a prepared processor displayed stale CC2 mute pressure");
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    const auto sendController = [&] (int controller, int value)
+    {
+        midi.addEvent (juce::MidiMessage::controllerEvent (
+            1, controller, value), 0);
+        renderBlock (processor, audio, midi);
+    };
+
+    sendController (2, 127);
+    expect (processor.getMidiMutePressureForDisplay() == 127,
+            "CC2 mute pressure did not reach the editor-facing state");
+
+    // All Sound Off silences strings but deliberately preserves physical
+    // controller state, so its readout must agree with the next attack.
+    sendController (120, 0);
+    expect (processor.getMidiMutePressureForDisplay() == 127,
+            "All Sound Off hid the CC2 pressure it preserves in the engine");
+
+    sendController (121, 0);
+    expect (processor.getMidiMutePressureForDisplay() == 0,
+            "Reset All Controllers left stale CC2 pressure in the editor");
+
+    ElectryStatusDisplay status;
+    status.setStatus (1, 0, true, sampleRate, 127, false);
+    expect (status.getStatusText().contains ("CC2 MUTE +100%")
+                && status.getTitle() == status.getStatusText(),
+            "the status display did not expose full live CC2 mute pressure");
+    status.setStatus (1, 0, true, sampleRate, 0, false);
+    expect (! status.getStatusText().contains ("CC2 MUTE")
+                && status.getStatusText().contains ("48.0 kHz"),
+            "the status display did not restore its normal readout at CC2 zero");
+
+    sendController (2, 64);
+    processor.releaseResources();
+    expect (processor.getMidiMutePressureForDisplay() == 0,
+            "releaseResources left stale CC2 mute pressure visible");
+}
+
 void testUiArticulationTriggerAndPanic()
 {
     enum class ResetPath { None, Panic, AllSoundOff };
@@ -2529,6 +2575,7 @@ int main()
     testResonanceWheelFeedback();
     testChannelPressureAndAftertouchVibratoDispatch();
     testResetAllControllersDispatch();
+    testMutePressureDisplayFeedback();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();

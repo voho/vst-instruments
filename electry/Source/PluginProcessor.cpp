@@ -439,6 +439,7 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     doubleEngine->setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
     doubleEngine->setPalmMutePressure (0.0f);
+    midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
     engine.setVibrato (0.0f);
     doubleEngine->setVibrato (0.0f);
     effects.prepare (sampleRate);
@@ -463,6 +464,7 @@ void ElectryAudioProcessor::releaseResources()
     doubleEngine->setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
     doubleEngine->setPalmMutePressure (0.0f);
+    midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
     engine.setVibrato (0.0f);
     doubleEngine->setVibrato (0.0f);
     engine.allNotesOff();
@@ -667,6 +669,8 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         {
             // Breath/CC2 is the performable side of the Mute Pressure parameter:
             // it adds bridge-hand pressure without needing automation.
+            midiMutePressureForDisplay.store (
+                static_cast<int> (controllerValue), std::memory_order_relaxed);
             engine.setPalmMutePressure (
                 static_cast<float> (controllerValue) / 127.0f);
             doubleEngine->setPalmMutePressure (
@@ -681,6 +685,7 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             doubleEngine->setResonance (0.0f);
             engine.setPalmMutePressure (0.0f);
             doubleEngine->setPalmMutePressure (0.0f);
+            midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
             engine.setVibrato (0.0f);
             doubleEngine->setVibrato (0.0f);
             engine.setSustainPedal (false);
