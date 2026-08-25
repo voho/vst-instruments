@@ -181,6 +181,13 @@ private:
         bool selectsBaseArticulation = false;
     };
 
+    struct NoteOnBatch
+    {
+        std::array<electry::ElectryEngine::NoteOnEvent,
+                   electry::ElectryEngine::maximumChordEvents> events {};
+        std::size_t size = 0;
+    };
+
     static constexpr unsigned uiQueueCapacity = 128;
     std::array<UiMidiEvent, uiQueueCapacity> uiMidiQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };
@@ -195,7 +202,12 @@ private:
                              bool selectsBaseArticulation = false) noexcept;
     void discardUiMidiEvents() noexcept;
     void dispatchUiMidiEventPass (unsigned begin, unsigned end,
-                                  bool conditioning) noexcept;
+                                  bool conditioning,
+                                  NoteOnBatch& batch) noexcept;
+    void batchOrDispatchNoteOn (int note, float velocity,
+                                bool selectsBaseArticulation,
+                                NoteOnBatch& batch) noexcept;
+    void flushNoteOnBatch (NoteOnBatch& batch) noexcept;
     void dispatchNoteOn (int note, float velocity,
                          bool selectsBaseArticulation) noexcept;
     void dispatchNoteOff (int note) noexcept;

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -643,6 +644,267 @@ void testSampleAccurateNoteAndSound()
             "note-on did not report one active string");
 
     processor.releaseResources();
+}
+
+void testSameSampleChordAllocationIsCanonical()
+{
+    struct Render
+    {
+        std::array<electry::StringVisualState,
+                   electry::ElectryEngine::stringCount> strings {};
+        std::vector<float> left;
+        std::vector<float> right;
+        bool heldAfterFirstProbeOff = false;
+        bool heldAfterSecondProbeOff = false;
+    };
+
+    const auto render = []<std::size_t N> (
+        const std::array<int, N>& hostNotes, std::span<const int> uiNotes,
+        float spreadMilliseconds, int onset, int ownershipProbe = -1)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+        setParameterValue (processor, electry::parameters::strumSpread,
+                           spreadMilliseconds);
+
+        constexpr auto velocityByte = static_cast<juce::uint8> (110);
+        constexpr float velocity = 110.0f / 127.0f;
+        for (const int note : uiNotes)
+            processor.keyboardState.noteOn (1, note, velocity);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        for (const int note : hostNotes)
+            if (note >= 0)
+                midi.addEvent (juce::MidiMessage::noteOn (
+                                   1, note, velocityByte), onset);
+
+        Render result;
+        for (int block = 0; block < 4; ++block)
+        {
+            renderBlock (processor, audio, midi);
+            const auto* left = audio.getReadPointer (0);
+            const auto* right = audio.getReadPointer (1);
+            result.left.insert (result.left.end(), left,
+                                left + audio.getNumSamples());
+            result.right.insert (result.right.end(), right,
+                                 right + audio.getNumSamples());
+        }
+        for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+            result.strings[static_cast<std::size_t> (string)] =
+                processor.getStringVisualState (string);
+
+        if (ownershipProbe >= 0)
+        {
+            const auto probeIsHeld = [&]
+            {
+                for (int string = 0;
+                     string < electry::ElectryEngine::stringCount; ++string)
+                {
+                    const auto state = processor.getStringVisualState (string);
+                    if (state.midiNote == ownershipProbe && state.sounding
+                        && ! state.releasing)
+                        return true;
+                }
+                return false;
+            };
+            midi.addEvent (juce::MidiMessage::noteOff (1, ownershipProbe), 0);
+            renderBlock (processor, audio, midi);
+            result.heldAfterFirstProbeOff = probeIsHeld();
+            midi.addEvent (juce::MidiMessage::noteOff (1, ownershipProbe), 0);
+            renderBlock (processor, audio, midi);
+            result.heldAfterSecondProbeOff = probeIsHeld();
+        }
+        processor.releaseResources();
+        return result;
+    };
+
+    const auto sameMapping = [] (const Render& first, const Render& second)
+    {
+        for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+        {
+            const auto index = static_cast<std::size_t> (string);
+            if (first.strings[index].sounding != second.strings[index].sounding
+                || first.strings[index].midiNote != second.strings[index].midiNote
+                || first.strings[index].fret != second.strings[index].fret)
+                return false;
+        }
+        return true;
+    };
+
+    const std::array<int, 3> canonical { 33, 40, 45 };
+    for (const float spread : { 0.0f, 12.0f })
+    {
+        const auto reference = render (canonical, {}, spread, 137);
+        expect (reference.strings[0].midiNote == 33
+                    && reference.strings[0].fret == 5
+                    && reference.strings[1].midiNote == 40
+                    && reference.strings[1].fret == 5
+                    && reference.strings[2].midiNote == 45
+                    && reference.strings[2].fret == 5,
+                "same-sample A power chord did not use its compact fifth-fret shape");
+        expect (std::all_of (reference.left.begin(),
+                            reference.left.begin() + 137,
+                            [] (float sample) { return sample == 0.0f; }),
+                "canonical chord sounded before its host sample position");
+
+        auto permutation = canonical;
+        do
+        {
+            const auto candidate = render (permutation, {}, spread, 137);
+            expect (sameMapping (candidate, reference),
+                    "same-sample host chord fingering depended on event order");
+            expect (candidate.left == reference.left
+                        && candidate.right == reference.right,
+                    "same-sample host chord audio depended on event order");
+        }
+        while (std::next_permutation (permutation.begin(), permutation.end()));
+    }
+
+    std::array duplicateChord { 33, 40, 40, 45 };
+    const auto duplicateReference = render (
+        duplicateChord, {}, 0.0f, 137, 40);
+    expect (duplicateReference.strings[0].midiNote == 33
+                && duplicateReference.strings[0].fret == 5
+                && duplicateReference.strings[1].midiNote == 40
+                && duplicateReference.strings[1].fret == 5
+                && duplicateReference.strings[2].midiNote == 45
+                && duplicateReference.strings[2].fret == 5,
+            "duplicate chord did not retain its compact physical shape");
+    do
+    {
+        const auto candidate = render (duplicateChord, {}, 0.0f, 137, 40);
+        expect (sameMapping (candidate, duplicateReference),
+                "mixed duplicate chord fingering depended on event order");
+        expect (candidate.left == duplicateReference.left
+                    && candidate.right == duplicateReference.right,
+                "mixed duplicate chord audio depended on event order");
+        expect (candidate.heldAfterFirstProbeOff
+                    && ! candidate.heldAfterSecondProbeOff,
+                "mixed duplicate chord lost its two MIDI-note owners");
+    }
+    while (std::next_permutation (duplicateChord.begin(),
+                                  duplicateChord.end()));
+
+    const std::array nineNotes { 28, 35, 40, 45, 50, 55, 59, 64, 69 };
+    const auto nineReference = render (nineNotes, {}, 0.0f, 137);
+    for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+    {
+        const auto& state = nineReference.strings[static_cast<std::size_t> (string)];
+        expect (state.midiNote == nineNotes[static_cast<std::size_t> (string)]
+                    && state.fret == 0,
+                "nine-note policy did not retain the lowest eight open strings");
+    }
+    for (std::size_t shift = 0; shift < nineNotes.size(); ++shift)
+    {
+        auto rotated = nineNotes;
+        std::rotate (rotated.begin(), rotated.begin() + shift, rotated.end());
+        const auto candidate = render (rotated, {}, 0.0f, 137);
+        expect (sameMapping (candidate, nineReference),
+                "nine-note chord fingering depended on event order");
+        expect (candidate.left == nineReference.left
+                    && candidate.right == nineReference.right,
+                "nine-note chord audio depended on event order");
+    }
+    auto reversedNine = nineNotes;
+    std::reverse (reversedNine.begin(), reversedNine.end());
+    const auto reversedNineRender = render (reversedNine, {}, 0.0f, 137);
+    expect (sameMapping (reversedNineRender, nineReference)
+                && reversedNineRender.left == nineReference.left
+                && reversedNineRender.right == nineReference.right,
+            "reversed nine-note chord bypassed the engine's lowest-eight policy");
+
+    // At sample zero the GUI queue and the host describe the same physical
+    // attack. Splitting the chord between them must not change its fingering
+    // or the deterministic player draws.
+    const std::array<int, 3> noHost { -1, -1, -1 };
+    const auto hostReference = render (canonical, {}, 0.0f, 0);
+    const std::array<int, 2> uiLowHigh { 33, 45 };
+    const std::array<int, 2> uiHighLow { 45, 33 };
+    const std::array<int, 1> uiMiddle { 40 };
+    const auto lowHighSplit = render (
+        std::array { 40, -1, -1 }, uiLowHigh, 0.0f, 0);
+    const auto highLowSplit = render (
+        std::array { 40, -1, -1 }, uiHighLow, 0.0f, 0);
+    const auto reverseHostSplit = render (
+        std::array { 45, 33, -1 }, uiMiddle, 0.0f, 0);
+    const auto uiOnly = render (noHost, canonical, 0.0f, 0);
+    for (const auto* candidate : { &lowHighSplit, &highLowSplit,
+                                  &reverseHostSplit, &uiOnly })
+    {
+        expect (sameMapping (*candidate, hostReference),
+                "sample-zero GUI/host chord split changed its fingering");
+        expect (candidate->left == hostReference.left
+                    && candidate->right == hostReference.right,
+                "sample-zero GUI/host chord split changed its audio");
+    }
+
+    // Lifecycle messages are ordering barriers, not chord members. A release
+    // before an attack and a release after it must therefore remain different.
+    const auto noteThenRelease = [] (bool releaseFirst)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        const auto noteOn = juce::MidiMessage::noteOn (
+            1, 45, static_cast<juce::uint8> (110));
+        const auto noteOff = juce::MidiMessage::noteOff (1, 45);
+        if (releaseFirst)
+            midi.addEvent (noteOff, 0);
+        midi.addEvent (noteOn, 0);
+        if (! releaseFirst)
+            midi.addEvent (noteOff, 0);
+        renderBlock (processor, audio, midi);
+        electry::StringVisualState result;
+        for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+        {
+            const auto state = processor.getStringVisualState (string);
+            if (state.midiNote == 45)
+                result = state;
+        }
+        processor.releaseResources();
+        return result;
+    };
+    const auto released = noteThenRelease (false);
+    const auto held = noteThenRelease (true);
+    expect ((! released.sounding || released.releasing)
+                && held.sounding && ! held.releasing,
+            "same-sample Note On/Off lifecycle order was canonicalised away");
+
+    ElectryAudioProcessor overlaps;
+    overlaps.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> overlapAudio;
+    juce::MidiBuffer overlapMidi;
+    overlapMidi.addEvent (juce::MidiMessage::noteOn (
+                              1, 45, static_cast<juce::uint8> (110)), 0);
+    overlapMidi.addEvent (juce::MidiMessage::noteOn (
+                              1, 45, static_cast<juce::uint8> (110)), 0);
+    renderBlock (overlaps, overlapAudio, overlapMidi);
+    overlapMidi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+    renderBlock (overlaps, overlapAudio, overlapMidi);
+    bool heldAfterOneRelease = false;
+    for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+    {
+        const auto state = overlaps.getStringVisualState (string);
+        heldAfterOneRelease = heldAfterOneRelease
+                           || (state.midiNote == 45 && state.sounding
+                               && ! state.releasing);
+    }
+    overlapMidi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+    renderBlock (overlaps, overlapAudio, overlapMidi);
+    bool secondOwnerStillHeld = false;
+    for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+    {
+        const auto state = overlaps.getStringVisualState (string);
+        secondOwnerStillHeld = secondOwnerStillHeld
+                            || (state.midiNote == 45 && state.sounding
+                                && ! state.releasing);
+    }
+    expect (heldAfterOneRelease && ! secondOwnerStillHeld,
+            "duplicate same-sample Note Ons lost overlap ownership");
+    overlaps.releaseResources();
 }
 
 void testKeyswitchContract()
@@ -2798,6 +3060,7 @@ int main()
     testStateRoundTrip();
     testBusAndPluginContract();
     testSampleAccurateNoteAndSound();
+    testSameSampleChordAllocationIsCanonical();
     testKeyswitchContract();
     testPlayStyleHoldContract();
     testSameSampleMuteKeyswitchOrder();

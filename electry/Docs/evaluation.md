@@ -910,6 +910,28 @@ Mute or Dead voice's retirement, keeps that stopped string out of open-string
 sympathetic and free-string allocation paths until normal voice stealing, and
 lets the picking hand restart it from silence.
 
+The same audit exposed a fingering defect that sounded like broken tuning:
+simultaneous chord notes were allocated one at a time, so host insertion order
+could select different strings and frets, move the hand differently, and attach
+different player-variation draws to the same score. The six permutations of
+the Drop-E power chord `{33, 40, 45}` produced two physical shapes and six
+different renders. Sorting bass-first or treble-first was not sufficient: each
+has a playable counterexample where an early note occupies the only string a
+later pitch can use. Electry now enumerates the bounded one-to-one assignments
+for an exact-sample group and ranks ownership/legato continuity, four-fret
+reach, occupied strings, hand movement, fret effort and uncrossed pitch order
+before starting any voice. This follows the constrained-cost direction of
+[Itoh and Hayashida](https://www.jstage.jst.go.jp/article/ieejeiss/124/7/124_7_1396/_article/-char/en)
+and the playable-configuration direction of
+[Yazawa et al.](https://cir.nii.ac.jp/crid/1573387452726377216), reduced to an
+eight-string, allocation-free realtime solve. The regression now covers 134
+permutations of four adversarial/open chord shapes with exact string/fret/hand
+agreement and bit-identical stereo, plus host/on-screen source splits and MIDI
+lifecycle barriers. Repeated-pitch permutations, owner-preserving re-fingering,
+releasing-string obstacles and the deterministic lowest-eight overflow policy
+have their own gates. The solve is deliberately chord-local; it does not claim
+phrase-wide fingering look-ahead.
+
 `LATCH | HOLD` is saved as non-parameter state alongside the current 26 host
 parameters; transient held keys are never serialized. Because Electry is not
 released, the suite pins current-state round trips rather than migration from

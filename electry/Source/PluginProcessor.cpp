@@ -75,7 +75,7 @@ bool isAttackConditioningMidiEvent (
             static_cast<int> (metadata.data[1] & 0x7fu));
     }
 
-    if (kind == 0x80u && metadata.numBytes >= 2)
+    if (kind == 0x80u && metadata.numBytes >= 3)
     {
         return electry::ElectryEngine::isKeyswitchNote (
             static_cast<int> (metadata.data[1] & 0x7fu));
@@ -527,7 +527,8 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // anything arriving during this callback belongs to the next block.
     const auto uiBegin = uiReadIndex.load (std::memory_order_relaxed);
     const auto uiEnd = uiWriteIndex.load (std::memory_order_acquire);
-    dispatchUiMidiEventPass (uiBegin, uiEnd, true);
+    NoteOnBatch uiBatch;
+    dispatchUiMidiEventPass (uiBegin, uiEnd, true, uiBatch);
 
     // A normal sample-zero host group and the GUI snapshot describe one attack
     // boundary. Let both sources condition it before either source's playable
@@ -538,7 +539,8 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                            && (*firstHostEvent).samplePosition == 0;
     if (! uiRemainderPending)
     {
-        dispatchUiMidiEventPass (uiBegin, uiEnd, false);
+        dispatchUiMidiEventPass (uiBegin, uiEnd, false, uiBatch);
+        flushNoteOnBatch (uiBatch);
         uiReadIndex.store (uiEnd, std::memory_order_release);
     }
 
@@ -563,6 +565,8 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                && (*groupEnd).samplePosition == (*event).samplePosition)
             ++groupEnd;
 
+        NoteOnBatch groupBatch;
+
         // Hosts are free to store simultaneous MIDI in either insertion order.
         // A keyswitch or CC2 therefore conditions every attack at its timestamp,
         // rather than only attacks that happened to follow it in the buffer.
@@ -580,7 +584,7 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // Do not release the queue slots until both GUI passes have read them.
         if (uiRemainderPending && (*event).samplePosition == 0)
         {
-            dispatchUiMidiEventPass (uiBegin, uiEnd, false);
+            dispatchUiMidiEventPass (uiBegin, uiEnd, false, groupBatch);
             uiReadIndex.store (uiEnd, std::memory_order_release);
             uiRemainderPending = false;
         }
@@ -588,9 +592,29 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         for (auto current = event; current != groupEnd; ++current)
         {
             const auto metadata = *current;
-            if (! isAttackConditioningMidiEvent (metadata))
-                dispatchMidiData (metadata.data, metadata.numBytes);
+            if (isAttackConditioningMidiEvent (metadata))
+                continue;
+
+            const auto* data = metadata.data;
+            const bool ordinaryPositiveNoteOn =
+                data != nullptr && metadata.numBytes >= 3
+                && (data[0] & 0xf0u) == 0x90u
+                && data[2] != 0u;
+            if (ordinaryPositiveNoteOn)
+            {
+                batchOrDispatchNoteOn (
+                    static_cast<int> (data[1] & 0x7fu),
+                    static_cast<float> (data[2] & 0x7fu) / 127.0f,
+                    false, groupBatch);
+                continue;
+            }
+
+            // Anything that can change ownership or performance state splits
+            // the chord. Dispatch it in source order between the two batches.
+            flushNoteOnBatch (groupBatch);
+            dispatchMidiData (data, metadata.numBytes);
         }
+        flushNoteOnBatch (groupBatch);
 
         event = groupEnd;
     }
@@ -1053,7 +1077,8 @@ void ElectryAudioProcessor::enqueueUiMidiEvent (
 
 void ElectryAudioProcessor::dispatchUiMidiEventPass (unsigned begin,
                                                       unsigned end,
-                                                      bool conditioning) noexcept
+                                                      bool conditioning,
+                                                      NoteOnBatch& batch) noexcept
 {
     auto read = begin;
     while (read != end)
@@ -1063,14 +1088,59 @@ void ElectryAudioProcessor::dispatchUiMidiEventPass (unsigned begin,
             electry::ElectryEngine::isKeyswitchNote (event.note);
         if (eventConditionsAttack == conditioning)
         {
-            if (event.noteOn)
-                dispatchNoteOn (event.note, event.velocity,
-                                event.selectsBaseArticulation);
+            if (conditioning)
+            {
+                if (event.noteOn)
+                    dispatchNoteOn (event.note, event.velocity,
+                                    event.selectsBaseArticulation);
+                else
+                    dispatchNoteOff (event.note);
+            }
+            else if (event.noteOn)
+            {
+                batchOrDispatchNoteOn (event.note, event.velocity,
+                                       event.selectsBaseArticulation, batch);
+            }
             else
+            {
+                flushNoteOnBatch (batch);
                 dispatchNoteOff (event.note);
+            }
         }
         read = (read + 1u) % uiQueueCapacity;
     }
+}
+
+void ElectryAudioProcessor::batchOrDispatchNoteOn (
+    int note, float velocity, bool selectsBaseArticulation,
+    NoteOnBatch& batch) noexcept
+{
+    if (selectsBaseArticulation || velocity <= 0.0f
+        || ! electry::ElectryEngine::isPlayableNote (note))
+    {
+        flushNoteOnBatch (batch);
+        dispatchNoteOn (note, velocity, selectsBaseArticulation);
+        return;
+    }
+
+    // Keep hostile event floods bounded without splitting any ordinary MIDI
+    // chord or overlap that fits in one complete 128-note MIDI key range.
+    if (batch.size == batch.events.size())
+        flushNoteOnBatch (batch);
+    batch.events[batch.size++] = { note, velocity };
+}
+
+void ElectryAudioProcessor::flushNoteOnBatch (NoteOnBatch& batch) noexcept
+{
+    if (batch.size != 0)
+    {
+        const std::span<const electry::ElectryEngine::NoteOnEvent> notes (
+            batch.events.data(), batch.size);
+        engine.noteOnChord (notes);
+        if (doubleModeActive)
+            doubleEngine->noteOnChord (notes);
+    }
+    batch.size = 0;
 }
 
 void ElectryAudioProcessor::discardUiMidiEvents() noexcept

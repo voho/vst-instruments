@@ -1292,11 +1292,445 @@ void ElectryEngine::setSustainPedal(bool down) noexcept
 
 void ElectryEngine::noteOn(int midiNote, float velocity)
 {
-    noteOnInternal(midiNote, velocity, -1);
+    noteOnInternal(midiNote, velocity, -1, true, false);
+}
+
+void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
+{
+    if (! prepared_)
+        return;
+
+    // Keep a bounded attack group in canonical pitch/velocity order. Eight
+    // distinct pitches can sound, while repeated pitches remain separate MIDI
+    // owners and physical restrikes of the one assigned string.
+    std::array<NoteOnEvent, maximumChordEvents> sorted {};
+    int eventCount = 0;
+    for (const auto& event : events)
+    {
+        const float velocity = clampf(
+            std::isfinite(event.velocity) ? event.velocity : 0.0f,
+            0.0f, 1.0f);
+        if (! isPlayableNote(event.midiNote) || velocity <= 0.0f)
+            continue;
+
+        int insertion = 0;
+        while (insertion < eventCount
+               && (sorted[static_cast<std::size_t>(insertion)].midiNote
+                       < event.midiNote
+                   || (sorted[static_cast<std::size_t>(insertion)].midiNote
+                           == event.midiNote
+                       && sorted[static_cast<std::size_t>(insertion)].velocity
+                              <= velocity)))
+            ++insertion;
+        if (insertion >= maximumChordEvents)
+            continue;
+
+        const int newCount = std::min(eventCount + 1, maximumChordEvents);
+        for (int index = newCount - 1; index > insertion; --index)
+            sorted[static_cast<std::size_t>(index)] =
+                sorted[static_cast<std::size_t>(index - 1)];
+        sorted[static_cast<std::size_t>(insertion)] = {
+            event.midiNote, velocity
+        };
+        eventCount = newCount;
+    }
+    if (eventCount == 0)
+        return;
+    if (eventCount == 1)
+    {
+        const auto& event = sorted[0];
+        noteOnInternal(event.midiNote, event.velocity, -1, true, false);
+        return;
+    }
+
+    // Repeated Note Ons are multiple owners/repicks of one fretted string,
+    // not an artificial unison spread across several strings. Match distinct
+    // pitches globally, then replay every canonical event on that assignment.
+    std::array<int, stringCount> notes {};
+    std::array<int, maximumChordEvents> eventNoteIndices {};
+    int noteCount = 0;
+    int selectedEventCount = 0;
+    for (int eventIndex = 0; eventIndex < eventCount; ++eventIndex)
+    {
+        const int midiNote = sorted[static_cast<std::size_t>(eventIndex)].midiNote;
+        if (noteCount == 0
+            || notes[static_cast<std::size_t>(noteCount - 1)] != midiNote)
+        {
+            if (noteCount == stringCount)
+                break;
+            notes[static_cast<std::size_t>(noteCount++)] = midiNote;
+        }
+        eventNoteIndices[static_cast<std::size_t>(eventIndex)] = noteCount - 1;
+        ++selectedEventCount;
+    }
+    // A physical eight-string cannot realise a ninth distinct pitch. Retain
+    // the lowest eight deterministically, but keep every overlap belonging to
+    // those pitches so matching Note Offs still balance their ownership.
+    eventCount = selectedEventCount;
+
+    const float spreadSeconds = targetParameters_.strumSpreadSeconds;
+    const int activeChordWindowSamples = spreadSeconds > 0.0f
+        ? chordWindowSamples_ : 0;
+    const bool newChord = engineClock_ - chordFirstNoteOnClock_
+                        > static_cast<std::int64_t>(activeChordWindowSamples);
+    returnFrettingHandIfIdle(newChord);
+
+    struct Score
+    {
+        int heldBindingMisses { 0 };
+        int soundingBindingMisses { 0 };
+        int legatoMisses { 0 };
+        int legatoDistance { 0 };
+        int occupiedStrings { 0 };
+        int heldSteals { 0 };
+        int nonReleasingSteals { 0 };
+        std::array<std::uint64_t, stringCount> stealOrders {};
+        float maximumSpanViolation { 0.0f };
+        float totalSpanViolation { 0.0f };
+        float handMovement { 0.0f };
+        float fretting { 0.0f };
+        int crossings { 0 };
+        std::array<int, stringCount> strings {};
+        float handPosition { 0.0f };
+    };
+
+    const auto better = [] (const Score& candidate, const Score& incumbent)
+    {
+        if (candidate.heldBindingMisses != incumbent.heldBindingMisses)
+            return candidate.heldBindingMisses < incumbent.heldBindingMisses;
+        if (candidate.soundingBindingMisses != incumbent.soundingBindingMisses)
+            return candidate.soundingBindingMisses
+                 < incumbent.soundingBindingMisses;
+        if (candidate.legatoMisses != incumbent.legatoMisses)
+            return candidate.legatoMisses < incumbent.legatoMisses;
+        if (candidate.legatoDistance != incumbent.legatoDistance)
+            return candidate.legatoDistance < incumbent.legatoDistance;
+        if (candidate.maximumSpanViolation != incumbent.maximumSpanViolation)
+            return candidate.maximumSpanViolation
+                 < incumbent.maximumSpanViolation;
+        if (candidate.totalSpanViolation != incumbent.totalSpanViolation)
+            return candidate.totalSpanViolation
+                 < incumbent.totalSpanViolation;
+        if (candidate.occupiedStrings != incumbent.occupiedStrings)
+            return candidate.occupiedStrings < incumbent.occupiedStrings;
+        if (candidate.heldSteals != incumbent.heldSteals)
+            return candidate.heldSteals < incumbent.heldSteals;
+        if (candidate.nonReleasingSteals != incumbent.nonReleasingSteals)
+            return candidate.nonReleasingSteals
+                 < incumbent.nonReleasingSteals;
+        if (candidate.stealOrders != incumbent.stealOrders)
+            return candidate.stealOrders < incumbent.stealOrders;
+        if (candidate.handMovement != incumbent.handMovement)
+            return candidate.handMovement < incumbent.handMovement;
+        if (candidate.fretting != incumbent.fretting)
+            return candidate.fretting < incumbent.fretting;
+        if (candidate.crossings != incumbent.crossings)
+            return candidate.crossings < incumbent.crossings;
+        return candidate.strings < incumbent.strings;
+    };
+
+    const auto& specs = stringSpecs();
+    std::array<int, stringCount> assignment {};
+    std::array<int, stringCount> bestAssignment {};
+    assignment.fill(-1);
+    bestAssignment.fill(-1);
+    Score bestScore;
+    bool found = false;
+
+    const auto evaluate = [&]
+    {
+        Score score;
+        score.stealOrders.fill(~std::uint64_t { 0 });
+        score.strings.fill(stringCount);
+        std::array<bool, stringCount> usedStrings {};
+        int stealOrderCount = 0;
+
+        for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+        {
+            const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+            const int stringIndex = assignment[static_cast<std::size_t>(noteIndex)];
+            const auto index = static_cast<std::size_t>(stringIndex);
+            const auto& voice = voices_[index];
+            usedStrings[index] = true;
+            score.strings[static_cast<std::size_t>(noteIndex)] = stringIndex;
+
+            bool heldMatchAvailable = false;
+            bool soundingMatchAvailable = false;
+            for (int candidateString = 0; candidateString < stringCount;
+                 ++candidateString)
+            {
+                const auto candidate = static_cast<std::size_t>(candidateString);
+                const int fret = midiNote - specs[candidate].openMidiNote;
+                if (fret < 0 || fret > fretCount)
+                    continue;
+                heldMatchAvailable = heldMatchAvailable
+                    || (heldNoteCounts_[candidate] > 0
+                        && heldMidiNotes_[candidate] == midiNote);
+                soundingMatchAvailable = soundingMatchAvailable
+                    || (voices_[candidate].active
+                        && voices_[candidate].midiNote == midiNote);
+            }
+
+            const bool heldMatch = heldNoteCounts_[index] > 0
+                                && heldMidiNotes_[index] == midiNote;
+            const bool soundingMatch = voice.active
+                                    && voice.midiNote == midiNote;
+            score.heldBindingMisses += heldMatchAvailable && ! heldMatch;
+            score.soundingBindingMisses += ! heldMatchAvailable
+                && soundingMatchAvailable && ! soundingMatch;
+
+            if (! heldMatchAvailable && ! soundingMatchAvailable
+                && (playStyle_ == PlayStyle::Hammer
+                    || playStyle_ == PlayStyle::Slide))
+            {
+                bool continuationAvailable = false;
+                bool continuation = false;
+                int selectedDistance = 0;
+                for (int candidateString = 0; candidateString < stringCount;
+                     ++candidateString)
+                {
+                    const auto candidate = static_cast<std::size_t>(candidateString);
+                    const auto& candidateVoice = voices_[candidate];
+                    const int fret = midiNote - specs[candidate].openMidiNote;
+                    if (! candidateVoice.active || fret < 1 || fret > fretCount)
+                        continue;
+                    const int distance = std::abs(fret - candidateVoice.fret);
+                    const bool reachable = playStyle_ == PlayStyle::Slide
+                                        || distance < 10;
+                    if (! reachable)
+                        continue;
+                    continuationAvailable = true;
+                    if (candidateString == stringIndex)
+                    {
+                        continuation = true;
+                        selectedDistance = distance;
+                    }
+                }
+                score.legatoMisses += continuationAvailable && ! continuation;
+                if (continuation)
+                    score.legatoDistance += selectedDistance;
+            }
+
+            const bool occupied = voice.active || heldNoteCounts_[index] > 0;
+            score.occupiedStrings += occupied;
+            score.heldSteals += heldNoteCounts_[index] > 0 && ! heldMatch;
+            if (occupied && ! heldMatch && ! soundingMatch)
+            {
+                const bool releasing = voice.releasing
+                                    && ! voice.pendingRepick.active
+                                    && heldNoteCounts_[index] == 0;
+                score.nonReleasingSteals += ! releasing;
+                const std::uint64_t order = voice.pendingRepick.active
+                    ? voice.pendingRepick.startOrder : voice.startOrder;
+                score.stealOrders[static_cast<std::size_t>(stealOrderCount++)]
+                    = order;
+            }
+        }
+        std::sort(score.stealOrders.begin(), score.stealOrders.end());
+
+        std::array<int, stringCount> frets {};
+        int fretCountForShape = 0;
+        for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+        {
+            const int stringIndex = assignment[static_cast<std::size_t>(noteIndex)];
+            const int fret = notes[static_cast<std::size_t>(noteIndex)]
+                           - specs[static_cast<std::size_t>(stringIndex)].openMidiNote;
+            if (fret > 0)
+                frets[static_cast<std::size_t>(fretCountForShape++)] = fret;
+        }
+        for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
+        {
+            const auto index = static_cast<std::size_t>(stringIndex);
+            if (usedStrings[index] || heldNoteCounts_[index] <= 0)
+                continue;
+            const int fret = heldMidiNotes_[index] - specs[index].openMidiNote;
+            if (fret > 0 && fret <= fretCount)
+                frets[static_cast<std::size_t>(fretCountForShape++)] = fret;
+        }
+
+        score.handPosition = frettingHandPosition_;
+        if (fretCountForShape > 0)
+        {
+            int lowestFret = frets[0];
+            int highestFret = frets[0];
+            bool currentHandFits = true;
+            for (int index = 0; index < fretCountForShape; ++index)
+            {
+                const int fret = frets[static_cast<std::size_t>(index)];
+                lowestFret = std::min(lowestFret, fret);
+                highestFret = std::max(highestFret, fret);
+                currentHandFits = currentHandFits
+                    && static_cast<float>(fret) >= frettingHandPosition_
+                    && static_cast<float>(fret)
+                           <= frettingHandPosition_
+                                + static_cast<float>(frettingHandReach);
+            }
+            if (newChord && ! currentHandFits)
+            {
+                score.handPosition = clampf(
+                    0.5f * static_cast<float>(lowestFret + highestFret
+                                               - frettingHandReach),
+                    0.0f,
+                    static_cast<float>(fretCount - frettingHandReach));
+            }
+            for (int index = 0; index < fretCountForShape; ++index)
+            {
+                const float fret = static_cast<float>(
+                    frets[static_cast<std::size_t>(index)]);
+                const float violation = std::max(
+                    std::max(score.handPosition - fret, 0.0f),
+                    std::max(fret - score.handPosition
+                                      - static_cast<float>(frettingHandReach),
+                             0.0f));
+                score.maximumSpanViolation = std::max(
+                    score.maximumSpanViolation, violation);
+                score.totalSpanViolation += violation;
+            }
+        }
+        score.handMovement = std::abs(
+            score.handPosition - frettingHandPosition_);
+
+        for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+        {
+            const int stringIndex = assignment[static_cast<std::size_t>(noteIndex)];
+            const int fret = notes[static_cast<std::size_t>(noteIndex)]
+                           - specs[static_cast<std::size_t>(stringIndex)].openMidiNote;
+            score.fretting += frettingCost(fret, score.handPosition);
+            if (noteIndex == 0)
+                continue;
+            const int previous = assignment[static_cast<std::size_t>(noteIndex - 1)];
+            if (stringIndex < previous)
+                score.crossings += stringCount * stringCount;
+            score.crossings += std::abs(stringIndex - previous);
+        }
+
+        if (! found || better(score, bestScore))
+        {
+            found = true;
+            bestScore = score;
+            bestAssignment = assignment;
+        }
+    };
+
+    const auto search = [&] (auto&& self, int noteIndex,
+                             unsigned int usedStrings) -> void
+    {
+        if (noteIndex == noteCount)
+        {
+            evaluate();
+            return;
+        }
+        const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+        for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
+        {
+            const unsigned int stringBit = 1u << stringIndex;
+            const int fret = midiNote
+                           - specs[static_cast<std::size_t>(stringIndex)].openMidiNote;
+            if ((usedStrings & stringBit) != 0 || fret < 0 || fret > fretCount)
+                continue;
+            assignment[static_cast<std::size_t>(noteIndex)] = stringIndex;
+            self(self, noteIndex + 1, usedStrings | stringBit);
+        }
+    };
+    search(search, 0, 0u);
+
+    if (! found)
+    {
+        // More mutually exclusive pitches than the reachable strings can
+        // carry: preserve the old stealing behaviour, but in canonical order.
+        for (int eventIndex = 0; eventIndex < eventCount; ++eventIndex)
+        {
+            const auto& event = sorted[static_cast<std::size_t>(eventIndex)];
+            noteOnInternal(event.midiNote, event.velocity, -1, true, false);
+        }
+        return;
+    }
+
+    // A repeated held pitch normally stays on its string. If another chord
+    // pitch can only use that string, the global solve may re-finger the held
+    // note elsewhere. Move its complete durable owner count with it before
+    // either voice starts; otherwise the new Note On would leave two physical
+    // strings representing fewer MIDI owners than were actually pressed.
+    const auto previousHeldNotes = heldMidiNotes_;
+    const auto previousHeldCounts = heldNoteCounts_;
+    for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+    {
+        const auto destination = static_cast<std::size_t>(
+            bestAssignment[static_cast<std::size_t>(noteIndex)]);
+        if (previousHeldNotes[destination]
+                != notes[static_cast<std::size_t>(noteIndex)])
+        {
+            heldMidiNotes_[destination] = -1;
+            heldNoteCounts_[destination] = 0;
+        }
+    }
+    for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+    {
+        const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+        const int destination =
+            bestAssignment[static_cast<std::size_t>(noteIndex)];
+        for (int source = 0; source < stringCount; ++source)
+        {
+            const auto sourceIndex = static_cast<std::size_t>(source);
+            if (source == destination || previousHeldCounts[sourceIndex] <= 0
+                || previousHeldNotes[sourceIndex] != midiNote)
+                continue;
+            heldMidiNotes_[sourceIndex] = -1;
+            heldNoteCounts_[sourceIndex] = 0;
+        }
+    }
+    for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+    {
+        const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+        const int destination =
+            bestAssignment[static_cast<std::size_t>(noteIndex)];
+        for (int source = 0; source < stringCount; ++source)
+        {
+            const auto sourceIndex = static_cast<std::size_t>(source);
+            if (source == destination || previousHeldCounts[sourceIndex] <= 0
+                || previousHeldNotes[sourceIndex] != midiNote)
+                continue;
+            const auto destinationIndex = static_cast<std::size_t>(destination);
+            heldMidiNotes_[destinationIndex] = midiNote;
+            heldNoteCounts_[destinationIndex] = previousHeldCounts[sourceIndex];
+            break;
+        }
+    }
+
+    frettingHandPosition_ = bestScore.handPosition;
+    std::array<int, stringCount> firstEventIndices {};
+    firstEventIndices.fill(-1);
+    for (int eventIndex = 0; eventIndex < eventCount; ++eventIndex)
+    {
+        const int noteIndex = eventNoteIndices[static_cast<std::size_t>(eventIndex)];
+        auto& first = firstEventIndices[static_cast<std::size_t>(noteIndex)];
+        if (first < 0)
+            first = eventIndex;
+    }
+    const auto trigger = [&] (int eventIndex)
+    {
+        const auto& event = sorted[static_cast<std::size_t>(eventIndex)];
+        const int noteIndex = eventNoteIndices[static_cast<std::size_t>(eventIndex)];
+        noteOnInternal(event.midiNote, event.velocity,
+                       bestAssignment[static_cast<std::size_t>(noteIndex)],
+                       true, true);
+    };
+    // Form the complete physical chord first, then apply duplicate-pitch
+    // restrikes. This is canonical across host insertion order and avoids a
+    // duplicate bass note splitting the chord before its treble arrives.
+    for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+        trigger(firstEventIndices[static_cast<std::size_t>(noteIndex)]);
+    for (int eventIndex = 0; eventIndex < eventCount; ++eventIndex)
+    {
+        const int noteIndex = eventNoteIndices[static_cast<std::size_t>(eventIndex)];
+        if (eventIndex != firstEventIndices[static_cast<std::size_t>(noteIndex)])
+            trigger(eventIndex);
+    }
 }
 
 void ElectryEngine::noteOnInternal(int midiNote, float velocity,
-                                   int forcedStringIndex)
+                                   int forcedStringIndex, bool addKeyOwner,
+                                   bool handPositionPlanned)
 {
     if (! prepared_)
         return;
@@ -1335,7 +1769,8 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
         // physical string also revives a Mute or Dead voice that has already
         // decayed below the audio-retirement floor; noteOnInternal restores the
         // durable fretting-key owner instead of adding a trigger-key owner.
-        noteOnInternal(heldMidiNotes_[index], velocity, stringIndex);
+        noteOnInternal(heldMidiNotes_[index], velocity, stringIndex,
+                       false, false);
         return;
     }
 
@@ -1361,19 +1796,8 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     bool newChord = engineClock_ - chordFirstNoteOnClock_
                   > static_cast<std::int64_t>(activeChordWindowSamples);
 
-    // The hand relaxes to the nut when the phrase ends: nothing is held and
-    // no note has arrived for over a second. Without this a figure played high
-    // up would keep pulling a following open-position chord out of position.
-    if (newChord
-        && engineClock_ - lastNoteOnClock_
-               > static_cast<std::int64_t>(handReturnSamples_))
-    {
-        bool anyHeld = false;
-        for (const int count : heldNoteCounts_)
-            anyHeld = anyHeld || count > 0;
-        if (! anyHeld)
-            frettingHandPosition_ = 0.0f;
-    }
+    if (! handPositionPlanned)
+        returnFrettingHandIfIdle(newChord);
 
     const int stringIndex = forcedStringIndex >= 0
         ? forcedStringIndex : chooseString(midiNote, playStyle_);
@@ -1408,9 +1832,11 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
                     < static_cast<std::int64_t>(strumPreRollSamples_))
         reAnchorChordStroke(stringIndex);
 
-    updateFrettingHand(
-        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
-        newChord);
+    if (! handPositionPlanned)
+        updateFrettingHand(
+            midiNote
+                - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
+            newChord);
     lastNoteOnClock_ = engineClock_;
 
     int startDelaySamples = 0;
@@ -1456,7 +1882,7 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
                    startDelaySamples);
 
     const auto heldIndex = static_cast<std::size_t>(stringIndex);
-    if (forcedStringIndex < 0)
+    if (addKeyOwner)
     {
         if (heldMidiNotes_[heldIndex] == midiNote)
             heldNoteCounts_[heldIndex] = std::min(
@@ -1633,15 +2059,20 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
 
 float ElectryEngine::frettingCost(int fret) const noexcept
 {
+    return frettingCost(fret, frettingHandPosition_);
+}
+
+float ElectryEngine::frettingCost(int fret, float handPosition) noexcept
+{
     // An open string costs no finger at all, so in first position it is free -
     // which is why the open-position chord shapes come out unchanged. Up the
     // neck it is a decision rather than a convenience: taking it abandons the
     // hand's position and changes the note's timbre, decay and damping, so its
     // cost grows with how far the hand has travelled.
     if (fret <= 0)
-        return 0.25f * frettingHandPosition_;
+        return 0.25f * handPosition;
 
-    const float low = frettingHandPosition_;
+    const float low = handPosition;
     const float high = low + static_cast<float>(frettingHandReach);
     if (fret < low)
     {
@@ -1655,6 +2086,21 @@ float ElectryEngine::frettingCost(int fret) const noexcept
     // Inside the hand's span every note is reachable; the small tilt prefers
     // the index finger, which breaks ties the way a player's hand does.
     return 0.05f * (static_cast<float>(fret) - low);
+}
+
+void ElectryEngine::returnFrettingHandIfIdle(bool newChord) noexcept
+{
+    // Nothing held and no note for over a second means the phrase ended. A
+    // following chord starts from the nut instead of inheriting an abandoned
+    // lead position; noteOnChord calls this before it solves the whole shape.
+    if (! newChord
+        || engineClock_ - lastNoteOnClock_
+               <= static_cast<std::int64_t>(handReturnSamples_))
+        return;
+    for (const int count : heldNoteCounts_)
+        if (count > 0)
+            return;
+    frettingHandPosition_ = 0.0f;
 }
 
 void ElectryEngine::updateFrettingHand(int fret, bool newChord) noexcept

@@ -4346,6 +4346,155 @@ void testStringAllocationAndPolyphony()
            "restruck note moved to another string");
 }
 
+void testChordAssignmentIsPermutationInvariant()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int renderSamples = 2048;
+
+    const auto check = []<std::size_t N> (
+        const char* label, const std::array<int, N>& notes,
+        const std::array<int, N>& expectedStrings,
+        const std::array<int, N>& expectedFrets, float expectedHand)
+    {
+        auto order = notes;
+        StereoBuffer reference(renderSamples);
+        bool haveReference = false;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        do
+        {
+            engine.reset();
+
+            std::array<ElectryEngine::NoteOnEvent, N> events {};
+            for (std::size_t i = 0; i < N; ++i)
+                events[i] = { order[i], 0.8f };
+            engine.noteOnChord(events);
+
+            expect(engine.getActiveVoiceCount() == static_cast<int>(N),
+                   std::string(label) + " lost a voice under permutation");
+            for (std::size_t i = 0; i < N; ++i)
+            {
+                const int string = TestAccess::stringForNote(engine, notes[i]);
+                const auto voice = TestAccess::snapshot(engine, string);
+                expect(string == expectedStrings[i] && voice.fret == expectedFrets[i],
+                       std::string(label) + " changed its string/fret assignment");
+            }
+            expect(std::abs(TestAccess::frettingHandPosition(engine) - expectedHand)
+                       < 1.0e-6f,
+                   std::string(label) + " moved the hand to the wrong position");
+
+            StereoBuffer audio(renderSamples);
+            renderInto(engine, audio);
+            if (! haveReference)
+            {
+                reference = audio;
+                haveReference = true;
+                expect(peakAbs(audio.left) > 1.0e-5f,
+                       std::string(label) + " permutation fixture was silent");
+            }
+            else
+            {
+                expect(audio.left == reference.left && audio.right == reference.right,
+                       std::string(label) + " rendered differently under permutation");
+            }
+        }
+        while (std::next_permutation(order.begin(), order.end()));
+    };
+
+    check("fifth-fret barre", std::array { 33, 40, 45 },
+          std::array { 0, 1, 2 }, std::array { 5, 5, 5 }, 3.0f);
+    check("high-register dyad", std::array { 64, 82 },
+          std::array { 4, 7 }, std::array { 14, 18 }, 14.0f);
+    check("open low chord", std::array { 28, 35, 69 },
+          std::array { 0, 1, 7 }, std::array { 0, 0, 5 }, 3.0f);
+    check("open C major", std::array { 48, 52, 55, 60, 64 },
+          std::array { 3, 4, 5, 6, 7 }, std::array { 3, 2, 0, 1, 0 }, 0.0f);
+
+    // Batching two owners of one MIDI pitch must retain the scalar note-on
+    // overlap contract: one physical string, released only by the second off.
+    auto duplicate = std::make_unique<ElectryEngine>();
+    duplicate->prepare(sampleRate, 512);
+    duplicate->setParameters(EngineParameters {});
+    const std::array duplicateEvents {
+        ElectryEngine::NoteOnEvent { 45, 0.8f },
+        ElectryEngine::NoteOnEvent { 45, 0.8f }
+    };
+    duplicate->noteOnChord(duplicateEvents);
+    const int duplicateString = TestAccess::stringForNote(*duplicate, 45);
+    expect(duplicate->getActiveVoiceCount() == 1 && duplicateString >= 0,
+           "duplicate chord notes did not share one physical string");
+    duplicate->noteOff(45);
+    expect(TestAccess::snapshot(*duplicate, duplicateString).keyDown,
+           "the first duplicate Note Off released both owners");
+    duplicate->noteOff(45);
+    expect(! TestAccess::snapshot(*duplicate, duplicateString).keyDown,
+           "the second duplicate Note Off left the string held");
+
+    auto held = std::make_unique<ElectryEngine>();
+    held->prepare(sampleRate, 512);
+    held->setParameters(EngineParameters {});
+    held->noteOn(45, 0.8f);
+    const int heldString = TestAccess::stringForNote(*held, 45);
+    const std::array addedChord {
+        ElectryEngine::NoteOnEvent { 40, 0.8f },
+        ElectryEngine::NoteOnEvent { 50, 0.8f },
+        ElectryEngine::NoteOnEvent { 55, 0.8f }
+    };
+    held->noteOnChord(addedChord);
+    const auto heldVoice = TestAccess::snapshot(*held, heldString);
+    expect(heldVoice.active && heldVoice.keyDown && heldVoice.midiNote == 45,
+           "a chord batch displaced an existing held-string owner");
+
+    // A constrained treble note can require a repeated held pitch to move to
+    // another string. Its old and new Note Ons must move together: neither is
+    // allowed to disappear when the original string is reassigned.
+    auto revoiced = std::make_unique<ElectryEngine>();
+    revoiced->prepare(sampleRate, 512);
+    revoiced->setParameters(EngineParameters {});
+    revoiced->noteOn(64, 0.8f);
+    StereoBuffer beforeRevoice(64);
+    renderInto(*revoiced, beforeRevoice);
+    const std::array revoicedChord {
+        ElectryEngine::NoteOnEvent { 64, 0.8f },
+        ElectryEngine::NoteOnEvent { 82, 0.8f }
+    };
+    revoiced->noteOnChord(revoicedChord);
+    const int movedString = TestAccess::stringForNote(*revoiced, 64);
+    const int constrainedString = TestAccess::stringForNote(*revoiced, 82);
+    expect(movedString == 4 && constrainedString == 7,
+           "a constrained dyad did not re-finger its repeated held pitch ("
+               + std::to_string(movedString) + ", "
+               + std::to_string(constrainedString) + ")");
+    revoiced->noteOff(64);
+    expect(TestAccess::snapshot(*revoiced, movedString).keyDown,
+           "re-fingering lost the original held-note owner");
+    revoiced->noteOff(64);
+    expect(! TestAccess::snapshot(*revoiced, movedString).keyDown,
+           "re-fingered overlap survived both matching Note Offs");
+
+    // A free but impossible stretch is not preferable to taking a string that
+    // is already releasing. This shape fits exactly under the four-fret hand.
+    auto releasedObstacle = std::make_unique<ElectryEngine>();
+    releasedObstacle->prepare(sampleRate, 512);
+    releasedObstacle->setParameters(EngineParameters {});
+    releasedObstacle->noteOn(35, 0.8f);
+    releasedObstacle->noteOff(35);
+    const std::array reachableChord {
+        ElectryEngine::NoteOnEvent { 41, 0.8f },
+        ElectryEngine::NoteOnEvent { 42, 0.8f }
+    };
+    releasedObstacle->noteOnChord(reachableChord);
+    expect(TestAccess::stringForNote(*releasedObstacle, 41) == 1
+               && TestAccess::snapshot(*releasedObstacle, 1).fret == 6
+               && TestAccess::stringForNote(*releasedObstacle, 42) == 2
+               && TestAccess::snapshot(*releasedObstacle, 2).fret == 2,
+           "allocator preferred an eleven-fret stretch over a releasing string");
+}
+
 // chooseString()'s steal branch (all eight strings already sounding) was
 // only ever exercised for the voice count staying at eight; the tie-break
 // policy itself - a releasing voice always outranks a held one, and among
@@ -11349,6 +11498,7 @@ int main()
     testGuitarBuildRangeIsAudible();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
+    testChordAssignmentIsPermutationInvariant();
     testVoiceStealingPriority();
     testNoteOnVelocitySanitisation();
     testSetVibratoSanitisation();

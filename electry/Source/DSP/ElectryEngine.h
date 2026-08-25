@@ -91,6 +91,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 
 namespace electry
 {
@@ -221,6 +222,10 @@ public:
 
     static constexpr int stringCount = 8;
     static constexpr int fretCount = 22;
+    // One timestamp can contain overlaps as well as eight distinct pitches.
+    // The bound keeps host input hostile-proof without allocating on the
+    // audio thread; ordinary MIDI/UI attack groups are far smaller.
+    static constexpr int maximumChordEvents = 128;
 
     // Keyswitches occupy one contiguous group below the playable range,
     // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
@@ -258,6 +263,12 @@ public:
     static_assert(firstRepickNote + repickNoteCount <= 128,
                   "repick keys must fit in the MIDI note range");
 
+    struct NoteOnEvent
+    {
+        int midiNote { -1 };
+        float velocity { 0.0f };
+    };
+
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
     // Selects a deterministic player's stroke/strum variation stream. The
@@ -266,6 +277,9 @@ public:
     void setVariationSeed(std::uint32_t seed) noexcept { variationSeed_ = seed; }
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
+    // Solves one sample-accurate chord as a whole, so host insertion order
+    // cannot change its physical strings, hand shape or variation stream.
+    void noteOnChord(std::span<const NoteOnEvent> events);
     void noteOff(int midiNote);
     void allNotesOff();
     // The pitch wheel bends every string - fingered and sympathetically
@@ -1191,7 +1205,8 @@ private:
                     int startDelaySamples,
                     std::uint64_t reservedStartOrder = 0,
                     bool keyStateAlreadyApplied = false) noexcept;
-    void noteOnInternal(int midiNote, float velocity, int forcedStringIndex);
+    void noteOnInternal(int midiNote, float velocity, int forcedStringIndex,
+                        bool addKeyOwner, bool handPositionPlanned);
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
                         PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
@@ -1201,6 +1216,9 @@ private:
     // fret-distance units. Lower wins; ties resolve toward the thicker string,
     // as they did when the rule was simply the lowest fret.
     [[nodiscard]] float frettingCost(int fret) const noexcept;
+    [[nodiscard]] static float frettingCost(int fret,
+                                            float handPosition) noexcept;
+    void returnFrettingHandIfIdle(bool newChord) noexcept;
     // The hand moves only when it has to, and only at the start of a chord.
     void updateFrettingHand(int fret, bool newChord) noexcept;
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
