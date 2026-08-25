@@ -16,10 +16,10 @@ constexpr float twoPi = 6.28318530717958647692f;
 // down. Pickup distances remain geometric reference estimates.
 constexpr float conventionalScaleMetres = 0.6477f;
 constexpr float baritoneScaleMetres = 0.7112f;
-constexpr float lesPaulBridgePickupMetres = 0.043f;
-constexpr float telecasterBridgePickupMetres = 0.028f;
-constexpr float lesPaulNeckPickupMetres = 0.155f;
-constexpr float telecasterNeckPickupMetres = 0.163f;
+constexpr float wideCoilBridgePickupMetres = 0.043f;
+constexpr float narrowCoilBridgePickupMetres = 0.028f;
+constexpr float wideCoilNeckPickupMetres = 0.155f;
+constexpr float narrowCoilNeckPickupMetres = 0.163f;
 
 // Magnetic aperture of one coil, and the distance between a humbucker's two.
 //
@@ -408,6 +408,58 @@ void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value)
 // ---------------------------------------------------------------------------
 // Static helpers
 // ---------------------------------------------------------------------------
+
+void applyGuitarBuild(EngineParameters& parameters, float build) noexcept
+{
+    // Slab/fixed, contoured, angular/set-neck, modern bolt-on, dense
+    // extended, and continuous-neck extended. The path is intentionally not
+    // a diagonal through six unrelated dials: real construction families
+    // revisit light/heavy bodies and bolt/set/continuous joints in different
+    // combinations. The 0.8 anchor is the fitted shipping Drop-E instrument.
+    static constexpr std::array<std::array<float, 6>, 6> anchors {{
+        { 0.75f, 0.65f, 1.00f, 1.00f, 0.00f, 0.10f },
+        { 0.50f, 0.80f, 0.60f, 0.72f, 0.12f, 0.18f },
+        { 0.05f, 0.55f, 0.95f, 0.05f, 0.00f, 0.25f },
+        { 0.60f, 0.70f, 0.75f, 0.90f, 0.60f, 0.15f },
+        { 0.00f, 0.00f, 0.00f, 0.00f, 0.85f, 1.00f },
+        { 0.50f, 0.62f, 0.70f, 0.15f, 1.00f, 0.35f },
+    }};
+
+    if (! std::isfinite(build))
+        build = defaultGuitarBuild;
+    build = clampf(build, 0.0f, 1.0f);
+
+    const float position = build * static_cast<float>(anchors.size() - 1);
+    const auto assign = [&] (const std::array<float, 6>& values)
+    {
+        parameters.bodyWood = values[0];
+        parameters.bodySize = values[1];
+        parameters.bodyShape = values[2];
+        parameters.construction = values[3];
+        parameters.scaleLength = values[4];
+        parameters.stringGauge = values[5];
+    };
+    const int nearest = static_cast<int>(std::round(position));
+    if (std::abs(position - static_cast<float>(nearest)) < 1.0e-6f)
+    {
+        assign(anchors[static_cast<std::size_t>(nearest)]);
+        return;
+    }
+
+    const int lower = std::min(static_cast<int>(anchors.size()) - 2,
+                               static_cast<int>(std::floor(position)));
+    const float local = position - static_cast<float>(lower);
+    const float smooth = local * local * (3.0f - 2.0f * local);
+    const auto coordinate = [&] (std::size_t index)
+    {
+        const float low = anchors[static_cast<std::size_t>(lower)][index];
+        return low + smooth
+            * (anchors[static_cast<std::size_t>(lower + 1)][index] - low);
+    };
+
+    assign({ coordinate(0), coordinate(1), coordinate(2), coordinate(3),
+             coordinate(4), coordinate(5) });
+}
 
 const std::array<ElectryEngine::StringSpec, ElectryEngine::stringCount>&
 ElectryEngine::stringSpecs() noexcept
@@ -2340,11 +2392,11 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     const float soundingLength = openLength
         * std::exp2(-static_cast<float>(voice.fret) / 12.0f);
 
-    const float bridgeDistance = lerp(lesPaulBridgePickupMetres,
-                                      telecasterBridgePickupMetres,
+    const float bridgeDistance = lerp(wideCoilBridgePickupMetres,
+                                      narrowCoilBridgePickupMetres,
                                       parameters.pickupType);
-    const float neckDistance = lerp(lesPaulNeckPickupMetres,
-                                    telecasterNeckPickupMetres,
+    const float neckDistance = lerp(wideCoilNeckPickupMetres,
+                                    narrowCoilNeckPickupMetres,
                                     parameters.pickupType);
 
     const float period = static_cast<float>(sampleRate_) / voice.baseFrequency;
@@ -2459,8 +2511,8 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     if (! voice.sympatheticReady)
         loop.currentDelay = compensatedPeriod;
 
-    const float bridgeDistance = lerp(lesPaulBridgePickupMetres,
-                                      telecasterBridgePickupMetres,
+    const float bridgeDistance = lerp(wideCoilBridgePickupMetres,
+                                      narrowCoilBridgePickupMetres,
                                       parameters.pickupType);
     voice.sympatheticPickupTap.setDelay(pickupTapDelaySamples(
         bridgeDistance, scaleLengthMetres(), period,
@@ -2723,18 +2775,24 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // MIDI note-on that schedules a strummed string. Arming it here keeps the
     // pre-roll silent and means a key released before the pick arrives makes no
     // phantom impact. Hammer and legato Slide have no picking-hand collision.
+    const float palmStyleDepth = voice.playStyle == PlayStyle::PalmMute
+        ? 0.55f + 0.45f * parameters.muteDamping : 0.0f;
+    // Palm style and the continuous bridge hand are parallel contacts: each
+    // can absorb only what the other leaves. Keep either one alone bit-exact.
+    const float bridgeHandDepth = palmStyleDepth > 0.0f
+                                  && palmMuteBlend_ > 0.0f
+        ? 1.0f - (1.0f - palmStyleDepth) * (1.0f - palmMuteBlend_)
+        : std::max(palmStyleDepth, palmMuteBlend_);
     if (plectrumContact)
     {
-        if (voice.playStyle == PlayStyle::PalmMute || palmMuteBlend_ > 0.0f)
+        if (bridgeHandDepth > 0.0f)
         {
-            const float muteIntensity = voice.playStyle == PlayStyle::PalmMute
-                ? 0.55f + 0.45f * parameters.muteDamping : palmMuteBlend_;
             // A new collision adds to the still-moving bridge/body response;
             // it cannot erase the preceding thud in zero time. The bound only
             // protects a malformed, audio-rate Note-On flood.
             voice.palmImpactVel = std::min(
                 1.0f, voice.palmImpactVel
-                          + 0.16f * profile.amplitude * muteIntensity);
+                          + 0.16f * profile.amplitude * bridgeHandDepth);
         }
     }
     // A stiffer pick is a little louder, but most of what it changes is the
@@ -2904,14 +2962,16 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // The depths match the values the sympathetic bus already uses for the same
     // hand, so one bridge hand damps the played string, its own attack, and the
     // strings it is covering by the same amount.
-    float handDamping = palmMuteBlend_;
-    if (voice.playStyle == PlayStyle::PalmMute)
-        handDamping = std::max(handDamping, 0.55f + 0.45f * parameters.muteDamping);
-    else if (voice.playStyle == PlayStyle::Dead)
+    float handDamping = bridgeHandDepth;
+    if (voice.playStyle == PlayStyle::Dead)
+    {
         // The fretting hand is already touching the string when the pick
         // lands. A light attack-path darkening removes the artificial bright
         // edge without turning Dead into the bridge hand's Palm Mute voicing.
-        handDamping = std::max(handDamping, 0.15f);
+        handDamping = bridgeHandDepth > 0.0f
+            ? 1.0f - (1.0f - bridgeHandDepth) * (1.0f - 0.15f)
+            : 0.15f;
+    }
     handDamping = clampf(handDamping, 0.0f, 1.0f);
     // A hand of exactly zero pressure leaves every factor below at one.
     pulseCutoff *= lerp(1.0f, 0.26f, handDamping);

@@ -82,6 +82,7 @@ int keyswitchFor(PlayStyle playStyle)
 EngineParameters evaluationParameters()
 {
     EngineParameters parameters;
+    applyGuitarBuild(parameters, electry::defaultGuitarBuild);
     parameters.outputMode = OutputMode::Mono;
     parameters.outputGain = 1.0f;
     // An isolated single-string DI makes comparison and alignment simpler.
@@ -241,6 +242,7 @@ bool writeManifest(const std::filesystem::path& path,
         << ", \"release_frames\": " << releaseFrames
         << ", \"block_size\": " << blockSize << "},\n"
         << "  \"engine_parameters\": {\n"
+        << "    \"guitar_build\": " << electry::defaultGuitarBuild << ",\n"
         << "    \"pickup_selector\": \"" << pickupSelectorName(p.pickupSelector)
         << "\",\n"
         << "    \"body_wood\": " << p.bodyWood

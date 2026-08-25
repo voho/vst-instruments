@@ -506,6 +506,20 @@ struct ElectryEngineTestAccess
             .palmImpactState;
     }
 
+    static float excitationPulseCoefficient(const ElectryEngine& engine,
+                                             int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .excitationPulseCoefficient;
+    }
+
+    static float noiseBandCoefficient(const ElectryEngine& engine,
+                                      int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .noiseBandCoefficient;
+    }
+
     // Counterfactual used only by the paired regression below: keep the same
     // stroke and replace its hand-contact rate multiplier with the old unity
     // behaviour, then refresh the two dependent solves before audio runs.
@@ -2982,7 +2996,7 @@ void testAttackTensionStateTransitions()
     }
 }
 
-void testPickupsToneAndModelMorph()
+void testPickupsToneAndBuildMorph()
 {
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
@@ -3032,37 +3046,33 @@ void testPickupsToneAndModelMorph()
                + std::to_string(openRatio) + ", rolled "
                + std::to_string(darkRatio) + ")");
 
-    // Guitar-model endpoints: a full Les Paul-style setting and a full
-    // Telecaster-style setting must be audibly different instruments.
-    EngineParameters lesPaul;
-    lesPaul.bodyWood = lesPaul.bodySize = lesPaul.bodyShape = 0.0f;
-    lesPaul.construction = lesPaul.scaleLength = lesPaul.pickupType = 0.0f;
-    lesPaul.pickNoise = 0.0f;
-    engine.setParameters(lesPaul);
-    const auto lesPaulRender = renderNote(engine, sampleRate, 45, 0.7f,
-                                          PlayStyle::Sustain, 0.8);
+    // Build changes construction only. Pickup construction remains fixed and
+    // independently playable, so this comparison cannot buy its contrast by
+    // silently switching a humbucker into a single coil.
+    EngineParameters slabBuild;
+    slabBuild.pickupType = 0.32f;
+    slabBuild.toneKnob = 0.8f;
+    slabBuild.bodyResonance = 0.55f;
+    slabBuild.pickNoise = 0.0f;
+    applyGuitarBuild(slabBuild, 0.0f);
+    engine.setParameters(slabBuild);
+    const auto slabRender = renderNote(engine, sampleRate, 45, 0.7f,
+                                       PlayStyle::Sustain, 0.8);
 
-    EngineParameters telecaster;
-    telecaster.bodyWood = telecaster.bodySize = telecaster.bodyShape = 1.0f;
-    telecaster.construction = telecaster.scaleLength = telecaster.pickupType = 1.0f;
-    telecaster.pickNoise = 0.0f;
-    engine.setParameters(telecaster);
-    const auto telecasterRender = renderNote(engine, sampleRate, 45, 0.7f,
+    auto continuousBuild = slabBuild;
+    applyGuitarBuild(continuousBuild, 1.0f);
+    engine.setParameters(continuousBuild);
+    const auto continuousRender = renderNote(engine, sampleRate, 45, 0.7f,
                                              PlayStyle::Sustain, 0.8);
 
-    const double lesPaulCentroid = spectralCentroid(lesPaulRender.left, start,
-                                                    window, sampleRate, f0);
-    const double telecasterCentroid = spectralCentroid(telecasterRender.left,
-                                                       start, window, sampleRate, f0);
-    // The single-coil Telecaster bridge is characteristically brighter than
-    // a humbucker Les Paul.
-    expect(telecasterCentroid > lesPaulCentroid * 1.10,
-           "Telecaster endpoint is not brighter than Les Paul endpoint (LP "
-               + std::to_string(lesPaulCentroid) + " Hz, Tele "
-               + std::to_string(telecasterCentroid) + " Hz)");
+    const double buildDifference = normalisedDifferenceRms(
+        slabRender.left, continuousRender.left, start, start + window);
+    expect(buildDifference > 0.08,
+           "Guitar Build endpoints are not audibly distinct ("
+               + std::to_string(buildDifference) + ")");
 
     // Both endpoints stay in tune.
-    for (const auto* render : { &lesPaulRender, &telecasterRender })
+    for (const auto* render : { &slabRender, &continuousRender })
     {
         const double measured = measureFrequency(
             render->left, static_cast<int>(0.3 * sampleRate),
@@ -3868,6 +3878,161 @@ void testMaterialAndControlAudibility()
     expect(hardRms > softRms * 0.55 && hardRms < softRms * 1.70,
            "Pick Hardness changes loudness more than material (RMS ratio "
                + std::to_string(hardRms / std::max(softRms, 1.0e-12)) + ")");
+}
+
+void testGuitarBuildMacro()
+{
+    static constexpr std::array<std::array<float, 6>, 6> expected {{
+        { 0.75f, 0.65f, 1.00f, 1.00f, 0.00f, 0.10f },
+        { 0.50f, 0.80f, 0.60f, 0.72f, 0.12f, 0.18f },
+        { 0.05f, 0.55f, 0.95f, 0.05f, 0.00f, 0.25f },
+        { 0.60f, 0.70f, 0.75f, 0.90f, 0.60f, 0.15f },
+        { 0.00f, 0.00f, 0.00f, 0.00f, 0.85f, 1.00f },
+        { 0.50f, 0.62f, 0.70f, 0.15f, 1.00f, 0.35f },
+    }};
+
+    const auto coordinates = [] (const EngineParameters& p)
+    {
+        return std::array<float, 6> { p.bodyWood, p.bodySize, p.bodyShape,
+                                      p.construction, p.scaleLength,
+                                      p.stringGauge };
+    };
+
+    for (std::size_t anchor = 0; anchor < expected.size(); ++anchor)
+    {
+        EngineParameters parameters;
+        parameters.pickupType = 0.73f;
+        parameters.toneKnob = 0.61f;
+        parameters.bodyResonance = 0.47f;
+        parameters.stringAge = 0.29f;
+        applyGuitarBuild(parameters,
+                         static_cast<float>(anchor)
+                             / static_cast<float>(expected.size() - 1));
+        const auto actual = coordinates(parameters);
+        expect(actual == expected[anchor],
+               "Guitar Build missed exact structural anchor "
+                   + std::to_string(anchor));
+        expect(parameters.pickupType == 0.73f && parameters.toneKnob == 0.61f
+                   && parameters.bodyResonance == 0.47f
+                   && parameters.stringAge == 0.29f,
+               "Guitar Build changed an independent pickup/player control");
+    }
+
+    EngineParameters midpoint;
+    applyGuitarBuild(midpoint, 0.1f);
+    const auto halfway = coordinates(midpoint);
+    for (std::size_t coordinate = 0; coordinate < halfway.size(); ++coordinate)
+        expect(std::abs(halfway[coordinate]
+                            - 0.5f * (expected[0][coordinate]
+                                      + expected[1][coordinate])) < 1.0e-5f,
+               "Guitar Build does not interpolate smoothly between anchors");
+
+    EngineParameters invalid;
+    applyGuitarBuild(invalid, std::numeric_limits<float>::quiet_NaN());
+    const EngineParameters defaults;
+    expect(std::abs(invalid.bodyWood - defaults.bodyWood) < 1.0e-5f
+               && std::abs(invalid.bodySize - defaults.bodySize) < 1.0e-5f
+               && std::abs(invalid.bodyShape - defaults.bodyShape) < 1.0e-5f
+               && std::abs(invalid.construction - defaults.construction) < 1.0e-5f
+               && std::abs(invalid.scaleLength - defaults.scaleLength) < 1.0e-5f
+               && std::abs(invalid.stringGauge - defaults.stringGauge) < 1.0e-5f,
+           "invalid Guitar Build did not fall back to the fitted default");
+
+    for (const auto& outside : { std::pair { -10.0f, std::size_t { 0 } },
+                                 std::pair { 10.0f, expected.size() - 1 } })
+    {
+        EngineParameters clamped;
+        applyGuitarBuild(clamped, outside.first);
+        const auto actual = coordinates(clamped);
+        for (std::size_t coordinate = 0; coordinate < actual.size(); ++coordinate)
+            expect(std::abs(actual[coordinate]
+                                - expected[outside.second][coordinate]) < 1.0e-5f,
+                   "Guitar Build did not clamp a finite out-of-range value");
+    }
+}
+
+void testGuitarBuildRangeIsAudible()
+{
+    constexpr double sampleRate = 48000.0;
+    for (const int midiNote : { 28, 45 })
+    {
+        std::vector<StereoBuffer> renders;
+        renders.reserve(6);
+        for (std::size_t anchor = 0; anchor < 6; ++anchor)
+        {
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            EngineParameters parameters;
+            parameters.pickupType = 0.32f;
+            parameters.toneKnob = 0.8f;
+            parameters.bodyResonance = 0.65f;
+            parameters.stringAge = 0.15f;
+            parameters.pickNoise = 0.0f;
+            parameters.fingerNoise = 0.0f;
+            parameters.releaseNoise = 0.0f;
+            parameters.artifactAmount = 0.0f;
+            applyGuitarBuild(parameters, static_cast<float>(anchor) / 5.0f);
+            engine.setParameters(parameters);
+            renders.push_back(renderNote(engine, sampleRate, midiNote, 0.9f,
+                                         PlayStyle::Sustain, 0.92));
+            expect(allFinite(renders.back()),
+                   "Guitar Build produced non-finite audio");
+
+            // Keep the contrast render as a hard metal pick, but measure
+            // structural tuning with the same low-force strike as the global
+            // pitch contract so the intended tension-bloom pitch rise is not
+            // mistaken for a Build error.
+            const auto tuningRender = renderNote(
+                engine, sampleRate, midiNote, 0.3f, PlayStyle::Sustain, 1.1);
+            const double measured = measureFrequency(
+                tuningRender.left, static_cast<int>(0.45 * sampleRate),
+                static_cast<int>(0.5 * sampleRate), sampleRate,
+                midiHz(midiNote));
+            const double errorCents = centsBetween(measured, midiHz(midiNote));
+            expect(std::abs(errorCents) < 8.0,
+                   "Guitar Build detuned anchor " + std::to_string(anchor)
+                       + " on note " + std::to_string(midiNote) + " ("
+                       + std::to_string(errorCents) + " cents)");
+        }
+
+        const int start = static_cast<int>(0.035 * sampleRate);
+        const int end = static_cast<int>(0.60 * sampleRate);
+        double minimumRms = std::numeric_limits<double>::max();
+        double maximumRms = 0.0;
+        for (const auto& render : renders)
+        {
+            const double level = rmsInRange(render.left, start, end);
+            minimumRms = std::min(minimumRms, level);
+            maximumRms = std::max(maximumRms, level);
+        }
+        const double levelSpreadDb = 20.0 * std::log10(
+            maximumRms / std::max(minimumRms, 1.0e-12));
+        expect(levelSpreadDb < 6.0,
+               "Guitar Build requires a large output trim ("
+                   + std::to_string(levelSpreadDb) + " dB)");
+
+        for (std::size_t anchor = 1; anchor < renders.size(); ++anchor)
+        {
+            const double difference = normalisedDifferenceRms(
+                renders[anchor - 1].left, renders[anchor].left, start, end);
+            std::cout << "PROBE Guitar Build note " << midiNote << " anchor "
+                      << anchor - 1 << "->" << anchor << ": "
+                      << difference << '\n';
+            expect(difference > 0.06,
+                   "adjacent Guitar Build anchors collapse to the same sound ("
+                       + std::to_string(anchor - 1) + "->"
+                       + std::to_string(anchor) + ": "
+                       + std::to_string(difference) + ")");
+        }
+        const double overall = normalisedDifferenceRms(
+            renders.front().left, renders.back().left, start, end);
+        expect(overall > 0.12,
+               "Guitar Build endpoints are too similar ("
+                   + std::to_string(overall) + ")");
+        std::cout << "PROBE Guitar Build note " << midiNote
+                  << ": endpoint difference " << overall
+                  << ", level spread " << levelSpreadDb << " dB\n";
+    }
 }
 
 void testNoiseComponentsAndSilence()
@@ -6892,8 +7057,8 @@ void testSympatheticBridgeCoupling()
            "string was damped (" + std::to_string(bypassed) + " -> "
                + std::to_string(coupled) + ")");
 
-    // At zero the coupled waveguides are never even configured, so the engine
-    // is exactly the pre-1.1 model.
+    // At zero the coupled waveguides are never configured, keeping the bypass
+    // both silent and free of idle-string work.
     parameters.sympatheticAmount = 0.0f;
     engine.setParameters(parameters);
     auto silentTail = renderNote(engine, sampleRate, 45, 0.95f,
@@ -7867,6 +8032,75 @@ void testPalmHandLossStartsEngaged()
                + std::to_string(greatestLater) + " later)");
     std::cout << "PROBE palm hand-loss depth: " << firstTick
               << " at first tick, greatest later " << greatestLater << '\n';
+}
+
+void testPalmAttackContactsCompose()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr std::array<float, 5> pressures {
+        0.0f, 0.25f, 0.50f, 0.75f, 1.0f
+    };
+    constexpr std::array<float, pressures.size()> expectedPalmDepth {
+        0.7975f, 0.848125f, 0.89875f, 0.949375f, 1.0f
+    };
+
+    struct AttackState
+    {
+        float impact;
+        float pulseCoefficient;
+        float noiseCoefficient;
+    };
+    const auto inspect = [] (PlayStyle style, float pressure)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.strumSpreadSeconds = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.setPalmMutePressure(pressure);
+        engine.noteOn(styleKeyswitch(style), 1.0f);
+        engine.noteOn(28, 0.90f);
+        const int stringIndex = TestAccess::stringForNote(engine, 28);
+        expect(stringIndex >= 0,
+               "stacked attack-contact fixture did not allocate E1");
+        if (stringIndex < 0)
+            return AttackState {};
+        return AttackState {
+            TestAccess::palmImpactVelocity(engine, stringIndex),
+            TestAccess::excitationPulseCoefficient(engine, stringIndex),
+            TestAccess::noiseBandCoefficient(engine, stringIndex)
+        };
+    };
+
+    std::array<AttackState, pressures.size()> palm {};
+    for (std::size_t i = 0; i < pressures.size(); ++i)
+        palm[i] = inspect(PlayStyle::PalmMute, pressures[i]);
+
+    const float impactPerDepth = palm.front().impact / expectedPalmDepth.front();
+    for (std::size_t i = 0; i < palm.size(); ++i)
+    {
+        expect(std::abs(palm[i].impact
+                        - impactPerDepth * expectedPalmDepth[i]) < 1.0e-6f,
+               "Palm style and Palm Pressure did not compose at "
+                   + std::to_string(pressures[i]));
+        if (i > 0)
+        {
+            expect(palm[i].impact > palm[i - 1].impact
+                       && palm[i].pulseCoefficient > palm[i - 1].pulseCoefficient
+                       && palm[i].noiseCoefficient > palm[i - 1].noiseCoefficient,
+                   "Palm Pressure did not continuously tighten the Palm attack");
+        }
+    }
+
+    // Dead's light fretting-hand contact is separate from the bridge hand.
+    // Ten-percent bridge pressure is below the old max() threshold, so these
+    // coefficients move only when the two contacts genuinely compose.
+    const auto deadOpen = inspect(PlayStyle::Dead, 0.0f);
+    const auto deadPressed = inspect(PlayStyle::Dead, 0.10f);
+    expect(deadPressed.pulseCoefficient > deadOpen.pulseCoefficient
+               && deadPressed.noiseCoefficient > deadOpen.noiseCoefficient,
+           "Dead's fretting and bridge hands replaced rather than composed");
 }
 
 void testPalmImpactIsSampleRateInvariant()
@@ -10806,8 +11040,8 @@ void testCpuGuardrail()
     constexpr int totalSamples = static_cast<int>(2.0 * 96000.0);
 
     // All eight physical strings ringing in Drop-E tuning. With every string
-    // played there is no coupled string left to render, so this measures
-    // exactly the same work the pre-1.1 engine did.
+    // played there is no coupled string left to render, so this isolates the
+    // active-voice path from idle sympathetic-string work.
     const auto strike = [&] (ElectryEngine& engine, PickupSelector selector,
                              electry::OutputMode mode)
     {
@@ -10946,7 +11180,7 @@ int main()
     testHammerOnLegatoContinuity();
     testTensionGlide();
     testAttackTensionStateTransitions();
-    testPickupsToneAndModelMorph();
+    testPickupsToneAndBuildMorph();
     testHumbuckerTwoCoilNotch();
     testArtifactsControl();
     testAdvancedDispersionAndBodyConductance();
@@ -10957,6 +11191,8 @@ int main()
     testVelocityExpression();
     testPickingHandVariation();
     testMaterialAndControlAudibility();
+    testGuitarBuildMacro();
+    testGuitarBuildRangeIsAudible();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
     testVoiceStealingPriority();
@@ -10982,6 +11218,7 @@ int main()
     testPalmMuteSpectralLoss();
     testRapidPalmMuteChugs();
     testPalmHandLossStartsEngaged();
+    testPalmAttackContactsCompose();
     testPalmImpactIsSampleRateInvariant();
     testPalmImpactWaitsForStrokeAndClears();
     testStrumSpread();

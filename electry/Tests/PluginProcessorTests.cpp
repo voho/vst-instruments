@@ -39,17 +39,12 @@ struct ParameterExpectation
 // struct, so reading it here too would make the check tautological. This table is
 // the independent statement of what the plug-in promises a new instance, and it is
 // what would have caught the two lists silently drifting apart.
-constexpr std::array<ParameterExpectation, 32> expectedParameters {{
+constexpr std::array<ParameterExpectation, 26> expectedParameters {{
     { electry::parameters::pickupSelector, 2.0f,  1.0e-5f },
     { electry::parameters::pickupType,     0.32f,  1.0e-5f },
     { electry::parameters::tone,           0.70f,  1.0e-5f },
-    { electry::parameters::bodyWood,       0.0f,  1.0e-5f },
-    { electry::parameters::bodySize,       0.0f,  1.0e-5f },
-    { electry::parameters::bodyShape,      0.0f,  1.0e-5f },
-    { electry::parameters::construction,   0.0f,  1.0e-5f },
-    { electry::parameters::scaleLength,    0.85f,  1.0e-5f },
+    { electry::parameters::guitarBuild,    0.80f, 1.0e-5f },
     { electry::parameters::bodyResonance,  0.35f, 1.0e-5f },
-    { electry::parameters::stringGauge,    1.0f,  1.0e-5f },
     { electry::parameters::stringAge,      0.30f, 1.0e-5f },
     { electry::parameters::pickPosition,   0.18f, 1.0e-5f },
     { electry::parameters::pickHardness,   0.58f,  1.0e-5f },
@@ -71,7 +66,6 @@ constexpr std::array<ParameterExpectation, 32> expectedParameters {{
     { electry::parameters::palmMute,       0.0f,  1.0e-5f },
     { electry::parameters::strumSpread,    0.0f,  1.0e-4f },
     { electry::parameters::resonanceDepth,  35.0f,  1.0e-4f },
-    { electry::parameters::doubleMode,       0.0f,  1.0e-5f },
 }};
 
 float parameterValue (const ElectryAudioProcessor& processor, const char* id)
@@ -239,7 +233,7 @@ void testParameterLayoutAndDefaults()
     ElectryAudioProcessor processor;
     expect (processor.getParameters().size()
                 == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 32 APVTS parameters");
+            "processor does not expose exactly 26 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     for (const auto& expected : expectedParameters)
@@ -251,6 +245,12 @@ void testParameterLayoutAndDefaults()
                 std::string ("wrong default for ") + expected.id + ": got "
                     + std::to_string (value));
     }
+
+    for (const char* removed : { "bodyWood", "bodySize", "bodyShape",
+                                 "construction", "scaleLength", "stringGauge",
+                                 "doubleMode", "vibratoDepth" })
+        expect (processor.parameters.getParameter (removed) == nullptr,
+                std::string ("obsolete host parameter still exists: ") + removed);
 }
 
 void testFactoryPrograms()
@@ -310,7 +310,6 @@ void testFactoryPrograms()
         if (program == 1)
         {
             overrideValue (electry::parameters::tone, 1.00f);
-            overrideValue (electry::parameters::stringGauge, 0.80f);
             overrideValue (electry::parameters::stringAge, 0.10f);
             overrideValue (electry::parameters::pickHardness, 0.85f);
             overrideValue (electry::parameters::fingerNoise, 0.55f);
@@ -338,7 +337,7 @@ void testFactoryPrograms()
     processor.addListener (&listener);
     for (int program = 0; program < processor.getNumPrograms(); ++program)
     {
-        // Poison all 32 controls before every load. A sparse implementation
+        // Poison all controls before every load. A sparse implementation
         // that forgot to restore omitted controls would fail this full matrix.
         for (auto* parameter : processor.getParameters())
             parameter->setValueNotifyingHost (
@@ -402,20 +401,25 @@ void testFactoryPrograms()
 void testParameterTextFormatting()
 {
     ElectryAudioProcessor processor;
-    expectParameterText (processor, electry::parameters::scaleLength, 0.0f, "25.50\"");
-    expectParameterText (processor, electry::parameters::scaleLength, 0.85f, "27.63\"");
-    expectParameterText (processor, electry::parameters::scaleLength, 1.0f, "28.00\"");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.0f,
+                         "Slab fixed");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.4f,
+                         "Angular set");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.5f, "50%");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.8f,
+                         "Dense extended");
+    expectParameterText (processor, electry::parameters::guitarBuild, 1.0f,
+                         "Neck-through");
     expectParameterText (processor, electry::parameters::output, -6.0f, "-6.0dB");
     expectParameterText (processor, electry::parameters::output, 3.0f, "+3.0dB");
     expectParameterText (processor, electry::parameters::tone, 0.8f, "80%");
     expectParameterText (processor, electry::parameters::artifacts, 0.18f, "18%");
     expectParameterText (processor, electry::parameters::outputMode, 0.0f, "Mono");
     expectParameterText (processor, electry::parameters::outputMode, 1.0f, "Stereo");
+    expectParameterText (processor, electry::parameters::outputMode, 2.0f, "Double");
     expectParameterText (processor, electry::parameters::bendTime, 0.28f, "280 ms");
     expectParameterText (processor, electry::parameters::pickupType, 0.0f, "Humbucker");
     expectParameterText (processor, electry::parameters::pickupType, 1.0f, "Single coil");
-    expectParameterText (processor, electry::parameters::bodyWood, 0.0f,
-                         "Mahogany/maple");
     expectParameterText (processor, electry::parameters::sympathetic, 0.2f, "20%");
     expectParameterText (processor, electry::parameters::palmMute, 0.0f, "0%");
     expectParameterText (processor, electry::parameters::strumSpread, 0.0f,
@@ -454,8 +458,8 @@ void expectParameterValueForText (ElectryAudioProcessor& processor, const char* 
 // a host or the generic parameter editor parses typed automation text back
 // into a value - and nothing in the suite had ever called it: percentValue(),
 // plainNumericValue() and timeValue() in PluginProcessor.cpp, plus
-// scaleLength's own bespoke inches parser, could all have silently
-// mis-parsed without failing a single existing test.
+// Guitar Build's named anchors could all have silently mis-parsed without
+// failing a single existing test.
 void testParameterTextParsing()
 {
     ElectryAudioProcessor processor;
@@ -503,22 +507,12 @@ void testParameterTextParsing()
     expectParameterValueForText (processor, electry::parameters::bendTime, "1500ms", 1.50f,
                                  1.0e-3f, "bendTime \"1500ms\" (\"ms\" suffix)");
 
-    // scaleLength's bespoke inverse lambda is the only valueFromString
-    // installed here that clamps its result (juce::jlimit(0.0f, 1.0f, ...))
-    // instead of handing the raw parse straight to the parameter's range, so
-    // it is also the one whose guard is worth checking directly: a typed inch
-    // value past either end of the 25.50"-28.00" span must clamp to that end
-    // rather than extrapolate to a negative or >1 normalised value.
-    expectParameterValueForText (processor, electry::parameters::scaleLength, "25.50\"",
-                                 0.0f, 1.0e-3f, "scaleLength \"25.50\\\"\"");
-    expectParameterValueForText (processor, electry::parameters::scaleLength, "28.00\"",
-                                 1.0f, 1.0e-3f, "scaleLength \"28.00\\\"\"");
-    expectParameterValueForText (processor, electry::parameters::scaleLength, "20.00\"",
-                                 0.0f, 1.0e-3f,
-                                 "scaleLength \"20.00\\\"\" (below range clamps)");
-    expectParameterValueForText (processor, electry::parameters::scaleLength, "40.00\"",
-                                 1.0f, 1.0e-3f,
-                                 "scaleLength \"40.00\\\"\" (above range clamps)");
+    expectParameterValueForText (processor, electry::parameters::guitarBuild,
+                                 "Angular set", 0.4f, 1.0e-3f,
+                                 "guitarBuild named anchor");
+    expectParameterValueForText (processor, electry::parameters::guitarBuild,
+                                 "50%", 0.5f, 1.0e-3f,
+                                 "guitarBuild percentage");
 }
 
 void testStateRoundTrip()
@@ -527,17 +521,15 @@ void testStateRoundTrip()
     source.setCurrentProgram (2);
     source.setPlayStyleKeysHold (true);
     setParameterValue (source, electry::parameters::pickupType, 0.9f);
-    setParameterValue (source, electry::parameters::bodyWood, 0.15f);
-    setParameterValue (source, electry::parameters::scaleLength, 1.0f);
+    setParameterValue (source, electry::parameters::guitarBuild, 0.15f);
     setParameterValue (source, electry::parameters::output, -12.0f);
     setParameterValue (source, electry::parameters::artifacts, 0.72f);
-    setParameterValue (source, electry::parameters::outputMode, 1.0f);
+    setParameterValue (source, electry::parameters::outputMode, 2.0f);
     setParameterValue (source, electry::parameters::pickupSelector, 0.0f);
     setParameterValue (source, electry::parameters::sympathetic, 0.66f);
     setParameterValue (source, electry::parameters::palmMute, 0.44f);
     setParameterValue (source, electry::parameters::strumSpread, 22.0f);
     setParameterValue (source, electry::parameters::resonanceDepth, 80.0f);
-    setParameterValue (source, electry::parameters::doubleMode, 1.0f);
     source.triggerArticulation (static_cast<int> (electry::PickStyle::Up));
     source.triggerArticulation (
         electry::ElectryEngine::pickStyleKeyswitchCount
@@ -556,19 +548,16 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, electry::parameters::pickupType) - 0.9f)
                 < 1.0e-4f,
             "pickupType did not survive a state round trip");
-    expect (std::abs (parameterValue (restored, electry::parameters::bodyWood) - 0.15f)
+    expect (std::abs (parameterValue (restored, electry::parameters::guitarBuild) - 0.15f)
                 < 1.0e-4f,
-            "bodyWood did not survive a state round trip");
-    expect (std::abs (parameterValue (restored, electry::parameters::scaleLength) - 1.0f)
-                < 1.0e-4f,
-            "scaleLength did not survive a state round trip");
+            "guitarBuild did not survive a state round trip");
     expect (std::abs (parameterValue (restored, electry::parameters::output) + 12.0f)
                 < 1.0e-3f,
             "output level did not survive a state round trip");
     expect (std::abs (parameterValue (restored, electry::parameters::artifacts) - 0.72f)
                 < 1.0e-4f,
             "artifacts did not survive a state round trip");
-    expect (std::abs (parameterValue (restored, electry::parameters::outputMode) - 1.0f)
+    expect (std::abs (parameterValue (restored, electry::parameters::outputMode) - 2.0f)
                 < 1.0e-4f,
             "output mode did not survive a state round trip");
     expect (std::abs (parameterValue (restored, electry::parameters::pickupSelector))
@@ -586,8 +575,6 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, electry::parameters::resonanceDepth)
                           - 80.0f) < 1.0e-3f,
             "resonance depth did not survive a state round trip");
-    expect (parameterValue (restored, electry::parameters::doubleMode) > 0.5f,
-            "Double mode did not survive a state round trip");
     expect (restored.getCurrentPickStyleIndex()
                 == static_cast<int> (electry::PickStyle::Up)
                 && restored.getCurrentPlayStyleIndex()
@@ -596,102 +583,6 @@ void testStateRoundTrip()
     expect (restored.getPlayStyleKeysHold(),
             "the play-style key mode did not survive a state round trip");
 
-    // A session saved before the 1.1 controls existed must still load: the
-    // original values carry over and the appended parameters fall back to
-    // their documented defaults.
-    ElectryAudioProcessor legacy;
-    setParameterValue (legacy, electry::parameters::tone, 0.31f);
-    setParameterValue (legacy, electry::parameters::stringAge, 0.77f);
-    auto legacyState = legacy.parameters.copyState();
-    for (int child = legacyState.getNumChildren(); --child >= 0;)
-    {
-        const auto id = legacyState.getChild (child).getProperty ("id").toString();
-        if (id == electry::parameters::sympathetic
-            || id == electry::parameters::palmMute
-            || id == electry::parameters::strumSpread
-            || id == electry::parameters::resonanceDepth
-            || id == electry::parameters::doubleMode)
-            legacyState.removeChild (child, nullptr);
-    }
-
-    // Load it the way a host does: setStateInformation() is the path that
-    // migrates, replaceState() on its own is not.
-    juce::MemoryBlock legacyStored;
-    if (const auto legacyXml = legacyState.createXml())
-        juce::AudioProcessor::copyXmlToBinary (*legacyXml, legacyStored);
-    else
-        expect (false, "the pre-1.1 state could not be serialised");
-
-    ElectryAudioProcessor upgraded;
-    upgraded.setStateInformation (legacyStored.getData(),
-                                  static_cast<int> (legacyStored.getSize()));
-    expect (std::abs (parameterValue (upgraded, electry::parameters::tone) - 0.31f)
-                < 1.0e-4f,
-            "a pre-1.1 session lost an original parameter value");
-    expect (std::abs (parameterValue (upgraded, electry::parameters::stringAge) - 0.77f)
-                < 1.0e-4f,
-            "a pre-1.1 session lost an original parameter value");
-    expect (std::abs (parameterValue (upgraded, electry::parameters::sympathetic)
-                          - 0.20f) < 1.0e-4f,
-            "a pre-1.1 session did not pick up the sympathetic default");
-    expect (std::abs (parameterValue (upgraded, electry::parameters::palmMute))
-                < 1.0e-4f,
-            "a pre-1.1 session did not pick up the palm-mute default");
-    expect (std::abs (parameterValue (upgraded, electry::parameters::strumSpread))
-                < 1.0e-3f,
-            "a pre-1.1 session did not pick up the strum-spread default");
-    expect (std::abs (parameterValue (upgraded, electry::parameters::resonanceDepth)
-                          - 35.0f) < 1.0e-3f,
-            "a pre-1.1 session did not pick up the resonance-depth default");
-    expect (parameterValue (upgraded, electry::parameters::doubleMode) < 0.5f,
-            "a legacy session did not default Double to off");
-    expect (! upgraded.getPlayStyleKeysHold(),
-            "a legacy state without play-style key mode did not default to LATCH");
-
-    // The same load into an instance that has already been played. APVTS keeps
-    // a parameter's live value when the stored tree omits it, so without the
-    // migration the legacy session would inherit the player's sympathetic
-    // resonance and palm mute rather than resetting them.
-    ElectryAudioProcessor used;
-    used.setCurrentProgram (2);
-    used.setPlayStyleKeysHold (true);
-    used.prepareToPlay (sampleRate, blockSize);
-    used.triggerArticulation (static_cast<int> (electry::PickStyle::Alternate));
-    used.triggerArticulation (
-        electry::ElectryEngine::pickStyleKeyswitchCount
-            + static_cast<int> (electry::PlayStyle::PalmMute));
-    juce::AudioBuffer<float> usedAudio;
-    juce::MidiBuffer usedMidi;
-    renderBlock (used, usedAudio, usedMidi);
-    setParameterValue (used, electry::parameters::sympathetic, 0.93f);
-    setParameterValue (used, electry::parameters::palmMute, 0.68f);
-    setParameterValue (used, electry::parameters::strumSpread, 0.21f);
-    setParameterValue (used, electry::parameters::resonanceDepth, 80.0f);
-    setParameterValue (used, electry::parameters::doubleMode, 1.0f);
-    used.setStateInformation (legacyStored.getData(),
-                              static_cast<int> (legacyStored.getSize()));
-
-    expect (used.getCurrentProgram() == 0,
-            "a legacy state without a factory-rig property kept a stale index");
-    renderBlock (used, usedAudio, usedMidi);
-    expect (used.getCurrentPickStyleIndex()
-                == static_cast<int> (electry::PickStyle::Down)
-                && used.getCurrentPlayStyleIndex()
-                       == static_cast<int> (electry::PlayStyle::Sustain),
-            "a legacy state inherited the recipient's articulation latches");
-    expect (! used.getPlayStyleKeysHold(),
-            "a legacy state inherited the recipient's HOLD key mode");
-
-    for (const char* id : { electry::parameters::sympathetic,
-                            electry::parameters::palmMute,
-                            electry::parameters::strumSpread,
-                            electry::parameters::resonanceDepth,
-                            electry::parameters::doubleMode })
-        expect (std::abs (parameterValue (used, id) - parameterValue (upgraded, id))
-                    < 1.0e-3f,
-                std::string ("a pre-1.1 session kept the live value of ") + id
-                    + " instead of its default");
-    used.releaseResources();
 }
 
 void testBusAndPluginContract()
@@ -2111,13 +2002,11 @@ void testOutputModeAudioField()
         std::uint64_t rightHash = 0;
     };
 
-    const auto render = [] (float mode, bool doubled, int midiNote)
+    const auto render = [] (float mode, int midiNote)
     {
         ElectryAudioProcessor processor;
         processor.prepareToPlay (sampleRate, blockSize);
         setParameterValue (processor, electry::parameters::outputMode, mode);
-        setParameterValue (processor, electry::parameters::doubleMode,
-                           doubled ? 1.0f : 0.0f);
 
         juce::AudioBuffer<float> audio;
         renderSeconds (processor, audio, 0.05); // settle the mode crossfade
@@ -2171,23 +2060,22 @@ void testOutputModeAudioField()
         };
     };
 
-    const auto mono = render (
-        0.0f, false, electry::ElectryEngine::lowestPlayableNote);
+    const auto mono = render (0.0f, electry::ElectryEngine::lowestPlayableNote);
     expect (mono.identical, "Mono output parameter did not produce exact dual mono");
 
     const auto stereoLow = render (
-        1.0f, false, electry::ElectryEngine::lowestPlayableNote);
+        1.0f, electry::ElectryEngine::lowestPlayableNote);
     expect (stereoLow.leftRms > stereoLow.rightRms * 1.08,
             "Stereo APVTS parameter did not spread the low string left");
 
-    const auto stereoHigh = render (1.0f, false, 64);
+    const auto stereoHigh = render (1.0f, 64);
     expect (stereoHigh.rightRms > stereoHigh.leftRms * 1.08,
             "Stereo APVTS parameter did not spread the high string right");
 
     const auto doubled = render (
-        0.0f, true, electry::ElectryEngine::lowestPlayableNote);
+        2.0f, electry::ElectryEngine::lowestPlayableNote);
     const auto repeatedDouble = render (
-        0.0f, true, electry::ElectryEngine::lowestPlayableNote);
+        2.0f, electry::ElectryEngine::lowestPlayableNote);
     expect (! doubled.identical && doubled.differenceRatio > 0.02,
             "Double did not render two distinct Electry performances");
     expect (doubled.leftHash == mono.leftHash,
@@ -2204,7 +2092,7 @@ void testOutputModeAudioField()
     // ringing on the left and the next physical attack starts both players.
     ElectryAudioProcessor toggled;
     toggled.prepareToPlay (sampleRate, blockSize);
-    setParameterValue (toggled, electry::parameters::doubleMode, 1.0f);
+    setParameterValue (toggled, electry::parameters::outputMode, 2.0f);
     juce::AudioBuffer<float> audio;
     juce::MidiBuffer midi;
     renderSeconds (toggled, audio, 0.05);
@@ -2212,9 +2100,9 @@ void testOutputModeAudioField()
         1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 102), 0);
     renderBlock (toggled, audio, midi);
     renderSeconds (toggled, audio, 0.08);
-    setParameterValue (toggled, electry::parameters::doubleMode, 0.0f);
+    setParameterValue (toggled, electry::parameters::outputMode, 0.0f);
     renderBlock (toggled, audio, midi);
-    setParameterValue (toggled, electry::parameters::doubleMode, 1.0f);
+    setParameterValue (toggled, electry::parameters::outputMode, 2.0f);
     renderBlock (toggled, audio, midi);
     const auto reentryLeft = audio.getMagnitude (0, 0, blockSize);
     const auto reentryRight = audio.getMagnitude (1, 0, blockSize);
@@ -2261,9 +2149,8 @@ void testEditorRendering()
                     "visible editor control escaped the editor bounds: "
                         + child->getName().toStdString());
     }
-    // 20 sound controls, five FX controls and the four version-1.1
-    // performance controls.
-    expect (knobs.size() == 29u, "editor did not expose all 29 knob controls");
+    // Nineteen instrument/master controls plus five FX controls.
+    expect (knobs.size() == 24u, "editor did not expose all 24 knob controls");
 
     for (std::size_t first = 0; first < knobs.size(); ++first)
     {
@@ -2302,6 +2189,18 @@ void testEditorRendering()
             : juce::jmin (control->getWidth(), control->getHeight() - 30);
     };
 
+    auto* buildControl = dynamic_cast<ElectryKnob*> (
+        findControl (electry::parameters::guitarBuild));
+    expect (buildControl != nullptr
+                && buildControl->slider.getTooltip().contains ("material damping")
+                && buildControl->slider.getTooltip().contains ("scale length")
+                && buildControl->slider.getTooltip().contains ("remain independent"),
+            "Guitar Build does not explain its coupled path and independent controls");
+    for (const char* removed : { "bodyWood", "bodySize", "bodyShape",
+                                 "construction", "scaleLength", "stringGauge" })
+        expect (findControl (removed) == nullptr,
+                std::string ("removed build control is still visible: ") + removed);
+
     auto* factoryProgramControl = dynamic_cast<juce::ComboBox*> (
         findControl ("factoryProgram"));
     expect (factoryProgramControl != nullptr,
@@ -2317,11 +2216,11 @@ void testEditorRendering()
         expect (factoryProgramControl->getTitle() == "Factory rig",
                 "factory-rig selector has no accessible title");
         const auto rigTooltip = factoryProgramControl->getTooltip();
-        expect (rigTooltip.contains ("Palm Tightness")
-                    && rigTooltip.contains ("Palm Pressure")
+        expect (rigTooltip.contains ("Mute Tightness")
+                    && rigTooltip.contains ("Mute Pressure")
                     && rigTooltip.contains ("PICK STROKE")
                     && rigTooltip.contains ("PLAY STYLE")
-                    && rigTooltip.contains ("Palm Mute")
+                    && rigTooltip.contains ("Mute")
                     && rigTooltip.contains ("Dead"),
                 "factory-rig tooltip does not explain mute controls and latch independence");
 
@@ -2397,20 +2296,17 @@ void testEditorRendering()
             && doubleButton != nullptr)
         {
             doubleButton->onClick();
-            expect (parameterValue (processor, electry::parameters::doubleMode)
-                        > 0.5f,
+            expect (parameterValue (processor, electry::parameters::outputMode)
+                        > 1.5f,
                     "DOUBLE editor button did not enable the second engine");
             stereoButton->onClick();
-            expect (parameterValue (processor, electry::parameters::doubleMode)
-                        < 0.5f
-                        && parameterValue (
-                               processor, electry::parameters::outputMode) > 0.5f,
-                    "STEREO editor button did not restore the legacy field");
+            expect (std::abs (parameterValue (
+                               processor, electry::parameters::outputMode) - 1.0f)
+                        < 1.0e-5f,
+                    "STEREO editor button did not select the stereo field");
             monoButton->onClick();
-            expect (parameterValue (processor, electry::parameters::doubleMode)
-                        < 0.5f
-                        && parameterValue (
-                               processor, electry::parameters::outputMode) < 0.5f,
+            expect (parameterValue (
+                        processor, electry::parameters::outputMode) < 0.5f,
                     "MONO editor button did not restore the summed DI");
         }
     }
@@ -2432,9 +2328,9 @@ void testEditorRendering()
                         >= effectiveDialSize (detail) * 135,
                     std::string (hero) + " is not visibly larger than " + detail);
 
-    expect (effectiveDialSize (electry::parameters::bodyWood) * 100
+    expect (effectiveDialSize (electry::parameters::guitarBuild) * 100
                 >= effectiveDialSize (electry::parameters::artifacts) * 120,
-            "material controls are not visually above texture details");
+            "Guitar Build is not visually above texture details");
     expect (effectiveDialSize (electry::parameters::muteDamping) * 100
                 >= effectiveDialSize (electry::parameters::artifacts) * 110,
             "contextual Mute control is not visually above texture details");
@@ -2442,8 +2338,8 @@ void testEditorRendering()
                 >= effectiveDialSize (electry::parameters::releaseNoise) * 110,
             "Master Output is not visually above release-noise detail");
 
-    // The version-1.1 performance controls sit beside the fretboard they
-    // change, and must not be smaller than the texture details.
+    // Performance controls sit beside the fretboard they change, and must not
+    // be smaller than the texture details.
     for (const auto* performance : { electry::parameters::sympathetic,
                                      electry::parameters::palmMute,
                                      electry::parameters::strumSpread,
@@ -2521,6 +2417,13 @@ void testEditorRendering()
         expect (countButtons (styleStrip)
                     == electry::ElectryEngine::playStyleKeyswitchCount,
                 "editor did not retain one button per play style");
+        bool hasMuteButton = false;
+        for (auto* child : styleStrip->getChildren())
+            if (auto* button = dynamic_cast<juce::TextButton*> (child))
+                hasMuteButton = hasMuteButton
+                             || button->getButtonText() == "MUTE";
+        expect (hasMuteButton,
+                "the bridge-hand articulation is not labelled MUTE");
         expect (countButtons (styleKeyMode) == 2,
                 "editor did not expose both LATCH and HOLD modes");
         juce::TextButton* latchButton = nullptr;

@@ -39,24 +39,79 @@ double besselI0(double x) noexcept
     return sum;
 }
 
-// A diode-pair clipper: unity slope at the origin, a firm bounded ceiling, and
-// derivatives of every order. A hard clamp would be cheaper, but its corner
-// radiates harmonics of unbounded order, which is precisely the content an
-// oversampled stage exists to avoid generating in the first place.
-float diodeClip(float x) noexcept
+// The pedal is the antiparallel 1N4148 RC circuit measured in volts. These are
+// the standard Shockley parameters used by the reference model, followed by
+// the actual 2.2 kOhm / 10 nF network around the pair.
+constexpr double diodeSaturationCurrent = 2.52e-9;
+constexpr double diodeThermalVoltage = 1.752 * 0.0258;
+constexpr double diodeResistance = 2200.0;
+constexpr double diodeCapacitance = 10.0e-9;
+
+// Dempwolf's measured Electro-Harmonix 12AX7 parameters. The quiescent point
+// below is the coupled solution of a 250 V supply, 100 kOhm plate resistor and
+// 1 kOhm cathode resistor: Vp + 100k Ia = 250 and Vk = 1k Ik. The transfer uses
+// the resulting fixed cathode bias and is normalised by its local plate gain,
+// so replacing the old curve does not change the small-signal gain structure.
+constexpr double triodeG = 1.371e-3;
+constexpr double triodeMu = 86.9;
+constexpr double triodeGamma = 1.349;
+constexpr double triodeC = 4.56;
+constexpr double triodeGridG = 3.263e-4;
+constexpr double triodeGridXi = 1.156;
+constexpr double triodeGridC = 11.99;
+constexpr double triodeGridOffset = 3.917e-8;
+constexpr double triodeSupplyVoltage = 250.0;
+constexpr double triodePlateResistance = 100000.0;
+constexpr double triodeCathodeBias = 0.978501831350406;
+constexpr double triodeQuiescentPlate = 152.15373624396778;
+constexpr double triodePlateGain = 56.87748350866928;
+// Normalised engine output is close to, but not literally, volts at a tube's
+// grid after the input divider. This calibration keeps ordinary DI peaks off
+// the hard plate rails while the drive control can still reach them.
+constexpr float ampGridVolts = 0.875f;
+
+double softplus(double value) noexcept
 {
-    return x / std::sqrt(1.0f + x * x);
+    return std::max(value, 0.0) + std::log1p(std::exp(-std::abs(value)));
 }
 
-// A triode stage's ceiling. It is deliberately one smooth curve rather than a
-// different curve above and below the origin: selecting a knee by sign leaves a
-// third-derivative kink at zero, and the near-square waveform a cascaded
-// second stage sees traverses that kink at full slew, which radiates far more
-// high-order content than the saturation itself. The stage's asymmetry comes
-// from its operating point instead, which is where a real one's comes from.
-float triode(float x) noexcept
+double sigmoid(double value) noexcept
 {
-    return x / std::sqrt(1.0f + 0.85f * x * x);
+    if (value >= 0.0)
+        return 1.0 / (1.0 + std::exp(-value));
+    const double exponential = std::exp(value);
+    return exponential / (1.0 + exponential);
+}
+
+double cathodeCurrent(double plateVoltage,
+                      double gridToCathodeVoltage) noexcept
+{
+    const double drive = plateVoltage / triodeMu + gridToCathodeVoltage;
+    const double conduction = softplus(triodeC * drive) / triodeC;
+    return triodeG * std::pow(conduction, triodeGamma);
+}
+
+double gridCurrent(double gridToCathodeVoltage) noexcept
+{
+    const double conduction = softplus(
+        triodeGridC * gridToCathodeVoltage) / triodeGridC;
+    return triodeGridG * std::pow(conduction, triodeGridXi)
+         + triodeGridOffset;
+}
+
+double plateCurrentAndSlope(double plateVoltage,
+                            double gridToCathodeVoltage,
+                            double& plateSlope) noexcept
+{
+    const double drive = plateVoltage / triodeMu + gridToCathodeVoltage;
+    const double conduction = softplus(triodeC * drive) / triodeC;
+    const double current = triodeG * std::pow(conduction, triodeGamma);
+    plateSlope = conduction > 0.0
+        ? triodeG * triodeGamma
+            * std::pow(conduction, triodeGamma - 1.0)
+            * sigmoid(triodeC * drive) / triodeMu
+        : 0.0;
+    return current - gridCurrent(gridToCathodeVoltage);
 }
 
 // Output trims, measured so that a loud Drop-E riff leaves each stage at
@@ -190,16 +245,18 @@ void ElectryFx::Comb::reset() noexcept
     state = 0.0f;
 }
 
-void ElectryFx::GainChannel::reset() noexcept
+void ElectryFx::GainChannel::resetPedal() noexcept
 {
-    for (auto& stage : interpolators)
-        stage.reset();
-    for (auto& stage : decimators)
-        stage.reset();
     pedalHighpass.reset();
     pedalVoice.reset();
     pedalTilt.reset();
-    pedalSmooth.reset();
+    diodeVoltage = 0.0;
+    diodeDerivative = 0.0;
+    pedalWasActive = false;
+}
+
+void ElectryFx::GainChannel::resetAmp() noexcept
+{
     ampHighpass.reset();
     ampVoice.reset();
     interstage.reset();
@@ -209,6 +266,17 @@ void ElectryFx::GainChannel::reset() noexcept
     flux.reset();
     for (auto& section : cabinet)
         section.reset();
+    ampWasActive = false;
+}
+
+void ElectryFx::GainChannel::reset() noexcept
+{
+    for (auto& stage : interpolators)
+        stage.reset();
+    for (auto& stage : decimators)
+        stage.reset();
+    resetPedal();
+    resetAmp();
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +296,11 @@ void ElectryFx::prepare(double sampleRate)
         ? 2 : (sampleRate_ <= 192000.0 ? 1 : 0);
     oversampledRate_ = static_cast<float>(
         sampleRate_ * static_cast<double>(1 << oversamplingStages_));
+
+    // The table is generated once from the exact measured-tube load-line
+    // solve below. Prime it during prepare rather than allowing first use to
+    // perform thread-safe static initialisation on the audio thread.
+    static_cast<void>(triodeStageLookup(0.0));
 
     // 15 ms on the five mixes and 12 ms on the gain block's engagement ramp.
     // Both are per-sample: the previous chain read its controls once per block
@@ -367,7 +440,7 @@ void ElectryFx::designFilters() noexcept
         // and then cutting 470 Hz after it wasted gain on the one region a
         // metal rhythm tone wants out of the way.
         channel.ampHighpass.setHighpass(52.0f, 0.80f, rate);
-        channel.ampVoice.setPeaking(850.0f, 0.75f, 4.0f, rate);
+        channel.ampVoice.setPeaking(850.0f, 0.75f, 4.25f, rate);
         // A transformer passes no DC, and this also keeps the bias drift's
         // residue out of the flux integrator in front of the core model.
         channel.transformerHighpass.setHighpass(26.0f, 0.707f, rate);
@@ -380,9 +453,9 @@ void ElectryFx::designFilters() noexcept
         // harmonic, and the thump that a palm-muted chug lives on sits in the
         // octave above that.
         channel.cabinet[0].setHighpass(74.0f, 0.80f, rate);   // no output below the box
-        channel.cabinet[1].setPeaking(102.0f, 1.20f, 5.5f, rate);  // cabinet thump
+        channel.cabinet[1].setPeaking(102.0f, 1.20f, 4.35f, rate); // cabinet thump
         channel.cabinet[2].setPeaking(430.0f, 0.85f, -6.5f, rate); // boxy honk removed
-        channel.cabinet[3].setPeaking(3100.0f, 1.10f, 4.5f, rate); // presence
+        channel.cabinet[3].setPeaking(3100.0f, 1.10f, 6.5f, rate); // presence
         // Fourth-order Butterworth roll-off: a 12-inch speaker is essentially
         // gone an octave above five kilohertz. Running it here rather than
         // after decimation removes the alias-generating content first.
@@ -451,6 +524,233 @@ float ElectryFx::transformerCore(OnePole& flux, float input,
     return input - (held - carried);
 }
 
+float ElectryFx::diodePairStep(double inputVolts, double sampleRate,
+                               double& outputVolts,
+                               double& previousDerivative) noexcept
+{
+    // C dVo/dt = (Vi - Vo) / R - 2 Is sinh(Vo / nVt). Trapezoidal
+    // integration makes the capacitor's memory stable even at the lowest
+    // supported host rate; four bounded Newton steps solve the diode current
+    // without a table or a memoryless approximation.
+    inputVolts = std::isfinite(inputVolts)
+        ? std::clamp(inputVolts, -12.0, 12.0) : 0.0;
+    if (! std::isfinite(outputVolts)
+        || ! std::isfinite(previousDerivative))
+    {
+        outputVolts = 0.0;
+        previousDerivative = 0.0;
+    }
+
+    const double step = 1.0 / std::max(sampleRate, 1.0);
+    const double linearCoefficient = 1.0
+        + 0.5 * step / (diodeResistance * diodeCapacitance);
+    const double nonlinearCoefficient = step * diodeSaturationCurrent
+                                      / diodeCapacitance;
+    const double rightHandSide = outputVolts
+        + 0.5 * step
+            * (previousDerivative
+               + inputVolts / (diodeResistance * diodeCapacitance));
+    const auto derivative = [inputVolts] (double voltage)
+    {
+        return (inputVolts - voltage)
+                 / (diodeResistance * diodeCapacitance)
+             - (2.0 * diodeSaturationCurrent / diodeCapacitance)
+                 * std::sinh(voltage / diodeThermalVoltage);
+    };
+    const auto residual = [=] (double voltage)
+    {
+        return linearCoefficient * voltage
+             + nonlinearCoefficient
+                 * std::sinh(voltage / diodeThermalVoltage)
+             - rightHandSide;
+    };
+
+    double lower = -1.0;
+    double upper = 1.0;
+    // Ignoring the diode gives one root estimate; ignoring the resistor gives
+    // another. The smaller magnitude is close on both sides of the
+    // knee and saves Newton from first leaping across the exponential wall.
+    const double linearEstimate = rightHandSide / linearCoefficient;
+    const double diodeEstimate = diodeThermalVoltage * std::asinh(
+        rightHandSide / nonlinearCoefficient);
+    double voltage = std::copysign(
+        std::min(std::abs(linearEstimate), std::abs(diodeEstimate)),
+        rightHandSide);
+    voltage = std::clamp(voltage, lower, upper);
+    for (int iteration = 0; iteration < 4; ++iteration)
+    {
+        const double error = residual(voltage);
+        if (std::abs(error) < 1.0e-12)
+            break;
+        if (error > 0.0)
+            upper = voltage;
+        else
+            lower = voltage;
+
+        const double slope = linearCoefficient
+            + nonlinearCoefficient / diodeThermalVoltage
+                * std::cosh(voltage / diodeThermalVoltage);
+        double candidate = voltage - error / slope;
+        if (! std::isfinite(candidate)
+            || candidate <= lower || candidate >= upper)
+            candidate = 0.5 * (lower + upper);
+        voltage = candidate;
+    }
+
+    outputVolts = voltage;
+    previousDerivative = derivative(voltage);
+    return static_cast<float>(voltage);
+}
+
+double ElectryFx::triodeCathodeCurrent(
+    double plateVoltage, double gridToCathodeVoltage) noexcept
+{
+    return cathodeCurrent(plateVoltage, gridToCathodeVoltage);
+}
+
+double ElectryFx::triodeGridCurrent(
+    double gridToCathodeVoltage) noexcept
+{
+    return gridCurrent(gridToCathodeVoltage);
+}
+
+double ElectryFx::triodePlateCurrent(
+    double plateVoltage, double gridToCathodeVoltage) noexcept
+{
+    double ignoredSlope = 0.0;
+    return plateCurrentAndSlope(plateVoltage, gridToCathodeVoltage,
+                                ignoredSlope);
+}
+
+double ElectryFx::solveTriodePlate(double gridToCathodeVoltage,
+                                   double supplyVoltage,
+                                   double& warmStart) noexcept
+{
+    gridToCathodeVoltage = std::isfinite(gridToCathodeVoltage)
+        ? std::clamp(gridToCathodeVoltage, -20.0, 20.0)
+        : -triodeCathodeBias;
+    supplyVoltage = std::isfinite(supplyVoltage)
+        ? std::clamp(supplyVoltage, 1.0, 500.0)
+        : triodeSupplyVoltage;
+
+    const auto residual = [=] (double plateVoltage, double& slope)
+    {
+        const double current = plateCurrentAndSlope(
+            plateVoltage, gridToCathodeVoltage, slope);
+        return plateVoltage + triodePlateResistance * current
+             - supplyVoltage;
+    };
+
+    double lower = 0.0;
+    double upper = supplyVoltage;
+    double slope = 0.0;
+    if (residual(lower, slope) >= 0.0)
+    {
+        warmStart = lower;
+        return lower;
+    }
+    if (residual(upper, slope) <= 0.0)
+    {
+        warmStart = upper;
+        return upper;
+    }
+
+    double plateVoltage = std::isfinite(warmStart)
+        ? std::clamp(warmStart, lower, upper)
+        : std::clamp(triodeQuiescentPlate, lower, upper);
+    for (int iteration = 0; iteration < 8; ++iteration)
+    {
+        const double error = residual(plateVoltage, slope);
+        if (std::abs(error) < 1.0e-9)
+            break;
+        if (error > 0.0)
+            upper = plateVoltage;
+        else
+            lower = plateVoltage;
+
+        const double jacobian = 1.0 + triodePlateResistance * slope;
+        double candidate = plateVoltage - error / jacobian;
+        if (! std::isfinite(candidate)
+            || candidate < lower || candidate > upper
+            || candidate == plateVoltage)
+            candidate = 0.5 * (lower + upper);
+        plateVoltage = candidate;
+    }
+
+    // A rail-to-cutoff jump can send the first Newton proposal exactly to a
+    // bracket endpoint. The guarded iterations normally settle immediately;
+    // this cold-path bisection supplies an actual residual guarantee for any
+    // hostile warm start instead of returning the last iteration blindly.
+    double finalError = residual(plateVoltage, slope);
+    if (std::abs(finalError) >= 1.0e-9)
+    {
+        for (int iteration = 0; iteration < 48; ++iteration)
+        {
+            plateVoltage = 0.5 * (lower + upper);
+            finalError = residual(plateVoltage, slope);
+            if (std::abs(finalError) < 1.0e-9)
+                break;
+            if (finalError > 0.0)
+                upper = plateVoltage;
+            else
+                lower = plateVoltage;
+        }
+    }
+
+    warmStart = std::clamp(plateVoltage, 0.0, supplyVoltage);
+    return warmStart;
+}
+
+float ElectryFx::triodeStage(double gridVoltage,
+                             double& plateVoltage) noexcept
+{
+    const double solved = solveTriodePlate(
+        gridVoltage - triodeCathodeBias, triodeSupplyVoltage, plateVoltage);
+    return static_cast<float>(
+        (triodeQuiescentPlate - solved) / triodePlateGain);
+}
+
+float ElectryFx::triodeStageLookup(double gridVoltage) noexcept
+{
+    // Plate loading and cathode bias are fixed, so the tube's plate solve is a
+    // memoryless monotonic transfer. A dense table retains that solved circuit
+    // curve while avoiding three sets of pow/exp/log operations per
+    // oversampled frame. Linear interpolation over 2.44 mV grid steps is kept
+    // below the independently tested transfer-error and alias floors.
+    constexpr std::size_t tableSize = 16385;
+    constexpr double minimumGridVoltage = -20.0 + triodeCathodeBias;
+    constexpr double maximumGridVoltage = 20.0 + triodeCathodeBias;
+    static const std::array<float, tableSize> transfer = []
+    {
+        std::array<float, tableSize> result {};
+        double warmStart = triodeSupplyVoltage;
+        for (std::size_t index = 0; index < result.size(); ++index)
+        {
+            const double fraction = static_cast<double>(index)
+                                  / static_cast<double>(result.size() - 1);
+            const double grid = minimumGridVoltage
+                              + fraction
+                                  * (maximumGridVoltage - minimumGridVoltage);
+            result[index] = triodeStage(grid, warmStart);
+        }
+        return result;
+    }();
+
+    if (! std::isfinite(gridVoltage))
+        gridVoltage = 0.0;
+    const double clamped = std::clamp(
+        gridVoltage, minimumGridVoltage, maximumGridVoltage);
+    const double position = (clamped - minimumGridVoltage)
+                          / (maximumGridVoltage - minimumGridVoltage)
+                          * static_cast<double>(tableSize - 1);
+    const auto lower = static_cast<std::size_t>(std::floor(position));
+    if (lower >= tableSize - 1)
+        return transfer.back();
+    const float fraction = static_cast<float>(
+        position - static_cast<double>(lower));
+    return lerp(transfer[lower], transfer[lower + 1], fraction);
+}
+
 void ElectryFx::updateDriveConstants() noexcept
 {
     // A pedal's gain range, and two amplifier stages whose drives rise
@@ -477,10 +777,11 @@ float ElectryFx::pedalStage(GainChannel& channel, float input) noexcept
 {
     float sample = channel.pedalHighpass.process(input);
     sample = channel.pedalVoice.process(sample);
-    sample = diodeClip(sample * pedalDrive_);
+    sample = diodePairStep(sample * pedalDrive_, oversampledRate_,
+                           channel.diodeVoltage,
+                           channel.diodeDerivative);
     sample = channel.pedalTilt.process(sample);
-    return channel.pedalSmooth.process(sample, interstageCoefficient_)
-         * pedalMakeup_;
+    return sample * pedalMakeup_;
 }
 
 float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
@@ -489,19 +790,16 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     sample = channel.ampVoice.process(sample);
 
     // The operating point: a standing grid bias plus the drift that grid
-    // current adds under sustained level. Driving a symmetric ceiling off
-    // centre is what produces the even-order harmonics of a real stage, and
-    // the drift is why a held chord thickens and thins again as it decays -
-    // breathing a static waveshaper cannot reproduce. Subtracting the transfer
-    // at the bias point keeps the stage centred instead of pumping DC into the
-    // cabinet.
+    // current adds under sustained level. Each transfer call interpolates the
+    // dense table generated from the measured 12AX7 plate-load circuit solve;
+    // subtracting the bias point keeps the stage centred instead of pumping DC
+    // into the cabinet.
     channel.bias += biasCoefficient_ * (std::abs(sample) - channel.bias);
     const float bias = -0.22f - 1.10f * channel.bias;
-    // Both stages below subtract the transfer at the same operating point, so
-    // it is solved once here rather than once per stage.
-    const float biasTriode = triode(bias);
+    const float biasTriode = triodeStageLookup(bias);
 
-    float stage = triode(sample * ampDriveFirst_ + bias) - biasTriode;
+    float stage = triodeStageLookup(
+        sample * ampDriveFirst_ * ampGridVolts + bias) - biasTriode;
     // Miller capacitance between the stages: each one is progressively darker,
     // which is why a cascaded amplifier saturates smoothly instead of
     // accumulating fizz.
@@ -522,11 +820,13 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // the identity.
     // What discharges the reservoir is the current the stage draws, which
     // follows its *output* rather than its grid signal - so the follower reads
-    // the stage's own last sample, not the drive. Bounded at 28%, which is the
-    // 350 V to 250 V a real supply measures.
-    const float droop = 1.0f - 0.28f * channel.sag / (0.30f + channel.sag);
-    stage = droop * (triode(stage * ampDriveSecond_ / droop + bias)
-                     - biasTriode);
+    // the stage's own last sample, not the drive. Bounded at 30%, which is the
+    // roughly 350 V to 250 V a real supply measures.
+    const float droop = 1.0f - 0.30f * channel.sag / (0.30f + channel.sag);
+    stage = droop
+        * (triodeStageLookup(
+               stage * ampDriveSecond_ * ampGridVolts / droop + bias)
+           - biasTriode);
     const float rectified = stage < 0.0f ? -stage : stage;
     channel.sag += (rectified > channel.sag ? sagAttack_ : sagRelease_)
                  * (rectified - channel.sag);
@@ -549,13 +849,26 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
 
 float ElectryFx::renderGainFrame(GainChannel& channel, float input) noexcept
 {
-    // Both stages always run while the block is engaged. A mix of exactly zero
-    // already contributes nothing, and keeping the filters clocked means
-    // neither stage can be re-engaged from stale state.
-    const float pedal = pedalStage(channel, input);
-    const float pedalled = lerp(input, pedal, distortionMix_);
-    const float amp = ampStage(channel, pedalled);
-    return lerp(pedalled, amp, ampMix_);
+    // An exactly dry stage contributes no signal and its private state cannot
+    // affect the other module. Reset once at the zero crossing so re-entry is
+    // from the circuit's resting state rather than a tail frozen seconds ago;
+    // mix smoothing brings that clean state in from an inaudible fraction.
+    float result = input;
+    if (distortionMix_ > 0.0f)
+    {
+        channel.pedalWasActive = true;
+        result = lerp(result, pedalStage(channel, result), distortionMix_);
+    }
+    else if (channel.pedalWasActive)
+        channel.resetPedal();
+    if (ampMix_ > 0.0f)
+    {
+        channel.ampWasActive = true;
+        result = lerp(result, ampStage(channel, result), ampMix_);
+    }
+    else if (channel.ampWasActive)
+        channel.resetAmp();
+    return result;
 }
 
 float ElectryFx::renderGainStage(GainChannel& channel, float input) noexcept

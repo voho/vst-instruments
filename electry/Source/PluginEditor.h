@@ -176,7 +176,7 @@ private:
     };
     ElectryChoiceStrip playStyleStrip {
         "PLAY STYLE  (KEYSWITCHES D#0..A0)",
-        { "SUSTAIN", "PALM MUTE", "HAMMER", "HARMONIC", "PINCH", "SLIDE",
+        { "SUSTAIN", "MUTE", "HAMMER", "HARMONIC", "PINCH", "SLIDE",
           "DEAD" }
     };
     ElectryChoiceStrip playStyleKeyModeStrip {
@@ -185,22 +185,17 @@ private:
     ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
     ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "DOUBLE" } };
 
-    ElectryKnob bodyWoodKnob { "WOOD" };
-    ElectryKnob bodySizeKnob { "SIZE" };
-    ElectryKnob bodyShapeKnob { "SHAPE" };
-    ElectryKnob constructionKnob { "NECK JOIN" };
-    ElectryKnob scaleLengthKnob { "SCALE" };
+    ElectryKnob guitarBuildKnob { "BUILD" };
     ElectryKnob bodyResonanceKnob { "BODY RES" };
 
     ElectryKnob pickupTypeKnob { "COIL TYPE" };
     ElectryKnob toneKnob { "TONE" };
 
-    ElectryKnob stringGaugeKnob { "GAUGE" };
     ElectryKnob stringAgeKnob { "AGE" };
     ElectryKnob pickPositionKnob { "PICK POS" };
     ElectryKnob pickHardnessKnob { "HARDNESS" };
     ElectryKnob bendTimeKnob { "BEND TIME" };
-    ElectryKnob muteDampingKnob { "PALM TIGHT" };
+    ElectryKnob muteDampingKnob { "MUTE" };
     ElectryKnob velocityKnob { "VELOCITY" };
 
     ElectryKnob pickNoiseKnob { "PLECTRUM" };
@@ -209,7 +204,7 @@ private:
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob sympatheticKnob { "SYMPATHY" };
-    ElectryKnob palmMuteKnob { "PALM PRESS" };
+    ElectryKnob palmMuteKnob { "MUTE PRESS" };
     ElectryKnob strumSpreadKnob { "STRUM" };
     ElectryKnob resonanceKnob { "RESONANCE" };
 
@@ -225,7 +220,6 @@ private:
 
     std::unique_ptr<juce::ParameterAttachment> pickupAttachment;
     std::unique_ptr<juce::ParameterAttachment> outputModeAttachment;
-    std::unique_ptr<juce::ParameterAttachment> doubleModeAttachment;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::array<juce::Rectangle<int>, sectionCount> sectionBounds {};
 

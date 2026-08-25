@@ -115,7 +115,7 @@ void layoutKnobRow (juce::Rectangle<int> rowArea,
 }
 
 constexpr std::array<const char*, keyswitchCount> keyswitchLabels {
-    "DN", "UP", "ALT", "SUS", "PM", "H/P", "HARM", "PNCH", "SLD", "DEAD"
+    "DN", "UP", "ALT", "SUS", "MUTE", "H/P", "HARM", "PNCH", "SLD", "DEAD"
 };
 
 bool isKeyswitch (int midiNoteNumber) noexcept
@@ -889,8 +889,8 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     factoryProgramSelector.setSelectedId (
         electryProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
     factoryProgramSelector.setTooltip (
-        "Rigs initialize guitar, FX, Palm Tightness and Palm Pressure. They "
-        "never change the PICK STROKE or PLAY STYLE latches; choose Palm Mute "
+        "Rigs initialize guitar, FX, Mute Tightness and Mute Pressure. They "
+        "never change the PICK STROKE or PLAY STYLE latches; choose Mute "
         "or Dead below.");
     factoryProgramSelector.setName ("Factory rig");
     factoryProgramSelector.setTitle ("Factory rig");
@@ -937,7 +937,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
             electry::ElectryEngine::pickStyleKeyswitchCount + index);
     };
     playStyleStrip.setTooltipText (
-        "Select the base style. Palm Mute is the bridge hand; Dead is the fretting hand; the selected pick stroke still applies.");
+        "Select the base style. Mute is the bridge hand; Dead is the fretting hand; the selected pick stroke still applies.");
     playStyleStrip.setComponentID ("playStyleStrip");
     addAndMakeVisible (playStyleStrip);
 
@@ -981,22 +981,13 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     {
         auto* outputParameter = electryProcessor.parameters.getParameter (
             electry::parameters::outputMode);
-        auto* doubleParameter = electryProcessor.parameters.getParameter (
-            electry::parameters::doubleMode);
-        if (outputParameter == nullptr || doubleParameter == nullptr)
+        if (outputParameter == nullptr)
             return;
 
-        doubleParameter->beginChangeGesture();
-        doubleParameter->setValueNotifyingHost (
-            doubleParameter->convertTo0to1 (index == 2 ? 1.0f : 0.0f));
-        doubleParameter->endChangeGesture();
-        if (index < 2)
-        {
-            outputParameter->beginChangeGesture();
-            outputParameter->setValueNotifyingHost (
-                outputParameter->convertTo0to1 (static_cast<float> (index)));
-            outputParameter->endChangeGesture();
-        }
+        outputParameter->beginChangeGesture();
+        outputParameter->setValueNotifyingHost (
+            outputParameter->convertTo0to1 (static_cast<float> (index)));
+        outputParameter->endChangeGesture();
     };
     if (auto* parameter = electryProcessor.parameters.getParameter (
             electry::parameters::outputMode))
@@ -1005,36 +996,10 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
             *parameter,
             [this] (float newValue)
             {
-                const auto* doubled = electryProcessor.parameters
-                    .getRawParameterValue (electry::parameters::doubleMode);
-                if (doubled == nullptr
-                    || doubled->load (std::memory_order_relaxed) < 0.5f)
-                    outputModeStrip.setSelectedIndex (juce::roundToInt (newValue));
+                outputModeStrip.setSelectedIndex (juce::roundToInt (newValue));
             },
             nullptr);
         outputModeAttachment->sendInitialUpdate();
-    }
-    if (auto* parameter = electryProcessor.parameters.getParameter (
-            electry::parameters::doubleMode))
-    {
-        doubleModeAttachment = std::make_unique<juce::ParameterAttachment> (
-            *parameter,
-            [this] (float newValue)
-            {
-                if (newValue >= 0.5f)
-                {
-                    outputModeStrip.setSelectedIndex (2);
-                    return;
-                }
-                const auto* output = electryProcessor.parameters
-                    .getRawParameterValue (electry::parameters::outputMode);
-                outputModeStrip.setSelectedIndex (output != nullptr
-                    ? juce::roundToInt (
-                          output->load (std::memory_order_relaxed))
-                    : 0);
-            },
-            nullptr);
-        doubleModeAttachment->sendInitialUpdate();
     }
     outputModeStrip.setTooltipText (
         "Mono is an authentic summed DI. Stereo spreads one guitar's eight "
@@ -1054,23 +1019,15 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
         attachSlider (knob.slider, parameterId);
     };
 
-    setup (bodyWoodKnob, bodyWood,
-           "Body wood: mahogany/maple blank toward swamp ash");
-    setup (bodySizeKnob, bodySize,
-           "Body mass and thickness: thick heavy blank toward thin light slab");
-    setup (bodyShapeKnob, bodyShape,
-           "Body outline: carved single-cut toward flat slab");
-    setup (constructionKnob, construction,
-           "Neck joint and bridge: set neck + stopbar toward bolt-on + through-body");
-    setup (scaleLengthKnob, scaleLength,
-           "Scale length: 25.5 in electric toward 28 in baritone / 8-string");
+    setup (guitarBuildKnob, guitarBuild,
+           "Morphs material damping, body mass and modes, neck and bridge "
+           "coupling, scale length, and Drop-E string gauge. Pickups and "
+           "playing controls remain independent.");
     setup (bodyResonanceKnob, bodyResonance,
            "How much solid-body structural colour reaches the pickups");
     setup (pickupTypeKnob, pickupType,
            "Pickup construction: wide humbucker toward narrow single coil");
     setup (toneKnob, tone, "Passive tone control loading the pickup resonance");
-    setup (stringGaugeKnob, stringGauge,
-           "Drop-E string set: light .009-.080 toward heavy .011-.098");
     setup (stringAgeKnob, stringAge, "String condition: fresh toward old and dead");
     setup (pickPositionKnob, pickPosition,
            "Picking spot: close to the bridge toward over the neck");
@@ -1080,7 +1037,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "Travel time of a pitch-wheel bend: how long the strings take to "
            "reach the wheel rather than snapping to it");
     setup (muteDampingKnob, muteDamping,
-           "Loose half-mute toward tight metal chug for the E0 Palm Mute "
+           "Loose half-mute toward tight metal chug for the E0 Mute "
            "play style");
     setup (velocityKnob, velocity, "How strongly MIDI velocity drives the pluck");
     setup (pickNoiseKnob, pickNoise, "Plectrum contact and scrape level");
@@ -1210,14 +1167,11 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
         if (bounds.isEmpty())
             continue;
         const auto panelBounds = bounds.toFloat();
-        const bool prioritySection = section == coreSection || section == masterSection;
         graphics.setColour (juce::Colours::black.withAlpha (0.22f));
         graphics.fillRoundedRectangle (panelBounds.translated (0.0f, 2.0f), 8.0f);
 
         juce::ColourGradient panelGradient (
-                                            prioritySection
-                                                ? colours::panelTop.brighter (0.055f)
-                                                : colours::panelTop,
+                                            colours::panelTop,
                                             panelBounds.getCentreX(), panelBounds.getY(),
                                             colours::panel,
                                             panelBounds.getCentreX(), panelBounds.getBottom(), false);
@@ -1247,18 +1201,10 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
         if (titles[static_cast<std::size_t> (section)][0] != '\0')
         {
             graphics.setColour (colours::accentBright.withAlpha (0.92f));
-            graphics.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            graphics.setFont (juce::FontOptions (13.0f, juce::Font::bold));
             graphics.drawText (titles[static_cast<std::size_t> (section)],
-                               bounds.reduced (12, 6).removeFromTop (14),
+                               bounds.withHeight (28).reduced (12, 0),
                                juce::Justification::centredLeft);
-
-            if (prioritySection)
-            {
-                graphics.setColour (colours::accent.withAlpha (0.55f));
-                graphics.fillRoundedRectangle (
-                    static_cast<float> (bounds.getX() + 12),
-                    static_cast<float> (bounds.getY() + 23), 42.0f, 2.0f, 1.0f);
-            }
         }
     }
 }
@@ -1327,8 +1273,8 @@ void ElectryAudioProcessorEditor::resized()
 
     // The remaining 410 px is deliberately split by sonic importance rather
     // than by parameter type. Controls that reshape every note occupy the
-    // large upper row; construction axes are medium; articulation-specific
-    // texture controls are visibly subordinate.
+    // large upper row; the single build macro and articulation-specific
+    // texture controls remain visibly subordinate.
     const int mainHeight = juce::jlimit (
         180, area.getHeight() - 150,
         juce::roundToInt (static_cast<float> (area.getHeight()) * 0.532f));
@@ -1345,7 +1291,7 @@ void ElectryAudioProcessorEditor::resized()
     sectionBounds[masterSection] = masterArea;
 
     {
-        auto inner = coreArea.reduced (12).withTrimmedTop (16);
+        auto inner = coreArea.reduced (16, 14).withTrimmedTop (16);
         auto selectorArea = inner.removeFromLeft (juce::jmin (150, inner.getWidth()));
         pickupStrip.setBounds (selectorArea.withSizeKeepingCentre (
             selectorArea.getWidth(), juce::jmin (64, selectorArea.getHeight())));
@@ -1359,7 +1305,7 @@ void ElectryAudioProcessorEditor::resized()
               { &stringAgeKnob, KnobTier::hero },
               { &bodyResonanceKnob, KnobTier::hero },
               { &velocityKnob, KnobTier::hero } },
-            6);
+            10);
     }
 
     {
@@ -1373,11 +1319,11 @@ void ElectryAudioProcessorEditor::resized()
 
     const int secondaryContentWidth = juce::jmax (0, secondaryRow.getWidth() - 8);
     const int buildWidth = juce::roundToInt (
-        static_cast<float> (secondaryContentWidth) * 0.43f);
+        static_cast<float> (secondaryContentWidth) * 0.18f);
     auto buildArea = secondaryRow.removeFromLeft (buildWidth);
     secondaryRow.removeFromLeft (juce::jmin (8, secondaryRow.getWidth()));
     const int detailWidth = juce::roundToInt (
-        static_cast<float> (secondaryContentWidth) * 0.30f);
+        static_cast<float> (secondaryContentWidth) * 0.40f);
     auto detailArea = secondaryRow.removeFromLeft (detailWidth);
     secondaryRow.removeFromLeft (juce::jmin (8, secondaryRow.getWidth()));
     auto effectsArea = secondaryRow;
@@ -1387,13 +1333,7 @@ void ElectryAudioProcessorEditor::resized()
 
     layoutKnobRow (
         buildArea.reduced (12).withTrimmedTop (16),
-        { { &bodyWoodKnob, KnobTier::character },
-          { &bodySizeKnob, KnobTier::character },
-          { &bodyShapeKnob, KnobTier::character },
-          { &constructionKnob, KnobTier::character },
-          { &scaleLengthKnob, KnobTier::character },
-          { &stringGaugeKnob, KnobTier::character } },
-        6);
+        { { &guitarBuildKnob, KnobTier::hero } }, 0);
 
     layoutKnobRow (
         detailArea.reduced (12).withTrimmedTop (16),

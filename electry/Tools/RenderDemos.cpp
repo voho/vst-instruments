@@ -238,6 +238,23 @@ public:
             sample *= gain;
     }
 
+    void fadeOut(double seconds) noexcept
+    {
+        const auto count = std::min(
+            left_.size(), static_cast<std::size_t>(seconds * demoSampleRate));
+        if (count < 2)
+            return;
+        const auto first = left_.size() - count;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const float t = static_cast<float>(index)
+                          / static_cast<float>(count - 1);
+            const float gain = 1.0f - t * t * (3.0f - 2.0f * t);
+            left_[first + index] *= gain;
+            right_[first + index] *= gain;
+        }
+    }
+
     [[nodiscard]] bool stereo() const noexcept { return stereo_; }
     [[nodiscard]] const std::vector<float>& left() const noexcept { return left_; }
     [[nodiscard]] const std::vector<float>& right() const noexcept { return right_; }
@@ -384,8 +401,7 @@ EngineParameters metalRhythmVoicing()
     parameters.pickupSelector = PickupSelector::Bridge;
     parameters.pickupType = 0.32f;   // toward a hot humbucker
     parameters.toneKnob = 1.0f;
-    parameters.scaleLength = 0.85f;  // long baritone build
-    parameters.stringGauge = 0.8f;   // heavy set
+    applyGuitarBuild(parameters, electry::defaultGuitarBuild);
     parameters.stringAge = 0.10f;
     parameters.pickHardness = 0.85f;
     parameters.pickPosition = 0.18f; // close to the bridge
@@ -541,7 +557,8 @@ Take renderLeadThroughAmp()
     take.wait(2.2);
     take.resonance(0.0f);
     take.noteOff(69);
-    take.wait(1.9);
+    take.wait(3.0);
+    take.fadeOut(1.25);
     return take;
 }
 
@@ -628,26 +645,14 @@ Take renderSympatheticStrum()
 
 Take renderBuildContrasts()
 {
-    // The same two-bar figure across the construction axes: a conventional
-    // A 25.5-inch light-string build, the shipped default instrument, and a
-    // 28-inch baritone with a heavy set and old strings.
-    //
-    // The middle entry is read from EngineParameters rather than written out,
-    // because the point of this take is to place the default between two
-    // deliberate extremes. It had been a copy of the old midpoints, so when the
-    // defaults became a thick blank with the heaviest set this segment quietly
-    // went on rendering an instrument the plug-in no longer ships - a take whose
-    // whole subject is the default, no longer containing it.
-    struct Build { const char* name; float scale; float gauge; float age;
-                   float wood; float size; float shape; float construction; };
-    const EngineParameters shipped {};
-    const std::array<Build, 3> builds {{
-        { "short scale, light, fresh", 0.0f, 0.15f, 0.05f, 0.2f, 0.7f, 0.2f, 0.15f },
-        { "default build",             shipped.scaleLength, shipped.stringGauge,
-                                       shipped.stringAge, shipped.bodyWood,
-                                       shipped.bodySize, shipped.bodyShape,
-                                       shipped.construction },
-        { "28-inch baritone, heavy",   1.0f, 0.95f, 0.55f, 0.8f, 0.2f, 0.9f, 0.85f },
+    // One fixed performance/pickup voicing visits every anchor of the same
+    // continuous Build path exposed by the plug-in.
+    struct Build { const char* name; float value; };
+    const std::array<Build, 6> builds {{
+        { "slab fixed", 0.0f }, { "contoured", 0.2f },
+        { "angular set", 0.4f }, { "modern bolt", 0.6f },
+        { "dense extended (default)", 0.8f },
+        { "neck-through extended", 1.0f },
     }};
 
     EngineParameters parameters;
@@ -655,18 +660,13 @@ Take renderBuildContrasts()
     parameters.pickPosition = 0.22f;
     parameters.pickHardness = 0.8f;
     parameters.bodyResonance = 0.5f;
+    parameters.stringAge = 0.15f;
     parameters.outputGain = 1.2f;
 
     Take take(parameters, FxParameters {}, false);
     for (const auto& build : builds)
     {
-        parameters.scaleLength = build.scale;
-        parameters.stringGauge = build.gauge;
-        parameters.stringAge = build.age;
-        parameters.bodyWood = build.wood;
-        parameters.bodySize = build.size;
-        parameters.bodyShape = build.shape;
-        parameters.construction = build.construction;
+        applyGuitarBuild(parameters, build.value);
         take.setEngineParameters(parameters);
         // Long enough for the smoothers to settle and for the new voicing to
         // reach the ringing strings.
@@ -1036,7 +1036,7 @@ const std::array<Demo, 16>& demos()
           "every playable note from E1 to D6 across the eight strings",
           renderFullFretboard },
         { "03-play-styles.wav",
-          "all three pick strokes and all seven play styles: sustain, palm mute, "
+          "all three pick strokes and all seven play styles: sustain, mute, "
           "hammer-on, natural and pinch harmonics, slides of two and twelve "
           "frets, and dead notes",
           renderPlayStyles },
@@ -1060,11 +1060,11 @@ const std::array<Demo, 16>& demos()
           "divided-pickup stereo field",
           renderSympatheticStrum },
         { "09-guitar-build-contrasts.wav",
-          "the same figure on a short-scale light build, the default "
-          "instrument and a 28-inch baritone",
+          "the same fixed pickup and performance across all six anchors of "
+          "the continuous Guitar Build path",
           renderBuildContrasts },
         { "10-velocity-dynamics.wav",
-          "the velocity response at full travel, open and palm muted",
+          "the velocity response at full travel, open and muted",
           renderVelocityDynamics },
         { "11-power-chords-dry.wav",
           "power chords dry: held, chugged, then tight muted stabs",
@@ -1081,11 +1081,11 @@ const std::array<Demo, 16>& demos()
           "self-sustaining amplifier feedback",
           renderWhammyAndFeedback },
         { "15-mute-and-dead-audition.wav",
-          "the same E1 open, at three Palm Mute depths and Dead, followed by "
-          "alternate ghost grooves with Palm Pressure off and stacked",
+          "the same E1 open, at three Mute depths and Dead, followed by "
+          "alternate ghost grooves with Mute Pressure off and stacked",
           renderMuteAndDeadAudition },
         { "16-mute-and-dead-metal.wav",
-          "the same rapid E1 and mixed E1/E2 scores as Palm Mute then Dead, "
+          "the same rapid E1 and mixed E1/E2 scores as Mute then Dead, "
           "through one high-gain rhythm chain",
           renderMuteAndDeadMetal },
     }};

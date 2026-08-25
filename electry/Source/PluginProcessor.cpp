@@ -24,9 +24,8 @@ struct FactoryParameterValue
 // instrument defaults. Keeping them sparse makes the defaults the single
 // source of truth, while setCurrentProgram() still derives every target from
 // a default plus these overrides so a rig never inherits the previous patch.
-constexpr std::array<FactoryParameterValue, 13> dropEMetalValues {{
+constexpr std::array<FactoryParameterValue, 12> dropEMetalValues {{
     { electry::parameters::tone,          1.00f },
-    { electry::parameters::stringGauge,   0.80f },
     { electry::parameters::stringAge,     0.10f },
     { electry::parameters::pickHardness,  0.85f },
     { electry::parameters::fingerNoise,   0.55f },
@@ -144,7 +143,6 @@ juce::AudioParameterFloatAttributes percentAttributes()
         .withValueFromStringFunction (percentValue);
 }
 
-// Material/construction morph axes use named solid-body endpoints.
 juce::AudioParameterFloatAttributes morphAttributes (const char* lowName,
                                                      const char* highName)
 {
@@ -164,49 +162,37 @@ juce::AudioParameterFloatAttributes morphAttributes (const char* lowName,
         .withValueFromStringFunction (percentValue);
 }
 
-// APVTS keeps a parameter at its current value when the replacement tree has
-// no child for it. A session saved before a control existed would therefore
-// adopt whatever the previously loaded preset left behind rather than that
-// control's default, so fill in every default the stored tree omits.
-bool containsParameterState (const juce::ValueTree& state,
-                             const juce::String& parameterId)
+juce::AudioParameterFloatAttributes guitarBuildAttributes()
 {
-    static const juce::Identifier parameterType { "PARAM" };
-    static const juce::Identifier idProperty { "id" };
+    static constexpr std::array<const char*, 6> names {
+        "Slab fixed", "Contoured", "Angular set", "Modern bolt",
+        "Dense extended", "Neck-through"
+    };
 
-    for (const auto& child : state)
-        if (child.hasType (parameterType)
-            && child.getProperty (idProperty).toString() == parameterId)
-            return true;
-
-    return false;
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction (
+            [] (float value, int)
+            {
+                const int nearest = juce::jlimit (
+                    0, static_cast<int> (names.size()) - 1,
+                    juce::roundToInt (value * static_cast<float> (names.size() - 1)));
+                const float anchor = static_cast<float> (nearest)
+                                   / static_cast<float> (names.size() - 1);
+                if (std::abs(value - anchor) < 0.002f)
+                    return juce::String (names[static_cast<std::size_t> (nearest)]);
+                return juce::String (juce::roundToInt (value * 100.0f)) + "%";
+            })
+        .withValueFromStringFunction (
+            [] (const juce::String& text)
+            {
+                for (std::size_t index = 0; index < names.size(); ++index)
+                    if (text.containsIgnoreCase (names[index]))
+                        return static_cast<float> (index)
+                             / static_cast<float> (names.size() - 1);
+                return percentValue(text);
+            });
 }
 
-void addMissingParameterDefaults (
-    juce::ValueTree& state, juce::AudioProcessorValueTreeState& parameters,
-    const juce::Array<juce::AudioProcessorParameter*>& hostParameters)
-{
-    static const juce::Identifier parameterType { "PARAM" };
-    static const juce::Identifier idProperty { "id" };
-    static const juce::Identifier valueProperty { "value" };
-
-    for (const auto* hostParameter : hostParameters)
-    {
-        const auto* ranged =
-            dynamic_cast<const juce::RangedAudioParameter*> (hostParameter);
-        if (ranged == nullptr
-            || parameters.getParameter (ranged->paramID) == nullptr
-            || containsParameterState (state, ranged->paramID))
-            continue;
-
-        juce::ValueTree parameterState { parameterType };
-        parameterState.setProperty (idProperty, ranged->paramID, nullptr);
-        parameterState.setProperty (
-            valueProperty,
-            ranged->convertFrom0to1 (ranged->getDefaultValue()), nullptr);
-        state.appendChild (parameterState, nullptr);
-    }
-}
 } // namespace
 
 ElectryAudioProcessor::ElectryAudioProcessor()
@@ -222,13 +208,8 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.pickupSelector = parameters.getRawParameterValue (pickupSelector);
     parameterPointers.pickupType     = parameters.getRawParameterValue (pickupType);
     parameterPointers.tone           = parameters.getRawParameterValue (tone);
-    parameterPointers.bodyWood       = parameters.getRawParameterValue (bodyWood);
-    parameterPointers.bodySize       = parameters.getRawParameterValue (bodySize);
-    parameterPointers.bodyShape      = parameters.getRawParameterValue (bodyShape);
-    parameterPointers.construction   = parameters.getRawParameterValue (construction);
-    parameterPointers.scaleLength    = parameters.getRawParameterValue (scaleLength);
+    parameterPointers.guitarBuild    = parameters.getRawParameterValue (guitarBuild);
     parameterPointers.bodyResonance  = parameters.getRawParameterValue (bodyResonance);
-    parameterPointers.stringGauge    = parameters.getRawParameterValue (stringGauge);
     parameterPointers.stringAge      = parameters.getRawParameterValue (stringAge);
     parameterPointers.pickPosition   = parameters.getRawParameterValue (pickPosition);
     parameterPointers.pickHardness   = parameters.getRawParameterValue (pickHardness);
@@ -250,13 +231,11 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.palmMute       = parameters.getRawParameterValue (palmMute);
     parameterPointers.strumSpread    = parameters.getRawParameterValue (strumSpread);
     parameterPointers.resonanceDepth = parameters.getRawParameterValue (resonanceDepth);
-    parameterPointers.doubleMode     = parameters.getRawParameterValue (doubleMode);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
              && parameterPointers.tone != nullptr
-             && parameterPointers.bodyWood != nullptr
-             && parameterPointers.scaleLength != nullptr
+             && parameterPointers.guitarBuild != nullptr
              && parameterPointers.bendTime != nullptr
              && parameterPointers.output != nullptr
              && parameterPointers.artifacts != nullptr
@@ -264,8 +243,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.sympathetic != nullptr
              && parameterPointers.palmMute != nullptr
              && parameterPointers.strumSpread != nullptr
-             && parameterPointers.resonanceDepth != nullptr
-             && parameterPointers.doubleMode != nullptr);
+             && parameterPointers.resonanceDepth != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -311,7 +289,7 @@ void ElectryAudioProcessor::setCurrentProgram (int index)
             parameter->setValueNotifyingHost (target);
     }
 
-    // Rigs may initialize Palm Tightness and Palm Pressure, but keep both
+    // Rigs may initialize Mute Tightness and Mute Pressure, but keep both
     // keyswitch latches player-controlled. The host learns every changed
     // parameter above, then refreshes its program view.
     updateHostDisplay (
@@ -330,7 +308,7 @@ ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (32);
+    result.reserve (26);
 
     // Every default below is read from the engine's own struct rather than
     // written out again here. These two lists had drifted apart: the engine's
@@ -369,38 +347,9 @@ ElectryAudioProcessor::createParameterLayout()
     addMorph (pickupType, "Pickup type", engineDefaults.pickupType,
               "Humbucker", "Single coil");
     addPercent (tone, "Tone", engineDefaults.toneKnob);
-
-    addMorph (bodyWood, "Body wood", engineDefaults.bodyWood,
-              "Mahogany/maple", "Swamp ash");
-    addMorph (bodySize, "Body size", engineDefaults.bodySize,
-              "Thick blank", "Thin slab");
-    addMorph (bodyShape, "Body shape", engineDefaults.bodyShape,
-              "Carved top", "Flat slab");
-    addMorph (construction, "Construction", engineDefaults.construction,
-              "Set neck", "Bolt-on");
-    addFloat (scaleLength, "Scale length", { 0.0f, 1.0f, 0.001f },
-              engineDefaults.scaleLength,
-              juce::AudioParameterFloatAttributes()
-                  .withLabel ("in")
-                  .withStringFromValueFunction (
-                      [] (float value, int)
-                      {
-                          const double inches = 25.5
-                              + static_cast<double> (value) * 2.5;
-                          const double hundredth = std::round (inches * 100.0)
-                                                   / 100.0;
-                          return juce::String (hundredth, 2) + "\"";
-                      })
-                  .withValueFromStringFunction (
-                      [] (const juce::String& text)
-                      {
-                          const auto inches = plainNumericValue (text);
-                          return juce::jlimit (0.0f, 1.0f, (inches - 25.5f) / 2.5f);
-                      }));
+    addFloat (guitarBuild, "Guitar build", { 0.0f, 1.0f, 0.001f },
+              electry::defaultGuitarBuild, guitarBuildAttributes());
     addPercent (bodyResonance, "Body resonance", engineDefaults.bodyResonance);
-
-    addMorph (stringGauge, "String gauge", engineDefaults.stringGauge,
-              "9-80 set", "11-98 set");
     addPercent (stringAge, "String age", engineDefaults.stringAge);
 
     addPercent (pickPosition, "Pick position", engineDefaults.pickPosition);
@@ -408,7 +357,7 @@ ElectryAudioProcessor::createParameterLayout()
     addPercent (pickNoise, "Pick noise", engineDefaults.pickNoise);
     addPercent (fingerNoise, "Finger noise", engineDefaults.fingerNoise);
     addPercent (releaseNoise, "Release noise", engineDefaults.releaseNoise);
-    addPercent (muteDamping, "Palm-mute tightness", engineDefaults.muteDamping);
+    addPercent (muteDamping, "Mute tightness", engineDefaults.muteDamping);
 
     auto bendRange = juce::NormalisableRange<float> { 0.04f, 2.0f, 0.0f };
     bendRange.setSkewForCentre (0.30f);
@@ -425,25 +374,20 @@ ElectryAudioProcessor::createParameterLayout()
                   .withStringFromValueFunction (decibelsText)
                   .withValueFromStringFunction (plainNumericValue));
 
-    // Appended after the original version-1 parameter sequence so existing
-    // host automation IDs and ordering stay intact.
     addPercent (artifacts, "Artifacts", engineDefaults.artifactAmount);
     result.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { outputMode, 1 }, "Output field",
-        juce::StringArray { "Mono", "Stereo" },
+        juce::ParameterID { outputMode, 1 }, "Output mode",
+        juce::StringArray { "Mono", "Stereo", "Double" },
         static_cast<int> (engineDefaults.outputMode)));
 
-    // Versioned additions are intentionally appended to preserve automation.
     addPercent (distortion, "Distortion", 0.0f);
     addPercent (amp, "Amp simulation", 0.0f);
     addPercent (compressor, "Compressor", 0.0f);
     addPercent (delay, "Delay", 0.0f);
     addPercent (room, "Room", 0.0f);
 
-    // Version 1.1 additions, again appended so parameter indices 1..27 keep
-    // pointing at exactly the same controls in existing host sessions.
     addPercent (sympathetic, "Sympathetic ring", engineDefaults.sympatheticAmount);
-    addPercent (palmMute, "Palm pressure", engineDefaults.palmMute);
+    addPercent (palmMute, "Mute pressure", engineDefaults.palmMute);
     addFloat (strumSpread, "Strum spread", { 0.0f, 40.0f, 0.1f },
               1000.0f * engineDefaults.strumSpreadSeconds,
               juce::AudioParameterFloatAttributes()
@@ -456,20 +400,12 @@ ElectryAudioProcessor::createParameterLayout()
                           return juce::String (value, 1) + " ms/string";
                       })
                   .withValueFromStringFunction (plainNumericValue));
-    // The 1.2 resonance control lives in the slot the 1.1 vibrato depth used
-    // (same stored ID and 0..100 range), so a saved session's value carries
-    // over as a sensible resonance depth and every automation index is kept.
     addFloat (resonanceDepth, "Resonance depth", { 0.0f, 100.0f, 1.0f },
               100.0f * engineDefaults.resonanceDepth,
               juce::AudioParameterFloatAttributes()
                   .withLabel ("%")
                   .withStringFromValueFunction (percentText100)
                   .withValueFromStringFunction (plainNumericValue));
-
-    // A new parameter, rather than a third outputMode choice: old hosts store
-    // Stereo as the top of that two-choice parameter, which must stay Stereo.
-    result.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { doubleMode, 1 }, "Double engine", false));
 
     return { result.begin(), result.end() };
 }
@@ -729,7 +665,7 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         }
         else if (controller == 2u)
         {
-            // Breath/CC2 is the performable side of the Palm Pressure parameter:
+            // Breath/CC2 is the performable side of the Mute Pressure parameter:
             // it adds bridge-hand pressure without needing automation.
             engine.setPalmMutePressure (
                 static_cast<float> (controllerValue) / 127.0f);
@@ -964,13 +900,8 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.pickupSelector = static_cast<electry::PickupSelector> (selector);
     next.pickupType = valueOf (parameterPointers.pickupType);
     next.toneKnob = valueOf (parameterPointers.tone);
-    next.bodyWood = valueOf (parameterPointers.bodyWood);
-    next.bodySize = valueOf (parameterPointers.bodySize);
-    next.bodyShape = valueOf (parameterPointers.bodyShape);
-    next.construction = valueOf (parameterPointers.construction);
-    next.scaleLength = valueOf (parameterPointers.scaleLength);
+    electry::applyGuitarBuild(next, valueOf (parameterPointers.guitarBuild));
     next.bodyResonance = valueOf (parameterPointers.bodyResonance);
-    next.stringGauge = valueOf (parameterPointers.stringGauge);
     next.stringAge = valueOf (parameterPointers.stringAge);
     next.pickPosition = valueOf (parameterPointers.pickPosition);
     next.pickHardness = valueOf (parameterPointers.pickHardness);
@@ -986,12 +917,11 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.palmMute = valueOf (parameterPointers.palmMute);
     next.strumSpreadSeconds = 0.001f * valueOf (parameterPointers.strumSpread);
     next.resonanceDepth = 0.01f * valueOf (parameterPointers.resonanceDepth);
-    const auto mode = juce::jlimit (0, 1,
+    const auto mode = juce::jlimit (0, 2,
         juce::roundToInt (valueOf (parameterPointers.outputMode)));
-    const bool requestedDouble = valueOf (parameterPointers.doubleMode) >= 0.5f;
-    next.outputMode = requestedDouble
-        ? electry::OutputMode::Mono
-        : static_cast<electry::OutputMode> (mode);
+    const bool requestedDouble = mode == 2;
+    next.outputMode = mode == 1 ? electry::OutputMode::Stereo
+                                : electry::OutputMode::Mono;
     engine.setParameters (next);
 
     // A Double lane is a complete mono guitar, not the divided-pickup field.
@@ -1181,7 +1111,6 @@ void ElectryAudioProcessor::setStateInformation (const void* data, int sizeInByt
             static_cast<bool> (
                 restoredState.getProperty (playStyleKeysHoldProperty, false)),
             std::memory_order_relaxed);
-        addMissingParameterDefaults (restoredState, parameters, getParameters());
         parameters.replaceState (restoredState);
         currentProgram.store (
             restoredProgram >= 0 && restoredProgram < getNumPrograms()

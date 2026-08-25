@@ -5,6 +5,35 @@ separate: a deterministic model render, recordings made by real players, and
 the listening claim that one is convincing as the other. A better numeric fit
 to one phrase is useful evidence; it is not a market-leading claim by itself.
 
+## Current product surface
+
+The unreleased plug-in currently exposes 26 host parameters; development
+snapshots have no backward-compatibility contract. One **Guitar Build**
+parameter replaces six separate construction axes and follows a smooth path
+through Slab fixed, Contoured, Angular set, Modern bolt, Dense extended and
+Neck-through anchors. Internally that path co-moves wood damping, body mass,
+modal shape, joint/bridge construction, scale and Drop-E gauge; the fitted
+Drop-E build at 0.8 is the default. Pickup selector and type, Tone, Body
+Resonance amount, string age and all player/contact controls remain independent.
+**Output Mode** is one three-choice Mono/Stereo/Double parameter; Double means
+two separately seeded complete engines, one mono performance per channel.
+
+The editor names the bridge-hand style **Mute** and its two controls **Mute
+Tightness** and **Mute Pressure**. This document retains “palm mute” where it
+names the physical technique, public-corpus annotation or frozen evaluator
+filename.
+
+The wet path is outside the dry probes below. Its Distortion module now solves
+the 2.2 kOhm / 10 nF antiparallel Shockley-diode RC node from
+[Yeh, Abel and Smith](https://dafx.de/paper-archive/2007/Papers/p197.pdf), and
+its two amplifier stages interpolate a dense transfer generated during
+preparation by solving
+[Dempwolf and Zölzer's measured 12AX7 current model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf)
+against a 250 V / 100 kOhm plate load with a residual-checked solver. Existing
+oversampling, sag, transformer-flux model and filter cabinet remain. These are
+circuit solves of the nonlinear modules, not a complete named pedal or amp
+schematic, a SPICE validation, or a measured cabinet impulse response.
+
 ## Reproducible model probes
 
 Build the JUCE-free tools, then render the evaluation set outside the source
@@ -20,9 +49,9 @@ cmake --build build-dsp --parallel
 Schema `electry-evaluation/v3` writes ten probes plus `manifest.json`:
 `e1-open.wav`, `e1-palm-mute-light.wav`, `e1-palm-mute-medium.wav`,
 `e1-palm-mute-hard.wav`, `e1-dead.wav`, and the same five names beginning with
-`e2-`. Light, medium and hard are Palm Mute style renders at Palm Tightness
+`e2-`. Light, medium and hard are Mute style renders at Mute Tightness
 0.00, the 0.55 shipping default, and 1.00; Dead is the independent fretting-hand
-mute with continuous Palm Pressure at zero. Every probe records its own value
+mute with continuous Mute Pressure at zero. Every probe records its own value
 in the manifest.
 All WAVs are unnormalized, mono, 32-bit IEEE float at 44.1 kHz. The targets are
 the open eighth string E1/MIDI 28 and open sixth string E2/MIDI 40, each struck
@@ -192,7 +221,7 @@ The Fishman MIDI velocities are close within each pair—113/118 ordinary/Palm
 for P1 and 23/16 for P2—but they are tracker output, not calibrated pick force.
 The table therefore compares normalized trajectory, never cross-file level.
 The Electry rows are the identical fresh-engine evaluator protocol moved one
-semitone to MIDI 41; medium means the shipping 55% Palm Tightness.
+semitone to MIDI 41; medium means the shipping 55% Mute Tightness.
 
 | output | 30-80 ms RMS vs 0-30 | centroid, 0-30 / 30-80 | upper share, 0-30 / 30-80 | harmonicity, 0-30 / 30-80 |
 | --- | ---: | ---: | ---: | ---: |
@@ -242,11 +271,11 @@ calibration, a sustained-noise tail, or one damping number for every string.
 
 ### Palm-control continuity and hand-history audit
 
-A full eight-string control sweep found no new voicing axis to add. Palm
+A full eight-string control sweep found no new voicing axis to add. Mute
 Tightness shortened and darkened every open string monotonically, Down and Up
 Palm attacks retained their velocity ordering, zero Velocity Response remained
 an exact identity across all seven play styles and eight strings, zero CC2 was
-an exact bypass, and Palm Tightness did nothing outside the Palm articulation.
+an exact bypass, and Mute Tightness did nothing outside the Mute articulation.
 The failure was narrower and more serious for performance: adjacent 7-bit CC2
 values could cross an infeasible low-string loss solve. On E1, CC2 97 to 98
 moved 0-50 ms RMS by +4.6493 dB and peak by +3.9187 dB; on E2, 116 to 117
@@ -307,10 +336,9 @@ reaches the loop output, and excess is clamped to real contact before every
 downstream use. A deterministic regression requires the dedicated collision
 PRNG to advance for maximum-force Palm and Dead on both E1 and E2. At the
 shipping 18% Artifacts setting the E1 Palm/Dead 0-150 ms change remains subtle,
-about -55.18 to -59.97 dB relative to the previous render. The common-chain
-rapid-Palm metric is effectively unchanged at 8.48152% upper share and 0.926221
-harmonicity, so this repairs a dead/inverted mechanism without pretending it
-fills the Palm-body gap.
+about -55.18 to -59.97 dB relative to the previous render. This repairs a
+dead/inverted mechanism without pretending it fills the Palm-body gap; the
+current circuit-chain alarm is frozen separately below.
 
 ### Repeated-mute envelope comparison
 
@@ -322,7 +350,7 @@ this removes absolute level and asks how closely the envelope shape repeats.
 
 The model side is the two MIDI-identical bars in
 `Docs/audio/04-drop-e-rhythm-dry.wav` (SHA-256
-`b69dfb73b2daf1ffa8d9be442e0f64621dc94439e8055f1b3bb04203ff66d4a0`).
+`6ba5bf9c90f20ae16c26edd5c2729fa1613e8090ba7b5eda94adb9bcf643e642`).
 Its exact bar starts are frames 11,025 and 148,601 at 44.1 kHz—the renderer
 truncates every scored hold and gap to an integer frame—and the corresponding
 E1 Palm Mute score hits are 0, 1, 2, 4, 5, 7, 8, 10, 11 and 13.
@@ -330,7 +358,7 @@ E1 Palm Mute score hits are 0, 1, 2, 4, 5, 7, 8, 10, 11 and 13.
 | source | corresponding pairs | 120 ms envelope correlation (raw; best within +/-2 ms) | paired 0-30 ms RMS difference |
 | --- | ---: | ---: | ---: |
 | real CC0 Drop-E E1 muted-string candidates | 1 | 0.742; 0.789 | 2.44 dB |
-| current Electry dry E1 bars | 10 | median 0.977, range 0.922-0.996; median 0.978, range 0.949-0.996 | median 1.041 dB, range 0.048-2.780 dB |
+| current Electry dry E1 bars | 10 | median 0.981, range 0.930-0.995; median 0.985, range 0.954-0.995 | median 0.807 dB, range 0.032-2.774 dB |
 
 Electry already spans the real pair's short-attack level difference, so this
 does not support more random gain or timing. Its later envelope repeats more
@@ -363,7 +391,7 @@ the smoother from 12-40 ms keeps both annotations within 13 ms.
 The comparison below uses the safe 0-30 and 30-80 ms windows common to the
 real phrase and the new 83.31 ms-IOI
 [`16-mute-and-dead-metal.wav`](audio/16-mute-and-dead-metal.wav), SHA-256
-`48b1cefda721898efbf6eaba00a4cf46b48e9bcf220c967db67d88f78b481c50`.
+`e8834165e14e2f8a1df22539f58c5d7ed3ac4d29ea2b2632a3782cd4f314707d`.
 Centroid and power share are mean-removed and Hann-windowed. Centroid and the
 power-share denominator use bins with `20 <= f <= 8,000 Hz`; the power-share
 numerator uses the strict upper band `500 < f <= 8,000 Hz`. Harmonicity is
@@ -372,20 +400,20 @@ normalized autocorrelation over the E1 lag range.
 | output/context | 30-80 ms RMS vs 0-30 | centroid 0-30 / 30-80 | 30-80 ms power, `500 < f <= 8,000` / `20 <= f <= 8,000` | harmonicity |
 | --- | ---: | ---: | ---: | ---: |
 | real distorted “muted string” | +0.87 dB | 1,033 / 1,506 Hz | 73.0696% | 0.212544 |
-| Electry common-chain Palm | -2.46 dB | 164 / 306 Hz | 8.4815% | 0.926221 |
+| Electry common-chain Mute | -4.34 dB | 167 / 289 Hz | 6.5960% | 0.879782 |
 | real first ghost after Palm | +3.12 dB | 652 / 310 Hz | 9.9994% | 0.786 |
 | real second repick | +1.30 dB | 754 / 1,314 Hz | 64.6730% | 0.247 |
-| Electry common-chain Dead | -1.26 dB | 198 / 335 Hz | 9.7151% | 0.932 |
+| Electry common-chain Dead | -3.17 dB | 246 / 316 Hz | 8.4881% | 0.880136 |
 
-The muted-candidate/model-Palm upper-band-share gap is 64.5881 percentage
+The muted-candidate/model-Mute upper-band-share gap is 66.4736 percentage
 points on that exact predicate. It remains a confounded processed-output alarm,
 not a dry tuning target.
 
 An independent chain audit locates this gap upstream of `ElectryFx`. For the
 last muted E1 of demo 04's first bar (known contact frame 103,622), the 30-100
-ms dry body has a 0.067% upper-band share under the same predicate and 0.989
+ms dry body has a 0.0685% upper-band share under the same predicate and 0.9878
 harmonicity; the identical frame in demo 05's common chain raises those to
-1.48% and 0.980. The FX adds
+0.2913% and 0.9837. The FX adds
 upper harmonics rather than removing them. Only about 1.2%
 of the real region's power lies above 5 kHz, so the cabinet's fourth-order
 5 kHz roll-off cannot explain the missing 500 Hz-5 kHz content either. At the
@@ -402,10 +430,10 @@ source cannot establish a missing dry mechanism. Electry's
 common-chain Palm is also substantially darker and more periodic here. On the
 existing 120 ms envelope method, the two real distorted muted candidates
 correlate 0.240
-(0.348 after best alignment within +/-2 ms), against a 0.945 median for the
-common-chain model bars, so their output trajectories repeat less alike even
-though paired 0-30 ms level displacement is comparable (0.431 versus a 0.466
-dB median).
+(0.348 after best alignment within +/-2 ms), against 0.9685 raw and 0.9762
+best-aligned medians for the final common-chain model bars, so their output
+trajectories repeat less alike. Paired 0-30 ms level displacement is 0.431 dB
+for the real pair versus a 0.296 dB model median (0.031-1.379 dB range).
 
 This file is not a dry calibration target. It is a separate performance, not a
 paired reamp of 557299: its two ghost IOIs are 332.6 and 329.3 ms where the
@@ -428,9 +456,9 @@ repeatedly show nonperiodic 60-80 ms energy above their measured noise floors.
 without downloading reference audio. It renders the exact twelve-hit E1 score
 and common metal voicing, mean-removes each scheduled 30-80 ms body, applies
 Hann only for spectral power, and computes harmonicity from unwindowed
-normalized autocorrelation at E1 lags. The current in-test medians are 8.481520%
-upper-body power and 0.926221 harmonicity; loose one-sided rails require more
-than 5% and less than 0.97 respectively. They reject a materially darker or
+normalized autocorrelation at E1 lags. The current in-test medians are 6.595952%
+upper-body power and 0.879781 harmonicity; loose one-sided rails require more
+than 6% and less than 0.97 respectively. They reject a materially darker or
 more periodic regression while leaving commissioned dry evidence free to
 support a different contact model.
 
@@ -466,7 +494,7 @@ normalized autocorrelation over 36-48 Hz in the detrended 30-250 ms body.
 | 30-250 ms harmonicity | 0.936 | 0.385 | 0.988 |
 
 Those model columns are the medians of a timing-matched
-Open -> Palm Mute -> Dead -> Dead render with no invented note-offs. The old
+Open -> Mute -> Dead -> Dead render with no invented note-offs. The old
 30 ms fretting-hand loss had an acceptable-looking centroid only because it
 had erased the pitched body: its three-window envelope error averaged 36.74 dB
 and its periodicity collapsed. The corrected model reduces that envelope error
@@ -483,7 +511,7 @@ fretting-hand loss target becomes 1.6 s, its upper decay fit moves from 3.6 kHz
 to the eighth partial, and the already-present attack hand darkening is set to
 15%. Sustain and all eight Open/Palm evaluation WAVs remain byte-identical.
 
-Palm Pressure remains the independent bridge hand and stacks with Dead. Its
+Mute Pressure remains the independent bridge hand and stacks with Dead. Its
 one-shot impact formerly armed only above 10%, creating a discontinuity even
 though the continuous loss itself was smooth. Arming it at every positive
 pressure lets its amplitude tend to zero naturally: over pressure
@@ -516,7 +544,7 @@ The commissioned dry train captures remain the calibration gate.
 
 One separate shipping-path mismatch was also corrected. The default 20%
 sympathetic-string system already said that a Dead fretting hand damps every
-string, but only Palm Mute actually entered its global contact calculation;
+string, but only Mute actually entered its global contact calculation;
 unused strings could therefore outlive the deliberately short Dead voice. A
 Dead voice now maps the same calibrated 1.6 s choke through the existing
 logarithmic hand-contact law (`handMute = 0.2041925`). A full contact value
@@ -550,7 +578,7 @@ signal was only 7.312 dB below the uninterrupted twin and the staged ring rose
 and deterministic seed only when the plectrum arrives.
 
 The existing pick-contact loss is not the missing state mechanism. At the
-default Palm Mute it derives nominal retention `R = 0.607456` over 151 internal
+default Mute it derives nominal retention `R = 0.607456` over 151 internal
 contact samples, then applies `R^(1/151) = 0.996704` at the commuted loop seam.
 An E1 or E2 wave occupies about 2,330 or 1,165 internal samples, so every
 contact frame attenuates a different stored cell once. The estimated
@@ -698,8 +726,8 @@ E1 stroke is about 2.5 cents.
 That string, gauge, position, articulation and velocity dependence comes from
 one stretch law and one effective full-force anchor; no new control or
 keyswitch was added by that recalibration, and its playable range is unchanged.
-The later Double wrapper is the separately appended host parameter 32 and does
-not alter this single-engine probe.
+The plug-in wrapper exposes Double as the third choice of its single Output
+Mode parameter; it does not alter this JUCE-free single-engine probe.
 
 The bridge-hand contact now also distinguishes a soft stroke from a hard one.
 The probe below expresses 0.5-1.0 s RMS relative to each attack's own 0-50 ms
@@ -714,7 +742,7 @@ This is a conservative attack latch, not another audio follower: the existing
 velocity amplitude and deterministic stroke-force draw are multiplied, clamped
 to 0.32-1.25, and applied to the final positive hand-loss rate. It adds no UI or
 random draw. With no hand the path remains exactly absent, Velocity Response at
-zero removes MIDI velocity exactly for the same stroke, and both Palm Tightness and
+zero removes MIDI velocity exactly for the same stroke, and both Mute Tightness and
 CC2 pressure retain monotonic tail contraction. The open render is unchanged.
 The separate palm-impact retention is calibrated at 48 kHz and rate-normalized:
 its internal velocity state falls 16.744 dB in 5 ms at 44.1, 48, 96, and 192
@@ -746,7 +774,7 @@ the slow median is not a general palm-mute requirement.
 The evidence-backed change is therefore local to contact physics. The hand's
 solved spectral loss is present from the attack instead of growing through an
 unsupported 40 ms fade, and stays full until the loop has established a real
-energy peak before its existing energy-driven relaxation can begin. Palm Mute
+energy peak before its existing energy-driven relaxation can begin. Mute
 also keeps the sustained triangular release displacement at the Sustain value
 of 1.55 instead of pre-shrinking it to 1.28: the hand damps a loaded string; it
 does not prevent the pick from loading it. Relative to the prior build, E1's
@@ -761,7 +789,7 @@ are `[0, -4.08, -9.76, -13.95]` dB below 500 Hz and
 50-150 ms exception is kept visible: the current model reaches the robust
 high-band direction after that first window, not at every pitch and window.
 
-The existing Palm Tightness control spans a real envelope range rather than three
+The existing Mute Tightness control spans a real envelope range rather than three
 labels over one sound:
 
 | probe and depth | 0-50 ms | 50-150 ms | 150-500 ms | 500-1000 ms |
@@ -843,17 +871,18 @@ the newest physical, host or on-screen play-style key overrides it only while
 down and reveals an older held key or the base on release. Pick Stroke remains
 independent and velocity keeps its physical force meaning.
 
-At that wrapper-only pass, the operating mode was saved as non-parameter state,
-so the then-current 31 automation IDs and factory-rig behavior remained
-unchanged; transient held keys are never serialized. Play-style Note On, Note
+`LATCH | HOLD` is saved as non-parameter state alongside the current 26 host
+parameters; transient held keys are never serialized. Because Electry is not
+released, the suite pins current-state round trips rather than migration from
+older development layouts. Play-style Note On, Note
 Off and zero-velocity Note On are stably
 conditioned before a same-sample attack in either host insertion order; CC123
 joins that pass and retains its source order against them.
 Duplicate and overlapping holds, base changes beneath a hold, delayed-note
 style capture, UI/host parity, CC120/123, Panic, prepare/release, mode changes,
-legacy state and hold-time state saves are regression-pinned. This closes the
-workflow gap without copying discrete half/full/short layers: Palm Tightness,
-CC2 Pressure and stroke force remain one continuous bridge-hand surface, and
+current state and hold-time state saves are regression-pinned. This closes the
+workflow gap without copying discrete half/full/short layers: Mute Tightness,
+Mute Pressure (CC2) and stroke force remain one continuous bridge-hand surface, and
 no DSP or rendered evaluator target changes.
 
 The adjacent specialist bar is
@@ -885,15 +914,36 @@ audio generator.
 
 ### Commissioned Palm/Dead capture gate
 
-No public source found in this pass verifies all of extended-range E1/F#1/B1,
-Palm or fretting-hand Dead articulation, genuinely dry DI capture, and rights
-for commercial virtual-instrument calibration. The lawful ccMixter eight-string
-muted stems are upper-register preamp performances, not low-E Palm/Dead
-calibration; the CC0 eight-string F#1/B1 pack is dry but contains only open
-notes. Uproar RAW and Hydra provide strong commercial listening references,
-but their licences do not permit turning their recordings into a competing
-instrument. The next fitting evidence must therefore be a commissioned capture
-with explicit commercial model-calibration and private evaluation rights. The
+No public source found closes the licensed, controlled, genuinely dry E1 and
+open-string E2 **Open/Mute/Dead** gate. The two strongest lawful CC0 leads
+still cover only separate pieces:
+
+- [Freesound 557299](https://freesound.org/people/minus_28_and_falling/sounds/557299/)
+  is a real Drop-E eight-string open/muted/ghost phrase, but “muted” does not
+  identify the hand, the chain and pick/pressure are uncontrolled, and this
+  audit could access only the public MP3 preview.
+- [cabled_mess's F#-string pack](https://freesound.org/people/cabled_mess/packs/29585/)
+  documents a clean eight-string/RME Babyface/Cubase workflow and dry F#1-F#2
+  open notes, but contains no Mute or Dead articulations and is not Drop-E.
+
+The additional lawful
+[CC BY 3.0 ccMixter stems](https://ccmixter.org/files/tobias_weber/57022) are
+upper-register preamp performances whose “muted single notes” label does not
+establish a palm technique, so they bound repetition timing only.
+
+The [cabled_mess profile](https://freesound.org/people/cabled_mess/) explicitly
+offers custom recordings, making that recordist the best first commission
+lead. Availability, retuning, adherence to this protocol and commercial
+model-calibration/private-evaluation rights still require a written agreement;
+the public CC0 pack alone grants none of those future-performance facts. The
+documented [Ibanez RG8 Drop-E corpus](https://github.com/aomartinezg/music-sheet-generator)
+is not an alternative: its raw recordings were never committed and the
+repository has no licence.
+
+Uproar RAW and Hydra remain strong commercial listening references, but their
+licences do not permit turning their recordings into a competing instrument.
+The next fitting evidence must therefore be a commissioned capture with
+explicit commercial model-calibration and private-evaluation rights. The
 smallest useful pilot is a separate
 `electry-mute-capture/v1` contract; the model-only `electry-evaluation/v3`
 directory and validator remain unchanged.
@@ -937,9 +987,9 @@ perfectly aligned with tuning drift, pick wear or hand fatigue.
 pressing any string to a fret. The picking hand clears the bridge and strings
 except for the pick. Each session fixes one ordinary natural hand location and
 shape for all Dead takes, logs the index-pad centre's nut distance along string
-8 and describes the finger/string contact span. Palm heel distance and Palm
+8 and describes the finger/string contact span. Palm heel distance and Mute
 Tightness do not describe this articulation; confusing the two hands would make
-the capture unable to test the model's separate Palm and Dead controls.
+the capture unable to test the model's separate Mute and Dead controls.
 
 Because isolated notes cannot validate re-pick state, the pilot also contains
 `e1-palm-middle-rapid.wav`, `e2-palm-middle-rapid.wav`, `e1-dead-rapid.wav` and

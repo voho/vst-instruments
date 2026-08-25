@@ -16,13 +16,8 @@ namespace electry::parameters
 inline constexpr auto pickupSelector = "pickupSelector";
 inline constexpr auto pickupType     = "pickupType";
 inline constexpr auto tone           = "tone";
-inline constexpr auto bodyWood       = "bodyWood";
-inline constexpr auto bodySize       = "bodySize";
-inline constexpr auto bodyShape      = "bodyShape";
-inline constexpr auto construction   = "construction";
-inline constexpr auto scaleLength    = "scaleLength";
+inline constexpr auto guitarBuild    = "guitarBuild";
 inline constexpr auto bodyResonance  = "bodyResonance";
-inline constexpr auto stringGauge    = "stringGauge";
 inline constexpr auto stringAge      = "stringAge";
 inline constexpr auto pickPosition   = "pickPosition";
 inline constexpr auto pickHardness   = "pickHardness";
@@ -40,17 +35,10 @@ inline constexpr auto amp            = "amp";
 inline constexpr auto compressor     = "compressor";
 inline constexpr auto delay          = "delay";
 inline constexpr auto room           = "room";
-// Version 1.1 additions, appended so every existing automation index is kept.
 inline constexpr auto sympathetic    = "sympathetic";
 inline constexpr auto palmMute       = "palmMute";
 inline constexpr auto strumSpread    = "strumSpread";
-// Version 1.2 repurposed this slot from the CC1 vibrato to the CC1 resonance
-// control. The stored ID is kept so existing sessions and automation lanes
-// keep pointing at the same parameter index.
-inline constexpr auto resonanceDepth = "vibratoDepth";
-// Appended after every 1.2 parameter. Keeping Double separate preserves the
-// original outputMode parameter's Mono/Stereo host-automation mapping.
-inline constexpr auto doubleMode     = "doubleMode";
+inline constexpr auto resonanceDepth = "resonanceDepth";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -156,13 +144,8 @@ private:
         std::atomic<float>* pickupSelector = nullptr;
         std::atomic<float>* pickupType = nullptr;
         std::atomic<float>* tone = nullptr;
-        std::atomic<float>* bodyWood = nullptr;
-        std::atomic<float>* bodySize = nullptr;
-        std::atomic<float>* bodyShape = nullptr;
-        std::atomic<float>* construction = nullptr;
-        std::atomic<float>* scaleLength = nullptr;
+        std::atomic<float>* guitarBuild = nullptr;
         std::atomic<float>* bodyResonance = nullptr;
-        std::atomic<float>* stringGauge = nullptr;
         std::atomic<float>* stringAge = nullptr;
         std::atomic<float>* pickPosition = nullptr;
         std::atomic<float>* pickHardness = nullptr;
@@ -184,7 +167,6 @@ private:
         std::atomic<float>* palmMute = nullptr;
         std::atomic<float>* strumSpread = nullptr;
         std::atomic<float>* resonanceDepth = nullptr;
-        std::atomic<float>* doubleMode = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent

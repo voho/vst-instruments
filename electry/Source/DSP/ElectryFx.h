@@ -241,7 +241,12 @@ private:
         Biquad pedalHighpass {};
         Biquad pedalVoice {};
         Biquad pedalTilt {};
-        OnePole pedalSmooth {};
+        // Voltage and derivative of the 2.2 kOhm / 10 nF diode node. The
+        // capacitor is part of the clipper circuit, so it replaces the old
+        // post-waveshaper smoothing pole rather than adding another filter.
+        double diodeVoltage { 0.0 };
+        double diodeDerivative { 0.0 };
+        bool pedalWasActive { false };
 
         Biquad ampHighpass {};
         Biquad ampVoice {};
@@ -270,7 +275,10 @@ private:
         OnePole flux {};
 
         std::array<Biquad, 6> cabinet {};
+        bool ampWasActive { false };
 
+        void resetPedal() noexcept;
+        void resetAmp() noexcept;
         void reset() noexcept;
     };
 
@@ -286,6 +294,22 @@ private:
         float sampleRate) noexcept;
     [[nodiscard]] static float transformerCore(OnePole& flux, float input,
                                                float coefficient) noexcept;
+    [[nodiscard]] static float diodePairStep(double inputVolts,
+                                             double sampleRate,
+                                             double& outputVolts,
+                                             double& previousDerivative) noexcept;
+    [[nodiscard]] static double triodeCathodeCurrent(
+        double plateVoltage, double gridToCathodeVoltage) noexcept;
+    [[nodiscard]] static double triodeGridCurrent(
+        double gridToCathodeVoltage) noexcept;
+    [[nodiscard]] static double triodePlateCurrent(
+        double plateVoltage, double gridToCathodeVoltage) noexcept;
+    [[nodiscard]] static double solveTriodePlate(
+        double gridToCathodeVoltage, double supplyVoltage,
+        double& warmStart) noexcept;
+    [[nodiscard]] static float triodeStage(double gridVoltage,
+                                           double& plateVoltage) noexcept;
+    [[nodiscard]] static float triodeStageLookup(double gridVoltage) noexcept;
     [[nodiscard]] float renderGainStage(GainChannel& channel,
                                         float input) noexcept;
     [[nodiscard]] float renderGainFrame(GainChannel& channel,

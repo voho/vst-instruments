@@ -68,6 +68,91 @@ struct ElectryFxTestAccess
         return fx.targetParameters_;
     }
 
+    static float diodeStep(double inputVolts, double rate,
+                           double& outputVolts,
+                           double& previousDerivative) noexcept
+    {
+        return ElectryFx::diodePairStep(inputVolts, rate, outputVolts,
+                                        previousDerivative);
+    }
+
+    static double cathodeCurrent(double plateVoltage,
+                                 double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::triodeCathodeCurrent(plateVoltage,
+                                               gridToCathodeVoltage);
+    }
+
+    static double plateCurrent(double plateVoltage,
+                               double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::triodePlateCurrent(plateVoltage,
+                                             gridToCathodeVoltage);
+    }
+
+    static double gridCurrent(double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::triodeGridCurrent(gridToCathodeVoltage);
+    }
+
+    static double solvePlate(double gridToCathodeVoltage,
+                             double supplyVoltage,
+                             double& warmStart) noexcept
+    {
+        return ElectryFx::solveTriodePlate(gridToCathodeVoltage,
+                                           supplyVoltage, warmStart);
+    }
+
+    static float triodeOutput(double gridVoltage,
+                              double& plateVoltage) noexcept
+    {
+        return ElectryFx::triodeStage(gridVoltage, plateVoltage);
+    }
+
+    static float triodeLookup(double gridVoltage) noexcept
+    {
+        return ElectryFx::triodeStageLookup(gridVoltage);
+    }
+
+    static bool pedalAtRest(const ElectryFx& fx) noexcept
+    {
+        return std::all_of(fx.gain_.begin(), fx.gain_.end(), [] (const auto& channel)
+        {
+            return ! channel.pedalWasActive
+                && channel.diodeVoltage == 0.0
+                && channel.diodeDerivative == 0.0
+                && channel.pedalHighpass.z1 == 0.0
+                && channel.pedalHighpass.z2 == 0.0
+                && channel.pedalVoice.z1 == 0.0
+                && channel.pedalVoice.z2 == 0.0
+                && channel.pedalTilt.z1 == 0.0
+                && channel.pedalTilt.z2 == 0.0;
+        });
+    }
+
+    static bool ampAtRest(const ElectryFx& fx) noexcept
+    {
+        return std::all_of(fx.gain_.begin(), fx.gain_.end(), [] (const auto& channel)
+        {
+            const bool cabinetClear = std::all_of(
+                channel.cabinet.begin(), channel.cabinet.end(), [] (const auto& section)
+                {
+                    return section.z1 == 0.0 && section.z2 == 0.0;
+                });
+            return ! channel.ampWasActive
+                && channel.bias == 0.0f && channel.sag == 0.0f
+                && channel.interstage.state == 0.0f
+                && channel.flux.state == 0.0f
+                && channel.ampHighpass.z1 == 0.0
+                && channel.ampHighpass.z2 == 0.0
+                && channel.ampVoice.z1 == 0.0
+                && channel.ampVoice.z2 == 0.0
+                && channel.transformerHighpass.z1 == 0.0
+                && channel.transformerHighpass.z2 == 0.0
+                && cabinetClear;
+        });
+    }
+
     // Harmonic distortion the output transformer's core adds to a steady sine,
     // measured at the stage itself. Measuring it at the chain's output instead
     // would measure the cabinet: a second-order high-pass at the box frequency
@@ -137,6 +222,8 @@ using electry::ElectryEngine;
 using electry::ElectryFx;
 using electry::EngineParameters;
 using electry::FxParameters;
+using electry::applyGuitarBuild;
+using electry::defaultGuitarBuild;
 using electry::PickStyle;
 using electry::PickupSelector;
 using electry::PlayStyle;
@@ -369,8 +456,7 @@ void testRapidPalmBodyDirection()
     engineParameters.pickupSelector = PickupSelector::Bridge;
     engineParameters.pickupType = 0.32f;
     engineParameters.toneKnob = 1.0f;
-    engineParameters.scaleLength = 0.85f;
-    engineParameters.stringGauge = 0.8f;
+    applyGuitarBuild(engineParameters, defaultGuitarBuild);
     engineParameters.stringAge = 0.10f;
     engineParameters.pickHardness = 0.85f;
     engineParameters.pickPosition = 0.18f;
@@ -529,7 +615,7 @@ void testRapidPalmBodyDirection()
     // Loose one-sided rails: only a material regression toward a darker or
     // more periodic chug should fail. They are not fits to the confounded real
     // reference and intentionally leave room for evidence-led model work.
-    expect(medianUpperBody > 0.05,
+    expect(medianUpperBody > 0.06,
            "the rapid Palm body became materially darker");
     expect(medianHarmonicity < 0.97,
            "the rapid Palm body became materially more periodic");
@@ -616,6 +702,196 @@ void testExactDryBypass()
         expect(allFinite(processed),
                "control " + std::to_string(index) + " produced a non-finite sample");
     }
+}
+
+void testCircuitGainStages()
+{
+    // The diode pair's three DC points come from the independent Shockley KCL
+    // equation (Vi - Vo) / 2.2k = 2 Is sinh(Vo / nVt), not from this solver.
+    const auto settledDiode = [] (double inputVolts)
+    {
+        double voltage = 0.0;
+        double derivative = 0.0;
+        for (int sample = 0; sample < 4096; ++sample)
+            FxAccess::diodeStep(inputVolts, 192000.0, voltage, derivative);
+        return voltage;
+    };
+    expect(std::abs(settledDiode(0.1) - 0.099950009) < 2.0e-6,
+           "the diode clipper misses its 0.1 V Shockley operating point");
+    expect(std::abs(settledDiode(1.0) - 0.514412245) < 2.0e-6,
+           "the diode clipper misses its 1 V Shockley operating point");
+    expect(std::abs(settledDiode(2.0) - 0.563440008) < 2.0e-6,
+           "the diode clipper misses its 2 V Shockley operating point");
+    expect(std::abs(settledDiode(1.0) + settledDiode(-1.0)) < 2.0e-7,
+           "the antiparallel diode pair is not symmetric");
+
+    double diodeVoltage = 0.0;
+    double diodeDerivative = 0.0;
+    const double first = FxAccess::diodeStep(
+        0.25, 192000.0, diodeVoltage, diodeDerivative);
+    const double released = FxAccess::diodeStep(
+        0.0, 192000.0, diodeVoltage, diodeDerivative);
+    expect(first > 0.0 && first < 0.25,
+           "the diode node does not charge through its RC network");
+    expect(released > 0.0 && released < 0.25,
+           "the diode node has no capacitor memory after the input releases");
+
+    // Independently derived coupled quiescent solution for 250 V / 100 kOhm
+    // plate loading and 1 kOhm cathode self-bias. Both KCL equations must hold;
+    // checking only the plate solve could conceal a mismatched cathode anchor.
+    constexpr double quiescentPlate = 152.15373624396778;
+    constexpr double quiescentCathode = 0.978501831350406;
+    const double cathode = FxAccess::cathodeCurrent(
+        quiescentPlate, -quiescentCathode);
+    const double plate = FxAccess::plateCurrent(
+        quiescentPlate, -quiescentCathode);
+    expect(std::abs(quiescentCathode - 1000.0 * cathode) < 1.0e-9,
+           "the measured triode model misses cathode-bias KCL");
+    expect(std::abs(quiescentPlate + 100000.0 * plate - 250.0) < 1.0e-8,
+           "the measured triode model misses plate-load KCL");
+
+    double arbitraryWarmStart = 10.0;
+    const double solvedPlate = FxAccess::solvePlate(
+        -quiescentCathode, 250.0, arbitraryWarmStart);
+    expect(std::abs(solvedPlate - quiescentPlate) < 1.0e-8,
+           "the plate-load Newton solve does not reach the DC operating point");
+
+    // Cross-check the warm-started Newton solver against an independent
+    // fixed-iteration bisection of the published current equations across the
+    // useful grid range. +2 V is already beyond the load line (the tube asks
+    // for more than 2.5 mA even at Vp=0), so both solvers must select the
+    // physical 0 V rail there; interior points must satisfy KCL themselves.
+    const auto referenceSoftplus = [] (double value)
+    {
+        return std::max(value, 0.0)
+             + std::log1p(std::exp(-std::abs(value)));
+    };
+    const auto referenceGridCurrent = [&] (double gridToCathode)
+    {
+        const double conduction = referenceSoftplus(11.99 * gridToCathode)
+                                / 11.99;
+        return 3.263e-4 * std::pow(conduction, 1.156) + 3.917e-8;
+    };
+    const auto referencePlateCurrent = [&] (double plateVoltage,
+                                             double gridToCathode)
+    {
+        const double drive = plateVoltage / 86.9 + gridToCathode;
+        const double conduction = referenceSoftplus(4.56 * drive) / 4.56;
+        const double cathodeCurrent = 1.371e-3
+            * std::pow(conduction, 1.349);
+        return cathodeCurrent - referenceGridCurrent(gridToCathode);
+    };
+    const auto referencePlate = [&] (double gridToCathode)
+    {
+        const auto residual = [&] (double plateVoltage)
+        {
+            return referencePlateCurrent(plateVoltage, gridToCathode)
+                 - (250.0 - plateVoltage) / 100000.0;
+        };
+        double lower = 0.0;
+        double upper = 250.0;
+        if (residual(lower) >= 0.0)
+            return lower;
+        if (residual(upper) <= 0.0)
+            return upper;
+        for (int iteration = 0; iteration < 64; ++iteration)
+        {
+            const double middle = 0.5 * (lower + upper);
+            if (residual(middle) > 0.0)
+                upper = middle;
+            else
+                lower = middle;
+        }
+        return 0.5 * (lower + upper);
+    };
+
+    double previousPlate = 251.0;
+    for (const double gridToCathode
+         : { -3.0, -2.0, -1.0, 0.0, 1.0, 1.5, 2.0 })
+    {
+        double warmStart = gridToCathode < 0.0 ? 5.0 : 245.0;
+        const double solved = FxAccess::solvePlate(
+            gridToCathode, 250.0, warmStart);
+        const double reference = referencePlate(gridToCathode);
+        expect(std::abs(solved - reference) < 1.0e-3,
+               "the triode Newton solve disagrees with independent bisection at Vgk="
+                   + std::to_string(gridToCathode));
+        expect(solved < previousPlate,
+               "triode plate voltage does not fall strictly as grid voltage rises");
+        previousPlate = solved;
+
+        const double currentResidual = referencePlateCurrent(
+            solved, gridToCathode) - (250.0 - solved) / 100000.0;
+        if (solved > 0.0 && solved < 250.0)
+            expect(std::abs(currentResidual) < 1.0e-8,
+                   "the triode plate solve misses load-line KCL at Vgk="
+                       + std::to_string(gridToCathode));
+        else
+            expect(gridToCathode == 2.0 && solved == 0.0
+                       && currentResidual > 0.0,
+                   "the triode solver selected the wrong physical plate rail");
+    }
+
+    // A clipped stage can move directly from the conducting 0 V rail to
+    // cutoff. That hostile warm start used to exhaust the safeguarded steps
+    // and return a point almost four volts away from the load-line root.
+    double railWarmStart = 0.0;
+    constexpr double cutoffJump = -4.2448;
+    const double jumpedPlate = FxAccess::solvePlate(
+        cutoffJump, 250.0, railWarmStart);
+    const double jumpedReference = referencePlate(cutoffJump);
+    const double jumpedResidual = referencePlateCurrent(
+        jumpedPlate, cutoffJump) - (250.0 - jumpedPlate) / 100000.0;
+    expect(std::abs(jumpedPlate - jumpedReference) < 1.0e-3,
+           "the plate solver did not recover from a rail-to-cutoff jump");
+    expect(std::abs(jumpedResidual) < 1.0e-8,
+           "the rail-to-cutoff fallback returned without satisfying KCL");
+
+    // Runtime uses a dense interpolation of this fixed, memoryless load-line
+    // solve. Probe between table knots across the full clamped grid range so
+    // the speedup cannot quietly replace the circuit curve with a coarse
+    // waveshaper.
+    double lookupWarmStart = 250.0;
+    double maximumLookupError = 0.0;
+    double previousLookup = -std::numeric_limits<double>::infinity();
+    bool lookupIsMonotonic = true;
+    for (double gridVoltage = -19.0; gridVoltage <= 20.9;
+         gridVoltage += 0.0317)
+    {
+        const double solved = FxAccess::triodeOutput(
+            gridVoltage, lookupWarmStart);
+        const double lookedUp = FxAccess::triodeLookup(gridVoltage);
+        maximumLookupError = std::max(
+            maximumLookupError, std::abs(solved - lookedUp));
+        lookupIsMonotonic = lookupIsMonotonic
+                         && lookedUp >= previousLookup;
+        previousLookup = lookedUp;
+    }
+    std::cout << "Maximum circuit-table transfer error: "
+              << maximumLookupError << '\n';
+    expect(maximumLookupError < 2.0e-4,
+           "the runtime triode table is too coarse ("
+               + std::to_string(maximumLookupError) + ")");
+    expect(lookupIsMonotonic,
+           "the runtime triode table folded back on its load-line curve");
+
+    expect(FxAccess::gridCurrent(1.0) > FxAccess::gridCurrent(-1.0),
+           "the measured triode grid current does not rise under positive drive");
+
+    double positivePlate = quiescentPlate;
+    double negativePlate = quiescentPlate;
+    const double smallPositive = FxAccess::triodeOutput(1.0e-4, positivePlate);
+    const double smallNegative = FxAccess::triodeOutput(-1.0e-4, negativePlate);
+    const double smallSignalSlope = (smallPositive - smallNegative) / 2.0e-4;
+    expect(std::abs(smallSignalSlope - 1.0) < 2.0e-4,
+           "the triode transfer is not unity-normalised at quiescence");
+
+    positivePlate = quiescentPlate;
+    negativePlate = quiescentPlate;
+    const double loudPositive = FxAccess::triodeOutput(2.0, positivePlate);
+    const double loudNegative = FxAccess::triodeOutput(-2.0, negativePlate);
+    expect(loudPositive > -loudNegative + 0.20,
+           "the measured triode transfer lost its plate-load asymmetry");
 }
 
 void testGainStageAliasing()
@@ -1062,6 +1338,66 @@ void testEngagementIsClickFree()
     expect(std::memcmp(left.data(), source.data(),
                        source.size() * sizeof(float)) == 0,
            "the chain does not return to a bit-exact bypass");
+
+    // Turning only the amp off now skips its private tube/filter state while
+    // the distortion pedal stays live. Its 15 ms wet-mix ramp must make the
+    // later cold-state re-entry just as smooth as an ordinary automation move.
+    ElectryFx switched;
+    switched.prepare(sampleRate);
+    FxParameters stacked;
+    stacked.distortion = 1.0f;
+    stacked.amp = 1.0f;
+    switched.setParameters(stacked);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        switched.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    const double stackedStep = largestStep(left);
+
+    FxParameters pedalOnly;
+    pedalOnly.distortion = 1.0f;
+    switched.setParameters(pedalOnly);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        switched.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    const double pedalStep = largestStep(left);
+    expect(FxAccess::ampAtRest(switched),
+           "an individually bypassed amp retained stale circuit state");
+
+    switched.setParameters(stacked);
+    left = source;
+    right = source;
+    switched.process(left.data(), right.data(), static_cast<int>(left.size()));
+    const double ampReentryStep = largestStep(left);
+    const double moduleBound = 1.5 * std::max(stackedStep, pedalStep) + 0.01;
+    expect(ampReentryStep < moduleBound,
+           "re-engaging the skipped amp while distortion stayed live produced a step");
+
+    ElectryFx reciprocal;
+    reciprocal.prepare(sampleRate);
+    reciprocal.setParameters(stacked);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        reciprocal.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    FxParameters ampOnly;
+    ampOnly.amp = 1.0f;
+    reciprocal.setParameters(ampOnly);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        reciprocal.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    expect(FxAccess::pedalAtRest(reciprocal),
+           "an individually bypassed pedal retained stale RC/filter state");
 }
 
 void testDeterminismAndRateMatrix()
@@ -1293,6 +1629,7 @@ int main()
     testRapidPalmBodyDirection();
     testHalfbandKernel();
     testExactDryBypass();
+    testCircuitGainStages();
     testGainStageAliasing();
     testCabinetVoicing();
     testPowerStage();

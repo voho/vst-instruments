@@ -198,6 +198,12 @@ struct EngineParameters
     float vibratoDepth { 0.30f };
 };
 
+// The plug-in exposes the six structural coordinates above as one playable
+// path through distinct solid-body builds. Pickups, tone, body-resonance
+// amount and playing controls deliberately remain independent.
+inline constexpr float defaultGuitarBuild = 0.8f;
+void applyGuitarBuild(EngineParameters& parameters, float build) noexcept;
+
 // Per-string readout for the editor's fretboard display. It is produced on
 // the audio thread and consumed on the message thread through the host's own
 // atomics, so it is deliberately small and trivially copyable.
