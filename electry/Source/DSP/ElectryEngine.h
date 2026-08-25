@@ -37,6 +37,17 @@
 //     Digital Waveguide Synthesis of Guitar: Touch and Collisions",
 //     https://www.researchgate.net/publication/224130817_Player-Instrument_Interaction_Models_for_Digital_Waveguide_Synthesis_of_Guitar_Touch_and_Collisions
 //
+//   Palm and distributed hand/string contact
+//     Biral, d'Alessandro and Freed, "Towards a Dynamic Model of the Palm Mute
+//     Guitar Technique",
+//     https://www.icmc14-smc14.net/images/proceedings/PS4-B10-TowardsaDynamicModel.pdf
+//     Reboursiere et al., "Left and right-hand guitar playing techniques
+//     detection", https://www.nime.org/proceedings/2012/nime2012_213.pdf
+//     Schafer, Frenstatsky and Rabenstein, "A Physical String Model with
+//     Adjustable Boundary Conditions",
+//     https://dafx.de/paper-archive/2016/dafxpapers/23-DAFx-16_paper_24-PN.pdf
+//     Exact corpus comparisons and their limits: Docs/evaluation.md.
+//
 //   Fret collisions
 //     Bilbao and Torin, "Numerical modeling and sound synthesis for
 //     articulated string/fretboard interactions",
@@ -105,7 +116,8 @@ enum class PickStyle
 // hand's thumb catches the string at the pick's own position, or the slide,
 // where the finger stays down and travels along the string, or the dead note,
 // where the fretting hand rests across the strings without stopping them so the
-// pick makes its attack and no pitch survives. Latched by its own keyswitch
+// pick makes its attack and leaves a short, dark percussive body. Latched by
+// its own keyswitch
 // bank, independently of the picking style. New styles are appended, so every
 // existing keyswitch note keeps its meaning.
 enum class PlayStyle
@@ -157,7 +169,7 @@ struct EngineParameters
     float pickNoise { 0.5f };       // plectrum contact/scrape level
     float fingerNoise { 0.4f };     // fretting-hand contact level
     float releaseNoise { 0.4f };    // note-end damping/lift noise level
-    float muteDamping { 0.55f };    // palm-mute strength for the Muted style
+    float muteDamping { 0.55f };    // Palm Tightness for the Palm Mute style
     float bendTimeSeconds { 0.28f };// finger-bend travel time
     float velocityAmount { 0.85f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
@@ -239,6 +251,10 @@ public:
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
+    // Selects a deterministic player's stroke/strum variation stream. The
+    // default zero preserves the established render contract; a new seed
+    // takes effect at the next reset and never introduces wall-clock random.
+    void setVariationSeed(std::uint32_t seed) noexcept { variationSeed_ = seed; }
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
@@ -253,7 +269,7 @@ public:
     // parameter alone, 1 = full bridge coupling plus acoustic feedback from
     // the amplified output, scaled by the Resonance Depth parameter).
     void setResonance(float normalised) noexcept;
-    // MIDI CC2 adds continuous bridge-hand damping on top of the Palm Mute
+    // MIDI CC2 adds continuous bridge-hand pressure on top of the Palm Pressure
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
     // Channel pressure is the fretting hand leaning into a string it is
@@ -733,14 +749,27 @@ private:
         float releaseRate { 0.72f };
         float brightness { 1.0f };
         float noise { 1.0f };
-        float tension { 1.0f };
         float collision { 0.5f };
+    };
+
+    struct PendingRepick
+    {
+        bool active { false };
+        float velocity { 0.0f };
+        PlayStyle playStyle { PlayStyle::Sustain };
+        bool strokeIsUp { false };
+        std::uint64_t startOrder { 0 };
     };
 
     struct Voice
     {
         bool active { false };
         bool keyDown { false };
+        // Matching Note Offs still owed for this pitch. A sequencer may order
+        // the next repeated Note On before the previous Note Off at the same
+        // timestamp; the physical string is repicked, but that older end must
+        // not release the new stroke.
+        int keyDownCount { 0 };
         bool sustained { false };
         bool releasing { false };
         int stringIndex { 0 };
@@ -761,6 +790,10 @@ private:
         int midiNote { -1 };
         int fret { 0 };
         PlayStyle playStyle { PlayStyle::Sustain };
+        // The latest whole-hand position applied to this ringing loop. Kept
+        // apart from playStyle so a newer contact can move the damping without
+        // rewriting how this note was attacked.
+        PlayStyle dampingStyle { PlayStyle::Sustain };
         // The concrete stroke this note was picked with, resolved from the
         // latched PickStyle (Alternate resolves per note).
         bool strokeIsUp { false };
@@ -777,6 +810,9 @@ private:
         float strokeForceGain { 1.0f };           // linear, on the pick's amplitude
         float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
         float strokeWidthScale { 1.0f };          // on the contact's duration
+        // Latched stroke force applied to the bridge hand's loss rate. It uses
+        // the same pick draw, so mute variation does not invent another player.
+        float handContactScale { 1.0f };
 
         // The finger that is rocking this string. Two fingers of one hand are
         // not one oscillator: each carries its own phase, its own rate and its
@@ -815,7 +851,10 @@ private:
         float legatoBlend { 1.0f };
         float legatoIncrement { 0.0f };
 
-        // Tension-modulation state (attack pitch glide).
+        // Tension-modulation state (attack pitch glide). The envelope is the
+        // squared transverse deflection in metres; the depth is the string's
+        // elastic frequency coefficient in inverse square metres, including
+        // the geometry of this stroke's pluck position.
         float energyEnvelope { 0.0f };
         float tensionDepth { 0.0f };
         float palmImpactState { 0.0f };
@@ -906,7 +945,7 @@ private:
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
         // static_cast<float>(std::max(1, artifactCollisionLength)), solved
-        // once in startVoice() rather than every rendered sample of the
+        // once in startExcitation() rather than every rendered sample of the
         // incidental fret-contact window, which divides by this same clamped
         // length once per sample to form its progress fraction.
         float artifactCollisionLengthDenominator { 1.0f };
@@ -922,6 +961,14 @@ private:
         // Strum travel: a chord's later strings start after the pick reaches
         // them. Zero for a simultaneous (non-strummed) note-on.
         int startDelaySamples { 0 };
+        // A same-note repick may be scheduled before the pick reaches an
+        // already-ringing string. Keep its small MIDI-side description here;
+        // the sounding Voice remains the preceding stroke until contact.
+        PendingRepick pendingRepick {};
+        // A delayed retrigger may still contain the preceding stroke. If its
+        // new contact is cancelled, keep that old ring; a genuinely fresh
+        // never-contacted voice can instead retire immediately.
+        bool pendingContactPreservesRing { false };
         // Which pick stroke this pending excitation belongs to. A note-on that
         // re-anchors the stroke may only push the strings of its own chord.
         std::uint64_t strumChordId { 0 };
@@ -1024,7 +1071,8 @@ private:
         int openMidiNote { 40 };
         bool wound { true };
         float plainDiameterMm { 0.4064f }; // light-set reference gauge
-        float woundCoreScale { 0.30f };    // effective bending-core fraction
+        float bendingCoreScale { 0.30f };  // empirical flexural-core fraction
+        float axialCoreScale { 0.30f };    // empirical tensile-core diameter fraction
         float t60Seconds { 6.0f };
     };
 
@@ -1114,7 +1162,7 @@ private:
     [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
-    void configureVoiceDamping(Voice& voice) noexcept;
+    void configureVoiceDamping(Voice& voice, PlayStyle dampingStyle) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
     void configureSympatheticString(Voice& voice) noexcept;
     void updateStyleWeights(Voice& voice, bool legato = false) noexcept;
@@ -1133,7 +1181,9 @@ private:
     void drawVibratoCycle(Voice& voice) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
-                    int startDelaySamples) noexcept;
+                    int startDelaySamples,
+                    std::uint64_t reservedStartOrder = 0,
+                    bool keyStateAlreadyApplied = false) noexcept;
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
                         PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
@@ -1184,6 +1234,7 @@ private:
     PickStyle pickStyle_ { PickStyle::Down };
     PlayStyle playStyle_ { PlayStyle::Sustain };
     bool alternateNextStrokeIsUp_ { false };
+    std::uint64_t variationSeed_ { 0 };
     std::uint64_t noteSequence_ { 0 };
     int activeVoiceCount_ { 0 };
     int sympatheticStringCount_ { 0 };
@@ -1232,12 +1283,24 @@ private:
     // at every host rate.
     std::int64_t engineClock_ { 0 };
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
+    // The most recent real string contact owns the shared muting-hand
+    // position. Keep that history at engine scope: retiring the voice that
+    // received the contact must not reveal an older voice and move the hand
+    // backward without a new performance event.
+    std::int64_t lastHandContactClock_ { -1 };
+    PlayStyle lastHandContactPlayStyle_ { PlayStyle::Sustain };
+    std::uint64_t lastHandContactOrder_ { 0 };
     // The neck edge the pick entered from, the direction it is travelling, and
     // the clock the chord's first note-on arrived on. Every voice of the chord
     // is scheduled against that one clock, so the ramp is laid down in stroke
-    // order however the host interleaved the note-ons.
+    // order however the host interleaved the note-ons. Alternate reserves one
+    // direction per accepted MIDI chord, not once per string. A fully pending
+    // current chord may return it before a later chord depends on that order;
+    // asking for an already-crossed string begins the next stroke.
     int chordAnchorString_ { 0 };
     bool chordStrokeIsUp_ { false };
+    bool chordAlternateConsumed_ { false };
+    bool chordContactOccurred_ { false };
     std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
     std::uint64_t chordSequence_ { 0 };
     int chordWindowSamples_ { 1680 };
@@ -1391,13 +1454,10 @@ private:
     // voice.palmImpactState in renderVoice(). Fixed corner, rate-derived
     // coefficient - belongs here for the same reason as its neighbours above.
     float palmImpactThudCoefficient_ { 0.0f };
-    // The hand-loss dip's 40 ms settle window, in samples: used as
-    // updateVoiceControl()'s `ageSamples / handLossSettleWindowSamples_`
-    // divisor for every active voice with an engaged hand-loss dip, every
-    // control tick. It depends only on the internal clock, so - like its
-    // neighbours above - it is solved once here instead of being recomputed
-    // (a float multiply and a cast) on every one of those calls.
-    float handLossSettleWindowSamples_ { 1920.0f };
+    // Per-sample retention of the impact's driving velocity. The voicing was
+    // calibrated as 0.992 at 48 kHz and is converted to the internal clock in
+    // prepare(), so oversampling and high-rate hosts keep one physical decay.
+    float palmImpactVelocityRetention_ { 0.992f };
     float sympatheticEnergyCoefficient_ { 0.002f };
     float displayLevelAttack_ { 0.5f };
     float displayLevelRelease_ { 0.08f };

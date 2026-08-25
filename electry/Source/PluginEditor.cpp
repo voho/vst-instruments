@@ -169,6 +169,11 @@ ElectryLookAndFeel::ElectryLookAndFeel()
     setColour (juce::Slider::textBoxTextColourId, colours::text);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     setColour (juce::Label::textColourId, colours::text);
+    setColour (juce::ComboBox::backgroundColourId, colours::knobFace);
+    setColour (juce::ComboBox::textColourId, colours::text);
+    setColour (juce::ComboBox::outlineColourId,
+               colours::panelOutline.withAlpha (0.75f));
+    setColour (juce::ComboBox::arrowColourId, colours::accentBright);
     setColour (juce::TextButton::buttonColourId, colours::knobFace);
     setColour (juce::TextButton::textColourOffId, colours::text);
     setColour (juce::TooltipWindow::backgroundColourId, colours::panel);
@@ -479,6 +484,9 @@ void ElectryChoiceStrip::setTooltipText (const juce::String& text)
 
 void ElectryChoiceStrip::paint (juce::Graphics& graphics)
 {
+    if (titleText.isEmpty())
+        return;
+
     graphics.setColour (colours::binding.withAlpha (0.82f));
     graphics.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     graphics.drawText (titleText, getLocalBounds().removeFromTop (14),
@@ -488,7 +496,8 @@ void ElectryChoiceStrip::paint (juce::Graphics& graphics)
 void ElectryChoiceStrip::resized()
 {
     auto area = getLocalBounds();
-    area.removeFromTop (16);
+    if (titleText.isNotEmpty())
+        area.removeFromTop (16);
     if (buttons.empty())
         return;
 
@@ -868,8 +877,34 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     editionLabel.setColour (juce::Label::textColourId, colours::dimText);
     addAndMakeVisible (editionLabel);
 
+    factoryProgramLabel.setText ("RIG", juce::dontSendNotification);
+    factoryProgramLabel.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    factoryProgramLabel.setColour (juce::Label::textColourId, colours::dimText);
+    factoryProgramLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (factoryProgramLabel);
+
+    for (int index = 0; index < electryProcessor.getNumPrograms(); ++index)
+        factoryProgramSelector.addItem (
+            electryProcessor.getProgramName (index), index + 1);
+    factoryProgramSelector.setSelectedId (
+        electryProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
+    factoryProgramSelector.setTooltip (
+        "Rigs initialize guitar, FX, Palm Tightness and Palm Pressure. They "
+        "never change the PICK STROKE or PLAY STYLE latches; choose Palm Mute "
+        "or Dead below.");
+    factoryProgramSelector.setName ("Factory rig");
+    factoryProgramSelector.setTitle ("Factory rig");
+    factoryProgramSelector.setComponentID ("factoryProgram");
+    factoryProgramSelector.onChange = [this]
+    {
+        const int index = factoryProgramSelector.getSelectedId() - 1;
+        if (index >= 0)
+            electryProcessor.setCurrentProgram (index);
+    };
+    addAndMakeVisible (factoryProgramSelector);
+
     keyboardHintLabel.setText (
-        "Oxblood keys latch the two banks: C0..D0 the pick stroke, D#0..A0 the play style - any combination. Bone and ebony keys play the Drop-E 8-string range E1..D6.",
+        "C0..D0 latch pick stroke. D#0..A0 follow LATCH/HOLD for play style; the PLAY STYLE strip sets the fallback. E1..D6 plays the guitar.",
         juce::dontSendNotification);
     keyboardHintLabel.setFont (juce::FontOptions (11.0f));
     keyboardHintLabel.setColour (juce::Label::textColourId, colours::dimText);
@@ -885,21 +920,35 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     pickStyleStrip.onChoice = [this] (int index)
     {
         keyboard.setSelectedKeyswitches (
-            index, electryProcessor.getCurrentPlayStyleIndex());
+            index, electryProcessor.getEffectivePlayStyleIndex());
         electryProcessor.triggerArticulation (index);
     };
+    pickStyleStrip.setTooltipText (
+        "Picking hand: Down, Up or Alternate. This bank combines independently with every play style.");
     pickStyleStrip.setComponentID ("pickStyleStrip");
     addAndMakeVisible (pickStyleStrip);
 
     playStyleStrip.onChoice = [this] (int index)
     {
         keyboard.setSelectedKeyswitches (
-            electryProcessor.getCurrentPickStyleIndex(), index);
+            electryProcessor.getCurrentPickStyleIndex(),
+            electryProcessor.getEffectivePlayStyleIndex());
         electryProcessor.triggerArticulation (
             electry::ElectryEngine::pickStyleKeyswitchCount + index);
     };
+    playStyleStrip.setTooltipText (
+        "Select the base style. Palm Mute is the bridge hand; Dead is the fretting hand; the selected pick stroke still applies.");
     playStyleStrip.setComponentID ("playStyleStrip");
     addAndMakeVisible (playStyleStrip);
+
+    playStyleKeyModeStrip.onChoice = [this] (int index)
+    {
+        electryProcessor.setPlayStyleKeysHold (index == 1);
+    };
+    playStyleKeyModeStrip.setTooltipText (
+        "LATCH leaves MIDI play-style keys selected. HOLD uses them only while pressed, then returns to the PLAY STYLE choice.");
+    playStyleKeyModeStrip.setComponentID ("playStyleKeyMode");
+    addAndMakeVisible (playStyleKeyModeStrip);
 
     // The pickup selector strip binds to the choice parameter.
     pickupStrip.onChoice = [this] (int index)
@@ -930,13 +979,23 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
 
     outputModeStrip.onChoice = [this] (int index)
     {
-        if (auto* parameter = electryProcessor.parameters.getParameter (
-                electry::parameters::outputMode))
+        auto* outputParameter = electryProcessor.parameters.getParameter (
+            electry::parameters::outputMode);
+        auto* doubleParameter = electryProcessor.parameters.getParameter (
+            electry::parameters::doubleMode);
+        if (outputParameter == nullptr || doubleParameter == nullptr)
+            return;
+
+        doubleParameter->beginChangeGesture();
+        doubleParameter->setValueNotifyingHost (
+            doubleParameter->convertTo0to1 (index == 2 ? 1.0f : 0.0f));
+        doubleParameter->endChangeGesture();
+        if (index < 2)
         {
-            parameter->beginChangeGesture();
-            parameter->setValueNotifyingHost (
-                parameter->convertTo0to1 (static_cast<float> (index)));
-            parameter->endChangeGesture();
+            outputParameter->beginChangeGesture();
+            outputParameter->setValueNotifyingHost (
+                outputParameter->convertTo0to1 (static_cast<float> (index)));
+            outputParameter->endChangeGesture();
         }
     };
     if (auto* parameter = electryProcessor.parameters.getParameter (
@@ -946,13 +1005,42 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
             *parameter,
             [this] (float newValue)
             {
-                outputModeStrip.setSelectedIndex (juce::roundToInt (newValue));
+                const auto* doubled = electryProcessor.parameters
+                    .getRawParameterValue (electry::parameters::doubleMode);
+                if (doubled == nullptr
+                    || doubled->load (std::memory_order_relaxed) < 0.5f)
+                    outputModeStrip.setSelectedIndex (juce::roundToInt (newValue));
             },
             nullptr);
         outputModeAttachment->sendInitialUpdate();
     }
+    if (auto* parameter = electryProcessor.parameters.getParameter (
+            electry::parameters::doubleMode))
+    {
+        doubleModeAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter,
+            [this] (float newValue)
+            {
+                if (newValue >= 0.5f)
+                {
+                    outputModeStrip.setSelectedIndex (2);
+                    return;
+                }
+                const auto* output = electryProcessor.parameters
+                    .getRawParameterValue (electry::parameters::outputMode);
+                outputModeStrip.setSelectedIndex (output != nullptr
+                    ? juce::roundToInt (
+                          output->load (std::memory_order_relaxed))
+                    : 0);
+            },
+            nullptr);
+        doubleModeAttachment->sendInitialUpdate();
+    }
     outputModeStrip.setTooltipText (
-        "Mono is an authentic summed DI. Stereo spreads the eight physical strings through a phase-coherent divided-pickup field; no delay or chorus.");
+        "Mono is an authentic summed DI. Stereo spreads one guitar's eight "
+        "strings through a phase-coherent divided-pickup field. Double runs "
+        "two independent Electry performances, one per channel. Choose Double "
+        "before the phrase; it does not clone notes already ringing.");
     outputModeStrip.setComponentID (electry::parameters::outputMode);
     addAndMakeVisible (outputModeStrip);
 
@@ -992,8 +1080,8 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "Travel time of a pitch-wheel bend: how long the strings take to "
            "reach the wheel rather than snapping to it");
     setup (muteDampingKnob, muteDamping,
-           "Palm-mute strength for the Palm mute play style: loose half-mute "
-           "toward a tight metal chug");
+           "Loose half-mute toward tight metal chug for the E0 Palm Mute "
+           "play style");
     setup (velocityKnob, velocity, "How strongly MIDI velocity drives the pluck");
     setup (pickNoiseKnob, pickNoise, "Plectrum contact and scrape level");
     setup (fingerNoiseKnob, fingerNoise, "Fretting-hand contact level");
@@ -1004,11 +1092,12 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "Bridge-coupled sympathetic ring of the strings you are not fingering. "
            "At 0% the coupled waveguides are bypassed exactly.");
     setup (palmMuteKnob, palmMute,
-           "Continuous bridge-hand damping for every play style, on top of the "
-           "Palm Mute keyswitch. MIDI CC2 adds to it while you play.");
+           "Continuous bridge-hand pressure across every play style, including "
+           "Dead; MIDI CC2 adds to it while you play.");
     setup (strumSpreadKnob, strumSpread,
-           "Pick travel time per string crossed. At 0 ms a chord starts as one "
-           "block; higher values sweep it string by string.");
+           "Mean pick travel time per string crossed. At 0 ms a chord starts as "
+           "one block; any higher value groups cross-string arrivals for up to "
+           "35 ms from the first and adds a 20 ms assembly pre-roll.");
     setup (resonanceKnob, resonanceDepth,
            "Full-scale reach of the modulation-wheel (CC1) resonance: how far "
            "the wheel can raise the sympathetic coupling and how much of the "
@@ -1068,11 +1157,18 @@ void ElectryAudioProcessorEditor::timerCallback()
                              electryProcessor.getSympatheticStringCount(),
                              electryProcessor.isEngineReady(),
                              electryProcessor.getCurrentSampleRateForDisplay());
+    const int programId = electryProcessor.getCurrentProgram() + 1;
+    if (factoryProgramSelector.getSelectedId() != programId)
+        factoryProgramSelector.setSelectedId (programId, juce::dontSendNotification);
     const auto pickIndex = electryProcessor.getCurrentPickStyleIndex();
-    const auto styleIndex = electryProcessor.getCurrentPlayStyleIndex();
+    const auto baseStyleIndex = electryProcessor.getCurrentPlayStyleIndex();
+    const auto effectiveStyleIndex =
+        electryProcessor.getEffectivePlayStyleIndex();
     pickStyleStrip.setSelectedIndex (pickIndex);
-    playStyleStrip.setSelectedIndex (styleIndex);
-    keyboard.setSelectedKeyswitches (pickIndex, styleIndex);
+    playStyleStrip.setSelectedIndex (baseStyleIndex);
+    playStyleKeyModeStrip.setSelectedIndex (
+        electryProcessor.getPlayStyleKeysHold() ? 1 : 0);
+    keyboard.setSelectedKeyswitches (pickIndex, effectiveStyleIndex);
 
     if (fretboardDisplay.refresh (electryProcessor, 1.0f / static_cast<float> (timerHz)))
         fretboardDisplay.repaint();
@@ -1150,11 +1246,8 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
 
         if (titles[static_cast<std::size_t> (section)][0] != '\0')
         {
-            graphics.setColour ((prioritySection ? colours::accentBright
-                                                 : colours::binding)
-                                    .withAlpha (prioritySection ? 0.92f : 0.80f));
-            graphics.setFont (juce::FontOptions (
-                prioritySection ? 11.5f : 10.5f, juce::Font::bold));
+            graphics.setColour (colours::accentBright.withAlpha (0.92f));
+            graphics.setFont (juce::FontOptions (12.0f, juce::Font::bold));
             graphics.drawText (titles[static_cast<std::size_t> (section)],
                                bounds.reduced (12, 6).removeFromTop (14),
                                juce::Justification::centredLeft);
@@ -1181,6 +1274,10 @@ void ElectryAudioProcessorEditor::resized()
     panicButton.setBounds (header.removeFromRight (76).reduced (0, 8));
     header.removeFromRight (8);
     statusDisplay.setBounds (header.removeFromRight (210).reduced (0, 8));
+    header.removeFromRight (8);
+    factoryProgramLabel.setBounds (header.removeFromLeft (28));
+    header.removeFromLeft (4);
+    factoryProgramSelector.setBounds (header.reduced (0, 8));
 
     area.removeFromTop (6);
 
@@ -1191,14 +1288,17 @@ void ElectryAudioProcessorEditor::resized()
                           / static_cast<float> (keyboardWhiteKeyCount));
     area.removeFromBottom (8);
 
-    // The two keyswitch strips across the top: the pick stroke and the play
-    // style, latched independently.
+    // The two keyswitch strips and their compact play-style operating mode.
     auto articulationArea = area.removeFromTop (76);
     sectionBounds[articulationSection] = articulationArea;
     auto stripRow = articulationArea.reduced (12, 8);
     const int pickWidth = juce::roundToInt (
-        static_cast<float> (stripRow.getWidth()) * 0.40f);
+        static_cast<float> (stripRow.getWidth()) * 0.29f);
+    const int modeWidth = juce::roundToInt (
+        static_cast<float> (stripRow.getWidth()) * 0.15f);
     pickStyleStrip.setBounds (stripRow.removeFromLeft (pickWidth));
+    stripRow.removeFromLeft (12);
+    playStyleKeyModeStrip.setBounds (stripRow.removeFromLeft (modeWidth));
     stripRow.removeFromLeft (12);
     playStyleStrip.setBounds (stripRow);
     area.removeFromTop (8);
@@ -1236,7 +1336,9 @@ void ElectryAudioProcessorEditor::resized()
     area.removeFromTop (8);
     auto secondaryRow = area;
 
-    auto masterArea = mainRow.removeFromRight (104);
+    // Three complete words must remain readable here at the minimum editor
+    // size; squeezing this panel turns STEREO/DOUBLE into ellipses.
+    auto masterArea = mainRow.removeFromRight (184);
     mainRow.removeFromRight (8);
     auto coreArea = mainRow;
     sectionBounds[coreSection] = coreArea;

@@ -934,6 +934,91 @@ Take renderWhammyAndFeedback()
     return take;
 }
 
+// The mute controls under a microscope: the same low string open, at three
+// bridge-hand depths, and under the fretting hand, followed by playable
+// alternate-picked ghost grooves with and without the bridge hand stacked.
+Take renderMuteAndDeadAudition()
+{
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.pickPosition = 0.20f;
+    parameters.pickHardness = 0.82f;
+    parameters.fingerNoise = 0.55f;
+    parameters.artifactAmount = 0.15f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.outputGain = 2.0f;
+
+    Take take(parameters, FxParameters {}, false);
+    take.pick(PickStyle::Down);
+    take.style(PlayStyle::Sustain);
+    take.pluck(28, 0.95f, 0.38, 0.16);
+
+    for (const float tightness : { 0.0f, 0.55f, 1.0f })
+    {
+        parameters.muteDamping = tightness;
+        take.setEngineParameters(parameters);
+        take.wait(0.12);
+        take.style(PlayStyle::PalmMute);
+        take.pluck(28, 0.95f, 0.38, 0.16);
+    }
+
+    take.style(PlayStyle::Dead);
+    take.pluck(28, 0.95f, 0.38, 0.16);
+    take.wait(0.20);
+
+    take.pick(PickStyle::Alternate);
+    for (int hit = 0; hit < 8; ++hit)
+        take.pluck(hit % 4 == 3 ? 40 : 28,
+                   hit % 2 == 0 ? 0.95f : 0.82f, 0.085, 0.040);
+
+    take.wait(0.20);
+    take.palmMutePressure(0.50f);
+    take.wait(0.08);
+    for (int hit = 0; hit < 8; ++hit)
+        take.pluck(hit % 4 == 3 ? 40 : 28,
+                   hit % 2 == 0 ? 0.95f : 0.82f, 0.055, 0.028);
+    take.palmMutePressure(0.0f);
+    take.wait(0.70);
+    return take;
+}
+
+// The dry take above exposes the hand/string distinction. This one asks the
+// production question: does the exact same rapid score remain distinguishable
+// as Palm versus Dead after the common high-gain rhythm chain compresses it?
+Take renderMuteAndDeadMetal()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.fingerNoise = 0.55f;
+    parameters.artifactAmount = 0.15f;
+
+    FxParameters fx;
+    fx.distortion = 0.45f;
+    fx.amp = 0.95f;
+    fx.compressor = 0.60f;
+    Take take(parameters, fx, false);
+
+    const auto playPhrase = [&] (PlayStyle style, int hits, bool mixedStrings)
+    {
+        // Relatch Alternate so every comparison starts with the same downstroke.
+        take.pick(PickStyle::Alternate);
+        take.style(style);
+        for (int hit = 0; hit < hits; ++hit)
+            take.pluck(mixedStrings && hit % 4 == 3 ? 40 : 28,
+                       hit % 2 == 0 ? 0.95f : 0.82f, 0.055, 0.028333);
+    };
+
+    take.wait(0.25);
+    playPhrase(PlayStyle::PalmMute, 12, false);
+    take.wait(0.35);
+    playPhrase(PlayStyle::Dead, 12, false);
+    take.wait(0.35);
+    playPhrase(PlayStyle::PalmMute, 8, true);
+    take.wait(0.35);
+    playPhrase(PlayStyle::Dead, 8, true);
+    take.wait(0.80);
+    return take;
+}
+
 struct Demo
 {
     const char* fileName;
@@ -941,9 +1026,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 14>& demos()
+const std::array<Demo, 16>& demos()
 {
-    static const std::array<Demo, 14> table {{
+    static const std::array<Demo, 16> table {{
         { "01-range-open-strings.wav",
           "the eight open strings, then all of them ringing together",
           renderOpenStrings },
@@ -951,7 +1036,7 @@ const std::array<Demo, 14>& demos()
           "every playable note from E1 to D6 across the eight strings",
           renderFullFretboard },
         { "03-play-styles.wav",
-          "every pick-stroke and play-style combination: sustain, palm mute, "
+          "all three pick strokes and all seven play styles: sustain, palm mute, "
           "hammer-on, natural and pinch harmonics, slides of two and twelve "
           "frets, and dead notes",
           renderPlayStyles },
@@ -995,6 +1080,14 @@ const std::array<Demo, 14>& demos()
           "a chord dived and raised on the wheel, then a note pushed into "
           "self-sustaining amplifier feedback",
           renderWhammyAndFeedback },
+        { "15-mute-and-dead-audition.wav",
+          "the same E1 open, at three Palm Mute depths and Dead, followed by "
+          "alternate ghost grooves with Palm Pressure off and stacked",
+          renderMuteAndDeadAudition },
+        { "16-mute-and-dead-metal.wav",
+          "the same rapid E1 and mixed E1/E2 scores as Palm Mute then Dead, "
+          "through one high-gain rhythm chain",
+          renderMuteAndDeadMetal },
     }};
     return table;
 }
@@ -1076,20 +1169,18 @@ bool removeStaleWavs(const std::filesystem::path& directory)
     return removedAll;
 }
 
-// The per-file level table in the output directory's README is regenerated in
-// place on every full render, so the documented rendered peaks can never
-// drift away from the committed WAVs. The markers bound exactly what the
-// renderer owns; the prose around them stays hand-written.
+// The per-file level table in the instrument's root README is regenerated on
+// every full render to keep documented peaks aligned with the committed WAVs.
+// The markers bound exactly what the renderer owns; surrounding prose remains
+// hand-written.
 constexpr const char* peaksTableBegin =
     "<!-- peaks-table-begin: regenerated by ElectryRenderDemos;"
     " edits between the markers are overwritten -->";
 constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 
-// The rendered-peak table lives in the instrument's own README, beside the
-// audio-demo list a reader is looking at, so each instrument keeps exactly one
-// document. Only the instrument's own Docs/audio directory has such a README:
-// an ad-hoc output directory carries none, and resolving one there is how the
-// renderer knows the difference.
+// Only the instrument's canonical Docs/audio directory maps to that root
+// README. An ad-hoc output directory maps to nothing and carries no
+// documentation side effect.
 std::filesystem::path instrumentReadme(const std::filesystem::path& directory)
 {
     auto normalised = directory.lexically_normal();

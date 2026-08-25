@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 namespace electry::parameters
 {
@@ -47,6 +48,9 @@ inline constexpr auto strumSpread    = "strumSpread";
 // control. The stored ID is kept so existing sessions and automation lanes
 // keep pointing at the same parameter index.
 inline constexpr auto resonanceDepth = "vibratoDepth";
+// Appended after every 1.2 parameter. Keeping Double separate preserves the
+// original outputMode parameter's Mono/Stereo host-automation mapping.
+inline constexpr auto doubleMode     = "doubleMode";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -74,10 +78,10 @@ public:
     static constexpr double maximumTailLengthSeconds = 18.0;
     double getTailLengthSeconds() const override { return maximumTailLengthSeconds; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destinationData) override;
@@ -86,6 +90,7 @@ public:
     // Message-thread entry points used by the editor. Both route through the
     // same bounded lock-free queue as on-screen keyboard notes.
     void triggerArticulation (int articulationIndex);
+    void setPlayStyleKeysHold (bool shouldHold);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
 
     int getActiveVoiceCount() const noexcept
@@ -114,6 +119,14 @@ public:
     int getCurrentPlayStyleIndex() const noexcept
     {
         return playStyleIndex.load (std::memory_order_relaxed);
+    }
+    int getEffectivePlayStyleIndex() const noexcept
+    {
+        return effectivePlayStyleIndex.load (std::memory_order_relaxed);
+    }
+    bool getPlayStyleKeysHold() const noexcept
+    {
+        return playStyleKeysHold.load (std::memory_order_relaxed);
     }
     double getCurrentSampleRateForDisplay() const noexcept
     {
@@ -171,6 +184,7 @@ private:
         std::atomic<float>* palmMute = nullptr;
         std::atomic<float>* strumSpread = nullptr;
         std::atomic<float>* resonanceDepth = nullptr;
+        std::atomic<float>* doubleMode = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -178,6 +192,7 @@ private:
         int note = 60;
         float velocity = 0.0f;
         bool noteOn = false;
+        bool selectsBaseArticulation = false;
     };
 
     static constexpr unsigned uiQueueCapacity = 128;
@@ -189,15 +204,32 @@ private:
                        int midiNoteNumber, float velocity) override;
     void handleNoteOff (juce::MidiKeyboardState*, int midiChannel,
                         int midiNoteNumber, float velocity) override;
-    void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn) noexcept;
+    void latchArticulation (int articulationIndex) noexcept;
+    void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn,
+                             bool selectsBaseArticulation = false) noexcept;
     void discardUiMidiEvents() noexcept;
-    void dispatchUiMidiEvents() noexcept;
+    void dispatchUiMidiEventPass (unsigned begin, unsigned end,
+                                  bool conditioning) noexcept;
+    void dispatchNoteOn (int note, float velocity,
+                         bool selectsBaseArticulation) noexcept;
+    void dispatchNoteOff (int note) noexcept;
+    void applyPlayStyle (int styleIndex) noexcept;
+    int latestHeldPlayStyle() const noexcept;
+    void clearHeldPlayStyles() noexcept;
+    void synchronisePlayStyleKeyMode() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
+    void resetEngineWithArticulations (int pickStyle, int playStyle) noexcept;
+    void renderEngines (float* left, float* right, int numSamples) noexcept;
     void updateEngineParameters() noexcept;
     void updateEffectParameters() noexcept;
     void publishStringVisualState() noexcept;
 
     electry::ElectryEngine engine;
+    // DOUBLE is two performances, not a delayed or widened copy. The second
+    // engine receives the same score with its own deterministic player draws.
+    std::unique_ptr<electry::ElectryEngine> doubleEngine {
+        std::make_unique<electry::ElectryEngine>()
+    };
     // The amplifier, cabinet and time effects live in the JUCE-free DSP
     // library alongside the string model, so the complete signal path is
     // regression tested on every platform rather than only inside a host.
@@ -206,10 +238,27 @@ private:
                electry::ElectryEngine::stringCount> visualScratch {};
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
+    bool doubleModeActive = false;
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<int> sympatheticStringCount { 0 };
+    std::atomic<int> currentProgram { 0 };
+    // Requested performance latches outlive the replaceable DSP engine state.
     std::atomic<int> pickStyleIndex { 0 };
+    // The strip and session state retain this base style. A HOLD keyswitch may
+    // temporarily change the effective style without overwriting it.
     std::atomic<int> playStyleIndex { 0 };
+    std::atomic<int> effectivePlayStyleIndex { 0 };
+    std::atomic<bool> playStyleKeysHold { false };
+    bool appliedPlayStyleKeysHold = false;
+    int appliedBasePlayStyleIndex = 0;
+    std::array<std::uint16_t,
+               electry::ElectryEngine::playStyleKeyswitchCount>
+        heldPlayStyleCounts {};
+    std::array<std::uint64_t,
+               electry::ElectryEngine::playStyleKeyswitchCount>
+        heldPlayStyleOrder {};
+    std::uint64_t heldPlayStyleSequence = 0;
+    bool sustainPedalDown = false;
     std::atomic<double> displaySampleRate { 0.0 };
     std::array<std::atomic<std::uint32_t>,
                electry::ElectryEngine::stringCount> stringVisuals {};

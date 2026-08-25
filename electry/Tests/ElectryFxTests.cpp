@@ -137,6 +137,9 @@ using electry::ElectryEngine;
 using electry::ElectryFx;
 using electry::EngineParameters;
 using electry::FxParameters;
+using electry::PickStyle;
+using electry::PickupSelector;
+using electry::PlayStyle;
 using FxAccess = electry::ElectryFxTestAccess;
 
 constexpr double pi = 3.14159265358979323846;
@@ -350,6 +353,186 @@ std::vector<float> throughChain(const FxParameters& parameters,
     std::vector<float> right = source;
     fx.process(left.data(), right.data(), static_cast<int>(left.size()));
     return left;
+}
+
+// Model-only guard for the 30-80 ms body of the shipping rapid-Palm demo.
+// The real reference take is useful evidence that this region needs more upper
+// body and less periodic ring, but its amp, cabinet and mastering are unknown,
+// so it is deliberately not treated as a numeric target here.
+void testRapidPalmBodyDirection()
+{
+    constexpr double rate = 44100.0;
+    constexpr int blockSize = 256;
+    constexpr int hitCount = 12;
+
+    EngineParameters engineParameters;
+    engineParameters.pickupSelector = PickupSelector::Bridge;
+    engineParameters.pickupType = 0.32f;
+    engineParameters.toneKnob = 1.0f;
+    engineParameters.scaleLength = 0.85f;
+    engineParameters.stringGauge = 0.8f;
+    engineParameters.stringAge = 0.10f;
+    engineParameters.pickHardness = 0.85f;
+    engineParameters.pickPosition = 0.18f;
+    engineParameters.velocityAmount = 0.7f;
+    engineParameters.sympatheticAmount = 0.25f;
+    engineParameters.muteDamping = 0.85f;
+    engineParameters.outputGain = 2.0f;
+    engineParameters.fingerNoise = 0.55f;
+    engineParameters.artifactAmount = 0.15f;
+
+    FxParameters fxParameters;
+    fxParameters.distortion = 0.45f;
+    fxParameters.amp = 0.95f;
+    fxParameters.compressor = 0.60f;
+
+    ElectryEngine engine;
+    engine.prepare(rate, blockSize);
+    engine.setParameters(engineParameters);
+    engine.reset();
+    ElectryFx fx;
+    fx.prepare(rate);
+    fx.setParameters(fxParameters);
+    engine.setAcousticReturnLevel(std::min(
+        1.0f, fxParameters.amp + 0.6f * fxParameters.distortion));
+    fx.reset();
+
+    std::vector<float> left;
+    std::vector<float> right;
+    const auto render = [&] (int sampleCount)
+    {
+        while (sampleCount > 0)
+        {
+            const int samples = std::min(blockSize, sampleCount);
+            const auto offset = left.size();
+            left.resize(offset + static_cast<std::size_t>(samples));
+            right.resize(offset + static_cast<std::size_t>(samples));
+            engine.process(left.data() + offset, right.data() + offset, samples);
+            fx.process(left.data() + offset, right.data() + offset, samples);
+            engine.pushAcousticReturn(left.data() + offset,
+                                      right.data() + offset, samples);
+            sampleCount -= samples;
+        }
+    };
+
+    // Take's constructor lead-in, then renderMuteAndDeadMetal's own lead-in.
+    render(static_cast<int>(0.25 * rate));
+    render(static_cast<int>(0.25 * rate));
+    engine.noteOn(ElectryEngine::firstKeyswitchNote
+                      + static_cast<int>(PickStyle::Alternate),
+                  1.0f);
+    engine.noteOn(ElectryEngine::firstPlayStyleKeyswitchNote
+                      + static_cast<int>(PlayStyle::PalmMute),
+                  1.0f);
+
+    std::array<std::size_t, hitCount> hitStarts {};
+    const int holdSamples = static_cast<int>(0.055 * rate);
+    const int gapSamples = static_cast<int>(0.028333 * rate);
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        hitStarts[static_cast<std::size_t>(hit)] = left.size();
+        engine.noteOn(28, hit % 2 == 0 ? 0.95f : 0.82f);
+        render(holdSamples);
+        engine.noteOff(28);
+        render(gapSamples);
+    }
+    expect(holdSamples + gapSamples == 3674,
+           "the rapid-Palm fixture no longer has the demo's 83.31 ms cadence");
+
+    constexpr int fftSize = 4096;
+    const int windowStart = static_cast<int>(0.030 * rate);
+    const int windowEnd = static_cast<int>(0.080 * rate);
+    const int windowLength = windowEnd - windowStart;
+    std::array<double, hitCount> upperBody {};
+    std::array<double, hitCount> harmonicity {};
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        std::vector<double> window(static_cast<std::size_t>(windowLength));
+        const auto first = hitStarts[static_cast<std::size_t>(hit)]
+                         + static_cast<std::size_t>(windowStart);
+        double mean = 0.0;
+        for (int i = 0; i < windowLength; ++i)
+            mean += left[first + static_cast<std::size_t>(i)];
+        mean /= windowLength;
+        for (int i = 0; i < windowLength; ++i)
+            window[static_cast<std::size_t>(i)] =
+                left[first + static_cast<std::size_t>(i)] - mean;
+
+        std::vector<std::complex<double>> spectrum(
+            static_cast<std::size_t>(fftSize));
+        for (int i = 0; i < windowLength; ++i)
+        {
+            const double hann = 0.5 - 0.5 * std::cos(
+                2.0 * pi * i / static_cast<double>(windowLength - 1));
+            spectrum[static_cast<std::size_t>(i)] =
+                { window[static_cast<std::size_t>(i)] * hann, 0.0 };
+        }
+        fft(spectrum);
+        double upperPower = 0.0;
+        double audiblePower = 0.0;
+        for (int bin = 1; bin <= fftSize / 2; ++bin)
+        {
+            const double frequency = bin * rate / fftSize;
+            if (frequency >= 20.0 && frequency <= 8000.0)
+            {
+                const double power = std::norm(
+                    spectrum[static_cast<std::size_t>(bin)]);
+                audiblePower += power;
+                if (frequency > 500.0)
+                    upperPower += power;
+            }
+        }
+        upperBody[static_cast<std::size_t>(hit)] = upperPower
+            / std::max(audiblePower, 1.0e-30);
+
+        // Autocorrelation uses the mean-removed body itself. The Hann belongs
+        // only to spectral power; applying it here would compare two different
+        // window gains one period apart and falsely lower harmonicity.
+        double strongestPeriod = -1.0;
+        const int firstLag = static_cast<int>(std::ceil(rate / 48.0));
+        const int lastLag = static_cast<int>(std::floor(rate / 36.0));
+        for (int lag = firstLag; lag <= lastLag; ++lag)
+        {
+            double product = 0.0;
+            double earlyPower = 0.0;
+            double latePower = 0.0;
+            for (int i = 0; i + lag < windowLength; ++i)
+            {
+                const double early = window[static_cast<std::size_t>(i)];
+                const double late = window[static_cast<std::size_t>(i + lag)];
+                product += early * late;
+                earlyPower += early * early;
+                latePower += late * late;
+            }
+            strongestPeriod = std::max(
+                strongestPeriod,
+                product / std::sqrt(std::max(earlyPower * latePower, 1.0e-30)));
+        }
+        harmonicity[static_cast<std::size_t>(hit)] = strongestPeriod;
+    }
+
+    const auto median = [] (auto values)
+    {
+        std::sort(values.begin(), values.end());
+        return 0.5 * (values[values.size() / 2 - 1]
+                    + values[values.size() / 2]);
+    };
+    const double medianUpperBody = median(upperBody);
+    const double medianHarmonicity = median(harmonicity);
+    const auto previousPrecision = std::cout.precision(9);
+    std::cout << "Rapid Palm 30-80 ms upper-body fraction (>500-8k / 20-8k): "
+              << medianUpperBody << " ("
+              << 10.0 * std::log10(std::max(medianUpperBody, 1.0e-30))
+              << " dB), harmonicity: " << medianHarmonicity << '\n';
+    std::cout.precision(previousPrecision);
+
+    // Loose one-sided rails: only a material regression toward a darker or
+    // more periodic chug should fail. They are not fits to the confounded real
+    // reference and intentionally leave room for evidence-led model work.
+    expect(medianUpperBody > 0.05,
+           "the rapid Palm body became materially darker");
+    expect(medianHarmonicity < 0.97,
+           "the rapid Palm body became materially more periodic");
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1290,7 @@ void testSetParametersSanitisation()
 
 int main()
 {
+    testRapidPalmBodyDirection();
     testHalfbandKernel();
     testExactDryBypass();
     testGainStageAliasing();

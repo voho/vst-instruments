@@ -26,9 +26,9 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
-// A guitar-oriented keyboard that keeps the latching keyswitch banks visually
-// separate from the playable Drop-E eight-string range. The picking-style and
-// play-style banks latch independently, so one key of each is highlighted.
+// A guitar-oriented keyboard that keeps the keyswitch banks visually separate
+// from the playable Drop-E eight-string range. Pick style stays latched; the
+// play-style highlight follows either its latch or the active HOLD override.
 class ElectryKeyboardComponent final : public juce::MidiKeyboardComponent
 {
 public:
@@ -162,7 +162,9 @@ private:
 
     juce::Label logoLabel;
     juce::Label editionLabel;
+    juce::Label factoryProgramLabel;
     juce::Label keyboardHintLabel;
+    juce::ComboBox factoryProgramSelector;
     ElectryStatusDisplay statusDisplay;
     juce::TextButton panicButton { "PANIC" };
 
@@ -177,8 +179,11 @@ private:
         { "SUSTAIN", "PALM MUTE", "HAMMER", "HARMONIC", "PINCH", "SLIDE",
           "DEAD" }
     };
+    ElectryChoiceStrip playStyleKeyModeStrip {
+        "PLAY-STYLE KEYS", { "LATCH", "HOLD" }
+    };
     ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
-    ElectryChoiceStrip outputModeStrip { "OUTPUT FIELD", { "MONO", "STEREO" } };
+    ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "DOUBLE" } };
 
     ElectryKnob bodyWoodKnob { "WOOD" };
     ElectryKnob bodySizeKnob { "SIZE" };
@@ -195,7 +200,7 @@ private:
     ElectryKnob pickPositionKnob { "PICK POS" };
     ElectryKnob pickHardnessKnob { "HARDNESS" };
     ElectryKnob bendTimeKnob { "BEND TIME" };
-    ElectryKnob muteDampingKnob { "MUTE DAMP" };
+    ElectryKnob muteDampingKnob { "PALM TIGHT" };
     ElectryKnob velocityKnob { "VELOCITY" };
 
     ElectryKnob pickNoiseKnob { "PLECTRUM" };
@@ -204,7 +209,7 @@ private:
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob sympatheticKnob { "SYMPATHY" };
-    ElectryKnob palmMuteKnob { "PALM MUTE" };
+    ElectryKnob palmMuteKnob { "PALM PRESS" };
     ElectryKnob strumSpreadKnob { "STRUM" };
     ElectryKnob resonanceKnob { "RESONANCE" };
 
@@ -220,6 +225,7 @@ private:
 
     std::unique_ptr<juce::ParameterAttachment> pickupAttachment;
     std::unique_ptr<juce::ParameterAttachment> outputModeAttachment;
+    std::unique_ptr<juce::ParameterAttachment> doubleModeAttachment;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::array<juce::Rectangle<int>, sectionCount> sectionBounds {};
 

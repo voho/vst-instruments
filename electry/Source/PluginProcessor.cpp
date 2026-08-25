@@ -3,11 +3,95 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace
 {
+constexpr std::array<const char*, 3> factoryProgramNames {
+    "Factory Default", "Drop-E Metal", "Mute / Dead DI"
+};
+
+struct FactoryParameterValue
+{
+    const char* id;
+    float plainValue;
+};
+
+// These are the two measured/demonstrated deviations from the existing
+// instrument defaults. Keeping them sparse makes the defaults the single
+// source of truth, while setCurrentProgram() still derives every target from
+// a default plus these overrides so a rig never inherits the previous patch.
+constexpr std::array<FactoryParameterValue, 13> dropEMetalValues {{
+    { electry::parameters::tone,          1.00f },
+    { electry::parameters::stringGauge,   0.80f },
+    { electry::parameters::stringAge,     0.10f },
+    { electry::parameters::pickHardness,  0.85f },
+    { electry::parameters::fingerNoise,   0.55f },
+    { electry::parameters::muteDamping,   0.85f },
+    { electry::parameters::velocity,      0.70f },
+    { electry::parameters::output,        6.00f },
+    { electry::parameters::artifacts,     0.15f },
+    { electry::parameters::distortion,    0.45f },
+    { electry::parameters::amp,           0.95f },
+    { electry::parameters::compressor,    0.60f },
+    { electry::parameters::sympathetic,   0.25f },
+}};
+
+constexpr std::array<FactoryParameterValue, 6> muteDeadDiValues {{
+    { electry::parameters::pickPosition,  0.20f },
+    { electry::parameters::pickHardness,  0.82f },
+    { electry::parameters::fingerNoise,   0.55f },
+    { electry::parameters::output,        6.00f },
+    { electry::parameters::artifacts,     0.15f },
+    { electry::parameters::sympathetic,   0.00f },
+}};
+
+std::span<const FactoryParameterValue> valuesForProgram (int index) noexcept
+{
+    if (index == 1)
+        return dropEMetalValues;
+    if (index == 2)
+        return muteDeadDiValues;
+    return {};
+}
+
+constexpr auto factoryProgramProperty = "factoryProgram";
+constexpr auto pickStyleProperty = "pickStyle";
+constexpr auto playStyleProperty = "playStyle";
+constexpr auto playStyleKeysHoldProperty = "playStyleKeysHold";
+
+bool isAttackConditioningMidiEvent (
+    const juce::MidiMessageMetadata& metadata) noexcept
+{
+    if (metadata.data == nullptr || metadata.numBytes < 1)
+        return false;
+
+    const auto kind = static_cast<unsigned> (metadata.data[0]) & 0xf0u;
+    if (kind == 0x90u && metadata.numBytes >= 3)
+    {
+        return electry::ElectryEngine::isKeyswitchNote (
+            static_cast<int> (metadata.data[1] & 0x7fu));
+    }
+
+    if (kind == 0x80u && metadata.numBytes >= 2)
+    {
+        return electry::ElectryEngine::isKeyswitchNote (
+            static_cast<int> (metadata.data[1] & 0x7fu));
+    }
+
+    if (kind != 0xb0u || metadata.numBytes < 3)
+        return false;
+
+    const auto controller = metadata.data[1] & 0x7fu;
+    // CC121 is the matching reset for CC2, and CC123 releases temporary HOLD
+    // keys. Keeping every attack-state change in one stable pass preserves
+    // their source order before the attack.
+    return controller == 2u || controller == 121u || controller == 123u;
+}
+
 float valueOf (const std::atomic<float>* value) noexcept
 {
     return value->load (std::memory_order_relaxed);
@@ -131,6 +215,10 @@ ElectryAudioProcessor::ElectryAudioProcessor()
 {
     using namespace electry::parameters;
 
+    // Fixed, distinct player stream: repeatable project renders, but not a
+    // phase-identical copy of the primary engine when DOUBLE is selected.
+    doubleEngine->setVariationSeed (0x9e3779b9u);
+
     parameterPointers.pickupSelector = parameters.getRawParameterValue (pickupSelector);
     parameterPointers.pickupType     = parameters.getRawParameterValue (pickupType);
     parameterPointers.tone           = parameters.getRawParameterValue (tone);
@@ -162,6 +250,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.palmMute       = parameters.getRawParameterValue (palmMute);
     parameterPointers.strumSpread    = parameters.getRawParameterValue (strumSpread);
     parameterPointers.resonanceDepth = parameters.getRawParameterValue (resonanceDepth);
+    parameterPointers.doubleMode     = parameters.getRawParameterValue (doubleMode);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
@@ -175,7 +264,8 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.sympathetic != nullptr
              && parameterPointers.palmMute != nullptr
              && parameterPointers.strumSpread != nullptr
-             && parameterPointers.resonanceDepth != nullptr);
+             && parameterPointers.resonanceDepth != nullptr
+             && parameterPointers.doubleMode != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -184,12 +274,63 @@ ElectryAudioProcessor::~ElectryAudioProcessor()
     keyboardState.removeListener (this);
 }
 
+int ElectryAudioProcessor::getNumPrograms()
+{
+    return static_cast<int> (factoryProgramNames.size());
+}
+
+int ElectryAudioProcessor::getCurrentProgram()
+{
+    return currentProgram.load (std::memory_order_relaxed);
+}
+
+void ElectryAudioProcessor::setCurrentProgram (int index)
+{
+    if (index < 0 || index >= getNumPrograms())
+        return;
+
+    currentProgram.store (index, std::memory_order_relaxed);
+    const auto overrides = valuesForProgram (index);
+
+    for (auto* hostParameter : getParameters())
+    {
+        auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (hostParameter);
+        jassert (parameter != nullptr);
+        if (parameter == nullptr)
+            continue;
+
+        auto target = parameter->getDefaultValue();
+        for (const auto& value : overrides)
+            if (parameter->paramID == value.id)
+            {
+                target = parameter->convertTo0to1 (value.plainValue);
+                break;
+            }
+
+        if (! juce::approximatelyEqual (parameter->getValue(), target))
+            parameter->setValueNotifyingHost (target);
+    }
+
+    // Rigs may initialize Palm Tightness and Palm Pressure, but keep both
+    // keyswitch latches player-controlled. The host learns every changed
+    // parameter above, then refreshes its program view.
+    updateHostDisplay (
+        juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
+}
+
+const juce::String ElectryAudioProcessor::getProgramName (int index)
+{
+    if (index < 0 || index >= getNumPrograms())
+        return {};
+    return factoryProgramNames[static_cast<std::size_t> (index)];
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout
 ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (31);
+    result.reserve (32);
 
     // Every default below is read from the engine's own struct rather than
     // written out again here. These two lists had drifted apart: the engine's
@@ -244,7 +385,11 @@ ElectryAudioProcessor::createParameterLayout()
                   .withStringFromValueFunction (
                       [] (float value, int)
                       {
-                          return juce::String (25.5f + value * 2.5f, 2) + "\"";
+                          const double inches = 25.5
+                              + static_cast<double> (value) * 2.5;
+                          const double hundredth = std::round (inches * 100.0)
+                                                   / 100.0;
+                          return juce::String (hundredth, 2) + "\"";
                       })
                   .withValueFromStringFunction (
                       [] (const juce::String& text)
@@ -263,7 +408,7 @@ ElectryAudioProcessor::createParameterLayout()
     addPercent (pickNoise, "Pick noise", engineDefaults.pickNoise);
     addPercent (fingerNoise, "Finger noise", engineDefaults.fingerNoise);
     addPercent (releaseNoise, "Release noise", engineDefaults.releaseNoise);
-    addPercent (muteDamping, "Mute damping", engineDefaults.muteDamping);
+    addPercent (muteDamping, "Palm-mute tightness", engineDefaults.muteDamping);
 
     auto bendRange = juce::NormalisableRange<float> { 0.04f, 2.0f, 0.0f };
     bendRange.setSkewForCentre (0.30f);
@@ -298,7 +443,7 @@ ElectryAudioProcessor::createParameterLayout()
     // Version 1.1 additions, again appended so parameter indices 1..27 keep
     // pointing at exactly the same controls in existing host sessions.
     addPercent (sympathetic, "Sympathetic ring", engineDefaults.sympatheticAmount);
-    addPercent (palmMute, "Palm mute", engineDefaults.palmMute);
+    addPercent (palmMute, "Palm pressure", engineDefaults.palmMute);
     addFloat (strumSpread, "Strum spread", { 0.0f, 40.0f, 0.1f },
               1000.0f * engineDefaults.strumSpreadSeconds,
               juce::AudioParameterFloatAttributes()
@@ -321,32 +466,51 @@ ElectryAudioProcessor::createParameterLayout()
                   .withStringFromValueFunction (percentText100)
                   .withValueFromStringFunction (plainNumericValue));
 
+    // A new parameter, rather than a third outputMode choice: old hosts store
+    // Stereo as the top of that two-choice parameter, which must stay Stereo.
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { doubleMode, 1 }, "Double engine", false));
+
     return { result.begin(), result.end() };
 }
 
 void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // This is the prepare boundary: forget only an older request. Any Panic
+    // click from here onward either reaches the still-running old block or
+    // survives the preparation work for the first new block.
+    panicRequested.store (false, std::memory_order_release);
     engineReady.store (false, std::memory_order_release);
     engine.prepare (sampleRate, samplesPerBlock);
+    doubleEngine->prepare (sampleRate, samplesPerBlock);
     updateEngineParameters();
-    engine.reset();
+    sustainPedalDown = false;
+    // Drop stale on-screen note events before reading the producer-side
+    // latches. A style click published after this boundary remains queued for
+    // the first block, so it can never be discarded after changing the UI.
+    discardUiMidiEvents();
+    clearHeldPlayStyles();
+    appliedPlayStyleKeysHold = playStyleKeysHold.load (std::memory_order_relaxed);
+    appliedBasePlayStyleIndex = juce::jlimit (
+        0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
+        playStyleIndex.load (std::memory_order_relaxed));
+    resetEngineWithArticulations (
+        pickStyleIndex.load (std::memory_order_relaxed),
+        appliedBasePlayStyleIndex);
     engine.setPitchBend (0.0f);
-    engine.setSustainPedal (false);
+    doubleEngine->setPitchBend (0.0f);
     engine.setResonance (0.0f);
+    doubleEngine->setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
+    doubleEngine->setPalmMutePressure (0.0f);
     engine.setVibrato (0.0f);
+    doubleEngine->setVibrato (0.0f);
     effects.prepare (sampleRate);
     updateEffectParameters();
     effects.reset();
-    discardUiMidiEvents();
-    panicRequested.store (false, std::memory_order_release);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     sympatheticStringCount.store (0, std::memory_order_relaxed);
-    pickStyleIndex.store (
-        static_cast<int> (engine.getCurrentPickStyle()), std::memory_order_relaxed);
-    playStyleIndex.store (
-        static_cast<int> (engine.getCurrentPlayStyle()), std::memory_order_relaxed);
     publishStringVisualState();
     engineReady.store (true, std::memory_order_release);
 }
@@ -355,14 +519,28 @@ void ElectryAudioProcessor::releaseResources()
 {
     engineReady.store (false, std::memory_order_release);
     engine.setPitchBend (0.0f);
+    doubleEngine->setPitchBend (0.0f);
+    sustainPedalDown = false;
     engine.setSustainPedal (false);
+    doubleEngine->setSustainPedal (false);
     engine.setResonance (0.0f);
+    doubleEngine->setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
+    doubleEngine->setPalmMutePressure (0.0f);
     engine.setVibrato (0.0f);
+    doubleEngine->setVibrato (0.0f);
     engine.allNotesOff();
+    doubleEngine->allNotesOff();
     engine.reset();
+    doubleEngine->reset();
     effects.reset();
     discardUiMidiEvents();
+    clearHeldPlayStyles();
+    appliedBasePlayStyleIndex = juce::jlimit (
+        0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
+        playStyleIndex.load (std::memory_order_relaxed));
+    effectivePlayStyleIndex.store (appliedBasePlayStyleIndex,
+                                   std::memory_order_relaxed);
     panicRequested.store (false, std::memory_order_release);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     sympatheticStringCount.store (0, std::memory_order_relaxed);
@@ -387,41 +565,102 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     updateEngineParameters();
     updateEffectParameters();
+    synchronisePlayStyleKeyMode();
 
     if (panicRequested.exchange (false, std::memory_order_acq_rel))
     {
-        engine.reset();
-        effects.reset();
+        sustainPedalDown = false;
+        // Preserve an already-clicked style while discarding queued playable
+        // notes. Discard first: a later click remains queued, instead of being
+        // lost after its immediate display latch has changed.
         discardUiMidiEvents();
+        clearHeldPlayStyles();
+        appliedBasePlayStyleIndex = juce::jlimit (
+            0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
+            playStyleIndex.load (std::memory_order_relaxed));
+        resetEngineWithArticulations (
+            pickStyleIndex.load (std::memory_order_relaxed),
+            appliedBasePlayStyleIndex);
+        effects.reset();
     }
 
     // GUI notes and articulation clicks enter through a bounded lock-free
-    // queue and start at the next block boundary. This avoids allocating or
-    // locking in the audio callback.
-    dispatchUiMidiEvents();
+    // queue and start at the next block boundary. Snapshot the producer once:
+    // anything arriving during this callback belongs to the next block.
+    const auto uiBegin = uiReadIndex.load (std::memory_order_relaxed);
+    const auto uiEnd = uiWriteIndex.load (std::memory_order_acquire);
+    dispatchUiMidiEventPass (uiBegin, uiEnd, true);
+
+    // A normal sample-zero host group and the GUI snapshot describe one attack
+    // boundary. Let both sources condition it before either source's playable
+    // notes. If a host supplies out-of-range negative positions, retain the
+    // old source order instead of pulling a later raw-zero event ahead of them.
+    const auto firstHostEvent = midiMessages.begin();
+    bool uiRemainderPending = firstHostEvent != midiMessages.end()
+                           && (*firstHostEvent).samplePosition == 0;
+    if (! uiRemainderPending)
+    {
+        dispatchUiMidiEventPass (uiBegin, uiEnd, false);
+        uiReadIndex.store (uiEnd, std::memory_order_release);
+    }
 
     const auto numSamples = buffer.getNumSamples();
     int renderedTo = 0;
 
-    for (const auto metadata : midiMessages)
+    for (auto event = midiMessages.begin(); event != midiMessages.end();)
     {
-        const auto eventSample = juce::jlimit (0, numSamples, metadata.samplePosition);
+        const auto eventSample = juce::jlimit (0, numSamples,
+                                               (*event).samplePosition);
 
         if (eventSample > renderedTo)
         {
-            engine.process (buffer.getWritePointer (0, renderedTo),
-                            buffer.getWritePointer (1, renderedTo),
-                            eventSample - renderedTo);
+            renderEngines (buffer.getWritePointer (0, renderedTo),
+                           buffer.getWritePointer (1, renderedTo),
+                           eventSample - renderedTo);
             renderedTo = eventSample;
         }
 
-        dispatchMidiData (metadata.data, metadata.numBytes);
+        auto groupEnd = event;
+        while (groupEnd != midiMessages.end()
+               && (*groupEnd).samplePosition == (*event).samplePosition)
+            ++groupEnd;
+
+        // Hosts are free to store simultaneous MIDI in either insertion order.
+        // A keyswitch or CC2 therefore conditions every attack at its timestamp,
+        // rather than only attacks that happened to follow it in the buffer.
+        // The two iterator walks allocate nothing and preserve input order within
+        // both the conditioning events and everything else.
+        for (auto current = event; current != groupEnd; ++current)
+        {
+            const auto metadata = *current;
+            if (isAttackConditioningMidiEvent (metadata))
+                dispatchMidiData (metadata.data, metadata.numBytes);
+        }
+
+        // Stable partition across event sources at the block boundary:
+        // GUI conditioning, host conditioning, GUI remainder, host remainder.
+        // Do not release the queue slots until both GUI passes have read them.
+        if (uiRemainderPending && (*event).samplePosition == 0)
+        {
+            dispatchUiMidiEventPass (uiBegin, uiEnd, false);
+            uiReadIndex.store (uiEnd, std::memory_order_release);
+            uiRemainderPending = false;
+        }
+
+        for (auto current = event; current != groupEnd; ++current)
+        {
+            const auto metadata = *current;
+            if (! isAttackConditioningMidiEvent (metadata))
+                dispatchMidiData (metadata.data, metadata.numBytes);
+        }
+
+        event = groupEnd;
     }
 
     if (renderedTo < numSamples)
-        engine.process (buffer.getWritePointer (0, renderedTo),
-                        buffer.getWritePointer (1, renderedTo),
-                        numSamples - renderedTo);
+        renderEngines (buffer.getWritePointer (0, renderedTo),
+                       buffer.getWritePointer (1, renderedTo),
+                       numSamples - renderedTo);
 
     effects.process (buffer.getWritePointer (0), buffer.getWritePointer (1),
                      numSamples);
@@ -429,16 +668,22 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // The amplified output is what the loudspeaker plays back at the guitar;
     // the engine consumes it next block, which gives the resonance feedback
     // loop the acoustic latency a real speaker-to-string path has.
-    engine.pushAcousticReturn (buffer.getReadPointer (0),
-                               buffer.getReadPointer (1), numSamples);
+    if (doubleModeActive)
+    {
+        engine.pushAcousticReturn (buffer.getReadPointer (0), nullptr,
+                                   numSamples);
+        doubleEngine->pushAcousticReturn (buffer.getReadPointer (1), nullptr,
+                                          numSamples);
+    }
+    else
+    {
+        engine.pushAcousticReturn (buffer.getReadPointer (0),
+                                   buffer.getReadPointer (1), numSamples);
+    }
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     sympatheticStringCount.store (engine.getSympatheticStringCount(),
                                   std::memory_order_relaxed);
-    pickStyleIndex.store (
-        static_cast<int> (engine.getCurrentPickStyle()), std::memory_order_relaxed);
-    playStyleIndex.store (
-        static_cast<int> (engine.getCurrentPlayStyle()), std::memory_order_relaxed);
     publishStringVisualState();
 }
 
@@ -453,54 +698,85 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
     if (kind == 0x90u && numBytes >= 3)
     {
         if (data[2] != 0)
-            engine.noteOn (static_cast<int> (data[1] & 0x7fu),
-                           static_cast<float> (data[2] & 0x7fu) / 127.0f);
+            dispatchNoteOn (static_cast<int> (data[1] & 0x7fu),
+                            static_cast<float> (data[2] & 0x7fu) / 127.0f,
+                            false);
         else
-            engine.noteOff (static_cast<int> (data[1] & 0x7fu));
+            dispatchNoteOff (static_cast<int> (data[1] & 0x7fu));
     }
     else if (kind == 0x80u && numBytes >= 3)
     {
-        engine.noteOff (static_cast<int> (data[1] & 0x7fu));
+        dispatchNoteOff (static_cast<int> (data[1] & 0x7fu));
     }
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
         const auto controllerValue = data[2] & 0x7fu;
         if (controller == 64u)
-            engine.setSustainPedal (controllerValue >= 64u);
+        {
+            sustainPedalDown = controllerValue >= 64u;
+            engine.setSustainPedal (sustainPedalDown);
+            doubleEngine->setSustainPedal (sustainPedalDown);
+        }
         else if (controller == 1u)
         {
             // The modulation wheel is the performance resonance: it lifts the
             // sympathetic coupling toward total and opens the acoustic
             // feedback path, so a distorted tone can be played into a howl.
             engine.setResonance (static_cast<float> (controllerValue) / 127.0f);
+            doubleEngine->setResonance (
+                static_cast<float> (controllerValue) / 127.0f);
         }
         else if (controller == 2u)
         {
-            // Breath/CC2 is the performable side of the Palm Mute parameter:
+            // Breath/CC2 is the performable side of the Palm Pressure parameter:
             // it adds bridge-hand pressure without needing automation.
             engine.setPalmMutePressure (
+                static_cast<float> (controllerValue) / 127.0f);
+            doubleEngine->setPalmMutePressure (
                 static_cast<float> (controllerValue) / 127.0f);
         }
         else if (controller == 121u)
         {
+            sustainPedalDown = false;
             engine.setPitchBend (0.0f);
+            doubleEngine->setPitchBend (0.0f);
             engine.setResonance (0.0f);
+            doubleEngine->setResonance (0.0f);
             engine.setPalmMutePressure (0.0f);
+            doubleEngine->setPalmMutePressure (0.0f);
             engine.setVibrato (0.0f);
+            doubleEngine->setVibrato (0.0f);
             engine.setSustainPedal (false);
+            doubleEngine->setSustainPedal (false);
         }
         else if (controller == 120u)
         {
-            // MIDI All Sound Off is an immediate mute, like the front-panel
-            // Panic control. The parameter targets survive the engine reset.
-            engine.reset();
+            // MIDI All Sound Off is an immediate audio mute. Unlike the
+            // front-panel Panic, it preserves controller/key state: parameter
+            // targets, selected latches and a physically held play-style key
+            // survive; Alternate deliberately restarts on Down.
+            // Producer/display latches can already describe a GUI event beyond
+            // this callback's queue snapshot. Preserve only styles that the
+            // audio thread has actually applied at the CC120 boundary.
+            const int appliedPickStyle = static_cast<int> (
+                engine.getCurrentPickStyle());
+            const int appliedPlayStyle = static_cast<int> (
+                engine.getCurrentPlayStyle());
+            resetEngineWithArticulations (appliedPickStyle, appliedPlayStyle);
+            engine.setSustainPedal (sustainPedalDown);
+            doubleEngine->setSustainPedal (sustainPedalDown);
+            effects.reset();
         }
         else if (controller == 123u)
         {
             // All Notes Off releases the held strings so the natural damped
-            // ring-out remains musical.
+            // ring-out remains musical. In HOLD mode the play-style
+            // keyswitches are notes too, so they return to the saved base.
+            clearHeldPlayStyles();
+            applyPlayStyle (appliedBasePlayStyleIndex);
             engine.allNotesOff();
+            doubleEngine->allNotesOff();
         }
     }
     else if (kind == 0xd0u && numBytes >= 2)
@@ -510,6 +786,8 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         // deliberately not on the sympathetically ringing ones, which is what
         // separates a finger from the bar the pitch wheel models.
         engine.setVibrato (static_cast<float> (data[1] & 0x7fu) / 127.0f);
+        doubleEngine->setVibrato (
+            static_cast<float> (data[1] & 0x7fu) / 127.0f);
     }
     else if (kind == 0xa0u && numBytes >= 3)
     {
@@ -517,11 +795,147 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         // hand rather than one per key, so the most recent key's pressure is
         // what that hand is doing.
         engine.setVibrato (static_cast<float> (data[2] & 0x7fu) / 127.0f);
+        doubleEngine->setVibrato (
+            static_cast<float> (data[2] & 0x7fu) / 127.0f);
     }
     else if (kind == 0xe0u && numBytes >= 3)
     {
-        engine.setPitchBend (decodePitchBend14 (data[1], data[2]));
+        const auto bend = decodePitchBend14 (data[1], data[2]);
+        engine.setPitchBend (bend);
+        doubleEngine->setPitchBend (bend);
     }
+}
+
+void ElectryAudioProcessor::dispatchNoteOn (
+    int note, float velocity, bool selectsBaseArticulation) noexcept
+{
+    const int articulation = note - electry::ElectryEngine::firstKeyswitchNote;
+    if (articulation < 0
+        || articulation >= electry::ElectryEngine::keyswitchCount)
+    {
+        engine.noteOn (note, velocity);
+        if (doubleModeActive)
+            doubleEngine->noteOn (note, velocity);
+        return;
+    }
+
+    if (articulation < electry::ElectryEngine::pickStyleKeyswitchCount)
+    {
+        if (! selectsBaseArticulation)
+            latchArticulation (articulation);
+        engine.noteOn (note, velocity);
+        doubleEngine->noteOn (note, velocity);
+        return;
+    }
+
+    const int style = articulation
+                    - electry::ElectryEngine::pickStyleKeyswitchCount;
+    if (selectsBaseArticulation)
+    {
+        appliedBasePlayStyleIndex = style;
+        if (! appliedPlayStyleKeysHold || latestHeldPlayStyle() < 0)
+            applyPlayStyle (style);
+        return;
+    }
+
+    if (! appliedPlayStyleKeysHold)
+    {
+        playStyleIndex.store (style, std::memory_order_relaxed);
+        appliedBasePlayStyleIndex = style;
+        applyPlayStyle (style);
+        return;
+    }
+
+    auto& count = heldPlayStyleCounts[static_cast<std::size_t> (style)];
+    if (count < std::numeric_limits<std::uint16_t>::max())
+        ++count;
+    heldPlayStyleOrder[static_cast<std::size_t> (style)] = ++heldPlayStyleSequence;
+    applyPlayStyle (style);
+}
+
+void ElectryAudioProcessor::dispatchNoteOff (int note) noexcept
+{
+    const int style = note - electry::ElectryEngine::firstPlayStyleKeyswitchNote;
+    if (! appliedPlayStyleKeysHold || style < 0
+        || style >= electry::ElectryEngine::playStyleKeyswitchCount)
+    {
+        engine.noteOff (note);
+        doubleEngine->noteOff (note);
+        return;
+    }
+
+    auto& count = heldPlayStyleCounts[static_cast<std::size_t> (style)];
+    if (count == 0)
+        return;
+    --count;
+    if (count == 0)
+        heldPlayStyleOrder[static_cast<std::size_t> (style)] = 0;
+
+    const int held = latestHeldPlayStyle();
+    applyPlayStyle (held >= 0 ? held : appliedBasePlayStyleIndex);
+}
+
+void ElectryAudioProcessor::applyPlayStyle (int styleIndex) noexcept
+{
+    styleIndex = juce::jlimit (
+        0, electry::ElectryEngine::playStyleKeyswitchCount - 1, styleIndex);
+    engine.noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                       + styleIndex, 1.0f);
+    doubleEngine->noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                              + styleIndex, 1.0f);
+    effectivePlayStyleIndex.store (styleIndex, std::memory_order_relaxed);
+}
+
+int ElectryAudioProcessor::latestHeldPlayStyle() const noexcept
+{
+    int latest = -1;
+    std::uint64_t latestOrder = 0;
+    for (int style = 0;
+         style < electry::ElectryEngine::playStyleKeyswitchCount; ++style)
+    {
+        const auto index = static_cast<std::size_t> (style);
+        if (heldPlayStyleCounts[index] != 0
+            && heldPlayStyleOrder[index] > latestOrder)
+        {
+            latest = style;
+            latestOrder = heldPlayStyleOrder[index];
+        }
+    }
+    return latest;
+}
+
+void ElectryAudioProcessor::clearHeldPlayStyles() noexcept
+{
+    heldPlayStyleCounts.fill (0);
+    heldPlayStyleOrder.fill (0);
+    heldPlayStyleSequence = 0;
+}
+
+void ElectryAudioProcessor::synchronisePlayStyleKeyMode() noexcept
+{
+    const bool requested = playStyleKeysHold.load (std::memory_order_relaxed);
+    if (requested == appliedPlayStyleKeysHold)
+        return;
+
+    appliedPlayStyleKeysHold = requested;
+    clearHeldPlayStyles();
+    applyPlayStyle (appliedBasePlayStyleIndex);
+}
+
+void ElectryAudioProcessor::resetEngineWithArticulations (int pickStyle,
+                                                          int playStyle) noexcept
+{
+    engine.reset();
+    doubleEngine->reset();
+    engine.noteOn (electry::ElectryEngine::firstKeyswitchNote
+                       + pickStyle, 1.0f);
+    doubleEngine->noteOn (electry::ElectryEngine::firstKeyswitchNote
+                              + pickStyle, 1.0f);
+    engine.noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                       + playStyle, 1.0f);
+    doubleEngine->noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                              + playStyle, 1.0f);
+    effectivePlayStyleIndex.store (playStyle, std::memory_order_relaxed);
 }
 
 float ElectryAudioProcessor::decodePitchBend14 (juce::uint8 data1, juce::uint8 data2) noexcept
@@ -532,6 +946,14 @@ float ElectryAudioProcessor::decodePitchBend14 (juce::uint8 data1, juce::uint8 d
         ? static_cast<float> (value14 - 8192) / 8192.0f
         : static_cast<float> (value14 - 8192) / 8191.0f;
     return juce::jlimit (-1.0f, 1.0f, bend);
+}
+
+void ElectryAudioProcessor::renderEngines (float* left, float* right,
+                                           int numSamples) noexcept
+{
+    engine.process (left, right, numSamples);
+    if (doubleModeActive)
+        doubleEngine->process (right, right, numSamples);
 }
 
 void ElectryAudioProcessor::updateEngineParameters() noexcept
@@ -566,8 +988,32 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.resonanceDepth = 0.01f * valueOf (parameterPointers.resonanceDepth);
     const auto mode = juce::jlimit (0, 1,
         juce::roundToInt (valueOf (parameterPointers.outputMode)));
-    next.outputMode = static_cast<electry::OutputMode> (mode);
+    const bool requestedDouble = valueOf (parameterPointers.doubleMode) >= 0.5f;
+    next.outputMode = requestedDouble
+        ? electry::OutputMode::Mono
+        : static_cast<electry::OutputMode> (mode);
     engine.setParameters (next);
+
+    // A Double lane is a complete mono guitar, not the divided-pickup field.
+    // Refresh it when Double is entered: dormant strings cannot resume and
+    // parameter targets changed while it slept become the new engine's exact
+    // starting state before the next note. Controller targets keep mirroring
+    // while dormant; reset() deliberately preserves them, except for sustain,
+    // which is restored explicitly below.
+    next.outputMode = electry::OutputMode::Mono;
+    doubleEngine->setParameters (next);
+    if (! doubleModeActive && requestedDouble)
+    {
+        const int pickStyle = static_cast<int> (engine.getCurrentPickStyle());
+        const int playStyle = static_cast<int> (engine.getCurrentPlayStyle());
+        doubleEngine->reset();
+        doubleEngine->noteOn (electry::ElectryEngine::firstKeyswitchNote
+                                  + pickStyle, 1.0f);
+        doubleEngine->noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                                  + playStyle, 1.0f);
+        doubleEngine->setSustainPedal (sustainPedalDown);
+    }
+    doubleModeActive = requestedDouble;
 }
 
 void ElectryAudioProcessor::updateEffectParameters() noexcept
@@ -585,6 +1031,8 @@ void ElectryAudioProcessor::updateEffectParameters() noexcept
     // while a clean DI is not in the room at all - and that level is what
     // decides whether the resonance wheel can push the strings into feedback.
     engine.setAcousticReturnLevel (
+        juce::jmin (1.0f, next.amp + 0.6f * next.distortion));
+    doubleEngine->setAcousticReturnLevel (
         juce::jmin (1.0f, next.amp + 0.6f * next.distortion));
 }
 
@@ -606,9 +1054,22 @@ void ElectryAudioProcessor::triggerArticulation (int articulationIndex)
     if (articulationIndex < 0
         || articulationIndex >= electry::ElectryEngine::keyswitchCount)
         return;
+    // A strip click chooses the persistent base even when physical MIDI
+    // play-style keys are configured as momentary overrides.
+    latchArticulation (articulationIndex);
     enqueueUiMidiEvent (
         electry::ElectryEngine::firstKeyswitchNote + articulationIndex,
-        1.0f, true);
+        1.0f, true, true);
+}
+
+void ElectryAudioProcessor::setPlayStyleKeysHold (bool shouldHold)
+{
+    if (playStyleKeysHold.exchange (shouldHold, std::memory_order_relaxed)
+        == shouldHold)
+        return;
+    updateHostDisplay (
+        juce::AudioProcessorListener::ChangeDetails()
+            .withNonParameterStateChanged (true));
 }
 
 void ElectryAudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,
@@ -623,7 +1084,21 @@ void ElectryAudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int,
     enqueueUiMidiEvent (midiNoteNumber, velocity, false);
 }
 
-void ElectryAudioProcessor::enqueueUiMidiEvent (int note, float velocity, bool isNoteOn) noexcept
+void ElectryAudioProcessor::latchArticulation (int articulationIndex) noexcept
+{
+    if (articulationIndex >= 0
+        && articulationIndex < electry::ElectryEngine::pickStyleKeyswitchCount)
+        pickStyleIndex.store (articulationIndex, std::memory_order_relaxed);
+    else if (articulationIndex >= electry::ElectryEngine::pickStyleKeyswitchCount
+             && articulationIndex < electry::ElectryEngine::keyswitchCount)
+        playStyleIndex.store (
+            articulationIndex - electry::ElectryEngine::pickStyleKeyswitchCount,
+            std::memory_order_relaxed);
+}
+
+void ElectryAudioProcessor::enqueueUiMidiEvent (
+    int note, float velocity, bool isNoteOn,
+    bool selectsBaseArticulation) noexcept
 {
     const auto write = uiWriteIndex.load (std::memory_order_relaxed);
     const auto next = (write + 1u) % uiQueueCapacity;
@@ -636,26 +1111,31 @@ void ElectryAudioProcessor::enqueueUiMidiEvent (int note, float velocity, bool i
     }
 
     uiMidiQueue[write] = { juce::jlimit (0, 127, note),
-                           juce::jlimit (0.0f, 1.0f, velocity), isNoteOn };
+                           juce::jlimit (0.0f, 1.0f, velocity), isNoteOn,
+                           selectsBaseArticulation };
     uiWriteIndex.store (next, std::memory_order_release);
 }
 
-void ElectryAudioProcessor::dispatchUiMidiEvents() noexcept
+void ElectryAudioProcessor::dispatchUiMidiEventPass (unsigned begin,
+                                                      unsigned end,
+                                                      bool conditioning) noexcept
 {
-    auto read = uiReadIndex.load (std::memory_order_relaxed);
-    const auto write = uiWriteIndex.load (std::memory_order_acquire);
-
-    while (read != write)
+    auto read = begin;
+    while (read != end)
     {
         const auto event = uiMidiQueue[read];
-        if (event.noteOn)
-            engine.noteOn (event.note, event.velocity);
-        else
-            engine.noteOff (event.note);
+        const bool eventConditionsAttack =
+            electry::ElectryEngine::isKeyswitchNote (event.note);
+        if (eventConditionsAttack == conditioning)
+        {
+            if (event.noteOn)
+                dispatchNoteOn (event.note, event.velocity,
+                                event.selectsBaseArticulation);
+            else
+                dispatchNoteOff (event.note);
+        }
         read = (read + 1u) % uiQueueCapacity;
     }
-
-    uiReadIndex.store (read, std::memory_order_release);
 }
 
 void ElectryAudioProcessor::discardUiMidiEvents() noexcept
@@ -666,7 +1146,16 @@ void ElectryAudioProcessor::discardUiMidiEvents() noexcept
 
 void ElectryAudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
-    if (const auto xml = parameters.copyState().createXml())
+    auto state = parameters.copyState();
+    state.setProperty (factoryProgramProperty,
+                       currentProgram.load (std::memory_order_relaxed), nullptr);
+    state.setProperty (pickStyleProperty,
+                       pickStyleIndex.load (std::memory_order_relaxed), nullptr);
+    state.setProperty (playStyleProperty,
+                       playStyleIndex.load (std::memory_order_relaxed), nullptr);
+    state.setProperty (playStyleKeysHoldProperty,
+                       playStyleKeysHold.load (std::memory_order_relaxed), nullptr);
+    if (const auto xml = state.createXml())
         copyXmlToBinary (*xml, destinationData);
 }
 
@@ -676,9 +1165,31 @@ void ElectryAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
+        const int restoredProgram = static_cast<int> (
+            restoredState.getProperty (factoryProgramProperty, 0));
+        pickStyleIndex.store (juce::jlimit (
+            0, electry::ElectryEngine::pickStyleKeyswitchCount - 1,
+            static_cast<int> (restoredState.getProperty (pickStyleProperty, 0))),
+            std::memory_order_relaxed);
+        const int restoredPlayStyle = juce::jlimit (
+            0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
+            static_cast<int> (restoredState.getProperty (playStyleProperty, 0)));
+        playStyleIndex.store (restoredPlayStyle, std::memory_order_relaxed);
+        effectivePlayStyleIndex.store (restoredPlayStyle,
+                                       std::memory_order_relaxed);
+        playStyleKeysHold.store (
+            static_cast<bool> (
+                restoredState.getProperty (playStyleKeysHoldProperty, false)),
+            std::memory_order_relaxed);
         addMissingParameterDefaults (restoredState, parameters, getParameters());
         parameters.replaceState (restoredState);
+        currentProgram.store (
+            restoredProgram >= 0 && restoredProgram < getNumPrograms()
+                ? restoredProgram : 0,
+            std::memory_order_relaxed);
         requestPanic();
+        updateHostDisplay (
+            juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
     }
 }
 

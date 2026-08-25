@@ -103,6 +103,24 @@ constexpr float handDipFullDepthDb = 10.0f;
 constexpr float handDipCentreRatio = 5.0f;
 constexpr float handDipQ = 0.70f;
 
+// The fretting hand's calibrated Dead-note contact. The played string and the
+// idle strings share that hand, so both loss paths use one physical decay
+// target instead of letting the coupled strings ring as though the hand were
+// absent. The sympathetic control maps 0..1 logarithmically from an uncovered
+// four-second decay to a firmly stopped 45 ms decay; this helper is its exact
+// inverse for a measured T60.
+constexpr float deadHandT60 = 1.600f;
+constexpr float sympatheticOpenHandT60 = 4.0f;
+constexpr float sympatheticStoppedHandT60 = 0.045f;
+
+float sympatheticHandMuteForT60(float t60) noexcept
+{
+    return clampf((std::log(sympatheticOpenHandT60) - std::log(t60))
+                      / (std::log(sympatheticOpenHandT60)
+                         - std::log(sympatheticStoppedHandT60)),
+                  0.0f, 1.0f);
+}
+
 // How much of one transverse polarisation crosses into the other over one
 // round trip of the string. The two meet at the bridge saddle and at the nut or
 // fret, which is where a real string's polarisations exchange energy, so this
@@ -185,6 +203,28 @@ constexpr float strumCrossingSigma = 0.005f;
 
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
+
+// The waveguide is normalised for stable modal projection rather than stored
+// in SI units. Mapping loop displacement back to metres lets the nonlinear
+// stretch law use the same physical core, tension and length as the dispersion
+// solve. The prior physical prototype
+// measured 0.002831 loop mean-square at 2.05 mm, giving 0.03853 m per loop
+// unit; 0.040 is that calibration rounded, and the rendered follower does not
+// exceed the physical seed. Separately, the 4.44 N full-force model load gives
+// 2.75 mm of E1 displacement at the default 27.625-inch scale/pick position,
+// and therefore a 30-cent initial rise, consistent with the CC0 Drop-E reference
+// without baking one string's displacement into all eight strings.
+constexpr float waveguideDisplacementMetresPerUnit = 0.040f;
+constexpr float fullForcePickLoadNewtons = 4.440f;
+
+// A low eight-string is commonly set near 1.75 mm at the upper frets. Let a
+// forceful, artifact-heavy stroke close a little under that nominal action and
+// a gentler one require a little more travel, then convert through the same SI
+// calibration as the tension model. The former 0.52..0.24 loop-unit range was
+// 20.8..9.6 mm: even the engine's 2.75 mm full-force E1 seed could never reach
+// it, so the alleged fret-collision branch was dead.
+constexpr float looseFretClearanceMetres = 0.00208f;
+constexpr float hardFretClearanceMetres = 0.00096f;
 
 // clampf lives in DspMath.h, included via ElectryEngine.h; every call site in
 // this file already resolved to it unqualified through that header.
@@ -385,16 +425,18 @@ ElectryEngine::stringSpecs() noexcept
     // what left the low register sounding hollow - the fundamental faded while
     // the upper partials were still going.
     static constexpr std::array<StringSpec, stringCount> specs {{
-        // Effective bending cores are smaller than the geometric core: the
-        // wrap slips under flexure instead of behaving like a solid rod.
-        { 28, true, 2.0320f, 0.22f, 20.0f }, // E1, wound (.080)
-        { 35, true, 1.5240f, 0.25f, 19.0f }, // B1, wound (.060)
-        { 40, true, 1.0668f, 0.28f, 18.0f }, // E2, wound
-        { 45, true, 0.8128f, 0.30f, 16.5f }, // A2, wound
-        { 50, true, 0.6096f, 0.32f, 15.0f }, // D3, wound
-        { 55, false, 0.4064f, 1.0f, 12.0f }, // G3, plain
-        { 59, false, 0.2794f, 1.0f, 10.0f }, // B3, plain
-        { 64, false, 0.2286f, 1.0f, 8.5f },  // E4, plain
+        // Flexural and axial effective cores are separate empirical fits: a
+        // winding can slip differently under bending and tension. Their
+        // initial values intentionally retain the calibrated instrument while
+        // allowing either fit to move independently when measured data exists.
+        { 28, true, 2.0320f, 0.22f, 0.22f, 20.0f }, // E1, wound (.080)
+        { 35, true, 1.5240f, 0.25f, 0.25f, 19.0f }, // B1, wound (.060)
+        { 40, true, 1.0668f, 0.28f, 0.28f, 18.0f }, // E2, wound
+        { 45, true, 0.8128f, 0.30f, 0.30f, 16.5f }, // A2, wound
+        { 50, true, 0.6096f, 0.32f, 0.32f, 15.0f }, // D3, wound
+        { 55, false, 0.4064f, 1.0f, 1.0f, 12.0f }, // G3, plain
+        { 59, false, 0.2794f, 1.0f, 1.0f, 10.0f }, // B3, plain
+        { 64, false, 0.2286f, 1.0f, 1.0f, 8.5f },  // E4, plain
     }};
     return specs;
 }
@@ -526,7 +568,7 @@ float ElectryEngine::bendSensitivity(int stringIndex) noexcept
             const float fOpen = midiToHz(static_cast<float>(spec.openMidiNote));
             const float massScale = spec.wound ? 0.85f : 1.0f;
             raw[static_cast<std::size_t>(index)] =
-                spec.woundCoreScale * spec.woundCoreScale
+                spec.axialCoreScale * spec.axialCoreScale
                 / (massScale * fOpen * fOpen);
             maximum = std::max(maximum, raw[static_cast<std::size_t>(index)]);
         }
@@ -818,9 +860,9 @@ ElectryEngine::makeVelocityProfile(float velocity) const noexcept
     const float force = 0.05f + 0.95f * v;
     profile.amplitude = std::pow(force, response);
 
-    // Effort stays the stroke's force: it is what decides how far the string
-    // swings, and thence how hard it meets the frets (`collision`) and how far
-    // it stretches itself sharp (`tension`).
+    // Effort stays the stroke's force: it decides how hard the string meets
+    // the frets (`collision`). The elastic pitch bloom reads the amplitude
+    // force law directly below rather than carrying a second velocity curve.
     profile.effort = lerp(0.65f, v, response);
 
     // The contact spectrum does not follow that force, and the coupling
@@ -851,7 +893,6 @@ ElectryEngine::makeVelocityProfile(float velocity) const noexcept
 
     profile.brightness = lerp(0.20f, 2.10f, profile.releaseRate);
     profile.noise = lerp(1.0f, 0.18f + 0.82f * std::sqrt(v), response);
-    profile.tension = lerp(0.55f, 1.25f, smoothStep(profile.effort));
     profile.collision = smoothStep(
         clampf((profile.effort - 0.25f) / 0.75f, 0.0f, 1.0f));
     return profile;
@@ -921,7 +962,7 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     energyReleaseCoefficient_ = rateAdjustedCoefficient(0.00006f, internalRate);
     // Calibrated at 48 kHz like its neighbours. Left as a bare per-sample
     // literal it would give the hand a different physical response time at
-    // every host rate, while the 40 ms settle beside it is rate-normalised.
+    // every host rate.
     handEnvelopeCoefficient_ = rateAdjustedCoefficient(0.0015f, internalRate);
     retireAttackCoefficient_ = rateAdjustedCoefficient(0.01f, internalRate);
     retireReleaseCoefficient_ = rateAdjustedCoefficient(0.0009f, internalRate);
@@ -931,10 +972,7 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // envelope was active, once per voice; it depends only on the internal
     // clock, so it belongs here with its neighbours instead.
     palmImpactThudCoefficient_ = 1.0f - std::exp(-twoPi * 85.0f * inverseSampleRate_);
-    // The hand-loss dip's 40 ms settle window, in samples. Read directly by
-    // updateVoiceControl() instead of recomputing this same product on every
-    // control tick of every voice with an engaged dip.
-    handLossSettleWindowSamples_ = 0.040f * internalRate;
+    palmImpactVelocityRetention_ = std::pow(0.992f, 48000.0f / internalRate);
     // A 30 ms lag on the CC1 resonance control, advanced at the control tick:
     // fast enough to ride the wheel, slow enough that a coarse 7-bit
     // controller cannot step the coupling gain audibly.
@@ -1005,7 +1043,7 @@ void ElectryEngine::reset()
     pickStyle_ = PickStyle::Down;
     playStyle_ = PlayStyle::Sustain;
     alternateNextStrokeIsUp_ = false;
-    noteSequence_ = 0;
+    noteSequence_ = variationSeed_;
     activeVoiceCount_ = 0;
     sympatheticStringCount_ = 0;
     controlCountdown_ = 0;
@@ -1028,10 +1066,15 @@ void ElectryEngine::reset()
     sustainPedalDown_ = false;
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
+    lastHandContactClock_ = -1;
+    lastHandContactPlayStyle_ = PlayStyle::Sustain;
+    lastHandContactOrder_ = 0;
     chordAnchorString_ = 0;
     chordStrokeIsUp_ = false;
+    chordAlternateConsumed_ = false;
+    chordContactOccurred_ = false;
     chordFirstNoteOnClock_ = -(1ll << 40);
-    chordSequence_ = 0;
+    chordSequence_ = variationSeed_;
     strumPreRollSamples_ = 0;
     chordTravelSamples_.fill(0);
     frettingHandPosition_ = 0.0f;
@@ -1177,6 +1220,12 @@ void ElectryEngine::setPalmMutePressure(float normalised) noexcept
 {
     palmMutePressure_ = std::isfinite(normalised)
         ? clampf(normalised, 0.0f, 1.0f) : 0.0f;
+    // CC2 and a note-on commonly share one MIDI sample. Note setup reads this
+    // cached blend before the render loop gets a control tick, so refresh it
+    // here as well or that note's one-shot excitation and palm impact are
+    // configured as open even though its loop becomes muted one sample later.
+    palmMuteBlend_ = clampf(smoothedParameters_.palmMute + palmMutePressure_,
+                            0.0f, 1.0f);
 }
 
 void ElectryEngine::setSustainPedal(bool down) noexcept
@@ -1207,7 +1256,7 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     if (isKeyswitchNote(midiNote))
     {
         // The two banks latch independently: a picking-style switch never
-        // touches the play style and vice versa, so any of the twelve
+        // touches the play style and vice versa, so any of the twenty-one
         // combinations survives switching either half.
         const int index = midiNote - firstKeyswitchNote;
         if (index < pickStyleKeyswitchCount)
@@ -1230,15 +1279,20 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     // neither colours it nor advances the alternate sequence - a legato run
     // in the middle of alternate picking resumes on the stroke it left off.
     const bool picked = playStyle_ != PlayStyle::Hammer;
-    const bool strokeIsUp = picked
-        && (pickStyle_ == PickStyle::Up
-            || (pickStyle_ == PickStyle::Alternate && alternateNextStrokeIsUp_));
+    const bool strokeCandidateIsUp = pickStyle_ == PickStyle::Up
+        || (pickStyle_ == PickStyle::Alternate && alternateNextStrokeIsUp_);
 
-    // Note-ons that arrive inside one chord window belong to the same pick
-    // stroke and to the same hand shape, so both the strum travel below and
-    // the fretting hand read the same flag.
-    const bool newChord = engineClock_ - lastNoteOnClock_
-                        > static_cast<std::int64_t>(chordWindowSamples_);
+    // A programmed strum accepts note-ons for a bounded window measured from
+    // the chord's first event, because a host can deliver one chord over several
+    // blocks. Measuring successive gaps instead would let a staircase of notes
+    // extend one stroke indefinitely. At zero spread there is no delayed chord
+    // to assemble: only truly simultaneous note-ons share a stroke, while a
+    // rapid cross-string riff advances Alternate on every hit.
+    const float spreadSeconds = targetParameters_.strumSpreadSeconds;
+    const int activeChordWindowSamples = spreadSeconds > 0.0f
+        ? chordWindowSamples_ : 0;
+    bool newChord = engineClock_ - chordFirstNoteOnClock_
+                  > static_cast<std::int64_t>(activeChordWindowSamples);
 
     // The hand relaxes to the nut when the phrase ends: nothing is held and
     // no note has arrived for over a second. Without this a figure played high
@@ -1260,21 +1314,27 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
+    // A wrist stroke cannot cross the same string twice. Even inside the chord
+    // window, reusing a string already assigned to this chord is a new stroke;
+    // this keeps 25-35 ms tremolo picking alternate while different strings
+    // arriving in the same window still share one chord direction.
+    if (! newChord && chordSequence_ != 0
+        && voice.strumChordId == chordSequence_)
+        newChord = true;
+
     // Strum travel. The pick enters the neck at one edge and crosses the chord
     // in one direction, so the edge is the chord's extreme string *in the
     // stroke's direction* - not whichever note-on the host happened to send
     // first - and the offset is the signed distance from it rather than the
-    // absolute one. At a zero spread this is exactly the previous simultaneous
-    // behaviour.
+    // absolute one. At zero spread its timing is exactly a simultaneous block.
     //
     // Read the sanitised target rather than the smoothed copy. This control
     // schedules the stroke instead of shaping it, so the control tick copies it
     // verbatim; a chord whose note-ons land at offset 0 of the same block as
     // the automation change would otherwise be scheduled with the previous
     // block's spread, usually as a block chord.
-    const float spreadSeconds = targetParameters_.strumSpreadSeconds;
     if (newChord)
-        beginChordStroke(stringIndex, strokeIsUp, spreadSeconds);
+        beginChordStroke(stringIndex, strokeCandidateIsUp, spreadSeconds);
     else if (strumPreRollSamples_ > 0
              && engineClock_ - chordFirstNoteOnClock_
                     < static_cast<std::int64_t>(strumPreRollSamples_))
@@ -1307,14 +1367,19 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
                          || playStyle_ == PlayStyle::Slide)
                      && voice.active
                      && voice.midiNote != midiNote;
+    const bool plectrumStroke = picked && ! legato;
+    const bool strokeIsUp = plectrumStroke && chordStrokeIsUp_;
 
-    // Advancing the alternate sequence waits until here because a Slide is
-    // only known to be legato once its target string is resolved and found
-    // already sounding. A slide onto a ringing string retargets it and strikes
-    // nothing, so charging it a stroke would leave the next genuinely picked
-    // note on the wrong one - the same reason a hammer never advances it.
-    if (picked && ! legato && pickStyle_ == PickStyle::Alternate)
-        alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
+    // One chord is one wrist stroke: every crossed string keeps the direction
+    // beginChordStroke() resolved, and Alternate advances only once. Waiting
+    // until here preserves the legato rule too—a Slide onto a ringing string
+    // and a Hammer strike no plectrum, so neither consumes the chord's stroke.
+    if (plectrumStroke && pickStyle_ == PickStyle::Alternate
+        && ! chordAlternateConsumed_)
+    {
+        chordAlternateConsumed_ = true;
+        alternateNextStrokeIsUp_ = ! chordStrokeIsUp_;
+    }
 
     if (legato)
         legatoRetarget(voice, midiNote, velocity, playStyle_);
@@ -1334,6 +1399,12 @@ void ElectryEngine::noteOff(int midiNote)
     {
         if (! voice.active || ! voice.keyDown || voice.midiNote != midiNote)
             continue;
+        if (voice.keyDownCount > 1)
+        {
+            --voice.keyDownCount;
+            continue;
+        }
+        voice.keyDownCount = 0;
         voice.keyDown = false;
         if (sustainPedalDown_)
             voice.sustained = true;
@@ -1348,6 +1419,7 @@ void ElectryEngine::allNotesOff()
     {
         if (! voice.active)
             continue;
+        voice.keyDownCount = 0;
         voice.keyDown = false;
         voice.sustained = false;
         beginVoiceRelease(voice);
@@ -1425,9 +1497,16 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
         const auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
         if (! playable(stringIndex))
             return 0;
-        // Older starts win; releasing voices win over held voices.
-        const std::uint64_t age = ~voice.startOrder;
-        return voice.releasing ? (age | (1ull << 63)) : (age & ~(1ull << 63));
+        // Older starts win; releasing voices win over held voices. A pending
+        // same-string repick has already reserved its event order even though
+        // its audible attack state is deliberately not committed until contact.
+        const std::uint64_t effectiveStartOrder = voice.pendingRepick.active
+            ? voice.pendingRepick.startOrder : voice.startOrder;
+        const std::uint64_t age = ~effectiveStartOrder;
+        const bool effectivelyReleasing = voice.releasing
+                                       && ! voice.pendingRepick.active;
+        return effectivelyReleasing ? (age | (1ull << 63))
+                                    : (age & ~(1ull << 63));
     };
 
     std::uint64_t bestScore = 0;
@@ -1516,8 +1595,10 @@ float ElectryEngine::deadSpotFactor(int stringIndex, int fret) const noexcept
     return 1.0f / (1.0f + depth * gaussian);
 }
 
-void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
+void ElectryEngine::configureVoiceDamping(Voice& voice,
+                                          PlayStyle dampingStyle) noexcept
 {
+    voice.dampingStyle = dampingStyle;
     const auto& parameters = smoothedParameters_;
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
 
@@ -1580,20 +1661,24 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // palm-mute pressure gets both.
     float handT60 = 0.0f;
     float chokeT60 = 0.0f;
-    if (voice.playStyle == PlayStyle::PalmMute)
+    if (dampingStyle == PlayStyle::PalmMute)
     {
         handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
                                 parameters.muteDamping));
     }
-    else if (voice.playStyle == PlayStyle::Dead)
+    else if (dampingStyle == PlayStyle::Dead)
     {
         // The fretting hand laid across the strings without pressing them to
         // the fret. It is the whole hand rather than the heel, and it is
-        // nowhere near the bridge, so it takes the fundamental as hard as
-        // everything else - which is the difference between a dead note and a
-        // very tight palm mute, and why the mute's mode-shape relief below
-        // must not reach this term.
-        chokeT60 = 0.030f;
+        // nowhere near the bridge, so it takes the fundamental directly - the
+        // difference between a dead note and a very tight palm mute, and why
+        // the mute's mode-shape relief below must not reach this term. The old
+        // 30 ms target erased the E1 body by 34-51 dB over 30-250 ms. Four CC0
+        // Drop-E ghost hits instead retain a dark periodic thunk through that
+        // interval; this target puts all three measured decay windows inside
+        // their observed range while remaining about 16 dB below Sustain in
+        // the 100-250 ms window.
+        chokeT60 = deadHandT60;
     }
     // A harmonic used to clamp T60 to 3.8 s here, standing in for the touching
     // finger. The finger is now in the loop as the node touch it actually is,
@@ -1716,9 +1801,23 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // note decay dramatically faster than an open one, which still holds at
         // 70 and fails at 110, so this sits with about a factor of four in hand.
         //
-        constexpr float handHighFrequencyTilt = 3.0f;
+        // The 2025 Guitar-TECHS DI set independently confirms that the upper
+        // band has to leave first. Raising this tilt from 3.0 to 4.5 moves the
+        // default E2's paired >500 Hz loss to -4.85/-15.57 dB in the 50-150 and
+        // 150-500 ms windows while its <500 Hz figures move by only 0.06/0.04
+        // dB. At maximum Palm Tightness those upper-band losses become
+        // -11.20/-28.73
+        // dB, spanning the first player's -11.18/-21.82 dB without forcing the
+        // second player's much firmer contact onto every muted note.
+        constexpr float handHighFrequencyTilt = 4.5f;
         constexpr float handFundamentalRelief = 22.0f;
-        const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
+        // A harder stroke drives the string farther into the hand and makes a
+        // tighter contact. This scale is latched at attack from the same force
+        // and deterministic stroke draw as the excitation: no second velocity
+        // curve and no extra random player. Multiplying the final positive rate
+        // preserves exact no-hand bypass and monotonic pressure/mute controls.
+        const float handRate = handT60 > 0.0f
+            ? voice.handContactScale / handT60 : 0.0f;
         // The dip's depth follows this rather than switching on. It is the
         // hand's share of the string's total loss rate, so it is zero without a
         // hand, near one under a firm mute, and continuous in between - which
@@ -1741,7 +1840,13 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
 
     const float sampleRate = static_cast<float>(sampleRate_);
     const float f0 = voice.baseFrequency;
-    const float fHigh = std::min(3600.0f, 0.32f * sampleRate);
+    // A distributed fretting hand shapes the low-order modes that make up a
+    // dead note's whole audible body, so fit its upper decay target at the
+    // eighth partial. The bridge hand and ordinary string still use 3.6 kHz;
+    // moving their anchor would change every sustained and palm-muted note.
+    const float fHigh = dampingStyle == PlayStyle::Dead
+        ? std::min(8.0f * f0, 0.32f * sampleRate)
+        : std::min(3600.0f, 0.32f * sampleRate);
     const float omega0 = twoPi * f0 * inverseSampleRate_;
     const float omegaHigh = twoPi * std::max(fHigh, f0 * 1.5f) * inverseSampleRate_;
 
@@ -1818,13 +1923,13 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
             atF0 = clampf(atF0, 1.0e-3f, 1.0f);
             atHigh = clampf(atHigh, 1.0e-3f, 1.0f);
             // The shelf must not be what makes the remainder unsolvable. The
-            // baseline - no shelf at all - is feasible by definition even where
-            // the note's own ratio needs clamping, which is the pre-existing
-            // behaviour for a nearly flat decay; an earlier version of this
-            // predicate rejected that case too and left the damping coefficient
-            // at zero, detuning every such note by around a semitone. The 0.98
-            // leaves the one-pole a little to do, so it stays the thing that
-            // meets the targets and the shelf stays a correction to its shape.
+            // baseline removes the shelf's extra constraint. It can still ask
+            // for more fundamental compensation than a stable scalar gain can
+            // supply on a very low, tightly muted string; that separate failure
+            // is handled below by the same bounded loop-loss solver used by the
+            // sympathetic strings. The 0.98 leaves the one-pole a little to do,
+            // so it stays the thing that meets the targets and the shelf stays a
+            // correction to its shape.
             const float rawTarget = ratio / (atHigh / atF0);
             if (depth > 0.0f && rawTarget > 0.98f)
                 return false;
@@ -1838,28 +1943,50 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
 
         float coefficient = 0.0f, gain = 0.0f, dipF0 = 1.0f;
         float depth = dipRequestedDepth;
-        if (depth <= 0.0f || ! solveFor(depth, coefficient, gain, dipF0))
+        if (depth <= 0.0f)
         {
-            // Zero always solves: it is the model without the shelf at all.
-            float lowDepth = 0.0f, highDepth = depth;
+            // Preserve the exact no-hand path. Its historical upper-target
+            // clamp is part of the calibrated open string; the discontinuity
+            // below can only occur while a hand depth is being swept.
             solveFor(0.0f, coefficient, gain, dipF0);
-            for (int i = 0; i < 12; ++i)
+        }
+        else if (! solveFor(depth, coefficient, gain, dipF0))
+        {
+            float lowDepth = 0.0f, highDepth = depth;
+            if (! solveFor(0.0f, coefficient, gain, dipF0))
             {
-                const float mid = 0.5f * (lowDepth + highDepth);
-                float tryCoefficient = 0.0f, tryGain = 0.0f, tryDip = 1.0f;
-                if (solveFor(mid, tryCoefficient, tryGain, tryDip))
-                {
-                    lowDepth = mid;
-                    coefficient = tryCoefficient;
-                    gain = tryGain;
-                    dipF0 = tryDip;
-                }
-                else
-                {
-                    highDepth = mid;
-                }
+                // Even the zero-shelf target can be overconstrained: forcing
+                // its one-pole ratio and then clamping the required loop gain
+                // creates abrupt coefficient/delay jumps as Palm Pressure
+                // crosses the feasibility boundary. Preserve the fundamental
+                // and relax only the upper decay target, exactly as the common
+                // bounded solver does for sympathetic strings.
+                depth = 0.0f;
+                dipF0 = 1.0f;
+                solveLoopLoss(t60Fundamental, t60HighTarget, period,
+                              sampleRate, omega0, omegaHigh, 0.99999f,
+                              coefficient, gain);
             }
-            depth = lowDepth;
+            else
+            {
+                for (int i = 0; i < 12; ++i)
+                {
+                    const float mid = 0.5f * (lowDepth + highDepth);
+                    float tryCoefficient = 0.0f, tryGain = 0.0f, tryDip = 1.0f;
+                    if (solveFor(mid, tryCoefficient, tryGain, tryDip))
+                    {
+                        lowDepth = mid;
+                        coefficient = tryCoefficient;
+                        gain = tryGain;
+                        dipF0 = tryDip;
+                    }
+                    else
+                    {
+                        highDepth = mid;
+                    }
+                }
+                depth = lowDepth;
+            }
         }
 
         loop.handLossSolvedDepth = depth;
@@ -1943,7 +2070,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
                                       smoothedParameters_.stringGauge);
         const float diameter = spec.plainDiameterMm * 1.0e-3f * gaugeScale;
-        const float bendingDiameter = diameter * spec.woundCoreScale;
+        const float bendingDiameter = diameter * spec.bendingCoreScale;
         const float openLength = scaleLengthMetres();
         const float soundingLength = openLength
             * std::exp2(-static_cast<float>(voice.fret) / 12.0f);
@@ -2197,7 +2324,7 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
             continue;
         }
         if (dampingDirty)
-            configureVoiceDamping(voice);
+            configureVoiceDamping(voice, voice.dampingStyle);
         if (pickupDirty)
             configureVoicePickups(voice);
         if (geometryDirty)
@@ -2410,6 +2537,8 @@ void ElectryEngine::beginChordStroke(int stringIndex, bool strokeIsUp,
     ++chordSequence_;
     chordAnchorString_ = stringIndex;
     chordStrokeIsUp_ = strokeIsUp;
+    chordAlternateConsumed_ = false;
+    chordContactOccurred_ = false;
     chordFirstNoteOnClock_ = engineClock_;
     chordTravelSamples_.fill(0);
 
@@ -2539,23 +2668,107 @@ void ElectryEngine::drawVibratoCycle(Voice& voice) noexcept
 
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
 {
+    const auto wholeHandStyle = [] (PlayStyle style)
+    {
+        return style == PlayStyle::PalmMute || style == PlayStyle::Dead
+            ? style : PlayStyle::Sustain;
+    };
+    const bool isLatestHandContact = engineClock_ > lastHandContactClock_
+        || (engineClock_ == lastHandContactClock_
+            && voice.startOrder > lastHandContactOrder_);
+    if (isLatestHandContact)
+    {
+        const bool handDampingChanged = lastHandContactClock_ >= 0
+            && wholeHandStyle(lastHandContactPlayStyle_)
+                != wholeHandStyle(voice.playStyle);
+        lastHandContactClock_ = engineClock_;
+        lastHandContactPlayStyle_ = voice.playStyle;
+        lastHandContactOrder_ = voice.startOrder;
+
+        if (wholeHandStyle(voice.dampingStyle)
+            != wholeHandStyle(voice.playStyle))
+        {
+            configureVoiceDamping(voice, voice.playStyle);
+            configureVoicePitch(voice, false);
+        }
+
+        if (handDampingChanged)
+        {
+            for (auto& activeVoice : voices_)
+            {
+                const bool freshContactPending = activeVoice.startDelaySamples > 0
+                    && ! activeVoice.pendingContactPreservesRing;
+                if (! activeVoice.active || &activeVoice == &voice
+                    || freshContactPending)
+                    continue;
+                configureVoiceDamping(activeVoice, voice.playStyle);
+                configureVoicePitch(activeVoice, false);
+            }
+        }
+    }
+    voice.pendingContactPreservesRing = false;
     (void) velocity; // The note-on velocity is cached in velocityProfile.
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
     const auto& profile = voice.velocityProfile;
+
+    // Whether the plectrum touches this string at all. Hammer-ons and taps are
+    // the fretting hand landing on the fingerboard, and a legato slide is a
+    // finger already down that simply moves. This one predicate gates every
+    // picking-hand contribution so the excitation, impact and stroke geometry
+    // cannot disagree about whether a pick was present.
+    const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+
+    // The bridge-hand thud belongs to the actual plectrum contact, not to the
+    // MIDI note-on that schedules a strummed string. Arming it here keeps the
+    // pre-roll silent and means a key released before the pick arrives makes no
+    // phantom impact. Hammer and legato Slide have no picking-hand collision.
+    if (plectrumContact)
+    {
+        if (voice.playStyle == PlayStyle::PalmMute || palmMuteBlend_ > 0.0f)
+        {
+            const float muteIntensity = voice.playStyle == PlayStyle::PalmMute
+                ? 0.55f + 0.45f * parameters.muteDamping : palmMuteBlend_;
+            // A new collision adds to the still-moving bridge/body response;
+            // it cannot erase the preceding thud in zero time. The bound only
+            // protects a malformed, audio-rate Note-On flood.
+            voice.palmImpactVel = std::min(
+                1.0f, voice.palmImpactVel
+                          + 0.16f * profile.amplitude * muteIntensity);
+        }
+    }
     // A stiffer pick is a little louder, but most of what it changes is the
     // spectrum: the release corner below carries that, and leaving a wide
     // amplitude range here as well turned Pick Hardness into a level control.
     const float hardnessGain = lerp(0.98f, 1.26f, parameters.pickHardness);
 
-    // Whether the plectrum touches this string at all. Hammer-ons and taps are
-    // the fretting hand landing on the fingerboard, and a legato slide is a
-    // finger already down that simply moves, so neither of them has a pick in
-    // the stroke - which is why the switch below turns the plectrum's own
-    // hardness off for them. The picking hand's stroke-to-stroke variation is
-    // read from the same fact and has to be decided here, before the four
-    // quantities it moves are built.
-    const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+    if (plectrumContact && voice.strumChordId == chordSequence_)
+        chordContactOccurred_ = true;
+
+    // A picked attack can graze a fret on the way. Start this opportunity at
+    // the actual plectrum contact: scheduling it in startVoice() spent part—or
+    // all—of the window while a delayed strum was still exactly silent.
+    if (plectrumContact && parameters.artifactAmount > 0.0f)
+    {
+        const float contact = std::pow(parameters.artifactAmount, 0.75f)
+                            * voice.velocityProfile.collision
+                            * (0.70f + 0.30f * voice.lowStringWeight);
+        voice.artifactCollisionLength = static_cast<int>(
+            lerp(0.025f, 0.100f, voice.velocityProfile.collision)
+            * static_cast<float>(sampleRate_));
+        voice.artifactCollisionLengthDenominator =
+            static_cast<float>(std::max(1, voice.artifactCollisionLength));
+        voice.artifactCollisionRemaining = voice.artifactCollisionLength;
+        voice.artifactClearance = lerp(looseFretClearanceMetres,
+                                       hardFretClearanceMetres, contact)
+                                / waveguideDisplacementMetresPerUnit;
+    }
+    else
+    {
+        voice.artifactCollisionRemaining = 0;
+        voice.artifactCollisionLength = 0;
+        voice.artifactClearance = 1.0f;
+    }
     // How far out of place the hand put the pick this stroke. A fingered note
     // has no pick to put out of place, so it draws no variation: leaving these
     // live gave repeated hammer-ons and slides a picking hand's spread of
@@ -2566,8 +2779,9 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float strokeContactOffsetMetres =
         plectrumContact ? voice.strokeContactOffsetMetres : 0.0f;
 
+    const float ageAmplitudeGain = lerp(1.0f, 0.90f, parameters.stringAge);
     float amplitude = 0.48f * profile.amplitude * hardnessGain
-                    * lerp(1.0f, 0.90f, parameters.stringAge)
+                    * ageAmplitudeGain
                     * strokeForceGain;
     // The string leaves the pick in a fraction of a millisecond; the width
     // controls how much of the upper spectrum the release step carries.
@@ -2693,6 +2907,11 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     float handDamping = palmMuteBlend_;
     if (voice.playStyle == PlayStyle::PalmMute)
         handDamping = std::max(handDamping, 0.55f + 0.45f * parameters.muteDamping);
+    else if (voice.playStyle == PlayStyle::Dead)
+        // The fretting hand is already touching the string when the pick
+        // lands. A light attack-path darkening removes the artificial bright
+        // edge without turning Dead into the bridge hand's Palm Mute voicing.
+        handDamping = std::max(handDamping, 0.15f);
     handDamping = clampf(handDamping, 0.0f, 1.0f);
     // A hand of exactly zero pressure leaves every factor below at one.
     pulseCutoff *= lerp(1.0f, 0.26f, handDamping);
@@ -2724,7 +2943,11 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         case PlayStyle::Sustain:
             break;
         case PlayStyle::PalmMute:
-            displacementGain = 1.28f;
+            // The hand damps the released string; it does not stop the pick
+            // from loading it. Keep the sustained triangular displacement and
+            // leave the sharp edge to the hand attenuation below, otherwise
+            // the low E loses body before the contact model has anything to
+            // damp.
             transientGain *= 1.10f;
             break;
         case PlayStyle::Hammer:
@@ -2792,7 +3015,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                                        * 0.001f * sampleRate));
 
     // Contact loss is a total attenuation over the complete pick/string
-    // engagement, not ten percent every oversampled frame.  The old 0.90
+    // engagement, not ten percent every oversampled frame. The old 0.90
     // per-sample multiplier erased essentially all energy on a repick.
     float contactRetention = lerp(0.88f, 0.64f, parameters.pickHardness);
     if (voice.playStyle == PlayStyle::PalmMute)
@@ -2825,8 +3048,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         + strokeContactOffsetMetres / scaleLengthMetres();
     const float combFraction = clampf(strokePluckFraction * fretStretch,
                                       0.02f, 0.49f);
-    voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
-
     // Where the touching hand is, if either hand is touching. The natural
     // harmonic is the fretting hand on the midpoint node: every odd partial
     // has an antinode under it and goes, every even one has a node there and
@@ -2881,6 +3102,57 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float contactMetres = 0.001f * lerp(1.5f, 0.5f, parameters.pickHardness);
     const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
                                           0.05f);
+    // To second order, a string displaced by y at fraction p of its sounding
+    // length grows by y^2 / (2 L p (1-p)). With dT = E A dL/L and the
+    // first-order linearisation of f proportional to sqrt(T), the frequency
+    // rise is
+    //
+    //     df/f = E A y^2 / (4 T L^2 p (1-p)).
+    //
+    // The axial core is its own empirical fit: winding slip under tension need
+    // not match the effective flexural core used by the dispersion model.
+    // The gauge cancels only in an ideal string; retaining both areas keeps
+    // this solve consistent with the actual fitted set.
+    const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
+                                  parameters.stringGauge);
+    const float diameter = spec.plainDiameterMm * 1.0e-3f * gaugeScale;
+    const float coreDiameter = diameter * spec.axialCoreScale;
+    const float coreArea = 0.25f * pi * coreDiameter * coreDiameter;
+    const float massScale = spec.wound ? 0.85f : 1.0f;
+    const float linearMass = massScale * steelDensity * 0.25f * pi
+                           * diameter * diameter;
+    const float waveSpeed = 2.0f * soundingMetres * voice.baseFrequency;
+    const float standingTension = linearMass * waveSpeed * waveSpeed;
+    const float pluckGeometry = std::max(combFraction * (1.0f - combFraction),
+                                         0.015f);
+    voice.tensionDepth = steelYoungModulus * coreArea
+        / std::max(4.0f * standingTension * soundingMetres * soundingMetres
+                     * pluckGeometry,
+                   1.0e-9f);
+
+    // `amplitude` already contains velocity, stroke-to-stroke force and the
+    // articulation's displacement reduction. Divide out the purely tonal
+    // hardness/age gains, and reference the ordinary sustain's 1.55 modal
+    // projection, so this is the stroke's physical force rather than a second
+    // output-level curve. The triangular-string statics then turn that force
+    // into the string-specific displacement below. Seeding the follower at
+    // release also fixes the old backwards trajectory, where the inferred
+    // energy did not peak until about 184 ms after the pick.
+    constexpr float sustainDisplacementGain = 1.55f;
+    const float relativeForce =
+        amplitude / std::max(0.48f * hardnessGain * ageAmplitudeGain, 1.0e-6f)
+        * (displacementGain / sustainDisplacementGain);
+    const float pluckForce = fullForcePickLoadNewtons
+                           * std::max(relativeForce, 0.0f);
+    const float deflectionMetres = pluckForce * pluckGeometry * soundingMetres
+                                 / std::max(standingTension, 1.0e-6f);
+    voice.energyEnvelope = std::max(voice.energyEnvelope,
+                                    deflectionMetres * deflectionMetres);
+    // startVoice() solved the un-stretched period before this attack's contact
+    // geometry existed. Re-solve now that the physical deflection is seeded;
+    // otherwise onset pitch depends on how far away the next control tick is.
+    configureVoicePitch(voice, false);
+    voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
     voice.excitationCombWidth = 0.5f * (contactMetres / soundingMetres)
                               * voice.vertical.targetDelay;
 
@@ -3065,13 +3337,41 @@ void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
 
 void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                PlayStyle playStyle, bool strokeIsUp,
-                               int startDelaySamples) noexcept
+                               int startDelaySamples,
+                               std::uint64_t reservedStartOrder,
+                               bool keyStateAlreadyApplied) noexcept
 {
-    const auto& parameters = smoothedParameters_;
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const int fret = midiNote - spec.openMidiNote;
 
     const bool wasRinging = voice.active;
+    const int repeatedKeyDownCount = wasRinging && voice.midiNote == midiNote
+        ? voice.keyDownCount : 0;
+    const bool delayedSameNoteRepick = reservedStartOrder == 0
+                                     && wasRinging
+                                     && voice.midiNote == midiNote
+                                     && startDelaySamples > 0;
+
+    if (delayedSameNoteRepick)
+    {
+        const bool preservesExistingRing = voice.pendingContactPreservesRing
+                                        || voice.startDelaySamples == 0;
+        // Strum pre-roll is scheduling lookahead, not an early physical pick.
+        // Only MIDI ownership changes now; replacing damping, hand followers,
+        // release state or stroke voicing here audibly rewrites the old ring
+        // several milliseconds before the new contact exists.
+        voice.keyDown = true;
+        voice.keyDownCount = std::min(repeatedKeyDownCount + 1, 65535);
+        voice.sustained = false;
+        voice.startDelaySamples = std::max(1, startDelaySamples);
+        voice.pendingContactPreservesRing = preservesExistingRing;
+        voice.pendingRepick = {
+            true, velocity, playStyle, strokeIsUp, ++noteSequence_
+        };
+        return;
+    }
+
+    voice.pendingRepick.active = false;
 
     // The fretting hand stops a sympathetically ringing open string before the
     // pick reaches it, so a coupled ring never survives into the played note.
@@ -3089,6 +3389,10 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
 
     voice.active = true;
     voice.keyDown = true;
+    // Saturation keeps a malformed endless Note-On stream defined while the
+    // ordinary two-event timestamp reorder costs only this counter.
+    if (! keyStateAlreadyApplied)
+        voice.keyDownCount = std::min(repeatedKeyDownCount + 1, 65535);
     voice.sustained = false;
     voice.releasing = false;
     voice.midiNote = midiNote;
@@ -3097,8 +3401,14 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.strokeIsUp = strokeIsUp;
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
-    voice.startOrder = ++noteSequence_;
+    voice.startOrder = reservedStartOrder != 0
+        ? reservedStartOrder : ++noteSequence_;
     drawStrokeVariation(voice);
+    voice.handContactScale = clampf(
+        voice.velocityProfile.amplitude
+            * (plectrumContacts(playStyle, false)
+                   ? voice.strokeForceGain : 1.0f),
+        0.32f, 1.25f);
     seedVibratoFinger(voice);
     voice.ageSamples = 0;
     // Per-note, for the same reason ageSamples is: the relax factor is
@@ -3115,7 +3425,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                               ^ static_cast<std::uint32_t>(
                                   (static_cast<int>(playStyle) * 2
                                    + (strokeIsUp ? 1 : 0)) * 17)
-                              ^ static_cast<std::uint32_t>(noteSequence_ * 2654435761u));
+                              ^ static_cast<std::uint32_t>(
+                                  voice.startOrder * 2654435761u));
     voice.artifactNoiseState = hash32(voice.noiseState ^ 0xa53c9e17u);
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
 
@@ -3147,47 +3458,26 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         voice.outputEnergy = 0.0f;
     }
 
-    // Tension-modulation depth: lighter strings glide more.
-    voice.tensionDepth = 0.042f * lerp(1.45f, 0.70f, parameters.stringGauge)
-                       * voice.velocityProfile.tension;
+    // The elastic depth depends on this stroke's contact position, which is
+    // resolved in startExcitation(). No fresh attack contributes tension yet.
+    voice.tensionDepth = 0.0f;
 
-    if (playStyle == PlayStyle::PalmMute || palmMuteBlend_ > 0.1f)
-    {
-        const float muteIntensity = (playStyle == PlayStyle::PalmMute)
-            ? (0.55f + 0.45f * parameters.muteDamping) : palmMuteBlend_;
-        voice.palmImpactVel = 0.16f * voice.velocityProfile.amplitude * muteIntensity;
-        voice.palmImpactState = 0.0f;
-    }
-    else
+    // A ringing physical string carries the preceding bridge/body thud through
+    // a repick or retarget. A genuinely fresh string starts silent;
+    // startExcitation() adds the new impact at contact.
+    if (! wasRinging)
     {
         voice.palmImpactVel = 0.0f;
         voice.palmImpactState = 0.0f;
     }
 
-    // A fingered hammer-on lands cleanly; every picked attack can graze a
-    // fret on the way.
-    const bool incidentalContact = playStyle != PlayStyle::Hammer;
-    if (incidentalContact && parameters.artifactAmount > 0.0f)
-    {
-        const float contact = std::pow(parameters.artifactAmount, 0.75f)
-                            * voice.velocityProfile.collision
-                            * (0.70f + 0.30f * voice.lowStringWeight);
-        voice.artifactCollisionLength = static_cast<int>(
-            lerp(0.025f, 0.100f, voice.velocityProfile.collision)
-            * static_cast<float>(sampleRate_));
-        voice.artifactCollisionLengthDenominator =
-            static_cast<float>(std::max(1, voice.artifactCollisionLength));
-        voice.artifactCollisionRemaining = voice.artifactCollisionLength;
-        voice.artifactClearance = lerp(0.52f, 0.24f, contact);
-    }
-    else
-    {
-        voice.artifactCollisionRemaining = 0;
-        voice.artifactCollisionLength = 0;
-        voice.artifactClearance = 1.0f;
-    }
-
-    configureVoiceDamping(voice);
+    // A delayed fret retarget still contains the preceding stroke. Keep that
+    // ring under the hand that is physically present; the scheduled style is
+    // restored by startExcitation() when its contact actually arrives.
+    const PlayStyle dampingStyle = wasRinging && startDelaySamples > 0
+        && lastHandContactClock_ >= 0
+            ? lastHandContactPlayStyle_ : voice.playStyle;
+    configureVoiceDamping(voice, dampingStyle);
     configureVoicePitch(voice, ! wasRinging);
     configureVoicePickups(voice);
 
@@ -3201,20 +3491,27 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                  / std::max(voice.vertical.currentDelay, 1.0f);
         if (relativeJump > 0.25f)
         {
+            constexpr float retainedAmplitude = 0.28f;
             for (auto* loop : { &voice.vertical, &voice.horizontal })
             {
                 for (auto& sample : loop->line)
-                    sample *= 0.28f;
+                    sample *= retainedAmplitude;
             }
+            constexpr float retainedEnergy =
+                retainedAmplitude * retainedAmplitude;
+            voice.energyEnvelope *= retainedEnergy;
+            voice.outputEnergy *= retainedEnergy;
             voice.vertical.currentDelay = voice.vertical.targetDelay;
             voice.horizontal.currentDelay = voice.horizontal.targetDelay;
         }
     }
 
     // A strummed chord's later strings are already fretted and choked, but the
-    // pick has not reached them yet. The excitation fires from the control
-    // tick once the travel time has elapsed.
+    // pick has not reached them yet. The audio-rate render countdown fires the
+    // excitation once the travel time has elapsed.
     voice.startDelaySamples = std::max(0, startDelaySamples);
+    voice.pendingContactPreservesRing = wasRinging
+                                     && voice.startDelaySamples > 0;
     updateStyleWeights(voice);
     if (voice.startDelaySamples == 0)
         startExcitation(voice, velocity, false);
@@ -3232,16 +3529,24 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.strokeIsUp = false;
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
     voice.keyDown = true;
+    voice.keyDownCount = 1;
     voice.sustained = false;
     voice.releasing = false;
     voice.startOrder = ++noteSequence_;
     drawStrokeVariation(voice);
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
+    voice.handContactScale = clampf(
+        voice.velocityProfile.amplitude
+            * (plectrumContacts(playStyle, true)
+                   ? voice.strokeForceGain : 1.0f),
+        0.32f, 1.25f);
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.artifactCollisionRemaining = 0;
     voice.startDelaySamples = 0;
+    voice.pendingRepick.active = false;
+    voice.pendingContactPreservesRing = false;
 
     // A hammered finger lands over roughly ten milliseconds rather than
     // instantly. A slide does not land at all: it stays down and travels, so
@@ -3302,7 +3607,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
             * clampf(speed * 1.6f, 0.0f, 1.4f);
     }
 
-    configureVoiceDamping(voice);
+    configureVoiceDamping(voice, voice.playStyle);
     configureVoicePitch(voice, false);
     configureVoicePickups(voice);
     startExcitation(voice, velocity, true);
@@ -3310,16 +3615,72 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
 
 void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
 {
-    if (! voice.active || voice.releasing)
+    if (! voice.active)
         return;
-    voice.releasing = true;
-    voice.sustained = false;
+
+    const bool wasAlreadyReleasing = voice.releasing;
 
     // A strum spreads the pick across the strings by up to 280 ms. If the key
     // is lifted before the pick arrives, it never lands: leaving the countdown
     // running would excite the string after the release and produce a late
     // attack on short notes.
+    const bool cancelledBeforeContact = voice.startDelaySamples > 0;
+    const bool preserveRingingString = voice.pendingContactPreservesRing;
+    const std::uint64_t cancelledChord = voice.strumChordId;
     voice.startDelaySamples = 0;
+    voice.pendingRepick.active = false;
+    voice.pendingContactPreservesRing = false;
+    if (cancelledBeforeContact)
+    {
+        voice.strumChordId = 0;
+
+        // Alternate reserves one direction for the assembled chord at Note On.
+        // If every picked member of the current chord is cancelled before any
+        // contact, return that reservation: no wrist stroke actually landed.
+        if (pickStyle_ == PickStyle::Alternate
+            && cancelledChord == chordSequence_
+            && chordAlternateConsumed_
+            && ! chordContactOccurred_)
+        {
+            bool anotherPickedMember = false;
+            for (const auto& member : voices_)
+            {
+                if (member.active && member.strumChordId == cancelledChord
+                    && plectrumContacts(member.playStyle, false))
+                {
+                    anotherPickedMember = true;
+                    break;
+                }
+            }
+            if (! anotherPickedMember)
+            {
+                chordAlternateConsumed_ = false;
+                alternateNextStrokeIsUp_ = chordStrokeIsUp_;
+            }
+        }
+
+        // No plectrum, palm impact or fretting-hand strike ever reached a
+        // fresh pending string. Keeping that silent allocation in Release
+        // made its Palm/Dead style qualify as a whole-hand mute until the
+        // ordinary 50 ms retirement floor elapsed, choking every string that
+        // was already ringing. A delayed retrigger is different: it still
+        // contains the previous stroke and must follow the normal release.
+        if (! preserveRingingString)
+        {
+            silenceVoice(voice);
+            updateActiveVoiceCount();
+            return;
+        }
+    }
+
+    // A released old stroke can receive and then cancel a pending repick. Its
+    // release envelope was never replaced, so there is nothing to restart.
+    if (wasAlreadyReleasing)
+        return;
+
+    voice.keyDownCount = 0;
+    voice.releasing = true;
+    voice.sustained = false;
 
     // The fretting or picking hand damps the string over tens of
     // milliseconds; the loop then decays with roughly a 60 ms T60.
@@ -3364,6 +3725,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
 {
     voice.active = false;
     voice.keyDown = false;
+    voice.keyDownCount = 0;
     voice.sustained = false;
     voice.releasing = false;
     voice.midiNote = -1;
@@ -3381,6 +3743,11 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.busContribution = 0.0f;
     voice.displayLevel = 0.0f;
     voice.startDelaySamples = 0;
+    voice.pendingRepick.active = false;
+    voice.pendingContactPreservesRing = false;
+    voice.strumChordId = 0;
+    voice.palmImpactVel = 0.0f;
+    voice.palmImpactState = 0.0f;
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
@@ -3577,38 +3944,24 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     if (! voice.active)
         return;
 
-    // A real palm mute is not one fixed amount of loss for the whole note, and
-    // the two ways it varies act at opposite ends of it. The heel's contact area
-    // grows over the first few tens of milliseconds, so the attack rings briefly
-    // before the mute takes hold; and the grip slackens as the string stops
-    // pressing into it, so the tail opens back up rather than staying clamped.
-    // They multiply because they are independent - one is a function of how old
-    // the note is, the other of how hard it is still driving the hand.
+    // A real palm mute is not one fixed amount of loss for the whole note. The
+    // heel is already touching the string when it is picked, then the grip
+    // slackens as the string stops pressing into it, so the tail opens back up
+    // rather than staying clamped.
     //
-    // Both leave the solved loop gain and damping pole alone and only re-push a
-    // scaled depth into the loss band, so at a factor of one this is exactly the
-    // static model and the fitted decay still holds. Away from one the decay
+    // This leaves the solved loop gain and damping pole alone and only re-pushes
+    // a scaled depth into the loss band, so at a factor of one this is exactly
+    // the static model and the fitted decay still holds. Away from one the decay
     // departs from the fit deliberately: that departure is the behaviour.
     {
-        // settleFactor depends only on voice.ageSamples and the sample rate,
-        // not on which polarisation is being modulated, so it is solved once
-        // here instead of being recomputed by modulate() for both the
-        // vertical and horizontal loop every control tick.
-        const bool eitherDipActive = voice.vertical.handLossSolvedDepth > 0.0f
-                                   || voice.horizontal.handLossSolvedDepth > 0.0f;
-        const float settleFactor = eitherDipActive
-            ? 0.35f + 0.65f * smoothStep(clampf(
-                  static_cast<float>(voice.ageSamples)
-                      / handLossSettleWindowSamples_,
-                  0.0f, 1.0f))
-            : 0.0f;
         const auto modulate = [&] (PolarisationLoop& loop)
         {
             if (loop.handLossSolvedDepth <= 0.0f)
                 return;
-            const float reference = std::max(loop.handEnvelopePeak, 1.0e-7f);
-            const float relaxFactor = 0.40f + 0.60f
-                * clampf(loop.handEnvelope / reference, 0.0f, 1.0f);
+            const float relaxFactor = loop.handEnvelopePeak > 1.0e-7f
+                ? 0.40f + 0.60f * clampf(
+                      loop.handEnvelope / loop.handEnvelopePeak, 0.0f, 1.0f)
+                : 1.0f;
             // The dip sits inside the loop, so its phase is part of the
             // sounding period - the same reason the loop compensates for it at
             // all. Moving the depth moves that phase, so the correction has to
@@ -3623,8 +3976,7 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
             // nearly hold, and it costs a recompute only while it is moving.
             // Re-flagged only on real movement so a settled tail stops paying.
             const float previousDepth = loop.handLossDepth;
-            applyDipDepth(loop, loop.handLossSolvedDepth
-                                    * settleFactor * relaxFactor);
+            applyDipDepth(loop, loop.handLossSolvedDepth * relaxFactor);
             if (std::fabs(loop.handLossDepth - previousDepth) > 1.0e-4f)
                 voice.compensationDirty = true;
         };
@@ -3650,17 +4002,6 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
                 voice.slideNoiseAmplitude = 0.0f;
                 voice.slideNoiseLevel = 0.0f;
             }
-        }
-    }
-
-    // Strum travel: the pick reaches this string after the programmed offset.
-    if (voice.startDelaySamples > 0)
-    {
-        voice.startDelaySamples -= controlPeriod;
-        if (voice.startDelaySamples <= 0)
-        {
-            voice.startDelaySamples = 0;
-            startExcitation(voice, voice.velocity, false);
         }
     }
 
@@ -3788,7 +4129,12 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // engine's exact contact-noise sequence.
     float artifactContactSignal = 0.0f;
     float artifactExcess = 0.0f;
-    if (artifactsActive_ && voice.artifactCollisionRemaining > 0)
+    // A fresh loop reads silence until the travelling excitation returns.
+    // Start spending the opportunity only when the string itself is moving;
+    // otherwise an E1 uses almost one 24 ms round trip merely opening an
+    // already unreachable clearance.
+    if (artifactsActive_ && voice.artifactCollisionRemaining > 0
+        && voice.outputEnergy > 0.0f)
     {
         --voice.artifactCollisionRemaining;
         const float progress = 1.0f
@@ -3796,7 +4142,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
               / voice.artifactCollisionLengthDenominator;
         const float clearance = voice.artifactClearance
                               * (1.0f + 3.5f * progress);
-        artifactExcess = std::abs(verticalSample) - clearance;
+        artifactExcess = std::max(std::abs(verticalSample) - clearance, 0.0f);
         if (artifactExcess > 0.0f)
         {
             const float contact = artifactContactShape_
@@ -4119,12 +4465,27 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     sympatheticBus_ += bridgeForce;
     voice.busContribution = bridgeForce;
     sums.body += bridgeForce + 1.6f * noiseSample;
-    if (voice.palmImpactVel > 0.0001f)
+    constexpr float palmImpactVelocityFloor = 1.0e-4f;
+    constexpr float palmImpactStateFloor = 1.0e-7f;
+    if (voice.palmImpactVel > 0.0f || std::abs(voice.palmImpactState) > 0.0f)
     {
+        const float impactDrive = voice.palmImpactVel > palmImpactVelocityFloor
+            ? voice.palmImpactVel : 0.0f;
         voice.palmImpactState += palmImpactThudCoefficient_
-                                * (voice.palmImpactVel - voice.palmImpactState);
-        voice.palmImpactVel *= 0.992f;
-        sums.body += 0.45f * voice.palmImpactState;
+                                * (impactDrive - voice.palmImpactState);
+        voice.palmImpactVel = impactDrive > 0.0f
+            ? impactDrive * palmImpactVelocityRetention_ : 0.0f;
+        if (voice.palmImpactVel <= palmImpactVelocityFloor)
+            voice.palmImpactVel = 0.0f;
+        if (voice.palmImpactVel == 0.0f
+            && std::abs(voice.palmImpactState) <= palmImpactStateFloor)
+        {
+            voice.palmImpactState = 0.0f;
+        }
+        else
+        {
+            sums.body += 0.45f * voice.palmImpactState;
+        }
     }
     if (artifactsActive_)
         sums.body += 0.9f * artifactContactSignal
@@ -4133,20 +4494,25 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // The slow energy envelope feeds tension modulation: its release side
     // follows the string's own decay scale so the attack pitch glide relaxes
     // over hundreds of milliseconds, as measured tension modulation does.
-    const float instantaneous = verticalSample * verticalSample
-                              + horizontalSample * horizontalSample;
-    const float coefficient = instantaneous > voice.energyEnvelope
+    const float instantaneousLoopEnergy = verticalSample * verticalSample
+                                        + horizontalSample * horizontalSample;
+    const float deflectionSquared = instantaneousLoopEnergy
+        * waveguideDisplacementMetresPerUnit
+        * waveguideDisplacementMetresPerUnit;
+    const float coefficient = deflectionSquared > voice.energyEnvelope
         ? energyAttackCoefficient_ : energyReleaseCoefficient_;
-    voice.energyEnvelope += coefficient * (instantaneous - voice.energyEnvelope);
+    voice.energyEnvelope += coefficient
+                          * (deflectionSquared - voice.energyEnvelope);
 
     // A separate, faster follower drives voice retirement only. Tying that to
     // the slow tension envelope kept an inaudible released string alive for
     // several seconds, needlessly holding its slot; this follower falls to
     // the retirement floor within about half a second of the audio going
     // silent while still tracking a genuine sustain.
-    const float retireCoefficient = instantaneous > voice.outputEnergy
+    const float retireCoefficient = instantaneousLoopEnergy > voice.outputEnergy
         ? retireAttackCoefficient_ : retireReleaseCoefficient_;
-    voice.outputEnergy += retireCoefficient * (instantaneous - voice.outputEnergy);
+    voice.outputEnergy += retireCoefficient
+                        * (instantaneousLoopEnergy - voice.outputEnergy);
 
     if (voice.releasing)
         voice.releaseGain += voice.releaseGainCoefficient
@@ -4362,32 +4728,43 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         if (sympatheticActive_)
         {
             // The muting hand covers every string. A palm-muted, chugged or
-            // dead-note passage therefore damps the coupled strings and stops
-            // feeding them, which is what keeps a Drop-E chug tight instead of
+            // dead-note passage therefore damps the coupled strings and
+            // starves their feed, which keeps a Drop-E chug tight instead of
             // washing it in open-string ring.
-            float handMute = palmMuteBlend_;
-            for (const auto& voice : voices_)
+            // Continuous Palm Pressure is already realised in each coupled
+            // string's loop decay by configureSympatheticString(). Only the
+            // most recent physical articulation adds this second, whole-hand
+            // contact loss; feeding Palm Pressure through both paths made the
+            // declared 80 ms endpoint collapse to about 29 ms. A released
+            // Palm tail remains the latest instruction through an ordinary
+            // chug gap. Once a newer physical contact arrives, however, that
+            // contact moves the one shared hand: MIDI lookahead for a delayed
+            // stroke cannot outrank an earlier real pick, and retiring the
+            // newer voice cannot reveal an older hand position again.
+            float styleHandMute = 0.0f;
+            if (lastHandContactClock_ >= 0
+                && lastHandContactPlayStyle_ == PlayStyle::PalmMute)
+                styleHandMute = 0.55f + 0.45f * s.muteDamping;
+            else if (lastHandContactClock_ >= 0
+                     && lastHandContactPlayStyle_ == PlayStyle::Dead)
+                styleHandMute = sympatheticHandMuteForT60(deadHandT60);
+            if (styleHandMute != sympatheticHandMute_)
             {
-                if (! voice.active)
-                    continue;
-                if (voice.playStyle == PlayStyle::PalmMute)
-                    handMute = std::max(handMute,
-                                        0.55f + 0.45f * s.muteDamping);
-            }
-            if (handMute != sympatheticHandMute_)
-            {
-                sympatheticHandMute_ = handMute;
+                sympatheticHandMute_ = styleHandMute;
                 // A per-sample contact loss, which is how a hand resting on a
                 // string actually damps it: distributed, not once per period.
-                sympatheticHandGainTarget_ = handMute > 0.0f
+                const float handT60 = std::exp(lerp(
+                    std::log(sympatheticOpenHandT60),
+                    std::log(sympatheticStoppedHandT60), styleHandMute));
+                sympatheticHandGainTarget_ = styleHandMute > 0.0f
                     ? std::pow(10.0f,
-                               -3.0f / (std::exp(lerp(std::log(4.0f),
-                                                      std::log(0.045f), handMute))
+                               -3.0f / (handT60
                                         * static_cast<float>(sampleRate_)))
                     : 1.0f;
             }
             sympatheticHandGain_ += parameterSmoothingCoefficient_
                 * (sympatheticHandGainTarget_ - sympatheticHandGain_);
+            const float handMute = std::max(palmMuteBlend_, styleHandMute);
             // How much of the coupling survives the mute, shared by the three
             // laws below instead of being reclamped from handMute three times:
             // the bridge-bus injection and the played strings' coupling both
@@ -4633,6 +5010,34 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         if (voice.active)
         {
             renderVoice(voice, sums);
+            // Strum travel is timed on the audio clock. Render this pending
+            // sample silent first, then arm the excitation for the next one;
+            // doing this at the control tick charged the first 16 samples
+            // immediately and made every delayed pick arrive early.
+            if (voice.startDelaySamples > 0
+                && --voice.startDelaySamples == 0)
+            {
+                if (voice.pendingRepick.active)
+                {
+                    const auto pending = voice.pendingRepick;
+                    const bool keyDown = voice.keyDown;
+                    const int keyDownCount = voice.keyDownCount;
+                    const bool sustained = voice.sustained;
+                    voice.pendingRepick.active = false;
+                    startVoice(voice, voice.midiNote, pending.velocity,
+                               pending.playStyle, pending.strokeIsUp, 0,
+                               pending.startOrder, true);
+                    // Note Off and CC64 may have changed ownership during the
+                    // pre-roll; committing the sound must not erase them.
+                    voice.keyDown = keyDown;
+                    voice.keyDownCount = keyDownCount;
+                    voice.sustained = sustained;
+                }
+                else
+                {
+                    startExcitation(voice, voice.velocity, false);
+                }
+            }
             rendered = true;
         }
         else if (sympatheticActive_
@@ -4857,6 +5262,14 @@ void ElectryEngine::updateActiveVoiceCount() noexcept
     }
     activeVoiceCount_ = count;
     sympatheticStringCount_ = sympathetic;
+    // With no played string left there is no phrase whose last contact must be
+    // preserved. The next real attack starts a fresh physical history.
+    if (activeVoiceCount_ == 0)
+    {
+        lastHandContactClock_ = -1;
+        lastHandContactPlayStyle_ = PlayStyle::Sustain;
+        lastHandContactOrder_ = 0;
+    }
     solveBridgeCoupling();
 }
 
