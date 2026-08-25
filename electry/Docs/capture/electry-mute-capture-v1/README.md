@@ -149,8 +149,130 @@ cmake -DELECTRY_MUTE_CAPTURE_COLLECTION_DIR=/absolute/collection/root \
   -P cmake/ValidateMuteCaptureCollection.cmake
 ```
 
-This recursively reruns every session intake, rejects duplicate `session_id`
-values, and rejects any declared `player_id` or `guitar_id` appearing in both
-splits. It cannot detect a person or physical guitar relabeled under a new ID;
-the coordinator's private identity ledger and no-holdout-access procedure remain
-the evidence for those facts.
+That collection command recursively reruns every session intake, rejects
+duplicate `session_id` values, and rejects any declared `player_id` or
+`guitar_id` appearing in both splits. It cannot detect a person or physical
+guitar relabeled under a new ID; the coordinator's private identity ledger is
+the evidence for those identities.
+
+Capture intake is not a listening-study pack. After the frozen analyzer has
+selected clips and the comparison exporter has cropped, level-matched and
+rendered them, copy and fill both
+[`comparison-manifest.template.json`](comparison-manifest.template.json) and
+[`blind-study.template.json`](blind-study.template.json) for the separate
+blinded A/B packer documented in
+[`../../evaluation.md`](../../evaluation.md#frozen-palmdead-blind-listening-gate).
+The comparison manifest is private. It binds the study ID, exact presentation
+seed, participant count, two holdout clusters, two distinct train practice
+sessions drawn from at least three disconnected engineering train clusters,
+every physical/Electry stimulus, and the selection, render,
+common-chain, engineering and listener-analysis contracts. Each source session
+supplies the actual capture-manifest path and hash plus its declared
+session/player/guitar IDs; the packer reads that file once, verifies the IDs and
+split, requires the exact 16 canonical v1 take records and metadata, rejects
+reused manifest or take-WAV hashes within or across sessions and disconnected
+clusters, and archives the exact bytes. Core
+cells freeze their content/processing, exact frames, capture take,
+slot or run, stroke, event/score file and QC record. Dry/processed cells 5/6,
+7/8 and 9/10 must share one source phrase, while the complete rotation remains
+5/5 across the two holdout clusters. Cell 5/6 must select the capture take's
+logged 180-BPM run.
+
+The packer regenerates the selection proof from the private selection seed. It
+ranks canonical candidates by SHA-256, chooses the lowest-ranked pair-preserving
+5/5 holdout-cluster assignment, fixes two down and two up single-note cells,
+then chooses the lowest-ranked eligible session/unit. Single draws contain all
+six slots in the assigned direction, groove draws all three runs, and the rapid
+draw only each session's logged 180-BPM run. Palm single cells use the middle
+landmark chosen on train. The archived receipt contains every candidate and
+rank; changing both a manifest choice and the receipt still fails regeneration.
+
+Generate the presentation and stimulus-selection seeds separately with
+`python3 -c 'import secrets; print(secrets.token_hex(32))'`. Keep both private,
+never reuse either seed for another study and disclose them only after
+unblinding. The packer rejects zero, repeated-pattern and low-variety
+placeholder seeds.
+
+Before rendering, fill
+[`selection-input.template.json`](selection-input.template.json) from the
+validated capture manifests, then generate the exact plan and receipt:
+
+```sh
+python3 Tools/PrepareBlindListening.py --generate-selection-receipt \
+  /private/selection-input.json /private/selection-receipt.json
+```
+
+Copy the selected cluster/session/take/unit values from each receipt draw into
+the comparison manifest (cells 6, 8 and 10 reuse draws 5, 7 and 9). Do not edit
+the generated receipt. The packer independently regenerates it.
+
+The v1 selection, render, chain and analysis settings have exact keys and
+values; they are not arbitrary self-hashed notes. The common chain freezes the
+current 4x effect oversampling at 44.1 kHz, and the analysis settings include
+every numerical listener gate. For each `settings_sha256`,
+hash the UTF-8 JSON serialization of the adjacent `settings` object with keys
+sorted, ASCII escaping and compact `,`/`:` separators. `assets` may be empty
+only when the frozen chain has no external asset or IR. The sealed artifact
+registry must contain every declared build, implementation, scorer, preset and
+asset hash. The frozen selection receipt repeats every chosen source/unit and
+is checked against the cells. The engineering freeze enumerates the complete
+v1 endpoint set, grids, depth mapping, aggregation, weights and numerical
+no-regression margins. Each margin names its exact method:
+balanced three-versus-three isolated repetitions, complete groove-run
+resampling, or quantization alone for rapid takes. Qualification, recruitment,
+replacement and no-outcome-based stopping rules are exact too.
+
+The engineering derivation receipt and combined result are sealed attestations,
+not a substitute for raw analysis. Each of at least three train clusters has a
+separately hashed analysis result. Each isolated cluster-level repeatability
+sample names one canonical 3v3 partition and carries the complete input set for
+every relevant session, Open/mute take, string/contact and down/up stratum;
+each groove sample similarly covers every relevant session/take for one complete
+run. Rapid endpoints attest the complete set of logged 180-BPM inputs but add no
+train repeatability sample. All ten canonical isolated partitions and all three
+groove runs are exhaustively enumerated, so v1 has no resampling RNG or seed.
+The v1 contract permits no omitted, duplicated or
+excluded eligible unit and no analyzer failure flag. The packer cross-checks
+those files, recomputes the cluster-sample R-7 P90, and binds the full engineering
+contract hash. Retain the underlying train audio, analyzer output and private
+identity ledger in the external immutable study archive.
+The frozen analyzer, rather than the packer, emits filled copies of
+[`engineering-train-analysis.template.json`](engineering-train-analysis.template.json),
+[`engineering-derivation-result.template.json`](engineering-derivation-result.template.json)
+and [`engineering-derivation-receipt.template.json`](engineering-derivation-receipt.template.json).
+Fill and seal [`artifact-registry.template.json`](artifact-registry.template.json)
+with every declared code/build/preset/asset and raw train-analysis hash. These
+templates are structural guides and intentionally fail until actual analyzer
+outputs, hashes and frozen statuses replace every placeholder.
+
+Change the completed comparison status to `frozen`, copy its exact study ID,
+presentation seed and stimulus hashes into the blind-study manifest, then
+change the latter status to `frozen_ready_to_pack`. The packer reads every
+referenced JSON or binary evidence file once for verification and writes those
+same bytes to
+`private/comparison-manifest.json`, `private/study-manifest.json`,
+`private/capture-manifests/`, `private/event-scores/`,
+`private/selection-receipt.json`, `private/engineering-derivation-*.json`,
+`private/engineering-train-analysis/` and `private/artifact-registry.json`. It also
+archives the exact preparer as `private/prepare.py`; private files use mode
+`0600` and directories `0700`. The answer key contains relative archive paths
+and hashes for later scoring verification. WAV stimuli are separately hashed,
+container-inspected, copied under opaque names and rehashed on their first
+public copy.
+
+Both committed templates remain intentionally unusable, so the packer cannot
+make the still-missing commissioned recordings appear to exist. A comparison
+JSON containing only schema and status is not a freeze and is rejected. The
+packer checks the capture manifest's schema, split, IDs, declared takes and
+hashes used by the comparison; it does not rerun the CMake audio intake.
+
+Before the first listener, record the printed study fingerprint outside the
+pack, then serve it only with that independent anchor:
+
+```sh
+python3 serve.py --expected-fingerprint <externally-recorded-64-hex-fingerprint>
+```
+
+The server preflights the complete frozen pack, then hash-checks a one-read
+snapshot on every GET/HEAD (including single-range audio requests) and refuses
+any public file changed after preflight.

@@ -1011,7 +1011,8 @@ dry E1 and open-string E2 Open/Mute/Dead gate. The best lawful CC0 leads each
 cover only part of it: [Freesound 557299](https://freesound.org/people/minus_28_and_falling/sounds/557299/)
 is a real Drop-E phrase but its hand labels, chain and public-preview codec are
 not controlled, while [cabled_mess's eight-string pack](https://freesound.org/people/cabled_mess/packs/29585/)
-documents clean dry open notes but no mutes or Dead. The
+documents clean dry chromatic one-shots on its lowest F# string, but only F#1
+is open and there are no mutes or Dead. The
 [cabled_mess profile](https://freesound.org/people/cabled_mess/) offers custom
 recordings and is the best first commission lead; availability, Drop-E setup,
 protocol compliance and commercial calibration rights still require a written
@@ -1060,8 +1061,8 @@ regression-measured model—not capture parity or market leadership.
   renamed the bridge-hand UI to Mute, and gave every section heading the same
   slightly larger, brighter treatment.
 - Added two focused Palm/Dead demos, a deterministic ten-probe evaluator, the
-  licensed capture intake/collection validators and a frozen blind-study
-  contract. The terminal capture and market-comparison gates remain open.
+  licensed capture intake/collection validators and a strict, runnable blinded
+  packer/scorer. The terminal capture and market-comparison gates remain open.
 
 ### Prototype baseline
 

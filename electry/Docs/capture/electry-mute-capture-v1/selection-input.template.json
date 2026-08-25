@@ -1,0 +1,64 @@
+{
+  "schema": "electry-blind-selection-input/v1",
+  "study_id": "REPLACE-STUDY-ID",
+  "selection_seed": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sessions": [
+    {
+      "session_id": "REPLACE-HOLDOUT-SESSION-1",
+      "split": "holdout",
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+      "takes": [
+        {"file": "e1-palm-middle.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e2-palm-middle.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e1-dead.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e2-dead.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e1-palm-middle-rapid.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": [120, 180, 240]},
+        {"file": "dead-e1-e2-groove.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "palm-open-e1-e2-groove.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null}
+      ]
+    },
+    {
+      "session_id": "REPLACE-HOLDOUT-SESSION-2",
+      "split": "holdout",
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+      "takes": [
+        {"file": "e1-palm-middle.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e2-palm-middle.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e1-dead.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e2-dead.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "e1-palm-middle-rapid.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": [120, 180, 240]},
+        {"file": "dead-e1-e2-groove.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null},
+        {"file": "palm-open-e1-e2-groove.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null}
+      ]
+    },
+    {
+      "session_id": "REPLACE-TRAIN-SESSION-1",
+      "split": "train",
+      "source_cluster_id": "REPLACE-TRAIN-CLUSTER-1",
+      "takes": [
+        {"file": "REPLACE-PRACTICE-TAKE-1.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null}
+      ]
+    },
+    {
+      "session_id": "REPLACE-TRAIN-SESSION-2",
+      "split": "train",
+      "source_cluster_id": "REPLACE-TRAIN-CLUSTER-2",
+      "takes": [
+        {"file": "REPLACE-PRACTICE-TAKE-2.wav", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "run_bpms_in_order": null}
+      ]
+    }
+  ],
+  "practice": [
+    {"id": "practice-1", "source_session_id": "REPLACE-TRAIN-SESSION-1", "capture_take_file": "REPLACE-PRACTICE-TAKE-1.wav", "selection_kind": "slot"},
+    {"id": "practice-2", "source_session_id": "REPLACE-TRAIN-SESSION-2", "capture_take_file": "REPLACE-PRACTICE-TAKE-2.wav", "selection_kind": "slot"}
+  ],
+  "cells": [
+    {"id": 1, "capture_take_file": "e1-palm-middle.wav"},
+    {"id": 2, "capture_take_file": "e2-palm-middle.wav"},
+    {"id": 3, "capture_take_file": "e1-dead.wav"},
+    {"id": 4, "capture_take_file": "e2-dead.wav"},
+    {"id": 5, "capture_take_file": "e1-palm-middle-rapid.wav"},
+    {"id": 7, "capture_take_file": "dead-e1-e2-groove.wav"},
+    {"id": 9, "capture_take_file": "palm-open-e1-e2-groove.wav"}
+  ]
+}

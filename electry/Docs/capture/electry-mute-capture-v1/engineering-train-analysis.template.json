@@ -1,0 +1,24 @@
+{
+  "schema": "electry-engineering-train-analysis/v1",
+  "status": "not_frozen_missing_analysis",
+  "study_id": "REPLACE-STUDY-ID",
+  "cluster_id": "REPLACE-TRAIN-CLUSTER-ID",
+  "sessions": [
+    {
+      "session_id": "REPLACE-TRAIN-SESSION-ID",
+      "capture_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "depth_mapping": {"palm_near": 0.2, "palm_middle": 0.5, "palm_far": 0.8, "dead": 0.5},
+  "passed": false,
+  "failure_flags": ["REPLACE-WITH-ANALYZER-OUTPUT"],
+  "exclusions": [],
+  "endpoints": [
+    {
+      "id": "REPLACE-ENDPOINT-ID",
+      "eligible_input_units": [],
+      "excluded_input_units": [],
+      "repeatability_samples": []
+    }
+  ]
+}

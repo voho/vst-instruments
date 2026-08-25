@@ -923,8 +923,10 @@ still cover only separate pieces:
   identify the hand, the chain and pick/pressure are uncontrolled, and this
   audit could access only the public MP3 preview.
 - [cabled_mess's F#-string pack](https://freesound.org/people/cabled_mess/packs/29585/)
-  documents a clean eight-string/RME Babyface/Cubase workflow and dry F#1-F#2
-  open notes, but contains no Mute or Dead articulations and is not Drop-E.
+  documents a clean eight-string/RME Babyface/Cubase workflow and thirteen dry
+  chromatic one-shots played on the lowest F# string from F#1 through F#2. Only
+  F#1 is an open string; the pack contains no Mute or Dead articulations and is
+  not Drop-E.
 
 The additional lawful
 [CC BY 3.0 ccMixter stems](https://ccmixter.org/files/tobias_weber/57022) are
@@ -1175,9 +1177,9 @@ balanced three-versus-three halves for six isolated repetitions, complete-run
 resampling for the groove, and propagated detector/analysis quantization alone
 for rapid takes because this pilot has no within-session same-tempo repeat.
 Between-session or between-cluster heterogeneity is reported but never inflated
-into a rapid no-regression allowance. The resampling seed, formula and numeric
-result are frozen before holdout; display precision, the candidate and holdout
-results cannot change them. A position-dependent DSP candidate must reduce per-harmonic
+into a rapid no-regression allowance. The complete enumerated input set,
+formula and numeric result are frozen before holdout; display precision, the
+candidate and holdout results cannot change them. A position-dependent DSP candidate must reduce per-harmonic
 mute-minus-open contour RMSE by at least 25% in each planned holdout cluster.
 In that same cluster it must not worsen beyond the frozen margin any isolated
 Palm onset/RMS/band endpoint, any Dead RMS/centroid/harmonicity endpoint, any
@@ -1254,16 +1256,16 @@ The minimum real-versus-model listening pilot has ten scored A/B pairs and
 three hidden repeats. Two unscored practice pairs come from train sessions; all
 scored real clips come from untouched holdout player/guitar clusters.
 
-| cells | source-matched content | scored length |
+| cells | source-matched content | exact scored length at 44.1 kHz |
 | --- | --- | ---: |
-| 1-2 | E1 and E2 Palm single, dry | 700 ms each |
-| 3-4 | E1 and E2 Dead single, dry | 430 ms each |
-| 5 | 12-hit E1 Palm run, 83.33 ms IOI, dry | 1.22 s |
-| 6 | the same Palm run through one common metal chain | 1.22 s |
-| 7 | eight-hit Dead `[E1, E1, E1, E2, E1, E1, E2, E1]` groove, 83.33 ms IOI, dry | 1.01 s |
-| 8 | the same Dead groove through the common chain | 1.01 s |
-| 9 | eight-hit Palm-E1/Open-E2 lift/replant groove, 166.67 ms IOI, dry | 1.52 s |
-| 10 | the same Palm/Open groove through the common chain | 1.52 s |
+| 1-2 | E1 and E2 Palm single, dry | 30,870 frames / 700 ms each |
+| 3-4 | E1 and E2 Dead single, dry | 18,963 frames / 430 ms each |
+| 5 | 12-hit E1 Palm run, 83.33 ms IOI, dry | 53,802 frames / 1.22 s |
+| 6 | the same Palm run through one common metal chain | 53,802 frames / 1.22 s |
+| 7 | eight-hit Dead `[E1, E1, E1, E2, E1, E1, E2, E1]` groove, 83.33 ms IOI, dry | 44,541 frames / 1.01 s |
+| 8 | the same Dead groove through the common chain | 44,541 frames / 1.01 s |
+| 9 | eight-hit Palm-E1/Open-E2 lift/replant groove, 166.67 ms IOI, dry | 67,032 frames / 1.52 s |
+| 10 | the same Palm/Open groove through the common chain | 67,032 frames / 1.52 s |
 | 11-13 | hidden repeats of cells 5, 7 and 9 with A/B sides reversed | unchanged |
 
 For every selected single, the frozen primary detector locates the real and
@@ -1276,22 +1278,27 @@ The Palm layer is chosen using train captures only. Rapid model phrases use the
 evaluator's parameters and the holdout performance's locked score; the audition
 demos are not acceptance stimuli because their parameter states differ.
 
-The comparison manifest freezes the source cohort, stimulus-selection and
-presentation seeds, selection/replacement algorithm and listener analysis
-before analytical or listening access to that active holdout cohort. Every
-active holdout player/guitar cluster enters the study in a balanced rotation
-(cell counts may differ by at most one). The
-stimulus seed selects isolated slots without replacement inside separate
-six-down and six-up pools, balancing stroke direction within each single-note
-cell before either pool reshuffles. It selects Dead-groove runs 1-3 the same way
-and selects the source run whose performed onset score the model follows. It
-selects Palm/Open groove runs by the same frozen rotation. The single-note model
-uses the selected slot's stroke direction. After active-cohort
-access, a structurally invalid, recording-failed or otherwise unusable selected
-cell is missing and fails the minimum gate; it is never substituted. A recapture
-may enter only as a new disconnected player/guitar cluster under a new
-comparison manifest; reusing either physical player or guitar remains part of
-the retired cluster.
+The referenced comparison JSON declares schema
+`electry-blind-comparison/v1` and status `frozen`; the packer rejects any other
+schema or status. That comparison manifest freezes the source cohort,
+stimulus-selection and presentation seeds, selection/replacement algorithm and
+listener analysis before analytical or listening access to that active holdout
+cohort. Every
+active holdout player/guitar cluster enters exactly five of the ten core cells.
+The stimulus seed ranks canonical candidates with
+`SHA-256(seed || NUL || "electry-stimulus-selection/v1" || NUL || domain ||
+NUL || sorted_compact_JSON)`, lowest first. It chooses the lowest-ranked of all
+pair-preserving 5/5 cluster assignments, then the lowest-ranked two-down/two-up
+assignment across cells 1-4. For each fixed take, it ranks the complete eligible
+session/unit pool: singles contain all six slots in the assigned direction,
+grooves all three runs, and rapid Palm only the logged 180-BPM run. Palm uses the
+middle contact landmark chosen on train. The generated receipt retains every
+candidate and rank, and the packer regenerates the choices from the seed. After
+active-cohort access, a structurally invalid, recording-failed or otherwise
+unusable selected cell is missing and fails the minimum gate; it is never
+substituted. A recapture may enter only as a new disconnected player/guitar
+cluster under a new comparison manifest; reusing either physical player or
+guitar remains part of the retired cluster.
 
 Palm pairs are level-matched by 0-50 ms onset RMS and Dead by 0-30 ms. Phrase
 pairs use the median corresponding per-hit RMS and one scalar for the entire
@@ -1305,22 +1312,154 @@ not values that may change after holdout access. Export metadata-free mono
 24-bit PCM with the frozen renderer/exporter. Do not gate, EQ, denoise or
 normalize individual hits.
 
-Opaque filenames and a private key manifest hide provenance. For participant
-`n` and cell `c`, `(n + c) mod 2` balances the real/model side; the manifest's
-frozen presentation seed shuffles cell order, and hidden repeats stay at least
-three trials from their originals. Each trial asks which clip is the physical
-guitar (forced A/B plus confidence), which is more convincing in a
+Opaque filenames and a private key manifest hide provenance. Separately for
+each practice/core pair and listener stratum, SHA-256 ranks the 15 one-based
+participant numbers from `presentation_seed_bytes || NUL || "physical-a" ||
+NUL || pair_id || NUL || participant_number`. Odd-numbered pairs assign the
+first eight guitarist and first seven producer ranks physical=A; even pairs
+assign seven and eight. That is exact 15/15 overall and 7/8 within each stratum
+without the predictable public parity rule. The secret presentation seed also shuffles cell order, and each hidden
+repeat occurs later with at least three intervening trials and reversed sides.
+Each trial asks which clip is the
+physical guitar (forced A/B plus confidence), which is more convincing in a
 black/progressive-metal production (A/B/Tie), and optionally which defect gave
-it away: attack, pitched body, decay, repetition, noise or other. Permit at most
-three replays and record the count. Exclusions are predeclared playback/
+it away: attack, pitched body, decay, repetition, noise or other. After one
+required playback start per side, permit at most three additional starts across
+the pair and record the count. Exclusions are predeclared playback/
 headphone-screen failures, not post-hoc disagreement with the expected answer.
+
+The runnable task is deliberately blinded **A/B**, not ABX: a labelled physical
+or model `X` would disclose the class the first question asks the listener to
+identify. [`PrepareBlindListening.py`](../Tools/PrepareBlindListening.py) and
+its dependency-free browser runner turn already finalized stimuli into the
+frozen presentation pack. Copy and fill
+[`comparison-manifest.template.json`](capture/electry-mute-capture-v1/comparison-manifest.template.json)
+and
+[`blind-study.template.json`](capture/electry-mute-capture-v1/blind-study.template.json)
+only after the comparison manifest, crops, level matching and exports above are
+sealed. Generate a fresh cryptographic presentation seed with
+`python3 -c 'import secrets; print(secrets.token_hex(32))'`; keep it private,
+never reuse it for another study and do not disclose it until unblinding is
+complete. Then change the study status to `frozen_ready_to_pack` and run:
+
+```sh
+python3 Tools/PrepareBlindListening.py \
+  /private/electry-blind-study.json /private/electry-blind-pack
+# Copy the printed STUDY_FINGERPRINT to an external append-only record now.
+cd /private/electry-blind-pack
+python3 serve.py \
+  --expected-fingerprint <externally-recorded-64-hex-fingerprint>
+```
+
+The pack-local standard-library server binds loopback by default, serves only
+`public/`, disables directory listings and adds no-cache/nosniff headers. Do not
+replace it with `python3 -m http.server`, whose listings would enumerate every
+session. The bundled server is plain HTTP: keep the supervised workflow on
+loopback, or place any non-loopback deployment behind a trusted TLS front end
+with access control. The required fingerprint is the external trust anchor:
+record the exact value printed by the packer outside the pack, ideally in an
+append-only or signed ledger, before distributing a link or accepting a response. The server
+runs a complete frozen-pack preflight against it before binding. For every
+GET or HEAD request it then reads the requested public file once, checks that
+snapshot against the preflight index and serves those same bytes; single-range
+audio requests receive the same treatment, so a post-preflight edit is refused
+rather than exposed. The coordinator privately maps IDs using
+`private/participant-links.tsv` and gives each listener only their 128-bit
+opaque URL, such as `http://127.0.0.1:8000/?session=<token>`; neither public
+session filenames/manifests nor downloaded responses contain `p001`-style IDs.
+
+The packer verifies the comparison manifest's exact v1 contract: frozen status,
+study/seed/listener agreement, two non-overlapping holdout clusters, at least
+three mutually disconnected engineering-train clusters, two distinct practice
+sessions drawn from train, balanced cell-to-cluster assignments, every
+stimulus hash and exact selection/render/chain/analysis settings. The settings
+include the numerical listener gates and the current 4x common-chain effect
+oversampling at 44.1 kHz, so an internally rehashed alternative setting is not
+accepted. Every core cell also freezes content, processing, frames, source
+cluster/session, capture take, slot/run and stroke, event/score record, and a
+hashed QC record; dry/processed phrase counterparts must share that complete
+provenance. The packer verifies the capture-manifest identity and selected-take
+hash, the seed-bearing selection receipt, the complete engineering/listener
+contract and a sealed registry containing every declared implementation,
+build, preset and asset hash. It also verifies the sealed engineering
+derivation receipt, combined result and one raw analysis result per complete
+train cluster, including the exact eligible-unit coverage used to derive each
+repeatability margin. These records attest the frozen analysis; retained train
+audio and analyzer output remain the external evidence behind that attestation.
+
+The exact verified evidence bytes are archived at
+`private/study-manifest.json`, `private/comparison-manifest.json`,
+`private/capture-manifests/`, `private/event-scores/`,
+`private/selection-receipt.json`, `private/engineering-derivation-*.json`,
+`private/engineering-train-analysis/`, `private/artifact-registry.json` and
+`private/prepare.py`. The packer also verifies canonical RIFF with one 16-byte
+PCM `fmt` chunk followed by `data`, mono 44.1-kHz 24-bit fields and a zero
+required pad, exact core frame counts, equal practice-pair frame counts and
+non-reuse outside the three declared repeats. It produces 30 deterministic
+public session manifests with distinct per-trial opaque filenames, secret
+exact 15/15 A-side balance for every pair, constrained later repeats and a
+static response recorder. The source mapping, seeds, ID/token map, input paths
+and implementation hashes remain private. `private/answer-key.json` binds all
+evidence archives plus the preparer, runner, no-listing server and scorer;
+byte-identical frozen copies of the latter two are `serve.py` and `score.py` in
+the pack root. Downloaded response JSON names only
+the opaque session/trial IDs, combined study/implementation fingerprint and a
+seed-keyed SHA-256 commitment to that session's canonical private ID, stratum,
+order and A/B mapping. The public session publishes the same commitment before
+listening; the scorer recomputes it from the private key and rejects either a
+post-pack key remap or a response carrying a different commitment.
+Specifically, the commitment is
+`SHA-256(presentation_seed_bytes || NUL || "electry-private-mapping/v1" || NUL
+|| canonical_mapping_JSON)`, where the UTF-8 JSON contains only the participant
+ID, stratum, session token, practice records and scored records, with keys
+sorted, compact separators and ASCII escaping.
+
+At scoring time the frozen scorer rehashes the archived study, comparison,
+preparer, capture manifests, event/score records, artifact registry, selection
+receipt, engineering derivation and raw train-analysis records; the browser
+runner, no-listing server and pack-local scorer; all 30 public session manifests;
+the exact participant-link bytes; and all 900 opaque public audio references.
+It independently reconstructs the canonical 16-take capture inventory, every
+eligible cluster-level engineering input, the R-7 P90 margins, formulas,
+engineering contract and artifact coverage. It also recomputes the study
+fingerprint, presentation mapping and source hashes before accepting responses.
+These checks detect accidental or partial pack editing. They are not a
+signature, trusted timestamp or proof that a malicious
+coordinator honestly ran the declared selector before viewing holdout data;
+the externally preserved capture/selection ledgers and frozen release hashes
+remain the trust root.
+
+The browser cannot cryptographically seal a client-authored download. Run each
+session under supervision: the coordinator collects the response immediately,
+computes its SHA-256 at intake and archives the original read-only before the
+next session. Keep that intake ledger outside the response directory. The
+scorer reports fresh scoring-time hashes for comparison with the ledger; it
+does not ingest or certify the intake record, and neither hash turns an edited
+client file into trusted evidence.
+
+This packer consumes final stimuli. It does not detect onsets, select the
+holdout cohort, crop, level-match, measure true peak, render the common chain,
+prove a licence or certify that a manifest was frozen before access. The
+repository template therefore remains
+`not_ready_missing_licensed_captures`, and the tool refuses it today rather
+than manufacturing a nominal “study” from absent recordings. Its deterministic
+layout check is runnable without audio dependencies:
+
+```sh
+python3 Tests/PrepareBlindListeningTests.py
+python3 Tests/ScoreBlindListeningTests.py
+```
 
 Recruit exactly 30 valid listeners: 15 active extended-range guitarists and 15
 metal producers/engineers, with dual-qualified people assigned before listening
 to the least-filled stratum. Continue recruitment only to replace predeclared
 qualification, playback-screen or incomplete-session exclusions until those
 exact valid counts are reached. Outcomes remain sealed and are never consulted
-for stopping. The frozen source cohort contains exactly two active untouched
+for stopping. The private key assigns `p001`-`p015` to
+`extended_range_guitarist` and `p016`-`p030` to `metal_producer`; a replacement
+inherits the excluded listener's ID instead of creating `p031`, so stratum size,
+side balance and the frozen session remain unchanged. The frozen source cohort
+contains exactly two active untouched
 holdout player/guitar clusters. The comparison manifest locks its exact cohort,
 the qualification questions, recruitment/stopping rule and these gates before
 analytical or listening access begins:
@@ -1336,12 +1475,54 @@ analytical or listening access begins:
 - Hidden-repeat same-source agreement is at least 70%, and aggregate A-side
   choices remain within 35-65%.
 
-Every listener bootstrap draw resamples whole people with replacement separately
-inside the 15-guitarist and 15-producer strata, retains each person's repeated
-trials, then combines the two stratum estimates with fixed 50/50 weight. Those
-intervals generalize to that equal listener mixture for this frozen stimulus
-set; with two source clusters they do not establish a population claim over
-guitars or players.
+Core identification and preference use only each listener's ten non-repeat
+cells. Practice answers never enter an endpoint. The three repeat answers enter
+same-underlying-source identification agreement after undoing their A/B
+reversal and the presentation-bias diagnostic, but never accuracy or preference.
+Thus the A-side diagnostic covers all 390 scored forced choices. Palm aggregates
+cells 1-2, 5-6 and 9-10; Dead aggregates cells 3-4 and 7-8. Physical-source accuracy
+is binary. Electry preference is one for choosing its side, zero for choosing
+the physical side and 0.5 for Tie. Core, articulation and cell point estimates
+are the arithmetic means of those eligible values.
+
+The frozen bootstrap has 20,000 replicates. Its seed is
+`SHA-256(presentation_seed_bytes || NUL ||
+"electry-listener-bootstrap/v1")` and is written into the private key before
+listening. For each replicate and each stratum, it draws 15 whole listener IDs
+with replacement and retains all ten core values for every sampled listener.
+Draw slot `s` uses the first unsigned big-endian 64 bits of
+`SHA-256(bootstrap_seed_bytes || NUL || replicate || NUL || stratum || NUL || s
+|| NUL || retry)`; values at or above the largest multiple of 15 below `2^64`
+are rehashed with the next retry, and the accepted value modulo 15 selects the
+listener. The same sampled people feed identification and preference. Each draw
+averages listeners within each fixed stratum, then gives the two stratum means
+50/50 weight. After sorting the 20,000 values, R-7 linear interpolation
+(`h = (N - 1) p`) gives the identification 5th/95th percentiles and the
+preference 5th percentile used as its one-sided 95% lower bound. Those intervals
+generalize to that equal listener mixture for this frozen stimulus set; with
+two source clusters they do not establish a population claim over guitars or
+players.
+
+After exactly one complete response file for every frozen ID has arrived, run:
+
+```sh
+cd /private/electry-blind-pack
+python3 score.py \
+  /private/electry-blind-pack/private/answer-key.json \
+  /private/electry-blind-responses \
+  /private/electry-blind-score.json \
+  --expected-fingerprint <externally-recorded-64-hex-fingerprint>
+```
+
+The scorer rejects a changed evidence archive, implementation, public session
+or audio file; a changed fingerprint, mapping commitment, trial order or ID;
+missing/extra/duplicate participants; malformed choices; incomplete trials;
+and play/replay-count contradictions. Its auditable JSON records hashes and
+aggregate indices for the frozen pack, answer key and all 30 response files;
+all core/cell/articulation, repeat, side-bias and bootstrap endpoints; every
+gate boolean; and one combined `gates.all`. That boolean evaluates a future
+completed cohort only. The current repository has no response cohort and
+therefore has no listening result.
 
 Real-versus-Electry parity does not establish a market win. A second,
 separately randomized session must compare the same Palm and closest available
