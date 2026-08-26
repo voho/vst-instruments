@@ -1389,7 +1389,9 @@ contacts retain its fractional remainder through Strum delay. Alternate
 advances once for a chord; sustain-only strings remain inert. A due contact is
 skipped while any held string still has an in-flight Strum delay rather than
 overwriting that pending attack. E6..B6 retain their established one-shot
-behavior.
+behavior. A hammer or legato slide landing on the same sample is only the
+fretting hand and leaves the due wrist contact intact on every held string; an
+actual played pick at that boundary still consumes it once.
 
 Overlapping B0 owners balance; a positive repeated Note On restarts the phase
 and updates force, while a zero-velocity Note On releases an owner. CC120 and
@@ -1399,8 +1401,9 @@ active hold is transient and never serialized; only its rate is saved. The
 scheduler is deliberately free-running rather than host-tempo synchronized,
 and adds no jitter, missed strokes, pattern editor or hidden direction bias.
 `22-tremolo-picking-study.wav` renders the planned 8/12/16 rate anchors,
-a moving single-note line, a vibrato lead and a held chord through the same
-physical path. It is audible workflow proof, not a human-performance fit.
+a moving single-note line, a vibrato lead and a held Drop-E chord whose low
+string slides on an 8-strokes/s boundary through the same physical path. It is
+audible workflow proof, not a human-performance fit.
 
 ### Complete-batch strum latency check
 

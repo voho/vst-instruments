@@ -12,6 +12,23 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep the fretting hand out of B0's wrist clock
+
+The same-boundary duplicate guard treated every playable Note On as a pick.
+With two strings held at 12 strokes/s, a legato Slide on the low string at the
+4,000-host-sample boundary therefore consumed the Down contact due on the
+unchanged high string. That string stayed Up until the following grid point: a
+166.7 ms gap in an 83.3 ms picking cadence.
+
+Decision: remember the latest physical plectrum contact separately from the
+latest playable Note On. Update that clock in `startExcitation`, where delayed
+Strum travel reaches the string and the existing contact predicate has already
+distinguished the two hands. A played pick on B0's boundary still consumes the
+automatic contact; a hammer or legato slide does not. The regression slides one
+member of a held two-string shape on the exact boundary and requires the other
+member's Alternate stroke immediately. Demo 22 exposes the same case in its
+closing Drop-E chord.
+
 ## 2026-08-27 — make a played note the tremolo wrist's first contact
 
 B0's fractional wrist clock kept running even when no string was physically

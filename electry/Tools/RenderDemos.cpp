@@ -1581,17 +1581,22 @@ Take renderTremoloPickingStudy()
     take.noteOff(76);
     take.wait(0.30);
 
-    // Polyphonic B0 is one alternating wrist across the held shape, with the
-    // ordinary Strum control supplying its small cross-string travel.
+    // Polyphonic B0 is one alternating wrist across the held shape. Half a
+    // second after it starts, the fretting hand slides E1 two frets to F#1
+    // exactly on the 8/s grid; that gesture cannot steal the due pick from the
+    // two unchanged strings above it.
     parameters.tremoloRateHz = 8.0f;
     parameters.strumSpreadSeconds = 0.003f;
     take.setEngineParameters(parameters);
-    take.chord({ 40, 47, 52 }, 0.82f);
+    take.chord({ 28, 35, 40 }, 0.82f);
     take.wait(0.22);
     take.beginTremoloPicking(0.86f);
-    take.wait(1.75);
+    take.wait(0.50);
+    take.style(PlayStyle::Slide);
+    take.noteOn(30, 0.82f);
+    take.wait(1.25);
     take.endTremoloPicking();
-    take.releaseChord({ 40, 47, 52 });
+    take.releaseChord({ 30, 35, 40 });
     take.wait(2.0);
     take.fadeOut(0.9);
     return take;
@@ -1688,7 +1693,7 @@ const std::array<Demo, 22>& demos()
           renderBluesRockLeadStudy },
         { "22-tremolo-picking-study.wav",
           "the visible B0 tremolo-picking gesture at 8, 12 and 16 strokes/s, "
-          "then a pre-held moving entrance, vibrato lead and chord applications",
+          "then a pre-held entrance, vibrato lead and same-grid chord slide",
           renderTremoloPickingStudy },
     }};
     return table;

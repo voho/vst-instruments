@@ -1077,6 +1077,7 @@ void ElectryEngine::reset()
     sustainPedalDown_ = false;
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
+    lastPlectrumContactClock_ = -(1ll << 40);
     lastHandContactClock_ = -1;
     lastHandContactPlayStyle_ = PlayStyle::Sustain;
     lastHandContactOrder_ = 0;
@@ -3361,6 +3362,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // picking-hand contribution so the excitation, impact and stroke geometry
     // cannot disagree about whether a pick was present.
     const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+    if (plectrumContact)
+        lastPlectrumContactClock_ = engineClock_;
     // Pick Hardness is a plectrum property. Keep the established default
     // finger-contact voicing when there is no pick, but do not let a preset's
     // plectrum setting change a hammer, pull-off or legato slide.
@@ -5226,9 +5229,9 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
     if (tremoloPickingVelocity_ > 0.0f)
     {
         // One normalised phase keeps the wrist coherent across a chord and
-        // lets host-rate changes take effect without restarting it. A newly
-        // fretted note at this exact boundary is already a contact, so the
-        // armed first stroke is consumed rather than doubling that attack.
+        // lets host-rate changes take effect without restarting it. A played
+        // pick at this exact boundary consumes the wrist stroke rather than
+        // doubling it; a hammer or legato slide does not.
         if (tremoloPickingPhase_ >= 1.0 - 1.0e-12)
         {
             tremoloPickingPhase_ = std::max(
@@ -5245,7 +5248,8 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             // A wrist cannot begin another chord traversal while its pick is
             // still travelling toward a held string. Consume that grid tick
             // instead of replacing an as-yet-unheard PendingRepick.
-            if (lastNoteOnClock_ != engineClock_ && ! traversalInFlight)
+            if (lastPlectrumContactClock_ != engineClock_
+                && ! traversalInFlight)
                 for (int stringIndex = 0; stringIndex < stringCount;
                      ++stringIndex)
                     repickHeldString(stringIndex, tremoloPickingVelocity_, false);

@@ -2325,6 +2325,38 @@ void testHeldTremoloPickingGesture()
                && ! lowDown.strokeIsUp && ! nextDown.strokeIsUp,
            "poly tremolo used separate wrist clocks or over-consumed Alternate");
 
+    // A legato slide is only the fretting hand. Landing one exactly on B0's
+    // grid must not swallow the wrist contact due on every other held string.
+    auto slideBoundaryStorage = std::make_unique<ElectryEngine>();
+    auto& slideBoundary = *slideBoundaryStorage;
+    slideBoundary.prepare(sampleRate, 512);
+    slideBoundary.setParameters(parameters);
+    slideBoundary.reset();
+    slideBoundary.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    slideBoundary.noteOnChord(chordNotes);
+    StereoBuffer slideAge(64);
+    renderInto(slideBoundary, slideAge);
+    slideBoundary.beginTremoloPicking(0.9f);
+    StereoBuffer slideFirst(1);
+    renderInto(slideBoundary, slideFirst);
+    const auto slideFirstHigh = TestAccess::snapshot(slideBoundary, 1);
+    StereoBuffer untilSlideBoundary(framesPerStroke - 1);
+    renderInto(slideBoundary, untilSlideBoundary);
+    slideBoundary.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+    const std::array<ElectryEngine::NoteOnEvent, 1> slideNote {{
+        { 30, 0.82f }
+    }};
+    slideBoundary.noteOnChord(slideNote);
+    expect(TestAccess::snapshot(slideBoundary, 0).midiNote == 30,
+           "same-grid Slide fixture did not retarget the low string");
+    StereoBuffer slideGridContact(1);
+    renderInto(slideBoundary, slideGridContact);
+    const auto afterSlideHigh = TestAccess::snapshot(slideBoundary, 1);
+    expect(slideFirstHigh.strokeIsUp
+               && afterSlideHigh.startOrder > slideFirstHigh.startOrder
+               && ! afterSlideHigh.strokeIsUp,
+           "a same-grid legato Slide swallowed B0 on another held string");
+
     // At the widest Strum setting a two-string traversal lasts 60 ms, longer
     // than a 20-strokes/s grid interval. The 50 ms tick is deliberately
     // skipped instead of overwriting the high string's pending contact; the

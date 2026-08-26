@@ -1332,6 +1332,9 @@ private:
     // at every host rate.
     std::int64_t engineClock_ { 0 };
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
+    // B0 consumes a same-sample played pick, but a hammer or legato slide is
+    // only the fretting hand and cannot suppress the wrist's due contact.
+    std::int64_t lastPlectrumContactClock_ { -(1ll << 40) };
     // The most recent real string contact owns the shared muting-hand
     // position. Keep that history at engine scope: retiring the voice that
     // received the contact must not reveal an older voice and move the hand
