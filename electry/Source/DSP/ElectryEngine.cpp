@@ -3255,6 +3255,17 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                     continue;
                 configureVoiceDamping(activeVoice, voice.playStyle);
                 configureVoicePitch(activeVoice, false);
+                if (voice.playStyle != PlayStyle::PalmMute)
+                {
+                    // The latest physical contact lifted or replaced the
+                    // bridge heel. Its short finite patch belongs to that hand
+                    // state, so it cannot survive on an older ringing voice.
+                    activeVoice.touchDepth = 0.0f;
+                    activeVoice.touchHoldRemaining = 0;
+                    activeVoice.touchReleaseStep = 0.0f;
+                    activeVoice.touchFraction = 0.0f;
+                    activeVoice.touchHalfSpanFraction = 0.0f;
+                }
             }
         }
     }
@@ -3608,6 +3619,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         + strokeContactOffsetMetres / scaleLengthMetres();
     const float combFraction = clampf(strokePluckFraction * fretStretch,
                                       0.02f, 0.49f);
+    const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
+                                          0.05f);
     // Where the touching hand is, if either hand is touching. The natural
     // harmonic is the fretting hand on the midpoint node: every odd partial
     // has an antinode under it and goes, every even one has a node there and
@@ -3629,6 +3642,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     {
         case PlayStyle::Harmonics:
             voice.touchFraction = 0.5f;
+            voice.touchHalfSpanFraction = 0.0f;
             voice.touchDepth = 0.92f;
             voice.touchHoldRemaining = static_cast<int>(0.045 * sampleRate_);
             voice.touchReleaseStep = 0.92f
@@ -3636,17 +3650,46 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             break;
         case PlayStyle::Pinch:
             voice.touchFraction = combFraction;
+            voice.touchHalfSpanFraction = 0.0f;
             voice.touchDepth = 1.0f;
             voice.touchHoldRemaining = static_cast<int>(0.090 * sampleRate_);
             voice.touchReleaseStep = 1.0f
                 / std::max(1.0f, 0.130f * sampleRate);
             break;
-        case PlayStyle::Sustain:
         case PlayStyle::PalmMute:
+        {
+            // A Palm heel covers a patch rather than the ideal point used by
+            // the harmonic articulations above. Mute Tightness travels through
+            // the capture protocol's 4-20 mm saddle landmarks; the 4 mm full
+            // footprint is deliberately the smallest plausible provisional
+            // value and remains train-owned when matched captures arrive.
+            constexpr float heelNearMetres = 0.004f;
+            constexpr float heelFarMetres = 0.020f;
+            constexpr float heelHalfSpanMetres = 0.002f;
+            const float heelCentreMetres = lerp(
+                heelNearMetres, heelFarMetres, parameters.muteDamping);
+            voice.touchFraction = heelCentreMetres / soundingMetres;
+            voice.touchHalfSpanFraction = heelHalfSpanMetres / soundingMetres;
+            // The 1.10 amplitude mapping is provisional/train-owned with the
+            // footprint above. Stroke force already moves the calibrated hand
+            // decay; applying it again here doubled the velocity-dependent tail
+            // spread instead of adding an independent spatial contact.
+            voice.touchDepth = clampf(
+                1.10f * bridgeHandDepth, 0.0f, 1.0f);
+            voice.touchHoldRemaining = static_cast<int>(0.070f * sampleRate);
+            // The controlled F2 body is already periodic by 30-80 ms. Let the
+            // short extra contact clear by that boundary; the calibrated
+            // steady bridge-hand damping remains after it has gone.
+            voice.touchReleaseStep = voice.touchDepth
+                / std::max(1.0f, 0.010f * sampleRate);
+            break;
+        }
+        case PlayStyle::Sustain:
         case PlayStyle::Hammer:
         case PlayStyle::Slide:
         case PlayStyle::Dead:
             voice.touchFraction = 0.0f;
+            voice.touchHalfSpanFraction = 0.0f;
             voice.touchDepth = 0.0f;
             voice.touchHoldRemaining = 0;
             voice.touchReleaseStep = 0.0f;
@@ -3660,8 +3703,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // an open Drop-E eighth string and a small fraction of one at the top of
     // the range, which is exactly the frequency dependence a real contact has.
     const float contactMetres = 0.001f * lerp(1.5f, 0.5f, parameters.pickHardness);
-    const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
-                                          0.05f);
     voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
     voice.excitationCombWidth = 0.5f * (contactMetres / soundingMetres)
                               * voice.vertical.targetDelay;
@@ -4256,6 +4297,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.touchDepth = 0.0f;
     voice.touchHoldRemaining = 0;
     voice.touchFraction = 0.0f;
+    voice.touchHalfSpanFraction = 0.0f;
     voice.slideNoiseAmplitude = 0.0f;
     voice.slideNoiseLevel = 0.0f;
     voice.slideShaperHigh.reset();
@@ -4556,7 +4598,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 
     // The touching finger, if there is one. It is held while the note forms
     // and then lifts: by then the partials it removed have gone and cannot be
-    // re-excited, so releasing it is free and stops paying for two extra
+    // re-excited, so releasing it is free and stops paying for the extra
     // delay reads.
     if (voice.touchDepth > 0.0f)
     {
@@ -4580,10 +4622,38 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         float sample = loop.readFractional(loop.currentDelay);
         if (touchWeight > 0.0f)
         {
-            // (1 - d/2) x(n) + (d/2) x(n - M), written as one blend so the
-            // untouched path stays exactly the same instruction sequence.
-            const float touched = loop.readFractional(
-                loop.currentDelay * touchDelayScale);
+            // A point touch keeps the established one-sided path bit-exact. A
+            // Palm heel instead averages symmetric cubic taps across its finite
+            // patch. Cubic Lagrange is non-expansive at every fractional phase;
+            // the non-negative read-combination weights therefore stay passive.
+            float touched = 0.0f;
+            if (voice.touchHalfSpanFraction > 0.0f)
+            {
+                // Read both travelling directions at each point of the heel.
+                // Equal shorter/longer cubic reads cancel the spatial phase;
+                // their tiny interpolation residual is covered at the string's
+                // actual modes by the folded-ring transfer regression.
+                const auto pairedAt = [&] (float fraction)
+                {
+                    return 0.5f * (
+                        loop.readFractional(
+                            loop.currentDelay * (1.0f - fraction))
+                        + loop.readFractional(
+                            loop.currentDelay * (1.0f + fraction)));
+                };
+                const float lower = voice.touchFraction
+                                  - voice.touchHalfSpanFraction;
+                const float upper = voice.touchFraction
+                                  + voice.touchHalfSpanFraction;
+                touched = 0.25f * pairedAt(lower)
+                        + 0.50f * pairedAt(voice.touchFraction)
+                        + 0.25f * pairedAt(upper);
+            }
+            else
+            {
+                touched = loop.readFractional(
+                    loop.currentDelay * touchDelayScale);
+            }
             sample += touchWeight * (touched - sample);
         }
         sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);

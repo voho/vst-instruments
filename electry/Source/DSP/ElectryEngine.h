@@ -1037,8 +1037,9 @@ private:
         float sympatheticEnergy { 0.0f };
         OnePole sympatheticEmf {};
 
-        // A light finger or thumb resting on the string, at `touchFraction` of
-        // its sounding length. Mode n's displacement there goes as
+        // A light finger, thumb or heel resting on the string, at
+        // `touchFraction` of its sounding length. Mode n's displacement there
+        // goes as
         // sin(n pi p), so the energy a light contact removes per round trip
         // goes as sin^2(n pi p) = (1 - cos(2 pi n p)) / 2. Condensed into the
         // single delay loop that is exactly a one-tap FIR
@@ -1060,8 +1061,12 @@ private:
         //
         // The finger lifts once the note has formed. By then the partials it
         // removed are gone and cannot be re-excited, so lifting it is free and
-        // buys back two delay reads per sample.
+        // buys back the extra delay reads.
         float touchFraction { 0.0f };
+        // Zero preserves the exact point-touch path above. A positive value is
+        // half the Palm heel's finite contact footprint; that path averages
+        // three symmetric tap pairs before the passive contact blend.
+        float touchHalfSpanFraction { 0.0f };
         float touchDepth { 0.0f };
         int touchHoldRemaining { 0 };
         float touchReleaseStep { 0.0f };
