@@ -40,7 +40,7 @@ struct ParameterExpectation
 // struct, so reading it here too would make the check tautological. This table is
 // the independent statement of what the plug-in promises a new instance, and it is
 // what would have caught the two lists silently drifting apart.
-constexpr std::array<ParameterExpectation, 26> expectedParameters {{
+constexpr std::array<ParameterExpectation, 27> expectedParameters {{
     { electry::parameters::pickupSelector, 2.0f,  1.0e-5f },
     { electry::parameters::pickupType,     0.32f,  1.0e-5f },
     { electry::parameters::tone,           0.70f,  1.0e-5f },
@@ -67,6 +67,7 @@ constexpr std::array<ParameterExpectation, 26> expectedParameters {{
     { electry::parameters::palmMute,       0.0f,  1.0e-5f },
     { electry::parameters::strumSpread,    0.0f,  1.0e-4f },
     { electry::parameters::resonanceDepth,  35.0f,  1.0e-4f },
+    { electry::parameters::tremoloRate,    12.0f, 1.0e-4f },
 }};
 
 float parameterValue (const ElectryAudioProcessor& processor, const char* id)
@@ -234,13 +235,19 @@ void testParameterLayoutAndDefaults()
     ElectryAudioProcessor processor;
     expect (processor.getParameters().size()
                 == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 26 APVTS parameters");
+            "processor does not expose exactly 27 APVTS parameters");
 
     std::set<std::string> uniqueIds;
-    for (const auto& expected : expectedParameters)
+    for (std::size_t index = 0; index < expectedParameters.size(); ++index)
     {
+        const auto& expected = expectedParameters[index];
         expect (uniqueIds.insert (expected.id).second,
                 std::string ("duplicate APVTS id ") + expected.id);
+        const auto* indexed = dynamic_cast<juce::AudioProcessorParameterWithID*> (
+            processor.getParameters()[static_cast<int> (index)]);
+        expect (indexed != nullptr && indexed->paramID == expected.id,
+                std::string ("host parameter index drifted at ")
+                    + std::to_string (index));
         const auto value = parameterValue (processor, expected.id);
         expect (std::abs (value - expected.defaultValue) <= expected.tolerance,
                 std::string ("wrong default for ") + expected.id + ": got "
@@ -252,6 +259,14 @@ void testParameterLayoutAndDefaults()
                                  "doubleMode", "vibratoDepth" })
         expect (processor.parameters.getParameter (removed) == nullptr,
                 std::string ("obsolete host parameter still exists: ") + removed);
+
+    const auto* tremoloRate = dynamic_cast<const juce::AudioParameterFloat*> (
+        processor.parameters.getParameter (electry::parameters::tremoloRate));
+    expect (tremoloRate != nullptr
+                && std::abs (tremoloRate->range.start - 4.0f) < 1.0e-5f
+                && std::abs (tremoloRate->range.end - 20.0f) < 1.0e-5f
+                && std::abs (tremoloRate->range.interval - 0.1f) < 1.0e-5f,
+            "Tremolo Rate did not expose its exact 4..20 strokes/s host range");
 }
 
 void testFactoryPrograms()
@@ -427,6 +442,8 @@ void testParameterTextFormatting()
                          "Block chord");
     expectParameterText (processor, electry::parameters::strumSpread, 18.0f,
                          "18.0 ms/string");
+    expectParameterText (processor, electry::parameters::tremoloRate, 12.0f,
+                         "12.0 strokes/s");
     expectParameterText (processor, electry::parameters::resonanceDepth, 35.0f,
                          "35%");
 
@@ -495,6 +512,9 @@ void testParameterTextParsing()
     expectParameterValueForText (processor, electry::parameters::strumSpread,
                                  "18.0 ms/string", 18.0f, 1.0e-3f,
                                  "strumSpread \"18.0 ms/string\"");
+    expectParameterValueForText (processor, electry::parameters::tremoloRate,
+                                 "12.0 strokes/s", 12.0f, 1.0e-3f,
+                                 "tremoloRate \"12.0 strokes/s\"");
 
     // timeValue()'s branch on whether the typed text contains "ms": bendTime's
     // own display crosses from milliseconds to seconds at 1.0 s, so both
@@ -530,6 +550,7 @@ void testStateRoundTrip()
     setParameterValue (source, electry::parameters::sympathetic, 0.66f);
     setParameterValue (source, electry::parameters::palmMute, 0.44f);
     setParameterValue (source, electry::parameters::strumSpread, 22.0f);
+    setParameterValue (source, electry::parameters::tremoloRate, 16.0f);
     setParameterValue (source, electry::parameters::resonanceDepth, 80.0f);
     source.triggerArticulation (static_cast<int> (electry::PickStyle::Up));
     source.triggerArticulation (
@@ -573,6 +594,9 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, electry::parameters::strumSpread)
                           - 22.0f) < 1.0e-3f,
             "strum spread did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, electry::parameters::tremoloRate)
+                          - 16.0f) < 1.0e-3f,
+            "tremolo rate did not survive a state round trip");
     expect (std::abs (parameterValue (restored, electry::parameters::resonanceDepth)
                           - 80.0f) < 1.0e-3f,
             "resonance depth did not survive a state round trip");
@@ -760,6 +784,51 @@ void testSameSampleChordAllocationIsCanonical()
                     "same-sample host chord audio depended on event order");
         }
         while (std::next_permutation (permutation.begin(), permutation.end()));
+    }
+
+    const auto firstAudibleSample = [] (const std::vector<float>& audio)
+    {
+        const auto found = std::find_if (audio.begin(), audio.end(), [] (float sample)
+        {
+            return sample != 0.0f;
+        });
+        return found == audio.end()
+            ? -1 : static_cast<int> (std::distance (audio.begin(), found));
+    };
+    const auto flatChord = render (canonical, {}, 0.0f, 137);
+    const auto spreadChord = render (canonical, {}, 12.0f, 137);
+    expect (firstAudibleSample (flatChord.left) >= 137
+                && firstAudibleSample (spreadChord.left)
+                       == firstAudibleSample (flatChord.left),
+            "a complete host chord retained Strum Spread's re-anchor latency");
+
+    // The processor knows that a one-note timestamp is complete too. With no
+    // strings to cross, enabling Strum Spread must be a sample-exact no-op;
+    // otherwise a monophonic riff pays the old fixed 20 ms lookahead.
+    const std::array<int, 1> singleNote { 45 };
+    const auto flatSingle = render (singleNote, {}, 0.0f, 137);
+    const auto spreadSingle = render (singleNote, {}, 12.0f, 137);
+    expect (flatSingle.left == spreadSingle.left
+                && flatSingle.right == spreadSingle.right,
+            "Strum Spread delayed or recoloured a complete host single note");
+
+    // A#0 is continuous performance state, not a fourth chord note. It must
+    // condition the complete simultaneous attack wherever the host inserted
+    // it, without flushing the bounded chord solve into separate fingerings.
+    const std::array<int, 4> vibratoFirst { 22, 33, 40, 45 };
+    const std::array<int, 4> vibratoMiddle { 33, 40, 22, 45 };
+    const std::array<int, 4> vibratoLast { 33, 40, 45, 22 };
+    const auto conditionedReference = render (
+        vibratoFirst, {}, 0.0f, 137);
+    for (const auto& candidate : {
+             render (vibratoMiddle, {}, 0.0f, 137),
+             render (vibratoLast, {}, 0.0f, 137) })
+    {
+        expect (sameMapping (candidate, conditionedReference),
+                "same-sample A#0 vibrato split the physical chord solve");
+        expect (candidate.left == conditionedReference.left
+                    && candidate.right == conditionedReference.right,
+                "same-sample A#0 vibrato depended on host insertion order");
     }
 
     std::array duplicateChord { 33, 40, 40, 45 };
@@ -1663,7 +1732,13 @@ void testRepickMidiContract()
         bool soundingBeforeRepick = false;
         bool unchangedByVelocityZero = false;
     };
-    const auto renderAlternateRepick = [] (bool onScreen, bool sustainOnly,
+    enum class RepickInput
+    {
+        host,
+        keyboard,
+        fretboard
+    };
+    const auto renderAlternateRepick = [] (RepickInput input, bool sustainOnly,
                                             bool shouldRepick)
     {
         ElectryAudioProcessor processor;
@@ -1691,9 +1766,11 @@ void testRepickMidiContract()
             processor.getStringVisualState (0).sounding;
         renderSeconds (processor, audio, 0.04);
 
-        if (shouldRepick && onScreen)
+        if (shouldRepick && input == RepickInput::keyboard)
             processor.keyboardState.noteOn (
                 1, repickNote, 110.0f / 127.0f);
+        else if (shouldRepick && input == RepickInput::fretboard)
+            processor.triggerStringRepick (0, 110.0f / 127.0f);
         else if (shouldRepick)
             midi.addEvent (juce::MidiMessage::noteOn (
                 1, repickNote, (juce::uint8) 110), 0);
@@ -1716,18 +1793,28 @@ void testRepickMidiContract()
         return result;
     };
 
-    const auto hostAlternate = renderAlternateRepick (false, false, true);
-    const auto uiAlternate = renderAlternateRepick (true, false, true);
+    const auto hostAlternate = renderAlternateRepick (
+        RepickInput::host, false, true);
+    const auto uiAlternate = renderAlternateRepick (
+        RepickInput::keyboard, false, true);
+    const auto fretboardAlternate = renderAlternateRepick (
+        RepickInput::fretboard, false, true);
     expect (hostAlternate.beganDown && hostAlternate.repickedUp
-                && uiAlternate.beganDown && uiAlternate.repickedUp,
-            "host or UI-queue repick did not advance Alternate from Down to Up");
-    expect (uiAlternate.audio == hostAlternate.audio,
-            "UI-queue Alternate repick did not match host MIDI");
+                && uiAlternate.beganDown && uiAlternate.repickedUp
+                && fretboardAlternate.beganDown
+                && fretboardAlternate.repickedUp,
+            "host, keyboard or fretboard repick did not advance Alternate "
+            "from Down to Up");
+    expect (uiAlternate.audio == hostAlternate.audio
+                && fretboardAlternate.audio == hostAlternate.audio,
+            "keyboard or fretboard repick did not match host MIDI");
     expect (hostAlternate.unchangedByVelocityZero,
             "velocity-zero repick created an attack and advanced Alternate");
 
-    const auto sustainTail = renderAlternateRepick (false, true, false);
-    const auto sustainedRepick = renderAlternateRepick (false, true, true);
+    const auto sustainTail = renderAlternateRepick (
+        RepickInput::host, true, false);
+    const auto sustainedRepick = renderAlternateRepick (
+        RepickInput::host, true, true);
     expect (sustainedRepick.soundingBeforeRepick
                 && sustainedRepick.audio == sustainTail.audio
                 && ! sustainedRepick.repickedUp,
@@ -2166,11 +2253,11 @@ void testMutePressureDisplayFeedback()
             "Reset All Controllers left stale CC2 pressure in the editor");
 
     ElectryStatusDisplay status;
-    status.setStatus (1, 0, true, sampleRate, 127, false);
+    status.setStatus (1, 0, true, sampleRate, 127, 0, 0, false);
     expect (status.getStatusText().contains ("CC2 MUTE +100%")
                 && status.getTitle() == status.getStatusText(),
             "the status display did not expose full live CC2 mute pressure");
-    status.setStatus (1, 0, true, sampleRate, 0, false);
+    status.setStatus (1, 0, true, sampleRate, 0, 0, 0, false);
     expect (! status.getStatusText().contains ("CC2 MUTE")
                 && status.getStatusText().contains ("48.0 kHz"),
             "the status display did not restore its normal readout at CC2 zero");
@@ -2179,6 +2266,443 @@ void testMutePressureDisplayFeedback()
     processor.releaseResources();
     expect (processor.getMidiMutePressureForDisplay() == 0,
             "releaseResources left stale CC2 mute pressure visible");
+}
+
+void testVibratoGestureMidiAndLifecycle()
+{
+    constexpr int gestureNote = electry::ElectryEngine::vibratoGestureNote;
+    ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "a prepared processor displayed stale A#0 vibrato");
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    const auto noteOn = [&] (int velocity)
+    {
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, gestureNote, static_cast<juce::uint8> (velocity)), 0);
+        renderBlock (processor, audio, midi);
+    };
+    const auto noteOff = [&]
+    {
+        midi.addEvent (juce::MidiMessage::noteOff (1, gestureNote), 0);
+        renderBlock (processor, audio, midi);
+    };
+
+    noteOn (64);
+    expect (processor.getVibratoGestureForDisplay() == 64
+                && processor.getActiveVoiceCount() == 0,
+            "A#0 did not become a silent velocity-shaped vibrato gesture");
+    noteOn (127);
+    expect (processor.getVibratoGestureForDisplay() == 127,
+            "a newer A#0 owner did not update the vibrato width");
+    noteOff();
+    expect (processor.getVibratoGestureForDisplay() == 127,
+            "one A#0 Note Off cancelled another held owner");
+    noteOff();
+    noteOff();
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "balanced or stray A#0 Note Off left vibrato held");
+
+    noteOn (64);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, gestureNote, static_cast<juce::uint8> (0)), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "velocity-zero A#0 did not act as Note Off");
+
+    processor.keyboardState.noteOn (
+        1, gestureNote, 64.0f / 127.0f);
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 64,
+            "the on-screen A#0 key did not reach the gesture path");
+    processor.keyboardState.noteOff (1, gestureNote, 0.0f);
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "releasing the on-screen A#0 key left vibrato held");
+
+    noteOn (96);
+    for (const int controller : { 121, 120 })
+    {
+        midi.addEvent (juce::MidiMessage::controllerEvent (
+            1, controller, 0), 0);
+        renderBlock (processor, audio, midi);
+        expect (processor.getVibratoGestureForDisplay() == 96,
+                std::string (controller == 121 ? "CC121" : "CC120")
+                    + " released the physically held A#0 gesture");
+    }
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 123, 0), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "All Notes Off did not release A#0 vibrato");
+
+    noteOn (127);
+    processor.requestPanic();
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "Panic left A#0 vibrato armed");
+
+    const auto renderGestureTail = [] (int note, bool gesture)
+    {
+        struct Tail
+        {
+            std::vector<float> left;
+            int fret = -1;
+        } result;
+
+        ElectryAudioProcessor p;
+        p.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (p, electry::parameters::sympathetic, 0.0f);
+        setParameterValue (p, electry::parameters::artifacts, 0.0f);
+        juce::AudioBuffer<float> block;
+        juce::MidiBuffer events;
+        events.addEvent (juce::MidiMessage::noteOn (
+            1, note, static_cast<juce::uint8> (105)), 0);
+        renderBlock (p, block, events);
+        renderSeconds (p, block, 0.2);
+        if (gesture)
+            events.addEvent (juce::MidiMessage::noteOn (
+                1, electry::ElectryEngine::vibratoGestureNote,
+                static_cast<juce::uint8> (127)), 0);
+        renderBlock (p, block, events);
+        result.left = renderCapture (p, block, 0.8);
+        for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
+        {
+            const auto state = p.getStringVisualState (string);
+            if (state.sounding && state.midiNote == note)
+                result.fret = state.fret;
+        }
+        p.releaseResources();
+        return result;
+    };
+
+    const auto stillStopped = renderGestureTail (47, false);
+    const auto movingStopped = renderGestureTail (47, true);
+    float stoppedDifference = 0.0f;
+    for (std::size_t i = 0; i < stillStopped.left.size(); ++i)
+        stoppedDifference = std::max (
+            stoppedDifference,
+            std::abs (stillStopped.left[i] - movingStopped.left[i]));
+    expect (stillStopped.fret > 0 && movingStopped.fret > 0
+                && stoppedDifference > 1.0e-6f,
+            "A#0 did not audibly move a stopped string");
+
+    const auto stillOpen = renderGestureTail (45, false);
+    const auto movingOpen = renderGestureTail (45, true);
+    expect (stillOpen.fret == 0 && movingOpen.fret == 0
+                && stillOpen.left == movingOpen.left,
+            "A#0 moved an open string that no finger can rock");
+
+    const auto renderDormantDouble = [] (bool gesture)
+    {
+        std::vector<float> right;
+        ElectryAudioProcessor p;
+        p.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (p, electry::parameters::sympathetic, 0.0f);
+        juce::AudioBuffer<float> block;
+        juce::MidiBuffer events;
+        if (gesture)
+            events.addEvent (juce::MidiMessage::noteOn (
+                1, electry::ElectryEngine::vibratoGestureNote,
+                static_cast<juce::uint8> (127)), 0);
+        renderBlock (p, block, events); // Double is still dormant here.
+        setParameterValue (p, electry::parameters::outputMode, 2.0f);
+        events.addEvent (juce::MidiMessage::noteOn (
+            1, 47, static_cast<juce::uint8> (105)), 0);
+        for (int remaining = static_cast<int> (0.8 * sampleRate);
+             remaining > 0;)
+        {
+            const int samples = std::min (blockSize, remaining);
+            renderBlock (p, block, events, samples);
+            const auto* channel = block.getReadPointer (1);
+            right.insert (right.end(), channel, channel + samples);
+            remaining -= samples;
+        }
+        p.releaseResources();
+        return right;
+    };
+    const auto stillDouble = renderDormantDouble (false);
+    const auto movingDouble = renderDormantDouble (true);
+    float doubleDifference = 0.0f;
+    for (std::size_t i = 0; i < stillDouble.size(); ++i)
+        doubleDifference = std::max (
+            doubleDifference, std::abs (stillDouble[i] - movingDouble[i]));
+    expect (doubleDifference > 1.0e-6f,
+            "A#0 pressed in Mono did not reach the dormant Double player");
+
+    ElectryStatusDisplay status;
+    status.setStatus (1, 0, true, sampleRate, 0, 64, 0, false);
+    expect (status.getStatusText().contains ("VIB 50%")
+                && status.getTitle() == status.getStatusText(),
+            "the status display did not expose live A#0 width");
+
+    noteOn (80);
+    processor.releaseResources();
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "releaseResources left A#0 vibrato visible");
+    processor.prepareToPlay (sampleRate, blockSize);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "a later prepare restored stale A#0 vibrato");
+    processor.releaseResources();
+}
+
+void testTremoloPickingMidiAndLifecycle()
+{
+    constexpr int gestureNote = electry::ElectryEngine::tremoloGestureNote;
+    constexpr int heldNote = electry::ElectryEngine::lowestPlayableNote;
+    ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+    expect (gestureNote == 23
+                && processor.getTremoloGestureForDisplay() == 0,
+            "a prepared processor lost B0 or displayed stale tremolo picking");
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, electry::ElectryEngine::firstKeyswitchNote
+               + static_cast<int> (electry::PickStyle::Alternate),
+        static_cast<juce::uint8> (127)), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, heldNote, static_cast<juce::uint8> (105)), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 0.04);
+    expect (! processor.getStringVisualState (0).strokeUp,
+            "the B0 Alternate fixture did not begin down");
+
+    const auto gestureOn = [&] (int velocity)
+    {
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, gestureNote, static_cast<juce::uint8> (velocity)), 0);
+        renderBlock (processor, audio, midi);
+    };
+    const auto gestureOff = [&]
+    {
+        midi.addEvent (juce::MidiMessage::noteOff (1, gestureNote), 0);
+        renderBlock (processor, audio, midi);
+    };
+
+    gestureOn (96);
+    expect (processor.getTremoloGestureForDisplay() == 96
+                && processor.getStringVisualState (0).strokeUp,
+            "B0 did not immediately repick an already-held string");
+    gestureOn (127);
+    expect (processor.getTremoloGestureForDisplay() == 127,
+            "a repeated B0 Note On did not capture the latest pick force");
+    gestureOff();
+    expect (processor.getTremoloGestureForDisplay() == 127,
+            "one B0 Note Off cancelled another held owner");
+    gestureOff();
+    gestureOff();
+    expect (processor.getTremoloGestureForDisplay() == 0
+                && processor.getStringVisualState (0).sounding,
+            "balanced/stray B0 Off stuck the wrist or released the fretting key");
+
+    gestureOn (80);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, gestureNote, static_cast<juce::uint8> (0)), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getTremoloGestureForDisplay() == 0,
+            "velocity-zero B0 did not act as Note Off");
+
+    processor.keyboardState.noteOn (1, gestureNote, 64.0f / 127.0f);
+    renderBlock (processor, audio, midi);
+    expect (processor.getTremoloGestureForDisplay() == 64,
+            "the on-screen B0 TRM key did not reach the gesture path");
+    processor.keyboardState.noteOff (1, gestureNote, 0.0f);
+    renderBlock (processor, audio, midi);
+    expect (processor.getTremoloGestureForDisplay() == 0,
+            "releasing the on-screen B0 TRM key left picking armed");
+
+    gestureOn (90);
+    for (const int controller : { 121, 120 })
+    {
+        midi.addEvent (juce::MidiMessage::controllerEvent (
+            1, controller, 0), 0);
+        renderBlock (processor, audio, midi);
+        expect (processor.getTremoloGestureForDisplay() == 90,
+                std::string (controller == 121 ? "CC121" : "CC120")
+                    + " released the physically held B0 gesture");
+    }
+    // CC120 cleared the old fretting state but retained the wrist. A new note
+    // is its own first contact and then resumes at the configured 12/s.
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, heldNote, static_cast<juce::uint8> (105)), 0);
+    renderBlock (processor, audio, midi);
+    const bool restartedDown = ! processor.getStringVisualState (0).strokeUp;
+    renderSeconds (processor, audio, 0.09);
+    expect (restartedDown && processor.getStringVisualState (0).strokeUp,
+            "CC120 preserved B0's display but not its running wrist");
+
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 123, 0), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getTremoloGestureForDisplay() == 0,
+            "All Notes Off did not release B0 tremolo picking");
+
+    gestureOn (110);
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+    ElectryAudioProcessor restored;
+    restored.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+    expect (restored.getTremoloGestureForDisplay() == 0
+                && std::abs (parameterValue (
+                    restored, electry::parameters::tremoloRate) - 12.0f)
+                       < 1.0e-4f,
+            "state restore persisted the momentary B0 gesture or lost its rate");
+
+    processor.requestPanic();
+    renderBlock (processor, audio, midi);
+    expect (processor.getTremoloGestureForDisplay() == 0,
+            "Panic left B0 tremolo picking armed");
+
+    // B0 is attack-conditioning state. Its insertion position must not split
+    // or double a same-sample chord.
+    const auto renderSameBoundary = [] (int gesturePosition)
+    {
+        ElectryAudioProcessor p;
+        p.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (p, electry::parameters::sympathetic, 0.0f);
+        juce::AudioBuffer<float> block;
+        juce::MidiBuffer events;
+        const auto addGesture = [&]
+        {
+            events.addEvent (juce::MidiMessage::noteOn (
+                1, electry::ElectryEngine::tremoloGestureNote,
+                static_cast<juce::uint8> (100)), 0);
+        };
+        if (gesturePosition == 0)
+            addGesture();
+        events.addEvent (juce::MidiMessage::noteOn (
+            1, 28, static_cast<juce::uint8> (105)), 0);
+        if (gesturePosition == 1)
+            addGesture();
+        events.addEvent (juce::MidiMessage::noteOn (
+            1, 35, static_cast<juce::uint8> (105)), 0);
+        if (gesturePosition == 2)
+            addGesture();
+        renderBlock (p, block, events);
+        std::vector<float> result (
+            block.getReadPointer (0), block.getReadPointer (0) + blockSize);
+        p.releaseResources();
+        return result;
+    };
+    const auto gestureFirst = renderSameBoundary (0);
+    const auto gestureMiddle = renderSameBoundary (1);
+    const auto gestureLast = renderSameBoundary (2);
+    expect (gestureFirst == gestureMiddle && gestureMiddle == gestureLast,
+            "same-sample B0 placement changed or doubled a chord attack");
+
+    // This crosses the APVTS boundary rather than setting EngineParameters
+    // directly: 20 strokes/s repeats after exactly 2,400 host samples at
+    // 48 kHz, then a live 4 -> 20 change keeps the existing wrist phase.
+    ElectryAudioProcessor hostRate;
+    hostRate.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (hostRate, electry::parameters::sympathetic, 0.0f);
+    setParameterValue (hostRate, electry::parameters::tremoloRate, 20.0f);
+    juce::AudioBuffer<float> rateAudio;
+    juce::MidiBuffer rateMidi;
+    rateMidi.addEvent (juce::MidiMessage::noteOn (
+        1, electry::ElectryEngine::firstKeyswitchNote
+               + static_cast<int> (electry::PickStyle::Alternate),
+        static_cast<juce::uint8> (127)), 0);
+    rateMidi.addEvent (juce::MidiMessage::noteOn (
+        1, heldNote, static_cast<juce::uint8> (105)), 0);
+    rateMidi.addEvent (juce::MidiMessage::noteOn (
+        1, gestureNote, static_cast<juce::uint8> (100)), 0);
+    renderBlock (hostRate, rateAudio, rateMidi, 1);
+    const auto renderRateSamples = [&] (int samples)
+    {
+        while (samples > 0)
+        {
+            const int count = std::min (blockSize, samples);
+            renderBlock (hostRate, rateAudio, rateMidi, count);
+            samples -= count;
+        }
+    };
+    expect (! hostRate.getStringVisualState (0).strokeUp,
+            "same-boundary B0 duplicated the host-rate fixture's first contact");
+    renderRateSamples (2399);
+    expect (! hostRate.getStringVisualState (0).strokeUp,
+            "20 strokes/s arrived before its exact 2,400-sample host interval");
+    renderRateSamples (1);
+    expect (hostRate.getStringVisualState (0).strokeUp,
+            "the APVTS 20 strokes/s value did not reach the picking scheduler");
+    setParameterValue (hostRate, electry::parameters::tremoloRate, 4.0f);
+    renderRateSamples (9600);
+    expect (hostRate.getStringVisualState (0).strokeUp,
+            "a live 4 strokes/s value advanced the held wrist too quickly");
+    setParameterValue (hostRate, electry::parameters::tremoloRate, 20.0f);
+    renderRateSamples (479);
+    expect (hostRate.getStringVisualState (0).strokeUp,
+            "a live Tremolo Rate change discarded the existing wrist phase");
+    renderRateSamples (1);
+    expect (! hostRate.getStringVisualState (0).strokeUp,
+            "a live Tremolo Rate change did not reach the held B0 gesture");
+    hostRate.releaseResources();
+
+    const auto renderReenteredDouble = [] (bool gesture)
+    {
+        ElectryAudioProcessor p;
+        p.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (p, electry::parameters::sympathetic, 0.0f);
+        juce::AudioBuffer<float> block;
+        juce::MidiBuffer events;
+        if (gesture)
+            events.addEvent (juce::MidiMessage::noteOn (
+                1, electry::ElectryEngine::tremoloGestureNote,
+                static_cast<juce::uint8> (100)), 0);
+        renderBlock (p, block, events); // The second player is dormant.
+        setParameterValue (p, electry::parameters::outputMode, 2.0f);
+        renderBlock (p, block, events);
+        setParameterValue (p, electry::parameters::outputMode, 0.0f);
+        renderBlock (p, block, events);
+        setParameterValue (p, electry::parameters::outputMode, 2.0f);
+        events.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote,
+            static_cast<juce::uint8> (105)), 0);
+        std::vector<float> right;
+        for (int remaining = static_cast<int> (0.11 * sampleRate);
+             remaining > 0;)
+        {
+            const int samples = std::min (blockSize, remaining);
+            renderBlock (p, block, events, samples);
+            const auto* channel = block.getReadPointer (1);
+            right.insert (right.end(), channel, channel + samples);
+            remaining -= samples;
+        }
+        p.releaseResources();
+        return right;
+    };
+    const auto plainReentry = renderReenteredDouble (false);
+    const auto tremoloReentry = renderReenteredDouble (true);
+    float reentryDifference = 0.0f;
+    for (std::size_t i = 0; i < plainReentry.size(); ++i)
+        reentryDifference = std::max (
+            reentryDifference,
+            std::abs (plainReentry[i] - tremoloReentry[i]));
+    expect (reentryDifference > 1.0e-6f,
+            "B0 held through Mono/Double re-entry did not reach player two");
+
+    ElectryStatusDisplay status;
+    status.setStatus (1, 0, true, sampleRate, 0, 0, 64, false);
+    expect (status.getStatusText().contains ("TRM 50%")
+                && status.getTitle() == status.getStatusText(),
+            "the status display did not expose live B0 pick force");
+    status.setStatus (1, 0, true, sampleRate, 0, 64, 96, false);
+    expect (status.getStatusText().contains ("VIB 50%")
+                && status.getStatusText().contains ("TRM 76%")
+                && ! status.getStatusText().contains ("kHz"),
+            "simultaneous A#0 vibrato and B0 picking hid one live gesture");
+
+    gestureOn (80);
+    processor.releaseResources();
+    expect (processor.getTremoloGestureForDisplay() == 0,
+            "releaseResources left B0 tremolo picking visible");
+    processor.prepareToPlay (sampleRate, blockSize);
+    expect (processor.getTremoloGestureForDisplay() == 0,
+            "a later prepare restored stale B0 tremolo picking");
+    processor.releaseResources();
 }
 
 void testUiArticulationTriggerAndPanic()
@@ -2398,6 +2922,8 @@ void testOutputModeAudioField()
         bool identical = true;
         std::uint64_t leftHash = 0;
         std::uint64_t rightHash = 0;
+        int leftOnset = -1;
+        int rightOnset = -1;
     };
 
     const auto render = [] (float mode, int midiNote)
@@ -2416,6 +2942,8 @@ void testOutputModeAudioField()
         std::uint64_t leftHash = 1469598103934665603ull;
         std::uint64_t rightHash = 1469598103934665603ull;
         bool identical = true;
+        int leftOnset = -1;
+        int rightOnset = -1;
         for (int block = 0; block < 48; ++block)
         {
             juce::MidiBuffer midi;
@@ -2423,6 +2951,16 @@ void testOutputModeAudioField()
                 midi.addEvent (juce::MidiMessage::noteOn (
                     1, midiNote, (juce::uint8) 102), 0);
             renderBlock (processor, audio, midi);
+            for (int sample = 0; sample < audio.getNumSamples(); ++sample)
+            {
+                const int absoluteSample = block * audio.getNumSamples() + sample;
+                if (leftOnset < 0
+                    && std::abs (audio.getSample (0, sample)) > 1.0e-9f)
+                    leftOnset = absoluteSample;
+                if (rightOnset < 0
+                    && std::abs (audio.getSample (1, sample)) > 1.0e-9f)
+                    rightOnset = absoluteSample;
+            }
             if (block < 2)
                 continue;
             for (int sample = 0; sample < audio.getNumSamples(); ++sample)
@@ -2454,7 +2992,7 @@ void testOutputModeAudioField()
             std::sqrt (leftEnergy / divisor),
             std::sqrt (rightEnergy / divisor),
             std::sqrt (differenceEnergy / std::max (meanEnergy, 1.0e-20)),
-            identical, leftHash, rightHash
+            identical, leftHash, rightHash, leftOnset, rightOnset
         };
     };
 
@@ -2478,6 +3016,13 @@ void testOutputModeAudioField()
             "Double did not render two distinct Electry performances");
     expect (doubled.leftHash == mono.leftHash,
             "Double changed the established primary-engine performance");
+    expect (doubled.leftOnset == mono.leftOnset
+                && doubled.rightOnset > doubled.leftOnset
+                && doubled.rightOnset - doubled.leftOnset
+                       <= static_cast<int> (std::ceil (0.006 * sampleRate)) + 2,
+            "Double did not preserve the primary onset and bound the second "
+            "player to 0-6 ms (L " + std::to_string (doubled.leftOnset)
+                + ", R " + std::to_string (doubled.rightOnset) + ")");
     expect (doubled.leftRms > doubled.rightRms * 0.70
                 && doubled.rightRms > doubled.leftRms * 0.70,
             "Double produced an excessive left/right level imbalance");
@@ -2548,7 +3093,7 @@ void testEditorRendering()
                         + child->getName().toStdString());
     }
     // Nineteen instrument/master controls plus five FX controls.
-    expect (knobs.size() == 24u, "editor did not expose all 24 knob controls");
+    expect (knobs.size() == 25u, "editor did not expose all 25 knob controls");
 
     for (std::size_t first = 0; first < knobs.size(); ++first)
     {
@@ -2764,18 +3309,77 @@ void testEditorRendering()
     for (const auto* performance : { electry::parameters::sympathetic,
                                      electry::parameters::palmMute,
                                      electry::parameters::strumSpread,
+                                     electry::parameters::tremoloRate,
                                      electry::parameters::resonanceDepth })
         expect (effectiveDialSize (performance)
                     >= effectiveDialSize (electry::parameters::artifacts),
                 std::string (performance)
                     + " is smaller than an artifact-texture control");
 
-    const auto* fretboard = findControl ("fretboard");
+    auto* tremoloRateControl = dynamic_cast<ElectryKnob*> (
+        findControl (electry::parameters::tremoloRate));
+    expect (tremoloRateControl != nullptr
+                && tremoloRateControl->slider.getTooltip().contains ("B0")
+                && tremoloRateControl->slider.getTooltip().contains ("8, 12 and 16")
+                && tremoloRateControl->slider.getTooltip().containsIgnoreCase (
+                    "not transport synced")
+                && tremoloRateControl->slider.getTooltip().contains ("180 BPM"),
+            "TRM Rate does not explain its gesture and physical rate anchors");
+
+    auto* fretboard = dynamic_cast<ElectryFretboardDisplay*> (
+        findControl ("fretboard"));
     expect (fretboard != nullptr, "editor is missing the live fretboard display");
     if (fretboard != nullptr)
     {
         expect (fretboard->getWidth() >= 400 && fretboard->getHeight() >= 60,
                 "the fretboard display is too small to read");
+        bool interceptsSelf = false;
+        bool interceptsChildren = true;
+        fretboard->getInterceptsMouseClicks (interceptsSelf, interceptsChildren);
+        expect (interceptsSelf && ! interceptsChildren
+                    && fretboard->onRepick != nullptr,
+                "the live fretboard does not expose its held-string repick gesture");
+        expect (fretboard->getTitle().containsIgnoreCase ("click")
+                    && fretboard->getTitle().containsIgnoreCase ("repick")
+                    && fretboard->getTooltip().contains ("E6")
+                    && fretboard->getTooltip().contains ("B6")
+                    && fretboard->getTooltip().containsIgnoreCase ("velocity"),
+                "the live fretboard does not explain mouse and MIDI repicking");
+
+        const auto processorRepick = std::move (fretboard->onRepick);
+        int clickedString = -1;
+        fretboard->onRepick = [&clickedString] (int stringIndex)
+        {
+            clickedString = stringIndex;
+        };
+        const auto clickString = [fretboard] (int stringIndex,
+                                              juce::ModifierKeys modifiers)
+        {
+            const auto position = juce::Point<float> (
+                static_cast<float> (fretboard->getWidth()) * 0.5f,
+                static_cast<float> (fretboard->getHeight())
+                    * electry::visuals::stringRowFraction (
+                          stringIndex, electry::ElectryEngine::stringCount,
+                          0.085f));
+            const auto now = juce::Time::getCurrentTime();
+            fretboard->mouseDown (juce::MouseEvent (
+                juce::Desktop::getInstance().getMainMouseSource(), position,
+                modifiers, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                fretboard, fretboard, now, position, now, 1, false));
+        };
+        clickString (0, juce::ModifierKeys::leftButtonModifier);
+        expect (clickedString == 0,
+                "the fretboard's low E1 row did not select physical string 8");
+        clickString (electry::ElectryEngine::stringCount - 1,
+                     juce::ModifierKeys::leftButtonModifier);
+        expect (clickedString == electry::ElectryEngine::stringCount - 1,
+                "the fretboard's high E4 row did not select physical string 1");
+        clickedString = -1;
+        clickString (3, juce::ModifierKeys::rightButtonModifier);
+        expect (clickedString < 0,
+                "a non-primary fretboard click triggered a string repick");
+        fretboard->onRepick = processorRepick;
+
         for (const auto* knob : knobs)
             expect (! fretboard->getBounds().intersects (knob->getBounds()),
                     "the fretboard display overlaps a control: "
@@ -2808,11 +3412,18 @@ void testEditorRendering()
                     && midiKeyboard->getWhiteNoteText (24).isEmpty(),
                 "keyboard labels the silent C1 dead zone as playable");
         expect (keyboard->getTitle().contains ("D6")
+                    && keyboard->getTitle().contains ("A#0")
+                    && keyboard->getTitle().contains ("B0")
+                    && keyboard->getTitle().containsIgnoreCase ("tremolo")
                     && ! keyboard->getTitle().contains ("E6")
                     && ! keyboard->getTitle().contains ("B6"),
                 "keyboard title presents out-of-range E6..B6 keys as pitched notes");
         expect (hintLabel != nullptr
                     && hintLabel->getText().contains ("E1..D6")
+                    && hintLabel->getText().contains ("A#0")
+                    && hintLabel->getText().containsIgnoreCase ("vibrato")
+                    && hintLabel->getText().contains ("B0")
+                    && hintLabel->getText().containsIgnoreCase ("tremolo")
                     && ! hintLabel->getText().contains ("E6")
                     && ! hintLabel->getText().contains ("B6"),
                 "keyboard hint presents out-of-range E6..B6 keys as pitched notes");
@@ -2988,6 +3599,8 @@ int main()
     testMidiPressureLeavesChordUnchanged();
     testResetAllControllersDispatch();
     testMutePressureDisplayFeedback();
+    testVibratoGestureMidiAndLifecycle();
+    testTremoloPickingMidiAndLifecycle();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();

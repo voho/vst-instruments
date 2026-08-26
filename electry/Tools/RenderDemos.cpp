@@ -174,19 +174,33 @@ public:
         engine_.noteOn(keyswitchFor(playStyle), 1.0f);
     }
 
-    void noteOn(int note, float velocity) { engine_.noteOn(note, velocity); }
+    void noteOn(int note, float velocity)
+    {
+        const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+            { note, velocity }
+        }};
+        engine_.noteOnChord(event);
+    }
     void noteOff(int note) { engine_.noteOff(note); }
     void pitchBend(float bipolar) { engine_.setPitchBend(bipolar); }
     void resonance(float amount) { engine_.setResonance(amount); }
-    // Channel pressure: the fretting hand leaning into the string it holds.
+    // The visible momentary fretting-hand gesture.
     void vibrato(float amount) { engine_.setVibrato(amount); }
+    void beginTremoloPicking(float velocity)
+    {
+        engine_.beginTremoloPicking(velocity);
+    }
+    void endTremoloPicking() { engine_.endTremoloPicking(); }
     void palmMutePressure(float amount) { engine_.setPalmMutePressure(amount); }
     void sustain(bool down) { engine_.setSustainPedal(down); }
 
     void chord(std::initializer_list<int> notes, float velocity)
     {
+        std::vector<ElectryEngine::NoteOnEvent> events;
+        events.reserve(notes.size());
         for (const int note : notes)
-            engine_.noteOn(note, velocity);
+            events.push_back({ note, velocity });
+        engine_.noteOnChord(events);
     }
 
     void releaseChord(std::initializer_list<int> notes)
@@ -349,17 +363,22 @@ Take renderPlayStyles()
         take.style(style);
         if (style == PlayStyle::Hammer)
         {
-            // A hammer-on continues a sounding string, whatever the latched
-            // stroke; the fresh attack that starts each pair is fingered too.
+            // Hammer-ons and pull-offs continue one sounding string, whatever
+            // the latched stroke; finish by releasing onto its open note.
             for (const auto pick : { PickStyle::Down, PickStyle::Up })
             {
                 take.pick(pick);
                 take.noteOn(40, 0.9f);
                 take.wait(0.16);
                 take.noteOn(45, 0.8f);
-                take.wait(0.30);
-                take.noteOff(45);
+                take.wait(0.22);
+                take.noteOn(43, 0.78f);
+                take.wait(0.20);
+                take.noteOn(40, 0.75f);
+                take.wait(0.28);
                 take.noteOff(40);
+                take.noteOff(43);
+                take.noteOff(45);
                 take.wait(0.06);
             }
             continue;
@@ -1019,6 +1038,564 @@ Take renderMuteAndDeadMetal()
     return take;
 }
 
+template <std::size_t Size>
+void playPickedRun(Take& take, const std::array<int, Size>& notes,
+                   double secondsPerNote, float velocity = 0.88f)
+{
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::Sustain);
+    for (std::size_t index = 0; index < notes.size(); ++index)
+    {
+        const float accent = index % 4 == 0 ? 0.08f
+                           : index % 2 == 0 ? 0.03f : -0.03f;
+        take.pluck(notes[index], std::clamp(velocity + accent, 0.0f, 1.0f),
+                   secondsPerNote * 0.84, secondsPerNote * 0.16);
+    }
+}
+
+void playPowerChordHit(Take& take, int root, float velocity, double length,
+                       PlayStyle style)
+{
+    take.style(style);
+    take.chord({ root, root + 7, root + 12 }, velocity);
+    take.wait(length * 0.86);
+    take.releaseChord({ root, root + 7, root + 12 });
+    take.wait(length * 0.14);
+}
+
+// A long, deliberately exposed lead performance rather than a test sweep. It
+// visits every play style in a musical order, surrounds the fast passages with
+// space, and gives the slide and vibrato enough time to be heard as gestures.
+Take renderExtendedTechniqueSolo()
+{
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.pickupType = 0.42f;
+    parameters.toneKnob = 0.92f;
+    parameters.bodyResonance = 0.42f;
+    parameters.stringAge = 0.06f;
+    parameters.pickPosition = 0.27f;
+    parameters.pickHardness = 0.78f;
+    parameters.fingerNoise = 0.52f;
+    parameters.artifactAmount = 0.12f;
+    parameters.bendTimeSeconds = 0.16f;
+    parameters.sympatheticAmount = 0.28f;
+    parameters.outputGain = 1.55f;
+    parameters.outputMode = OutputMode::Stereo;
+
+    FxParameters fx;
+    fx.distortion = 0.28f;
+    fx.amp = 0.82f;
+    fx.compressor = 0.38f;
+    fx.delay = 0.24f;
+    fx.room = 0.30f;
+
+    Take take(parameters, fx, true);
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::Sustain);
+    for (const int note : { 64, 67, 69, 72, 70, 67 })
+        take.pluck(note, note == 72 ? 0.98f : 0.86f, 0.27, 0.05);
+
+    // One continuous wound-string slide, settling into a wide finger vibrato.
+    take.noteOn(62, 0.90f);
+    take.wait(0.24);
+    take.style(PlayStyle::Slide);
+    take.noteOn(69, 0.84f);
+    take.wait(0.62);
+    take.vibrato(0.82f);
+    take.wait(1.15);
+    take.vibrato(0.0f);
+    take.noteOff(69);
+    take.noteOff(62);
+    take.wait(0.12);
+
+    // Ascending hammer-ons and direction-aware pull-offs share one ringing
+    // string. The following picked run opens into two octaves of shredding.
+    take.style(PlayStyle::Sustain);
+    take.noteOn(64, 0.88f);
+    take.wait(0.18);
+    take.style(PlayStyle::Hammer);
+    for (const int note : { 67, 69, 72, 74, 72, 69, 67, 64 })
+    {
+        take.noteOn(note, 0.82f);
+        take.wait(0.12);
+    }
+    for (const int note : { 64, 67, 69, 72, 74 })
+        take.noteOff(note);
+    take.wait(0.12);
+
+    static constexpr std::array<int, 32> firstShred {{
+        64, 67, 69, 70, 72, 74, 76, 79,
+        77, 76, 74, 72, 70, 69, 67, 64,
+        67, 70, 72, 74, 77, 79, 81, 84,
+        81, 79, 77, 74, 72, 70, 67, 64
+    }};
+    static constexpr std::array<int, 32> secondShred {{
+        69, 72, 76, 74, 72, 76, 79, 77,
+        76, 79, 83, 81, 79, 77, 76, 74,
+        72, 76, 79, 84, 83, 81, 79, 77,
+        76, 74, 72, 70, 69, 67, 64, 62
+    }};
+    playPickedRun(take, firstShred, 0.064, 0.88f);
+    playPickedRun(take, secondShred, 0.058, 0.90f);
+    take.wait(0.16);
+
+    // A slower answer keeps the solo shaped like a performance instead of one
+    // uninterrupted exercise, with a semitone bend blooming into vibrato.
+    take.pick(PickStyle::Down);
+    take.style(PlayStyle::Sustain);
+    take.pluck(72, 0.84f, 0.38, 0.10);
+    take.pluck(74, 0.88f, 0.38, 0.10);
+    take.noteOn(76, 0.96f);
+    take.wait(0.30);
+    take.pitchBend(0.5f);
+    take.wait(0.52);
+    take.pitchBend(0.0f);
+    take.wait(0.22);
+    take.vibrato(0.46f);
+    take.wait(0.95);
+    take.vibrato(0.0f);
+    take.noteOff(76);
+    take.wait(0.18);
+    take.pluck(74, 0.82f, 0.34, 0.10);
+    take.pluck(72, 0.86f, 0.52, 0.15);
+
+    // The two percussive hand contacts are musical punctuation, not a style
+    // catalogue: tight bridge-hand chugs answer fretting-hand dead ghosts.
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::PalmMute);
+    for (int hit = 0; hit < 12; ++hit)
+        take.pluck(hit % 6 == 5 ? 35 : 28,
+                   hit % 3 == 0 ? 0.98f : 0.80f, 0.070, 0.035);
+    take.style(PlayStyle::Dead);
+    for (int hit = 0; hit < 8; ++hit)
+        take.pluck(hit % 4 == 3 ? 40 : 28,
+                   hit % 2 == 0 ? 0.90f : 0.74f, 0.050, 0.040);
+    take.wait(0.16);
+
+    take.pick(PickStyle::Down);
+    take.style(PlayStyle::Harmonics);
+    take.pluck(64, 0.92f, 0.95, 0.08);
+    take.style(PlayStyle::Pinch);
+    take.pluck(57, 1.0f, 0.95, 0.08);
+
+    // A descending slide resolves onto a final sustained note with a slower,
+    // narrower vibrato, then the delay and room are allowed to decay.
+    take.style(PlayStyle::Sustain);
+    take.noteOn(76, 0.92f);
+    take.wait(0.22);
+    take.style(PlayStyle::Slide);
+    take.noteOn(69, 0.82f);
+    take.wait(0.70);
+    take.vibrato(0.58f);
+    take.wait(1.45);
+    take.vibrato(0.0f);
+    take.noteOff(69);
+    take.noteOff(76);
+    take.wait(2.8);
+    take.fadeOut(1.2);
+    return take;
+}
+
+// Original syncopated extended-range study: tight Drop-E subdivisions,
+// displaced accents, dead-string punctuation and a tapped upper-register
+// release. It uses the broad vocabulary of modern djent/progressive metal,
+// not any existing riff or recording.
+Take renderSyncopatedDjentStudy()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.muteDamping = 0.94f;
+    parameters.palmMute = 0.18f;
+    parameters.strumSpreadSeconds = 0.0015f;
+    parameters.artifactAmount = 0.20f;
+    parameters.sympatheticAmount = 0.18f;
+    parameters.outputMode = OutputMode::Stereo;
+
+    FxParameters fx;
+    fx.distortion = 0.50f;
+    fx.amp = 1.0f;
+    fx.compressor = 0.72f;
+    fx.room = 0.09f;
+    Take take(parameters, fx, true);
+
+    struct Hit { int note; int units; bool open; bool dead; };
+    static constexpr std::array<Hit, 16> cell {{
+        { 28, 3, false, false }, { 28, 1, false, true },
+        { 31, 2, false, false }, { 28, 2, false, false },
+        { 35, 3, true,  false }, { 28, 1, false, true },
+        { 30, 2, false, false }, { 28, 2, false, false },
+        { 33, 3, true,  false }, { 28, 1, false, true },
+        { 28, 2, false, false }, { 36, 2, false, false },
+        { 28, 3, false, false }, { 40, 1, true,  false },
+        { 31, 2, false, false }, { 28, 2, false, false }
+    }};
+    const auto playCell = [&]
+    {
+        take.pick(PickStyle::Alternate);
+        for (std::size_t index = 0; index < cell.size(); ++index)
+        {
+            const auto& hit = cell[index];
+            take.style(hit.dead ? PlayStyle::Dead
+                                : hit.open ? PlayStyle::Sustain
+                                           : PlayStyle::PalmMute);
+            const double span = 0.036 * static_cast<double>(hit.units);
+            take.pluck(hit.note, index % 4 == 0 ? 0.98f : 0.82f,
+                       span * 0.62, span * 0.38);
+        }
+    };
+    for (int repeat = 0; repeat < 4; ++repeat)
+    {
+        playCell();
+        if (repeat == 1 || repeat == 3)
+            playPowerChordHit(take, repeat == 1 ? 31 : 28, 0.98f, 0.42,
+                              PlayStyle::Sustain);
+    }
+
+    // A brief tapped answer leaves the low ostinato without pretending that a
+    // single rendered guitar is a layered production.
+    take.style(PlayStyle::Sustain);
+    take.noteOn(64, 0.86f);
+    take.wait(0.16);
+    take.style(PlayStyle::Hammer);
+    for (const int note : { 71, 76, 72, 79, 74, 71, 67, 64 })
+    {
+        take.noteOn(note, 0.80f);
+        take.wait(0.105);
+    }
+    for (const int note : { 64, 67, 71, 72, 74, 76, 79 })
+        take.noteOff(note);
+    take.wait(0.22);
+
+    for (int repeat = 0; repeat < 3; ++repeat)
+        playCell();
+    playPowerChordHit(take, 28, 1.0f, 1.25, PlayStyle::Sustain);
+    take.wait(1.5);
+    return take;
+}
+
+// Original modern-metalcore study: an open, anthemic chord hook gives way to
+// a simple octave melody and then a half-time Drop-E breakdown.
+Take renderModernMetalcoreStudy()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.strumSpreadSeconds = 0.004f;
+    parameters.muteDamping = 0.90f;
+    parameters.sympatheticAmount = 0.28f;
+    parameters.outputMode = OutputMode::Stereo;
+    FxParameters fx;
+    fx.distortion = 0.46f;
+    fx.amp = 0.96f;
+    fx.compressor = 0.62f;
+    fx.delay = 0.13f;
+    fx.room = 0.24f;
+    Take take(parameters, fx, true);
+
+    take.pick(PickStyle::Down);
+    for (const int root : { 28, 31, 33, 30, 28, 35, 33, 31 })
+        playPowerChordHit(take, root, 0.94f, 0.58, PlayStyle::Sustain);
+
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::Sustain);
+    static constexpr std::array<int, 16> hook {{
+        64, 67, 69, 67, 72, 69, 67, 64,
+        62, 64, 67, 69, 67, 64, 62, 59
+    }};
+    for (int repeat = 0; repeat < 2; ++repeat)
+        playPickedRun(take, hook, 0.145, repeat == 0 ? 0.84f : 0.90f);
+    take.wait(0.18);
+
+    take.pick(PickStyle::Alternate);
+    for (int bar = 0; bar < 4; ++bar)
+    {
+        for (int hit = 0; hit < 8; ++hit)
+        {
+            const bool accent = hit == 0 || hit == 5;
+            const bool ghost = hit == 3 || hit == 7;
+            take.style(ghost ? PlayStyle::Dead : PlayStyle::PalmMute);
+            take.pluck(accent && bar % 2 != 0 ? 31 : 28,
+                       accent ? 1.0f : ghost ? 0.70f : 0.84f,
+                       ghost ? 0.045 : 0.085, ghost ? 0.095 : 0.055);
+        }
+        playPowerChordHit(take, bar % 2 == 0 ? 33 : 31, 0.98f, 0.52,
+                          PlayStyle::Sustain);
+    }
+    playPowerChordHit(take, 28, 1.0f, 1.50, PlayStyle::Sustain);
+    take.wait(1.8);
+    take.fadeOut(0.9);
+    return take;
+}
+
+// Original odd-meter progressive study. A clean seven-note arpeggio changes
+// into a high-gain 7/8 riff, a fast lead sequence and a five-beat resolution.
+Take renderOddMeterProgStudy()
+{
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Both;
+    parameters.pickupType = 0.46f;
+    parameters.toneKnob = 0.92f;
+    parameters.bodyResonance = 0.55f;
+    parameters.stringAge = 0.10f;
+    parameters.pickPosition = 0.34f;
+    parameters.pickHardness = 0.68f;
+    parameters.sympatheticAmount = 0.38f;
+    parameters.outputGain = 1.0f;
+    parameters.outputMode = OutputMode::Stereo;
+    FxParameters clean;
+    clean.amp = 0.22f;
+    clean.compressor = 0.20f;
+    clean.delay = 0.12f;
+    clean.room = 0.30f;
+    Take take(parameters, clean, true);
+
+    static constexpr std::array<int, 7> arpeggioA {{ 52, 59, 64, 67, 64, 59, 55 }};
+    static constexpr std::array<int, 7> arpeggioB {{ 50, 57, 62, 65, 62, 57, 53 }};
+    for (int repeat = 0; repeat < 3; ++repeat)
+    {
+        playPickedRun(take, repeat % 2 == 0 ? arpeggioA : arpeggioB,
+                      0.165, 0.70f);
+    }
+    take.style(PlayStyle::Harmonics);
+    take.pluck(64, 0.46f, 0.80, 0.12);
+
+    FxParameters gain;
+    gain.distortion = 0.45f;
+    gain.amp = 0.95f;
+    gain.compressor = 0.60f;
+    gain.delay = 0.16f;
+    gain.room = 0.18f;
+    take.setFxParameters(gain);
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.pickPosition = 0.20f;
+    parameters.outputGain = 2.0f;
+    take.setEngineParameters(parameters);
+    take.wait(0.30);
+
+    const auto sevenEight = [&] (int highRoot)
+    {
+        take.pick(PickStyle::Alternate);
+        for (int step = 0; step < 14; ++step)
+        {
+            const bool accent = step == 0 || step == 6 || step == 10;
+            take.style(accent ? PlayStyle::Sustain : PlayStyle::PalmMute);
+            take.pluck(accent ? highRoot : 28, accent ? 0.98f : 0.82f,
+                       0.070, 0.030);
+        }
+    };
+    for (const int root : { 35, 33, 31, 36 })
+        sevenEight(root);
+
+    static constexpr std::array<int, 35> progRun {{
+        64, 67, 69, 72, 74, 72, 69,
+        67, 70, 72, 76, 77, 76, 72,
+        69, 72, 74, 77, 81, 77, 74,
+        72, 76, 79, 83, 84, 83, 79,
+        77, 76, 74, 72, 69, 67, 64
+    }};
+    playPickedRun(take, progRun, 0.062, 0.89f);
+    take.style(PlayStyle::Pinch);
+    take.pluck(57, 1.0f, 0.72, 0.10);
+
+    for (const int root : { 28, 31, 33, 30, 28 })
+        playPowerChordHit(take, root, 0.96f, 0.42,
+                          root == 28 ? PlayStyle::PalmMute
+                                     : PlayStyle::Sustain);
+    take.wait(2.0);
+    take.fadeOut(1.0);
+    return take;
+}
+
+// Original blues-rock lead study: neck-pickup warmth, dynamic space, slides,
+// hammer/pull phrasing, whole-step bends and sustained finger vibrato. It uses
+// a shared genre vocabulary and no melody from a released song.
+Take renderBluesRockLeadStudy()
+{
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Neck;
+    parameters.pickupType = 0.56f;
+    parameters.toneKnob = 0.78f;
+    parameters.bodyResonance = 0.62f;
+    parameters.stringAge = 0.20f;
+    parameters.pickPosition = 0.38f;
+    parameters.pickHardness = 0.52f;
+    parameters.velocityAmount = 0.90f;
+    parameters.fingerNoise = 0.48f;
+    parameters.bendTimeSeconds = 0.15f;
+    parameters.sympatheticAmount = 0.35f;
+    parameters.outputGain = 1.45f;
+    parameters.outputMode = OutputMode::Stereo;
+    FxParameters fx;
+    fx.distortion = 0.14f;
+    fx.amp = 0.62f;
+    fx.compressor = 0.28f;
+    fx.delay = 0.18f;
+    fx.room = 0.28f;
+    Take take(parameters, fx, true);
+
+    take.pick(PickStyle::Down);
+    take.style(PlayStyle::Sustain);
+    for (const int note : { 64, 67, 69, 67, 71, 69 })
+        take.pluck(note, note == 71 ? 0.94f : 0.72f, 0.34, 0.12);
+
+    take.noteOn(67, 0.76f);
+    take.wait(0.24);
+    take.style(PlayStyle::Slide);
+    take.noteOn(72, 0.70f);
+    take.wait(0.62);
+    take.vibrato(0.52f);
+    take.wait(1.20);
+    take.vibrato(0.0f);
+    take.noteOff(72);
+    take.noteOff(67);
+    take.wait(0.18);
+
+    take.style(PlayStyle::Sustain);
+    take.noteOn(69, 0.88f);
+    take.wait(0.25);
+    take.pitchBend(1.0f); // one whole tone over the wheel's +/-2-semitone range
+    take.wait(0.72);
+    take.vibrato(0.34f);
+    take.wait(0.82);
+    take.vibrato(0.0f);
+    take.pitchBend(0.0f);
+    take.wait(0.34);
+    take.noteOff(69);
+    take.wait(0.18);
+
+    take.style(PlayStyle::Sustain);
+    take.noteOn(64, 0.70f);
+    take.wait(0.20);
+    take.style(PlayStyle::Hammer);
+    for (const int note : { 67, 69, 67, 64, 62, 64 })
+    {
+        take.noteOn(note, 0.68f);
+        take.wait(0.18);
+    }
+    for (const int note : { 62, 64, 67, 69 })
+        take.noteOff(note);
+    take.wait(0.20);
+
+    static constexpr std::array<int, 12> turnaround {{
+        64, 67, 69, 70, 71, 70, 69, 67, 66, 65, 64, 59
+    }};
+    playPickedRun(take, turnaround, 0.145, 0.74f);
+
+    take.style(PlayStyle::Pinch);
+    take.pluck(57, 0.95f, 0.72, 0.12);
+    take.style(PlayStyle::Sustain);
+    take.noteOn(76, 0.92f);
+    take.wait(0.36);
+    take.pitchBend(0.5f);
+    take.wait(0.58);
+    take.pitchBend(0.0f);
+    take.vibrato(0.62f);
+    take.wait(1.65);
+    take.vibrato(0.0f);
+    take.noteOff(76);
+    take.wait(2.6);
+    take.fadeOut(1.2);
+    return take;
+}
+
+// The dedicated B0/TRM performance path at the three commissioned capture
+// anchors. This is an original study rather than a tempo-grid pattern: one
+// held picking wrist drives the ordinary physical repick path, so Alternate,
+// muting, pitch changes, vibrato and chord travel remain audible.
+Take renderTremoloPickingStudy()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.muteDamping = 0.92f;
+    parameters.palmMute = 0.12f;
+    parameters.strumSpreadSeconds = 0.002f;
+    parameters.sympatheticAmount = 0.16f;
+    parameters.artifactAmount = 0.20f;
+    parameters.outputMode = OutputMode::Stereo;
+    FxParameters fx;
+    fx.distortion = 0.48f;
+    fx.amp = 0.98f;
+    fx.compressor = 0.66f;
+    fx.delay = 0.08f;
+    fx.room = 0.14f;
+    Take take(parameters, fx, true);
+
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::PalmMute);
+    const auto lowRate = [&] (float strokesPerSecond, int note,
+                              float velocity, double duration)
+    {
+        parameters.tremoloRateHz = strokesPerSecond;
+        take.setEngineParameters(parameters);
+        take.wait(0.08);
+        take.noteOn(note, velocity * 0.86f);
+        take.wait(0.18);
+        take.beginTremoloPicking(velocity);
+        take.wait(duration);
+        take.endTremoloPicking();
+        take.noteOff(note);
+        take.wait(0.24);
+    };
+    lowRate(8.0f, 28, 0.88f, 1.50);   // 120 BPM sixteenths
+    lowRate(12.0f, 28, 0.92f, 1.50);  // 180 BPM sixteenths
+    lowRate(16.0f, 28, 0.96f, 1.50);  // 240 BPM sixteenths
+
+    // Keep the wrist running while the fretting hand moves through a compact
+    // black-metal answer. Each new pitch is its own boundary, then the shared
+    // 16/s clock resumes without inventing a second attack lane.
+    parameters.tremoloRateHz = 16.0f;
+    take.setEngineParameters(parameters);
+    take.style(PlayStyle::Sustain);
+    int currentNote = 40;
+    take.noteOn(currentNote, 0.82f);
+    take.wait(0.12);
+    take.beginTremoloPicking(0.90f);
+    for (const int note : { 40, 43, 45, 47, 45, 43, 40, 38 })
+    {
+        if (note != currentNote)
+        {
+            take.noteOff(currentNote);
+            take.noteOn(note, 0.84f);
+            currentNote = note;
+        }
+        take.wait(0.32);
+    }
+    take.endTremoloPicking();
+    take.noteOff(currentNote);
+    take.wait(0.24);
+
+    // A high sustained tremolo becomes a lead gesture when the fretting hand
+    // adds width and a slow wheel bend; velocity still controls pick force.
+    parameters.tremoloRateHz = 12.0f;
+    parameters.palmMute = 0.0f;
+    take.setEngineParameters(parameters);
+    take.noteOn(76, 0.86f);
+    take.wait(0.20);
+    take.beginTremoloPicking(0.78f);
+    take.wait(0.75);
+    take.vibrato(0.42f);
+    take.wait(0.90);
+    take.pitchBend(0.5f);
+    take.wait(0.55);
+    take.pitchBend(0.0f);
+    take.vibrato(0.0f);
+    take.endTremoloPicking();
+    take.noteOff(76);
+    take.wait(0.30);
+
+    // Polyphonic B0 is one alternating wrist across the held shape, with the
+    // ordinary Strum control supplying its small cross-string travel.
+    parameters.tremoloRateHz = 8.0f;
+    parameters.strumSpreadSeconds = 0.003f;
+    take.setEngineParameters(parameters);
+    take.chord({ 40, 47, 52 }, 0.82f);
+    take.wait(0.22);
+    take.beginTremoloPicking(0.86f);
+    take.wait(1.75);
+    take.endTremoloPicking();
+    take.releaseChord({ 40, 47, 52 });
+    take.wait(2.0);
+    take.fadeOut(0.9);
+    return take;
+}
+
 struct Demo
 {
     const char* fileName;
@@ -1026,9 +1603,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 16>& demos()
+const std::array<Demo, 22>& demos()
 {
-    static const std::array<Demo, 16> table {{
+    static const std::array<Demo, 22> table {{
         { "01-range-open-strings.wav",
           "the eight open strings, then all of them ringing together",
           renderOpenStrings },
@@ -1037,8 +1614,8 @@ const std::array<Demo, 16>& demos()
           renderFullFretboard },
         { "03-play-styles.wav",
           "all three pick strokes and all seven play styles: sustain, mute, "
-          "hammer-on, natural and pinch harmonics, slides of two and twelve "
-          "frets, and dead notes",
+          "hammer-on and pull-off, natural and pinch harmonics, slides of two "
+          "and twelve frets, and dead notes",
           renderPlayStyles },
         { "04-drop-e-rhythm-dry.wav",
           "a chugged Drop-E rhythm figure, dry DI",
@@ -1088,6 +1665,30 @@ const std::array<Demo, 16>& demos()
           "the same rapid E1 and mixed E1/E2 scores as Mute then Dead, "
           "through one high-gain rhythm chain",
           renderMuteAndDeadMetal },
+        { "17-extended-technique-solo.wav",
+          "a long lead with alternate-picked shredding, finger vibrato, "
+          "slides and all seven play styles",
+          renderExtendedTechniqueSolo },
+        { "18-syncopated-djent-study.wav",
+          "an original syncopated Drop-E progressive-metal study with tight "
+          "chugs, displaced accents, dead notes and a tapped answer",
+          renderSyncopatedDjentStudy },
+        { "19-modern-metalcore-study.wav",
+          "an original modern-metalcore study with anthemic power chords, an "
+          "octave hook and a half-time breakdown",
+          renderModernMetalcoreStudy },
+        { "20-odd-meter-prog-study.wav",
+          "an original clean-to-high-gain progressive study in seven- and "
+          "five-beat groupings with a virtuoso lead run",
+          renderOddMeterProgStudy },
+        { "21-blues-rock-lead-study.wav",
+          "an original dynamic blues-rock lead with slides, legato, bends, "
+          "pinch harmonic and sustained finger vibrato",
+          renderBluesRockLeadStudy },
+        { "22-tremolo-picking-study.wav",
+          "the visible B0 tremolo-picking gesture at 8, 12 and 16 strokes/s, "
+          "then moving single-note, vibrato-lead and chord applications",
+          renderTremoloPickingStudy },
     }};
     return table;
 }

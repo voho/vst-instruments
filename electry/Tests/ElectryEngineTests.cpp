@@ -49,6 +49,7 @@ struct ElectryEngineTestAccess
         float bodyLossFactor { 1.0f };
         float loopGain { 0.0f };
         float baseFrequency { 0.0f };
+        std::uint64_t startOrder { 0 };
         std::uint64_t ageSamples { 0 };
         int startDelaySamples { 0 };
         bool sympatheticReady { false };
@@ -57,9 +58,13 @@ struct ElectryEngineTestAccess
         float excitationCombWidth { 0.0f };
         // The two the picking hand's force and contact patch reach.
         float excitationAmplitude { 0.0f };
+        float verticalWeight { 0.0f };
+        float horizontalWeight { 0.0f };
         int excitationLength { 0 };
         float excitationLoadScale { 0.0f };
         float excitationSlipScale { 0.0f };
+        bool excitationInContact { false };
+        float contactFeedbackGain { 1.0f };
         std::uint32_t artifactNoiseState { 0u };
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
@@ -99,6 +104,7 @@ struct ElectryEngineTestAccess
         result.bodyLossFactor = voice.bodyLossFactor;
         result.loopGain = voice.vertical.loopGain;
         result.baseFrequency = voice.baseFrequency;
+        result.startOrder = voice.startOrder;
         result.ageSamples = voice.ageSamples;
         result.startDelaySamples = voice.startDelaySamples;
         result.sympatheticReady = voice.sympatheticReady;
@@ -106,9 +112,14 @@ struct ElectryEngineTestAccess
         result.excitationCombDelay = voice.excitationCombDelay;
         result.excitationCombWidth = voice.excitationCombWidth;
         result.excitationAmplitude = voice.excitationAmplitude;
+        result.verticalWeight = voice.verticalWeight;
+        result.horizontalWeight = voice.horizontalWeight;
         result.excitationLength = voice.excitationLength;
         result.excitationLoadScale = voice.excitationLoadScale;
         result.excitationSlipScale = voice.excitationSlipScale;
+        result.excitationInContact =
+            voice.excitationPhase == ElectryEngine::ExcitationPhase::Contact;
+        result.contactFeedbackGain = voice.contactFeedbackGain;
         result.artifactNoiseState = voice.artifactNoiseState;
         result.artifactCollisionRemaining = voice.artifactCollisionRemaining;
         result.artifactCollisionLength = voice.artifactCollisionLength;
@@ -125,12 +136,28 @@ struct ElectryEngineTestAccess
         return engine.vibratoAmount_;
     }
 
-    // The channel-pressure target setVibrato() writes, read straight off the
+    // The performance-gesture target setVibrato() writes, read straight off the
     // engine so its own sanitisation guard can be checked directly rather
     // than only through whatever it happens to do to a rendered voice.
     static float vibratoTarget(const ElectryEngine& engine) noexcept
     {
         return engine.vibratoTarget_;
+    }
+
+    static float tremoloPickingVelocity(
+        const ElectryEngine& engine) noexcept
+    {
+        return engine.tremoloPickingVelocity_;
+    }
+
+    static double tremoloPickingPhase(const ElectryEngine& engine) noexcept
+    {
+        return engine.tremoloPickingPhase_;
+    }
+
+    static std::uint64_t noteSequence(const ElectryEngine& engine) noexcept
+    {
+        return engine.noteSequence_;
     }
 
     // The bipolar bend target setPitchBend() writes, read straight off the
@@ -348,6 +375,12 @@ struct ElectryEngineTestAccess
     static double internalSampleRate(const ElectryEngine& engine) noexcept
     {
         return engine.sampleRate_;
+    }
+
+    static int chordPerformanceDelaySamples(
+        const ElectryEngine& engine) noexcept
+    {
+        return engine.chordPerformanceDelaySamples_;
     }
 
     static double minimumSupportedSampleRate() noexcept
@@ -2224,6 +2257,238 @@ void testHeldStringRepickKeys()
            "original Note Off did not release the revived held string");
 }
 
+void testHeldTremoloPickingGesture()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int heldNote = ElectryEngine::lowestPlayableNote;
+    constexpr int framesPerStroke = 4000; // 12 strokes/s at 48 kHz
+
+    expect(ElectryEngine::tremoloGestureNote == 23
+               && ElectryEngine::isTremoloGestureNote(23)
+               && ! ElectryEngine::isPlayableNote(23),
+           "the momentary tremolo gesture drifted from MIDI B0");
+
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.strumSpreadSeconds = 0.0f;
+    parameters.tremoloRateHz = 12.0f;
+
+    auto engineStorage = std::make_unique<ElectryEngine>();
+    auto& engine = *engineStorage;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    engine.noteOn(heldNote, 0.82f);
+    StereoBuffer aged(128);
+    renderInto(engine, aged);
+    const auto before = TestAccess::snapshot(engine, 0);
+
+    engine.beginTremoloPicking(0.93f);
+    StereoBuffer immediate(1);
+    renderInto(engine, immediate);
+    const auto first = TestAccess::snapshot(engine, 0);
+    expect(before.active && ! before.strokeIsUp
+               && first.startOrder > before.startOrder && first.strokeIsUp,
+           "B0 did not immediately repick the held string through Alternate");
+    expect(std::abs(TestAccess::tremoloPickingVelocity(engine) - 0.93f)
+               < 1.0e-6f,
+           "the tremolo gesture did not retain its velocity as pick force");
+
+    StereoBuffer beforeBoundary(framesPerStroke - 1);
+    renderInto(engine, beforeBoundary);
+    const auto waiting = TestAccess::snapshot(engine, 0);
+    expect(waiting.startOrder == first.startOrder && waiting.strokeIsUp,
+           "12-strokes/s tremolo repeated before its 4000-frame boundary");
+
+    StereoBuffer onBoundary(1);
+    renderInto(engine, onBoundary);
+    const auto second = TestAccess::snapshot(engine, 0);
+    expect(second.startOrder > first.startOrder && ! second.strokeIsUp,
+           "12-strokes/s tremolo missed its sample-accurate second contact");
+
+    engine.endTremoloPicking();
+    const auto stoppedOrder = second.startOrder;
+    StereoBuffer stopped(framesPerStroke + 256);
+    renderInto(engine, stopped);
+    expect(TestAccess::snapshot(engine, 0).startOrder == stoppedOrder
+               && TestAccess::tremoloPickingVelocity(engine) == 0.0f
+               && TestAccess::snapshot(engine, 0).keyDown,
+           "releasing B0 either left picking armed or released the fretting key");
+
+    // A note arriving at the same MIDI boundary is already the first attack.
+    // The armed wrist must consume that contact instead of doubling it.
+    auto simultaneousStorage = std::make_unique<ElectryEngine>();
+    auto& simultaneous = *simultaneousStorage;
+    simultaneous.prepare(sampleRate, 512);
+    simultaneous.setParameters(parameters);
+    simultaneous.reset();
+    simultaneous.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    simultaneous.beginTremoloPicking(0.9f);
+    simultaneous.noteOn(heldNote, 0.82f);
+    const auto normalStart = TestAccess::snapshot(simultaneous, 0);
+    StereoBuffer firstFrame(1);
+    renderInto(simultaneous, firstFrame);
+    const auto afterFirstFrame = TestAccess::snapshot(simultaneous, 0);
+    expect(normalStart.startOrder == afterFirstFrame.startOrder
+               && ! afterFirstFrame.strokeIsUp,
+           "same-boundary B0 doubled a newly fretted note");
+
+    // With no physically held key the gesture is silent and allocates no
+    // voice. This also proves that velocity is not being treated as a pitch.
+    auto emptyStorage = std::make_unique<ElectryEngine>();
+    auto& empty = *emptyStorage;
+    empty.prepare(sampleRate, 512);
+    empty.setParameters(parameters);
+    empty.reset();
+    empty.beginTremoloPicking(1.0f);
+    StereoBuffer silence(static_cast<int>(0.12 * sampleRate));
+    renderInto(empty, silence);
+    expect(empty.getActiveVoiceCount() == 0 && peakAbs(silence.left) == 0.0f,
+           "B0 tremolo produced sound without a physically held string");
+    empty.beginTremoloPicking(std::numeric_limits<float>::quiet_NaN());
+    expect(TestAccess::tremoloPickingVelocity(empty) == 0.0f
+               && TestAccess::tremoloPickingPhase(empty) == 0.0,
+           "non-finite tremolo force did not fold to a stopped gesture");
+
+    // The phase runs on the internal clock, but its observable interval is a
+    // host-time quantity at every supported oversampling mode.
+    for (const double rate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        auto timedStorage = std::make_unique<ElectryEngine>();
+        auto& timed = *timedStorage;
+        timed.prepare(rate, 257);
+        auto timedParameters = parameters;
+        timedParameters.tremoloRateHz = 10.0f;
+        timed.setParameters(timedParameters);
+        timed.reset();
+        timed.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+        timed.noteOn(heldNote, 0.82f);
+        StereoBuffer preRoll(7);
+        renderInto(timed, preRoll, 3);
+        timed.beginTremoloPicking(0.9f);
+        StereoBuffer firstContact(1);
+        renderInto(timed, firstContact);
+        const auto firstTimed = TestAccess::snapshot(timed, 0);
+        const int interval = static_cast<int>(rate / 10.0);
+        StereoBuffer beforeTimed(interval - 1);
+        renderInto(timed, beforeTimed, 113);
+        expect(TestAccess::snapshot(timed, 0).startOrder
+                   == firstTimed.startOrder,
+               "10-strokes/s tremolo repeated early at host rate "
+                   + std::to_string(rate));
+        StereoBuffer timedBoundary(1);
+        renderInto(timed, timedBoundary);
+        expect(TestAccess::snapshot(timed, 0).startOrder
+                   > firstTimed.startOrder,
+               "10-strokes/s tremolo missed its boundary at host rate "
+                   + std::to_string(rate));
+    }
+
+    // Rendering in arbitrary host blocks cannot move a wrist contact.
+    const auto prepareBlocked = [&] (ElectryEngine& blocked)
+    {
+        blocked.prepare(sampleRate, 512);
+        blocked.setParameters(parameters);
+        blocked.reset();
+        blocked.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+        blocked.noteOn(heldNote, 0.82f);
+        StereoBuffer preRoll(97);
+        renderInto(blocked, preRoll, 31);
+        blocked.beginTremoloPicking(0.9f);
+    };
+    auto oneBlockStorage = std::make_unique<ElectryEngine>();
+    auto irregularBlocksStorage = std::make_unique<ElectryEngine>();
+    auto& oneBlock = *oneBlockStorage;
+    auto& irregularBlocks = *irregularBlocksStorage;
+    prepareBlocked(oneBlock);
+    prepareBlocked(irregularBlocks);
+    StereoBuffer contiguous(static_cast<int>(0.27 * sampleRate));
+    StereoBuffer fragmented(contiguous.size());
+    renderInto(oneBlock, contiguous, contiguous.size());
+    renderInto(irregularBlocks, fragmented, 37);
+    expect(contiguous.left == fragmented.left
+               && contiguous.right == fragmented.right
+               && TestAccess::snapshot(oneBlock, 0).startOrder
+                      == TestAccess::snapshot(irregularBlocks, 0).startOrder,
+           "tremolo timing or audio changed with host block partitioning");
+
+    // Two strings belong to one wrist stroke: they share direction and move
+    // Alternate only once per tick.
+    auto chordStorage = std::make_unique<ElectryEngine>();
+    auto& chord = *chordStorage;
+    chord.prepare(sampleRate, 512);
+    chord.setParameters(parameters);
+    chord.reset();
+    chord.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    const std::array<ElectryEngine::NoteOnEvent, 2> chordNotes {{
+        { 28, 0.82f }, { 35, 0.82f }
+    }};
+    chord.noteOnChord(chordNotes);
+    StereoBuffer chordAge(64);
+    renderInto(chord, chordAge);
+    chord.beginTremoloPicking(0.9f);
+    StereoBuffer chordFirst(1);
+    renderInto(chord, chordFirst);
+    const auto lowUp = TestAccess::snapshot(chord, 0);
+    const auto nextUp = TestAccess::snapshot(chord, 1);
+    StereoBuffer chordWait(framesPerStroke - 1);
+    renderInto(chord, chordWait);
+    StereoBuffer chordSecond(1);
+    renderInto(chord, chordSecond);
+    const auto lowDown = TestAccess::snapshot(chord, 0);
+    const auto nextDown = TestAccess::snapshot(chord, 1);
+    expect(lowUp.strokeIsUp && nextUp.strokeIsUp
+               && ! lowDown.strokeIsUp && ! nextDown.strokeIsUp,
+           "poly tremolo used separate wrist clocks or over-consumed Alternate");
+
+    // At the widest Strum setting a two-string traversal lasts 60 ms, longer
+    // than a 20-strokes/s grid interval. The 50 ms tick is deliberately
+    // skipped instead of overwriting the high string's pending contact; the
+    // following 100 ms tick resumes once the pick has crossed it.
+    auto wideChordStorage = std::make_unique<ElectryEngine>();
+    auto& wideChord = *wideChordStorage;
+    auto wideParameters = parameters;
+    wideParameters.strumSpreadSeconds = 0.040f;
+    wideParameters.tremoloRateHz = 20.0f;
+    wideChord.prepare(sampleRate, 512);
+    wideChord.setParameters(wideParameters);
+    wideChord.reset();
+    wideChord.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    wideChord.noteOnChord(chordNotes);
+    StereoBuffer finishInitialTraversal(static_cast<int>(0.08 * sampleRate));
+    renderInto(wideChord, finishInitialTraversal);
+    wideChord.beginTremoloPicking(0.9f);
+    StereoBuffer startWide(1);
+    renderInto(wideChord, startWide);
+    const auto firstWideSequence = TestAccess::noteSequence(wideChord);
+    StereoBuffer acrossSkippedTick(static_cast<int>(0.055 * sampleRate));
+    renderInto(wideChord, acrossSkippedTick);
+    expect(TestAccess::noteSequence(wideChord) == firstWideSequence,
+           "wide-chord tremolo replaced a pick contact still in flight");
+    StereoBuffer throughNextTick(static_cast<int>(0.050 * sampleRate));
+    renderInto(wideChord, throughNextTick);
+    expect(TestAccess::noteSequence(wideChord) == firstWideSequence + 2,
+           "wide-chord tremolo did not resume after its traversal completed");
+
+    // A sustain-pedal tail is sounding but no longer physically fingered; B0
+    // must leave it untouched, just like the one-shot per-string commands.
+    auto sustainOnlyStorage = std::make_unique<ElectryEngine>();
+    auto& sustainOnly = *sustainOnlyStorage;
+    sustainOnly.prepare(sampleRate, 512);
+    sustainOnly.setParameters(parameters);
+    sustainOnly.reset();
+    sustainOnly.noteOn(heldNote, 0.82f);
+    sustainOnly.setSustainPedal(true);
+    sustainOnly.noteOff(heldNote);
+    const auto sustainOrder = TestAccess::snapshot(sustainOnly, 0).startOrder;
+    sustainOnly.beginTremoloPicking(0.9f);
+    StereoBuffer sustainProbe(framesPerStroke + 8);
+    renderInto(sustainOnly, sustainProbe);
+    expect(TestAccess::snapshot(sustainOnly, 0).startOrder == sustainOrder,
+           "B0 repicked a sustain-only string without a physical key owner");
+}
+
 void testAlternateStrokeSequence()
 {
     constexpr double sampleRate = 48000.0;
@@ -2658,6 +2923,32 @@ void testStyleAndStrokeCombinations()
                                      PickStyle::Up);
     expect(hammerDown.left == hammerUp.left,
            "the latched picking style changed a hammered note");
+
+    // Pick Position, Hardness and Noise describe a plectrum. Moving all three
+    // from end to end must leave a fretting-hand tap exactly alone; an exact
+    // render comparison catches level, pulse, comb and noise leaks together.
+    const auto hammerAtPickControls = [&] (float value)
+    {
+        ElectryEngine fingered;
+        fingered.prepare(sampleRate, 512);
+        EngineParameters fingeredParameters;
+        fingeredParameters.artifactAmount = 0.0f;
+        fingeredParameters.bodyResonance = 0.0f;
+        fingeredParameters.sympatheticAmount = 0.0f;
+        fingeredParameters.pickPosition = value;
+        fingeredParameters.pickHardness = value;
+        fingeredParameters.pickNoise = value;
+        fingeredParameters.fingerNoise = 0.55f;
+        fingeredParameters.releaseNoise = 0.0f;
+        fingered.setParameters(fingeredParameters);
+        return renderNote(fingered, sampleRate, 45, 0.85f,
+                          PlayStyle::Hammer, 0.6);
+    };
+    const auto hammerAtSoftPick = hammerAtPickControls(0.0f);
+    const auto hammerAtHardPick = hammerAtPickControls(1.0f);
+    expect(hammerAtSoftPick.left == hammerAtHardPick.left
+               && hammerAtSoftPick.right == hammerAtHardPick.right,
+           "plectrum controls changed a Hammer articulation with no plectrum");
 }
 
 /** A note played without a plectrum draws no picking-hand variation.
@@ -2982,6 +3273,156 @@ void testHammerOnLegatoContinuity()
     const float scale = peakAbs(buffer.left, transition - 4800, transition);
     expect(maximumStep < std::max(0.05f, 1.2f * scale),
            "hammer-on transition produced a hard discontinuity");
+}
+
+void testPullOffLegatoDirection()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int hammerStart = 50;
+    constexpr int pullOffStart = 54;
+    constexpr int targetNote = 52;
+    constexpr int transition = static_cast<int>(0.25 * sampleRate);
+    constexpr int totalSamples = static_cast<int>(0.65 * sampleRate);
+
+    struct LegatoRender
+    {
+        StereoBuffer audio { totalSamples };
+        TestAccess::VoiceSnapshot voice;
+        int stringBefore { -1 };
+        int stringAfter { -1 };
+        int activeVoices { 0 };
+    };
+
+    const auto render = [] (int start, int target,
+                            PickStyle pickStyle = PickStyle::Down)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        LegatoRender result;
+        engine.noteOn(start, 0.7f);
+        engine.process(result.audio.left.data(), result.audio.right.data(), transition);
+        result.stringBefore = TestAccess::stringForNote(engine, start);
+
+        engine.noteOn(ElectryEngine::firstKeyswitchNote
+                          + static_cast<int>(pickStyle), 1.0f);
+        engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        engine.noteOn(target, 0.7f);
+        result.stringAfter = TestAccess::stringForNote(engine, target);
+        result.activeVoices = engine.getActiveVoiceCount();
+        result.voice = TestAccess::snapshot(engine, result.stringAfter);
+        engine.process(result.audio.left.data() + transition,
+                       result.audio.right.data() + transition,
+                       totalSamples - transition);
+        return result;
+    };
+
+    const auto hammer = render(hammerStart, targetNote);
+    const auto pullOff = render(pullOffStart, targetNote);
+    const auto pullOffWithUpLatched = render(
+        pullOffStart, targetNote, PickStyle::Up);
+    expect(allFinite(pullOff.audio), "pull-off render became non-finite");
+    expect(pullOff.audio.left == pullOffWithUpLatched.audio.left
+               && pullOff.audio.right == pullOffWithUpLatched.audio.right,
+           "the latched plectrum direction leaked into a pull-off");
+    expect(pullOff.stringBefore >= 0
+               && pullOff.stringAfter == pullOff.stringBefore
+               && pullOff.stringAfter == hammer.stringAfter
+               && pullOff.activeVoices == 1,
+           "pull-off did not preserve the sounding string state");
+
+    const double pullOffRms = rmsInRange(
+        pullOff.audio.left, transition, transition + static_cast<int>(0.030 * sampleRate));
+    expect(pullOffRms > 1.0e-5, "pull-off transition was inaudible");
+
+    const double directionDifference = normalisedDifferenceRms(
+        hammer.audio.left, pullOff.audio.left, transition,
+        transition + static_cast<int>(0.030 * sampleRate));
+    expect(directionDifference > 0.05,
+           "pull-off audio was not directionally distinct from a hammer-on ("
+               + std::to_string(directionDifference) + ")");
+
+    expect(hammer.voice.verticalWeight > hammer.voice.horizontalWeight,
+           "ascending hammer-on voicing changed");
+    expect(pullOff.voice.horizontalWeight > pullOff.voice.verticalWeight,
+           "descending legato did not use a lateral release");
+    expect(std::abs(pullOff.voice.excitationAmplitude
+                    - hammer.voice.excitationAmplitude) < 1.0e-6f,
+           "pull-off velocity mapping diverged from the hammer-on");
+    const float expectedReleasedFraction = std::exp2(-2.0f / 12.0f);
+    const float renderedReleasedFraction = pullOff.voice.excitationCombDelay
+                                         / pullOff.voice.verticalDelayTarget;
+    expect(std::abs(renderedReleasedFraction - expectedReleasedFraction) < 1.0e-6f,
+           "pull-off excitation did not originate at the released old-fret segment");
+
+    const auto openPullOff = render(49, 45);
+    expect(allFinite(openPullOff.audio)
+               && openPullOff.stringBefore >= 0
+               && openPullOff.stringAfter == openPullOff.stringBefore
+               && openPullOff.activeVoices == 1
+               && openPullOff.voice.fret == 0,
+           "pull-off to an open string did not preserve the sounding string");
+    const float expectedOpenFraction = std::exp2(-4.0f / 12.0f);
+    const float renderedOpenFraction = openPullOff.voice.excitationCombDelay
+                                     / openPullOff.voice.verticalDelayTarget;
+    expect(std::abs(renderedOpenFraction - expectedOpenFraction) < 1.0e-6f,
+           "open-string pull-off did not retain the lifted finger's position");
+    expect(rmsInRange(openPullOff.audio.left, transition,
+                      transition + static_cast<int>(0.030 * sampleRate)) > 1.0e-5,
+           "open-string pull-off transition was inaudible");
+
+    const auto expectSettledPitch = [] (const LegatoRender& result, int midiNote,
+                                        const char* label)
+    {
+        const int start = transition + static_cast<int>(0.18 * sampleRate);
+        const int length = static_cast<int>(0.18 * sampleRate);
+        const double expected = midiHz(midiNote);
+        const double measured = measureFrequency(
+            result.audio.left, start, length, sampleRate, expected);
+        expect(std::abs(centsBetween(measured, expected)) < 10.0,
+               std::string(label) + " did not settle on the target pitch");
+    };
+    expectSettledPitch(pullOff, targetNote, "fretted pull-off");
+    expectSettledPitch(openPullOff, 45, "open-string pull-off");
+
+    // A simultaneous second note makes the host use the chord allocator. It
+    // must retain the same open-string continuation as the scalar path.
+    ElectryEngine chordEngine;
+    chordEngine.prepare(sampleRate, 512);
+    chordEngine.setParameters(EngineParameters {});
+    chordEngine.noteOn(49, 0.7f);
+    const int chordStringBefore = TestAccess::stringForNote(chordEngine, 49);
+    chordEngine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+    const std::array chordEvents {
+        ElectryEngine::NoteOnEvent { 45, 0.7f },
+        ElectryEngine::NoteOnEvent { 64, 0.7f }
+    };
+    chordEngine.noteOnChord(chordEvents);
+    const int chordStringAfter = TestAccess::stringForNote(chordEngine, 45);
+    expect(chordStringBefore >= 0 && chordStringAfter == chordStringBefore
+               && TestAccess::snapshot(chordEngine, chordStringAfter).fret == 0,
+           "chord allocation displaced an open-string pull-off");
+
+    float maximumStep = 0.0f;
+    for (int i = transition - 32;
+         i < transition + static_cast<int>(0.020 * sampleRate); ++i)
+    {
+        maximumStep = std::max(
+            maximumStep,
+            std::abs(pullOff.audio.left[static_cast<std::size_t>(i + 1)]
+                     - pullOff.audio.left[static_cast<std::size_t>(i)]));
+    }
+    const float scale = peakAbs(pullOff.audio.left, transition - 4800, transition);
+    expect(maximumStep < std::max(0.05f, 1.2f * scale),
+           "pull-off transition produced a hard discontinuity");
 }
 
 void testHardPickingStaysInTune()
@@ -4538,7 +4979,9 @@ void testChordAssignmentIsPermutationInvariant()
     // overlap contract: one physical string, released only by the second off.
     auto duplicate = std::make_unique<ElectryEngine>();
     duplicate->prepare(sampleRate, 512);
-    duplicate->setParameters(EngineParameters {});
+    EngineParameters duplicateParameters;
+    duplicateParameters.strumSpreadSeconds = 0.020f;
+    duplicate->setParameters(duplicateParameters);
     const std::array duplicateEvents {
         ElectryEngine::NoteOnEvent { 45, 0.8f },
         ElectryEngine::NoteOnEvent { 45, 0.8f }
@@ -4547,6 +4990,11 @@ void testChordAssignmentIsPermutationInvariant()
     const int duplicateString = TestAccess::stringForNote(*duplicate, 45);
     expect(duplicate->getActiveVoiceCount() == 1 && duplicateString >= 0,
            "duplicate chord notes did not share one physical string");
+    const auto duplicateContact =
+        TestAccess::snapshot(*duplicate, duplicateString);
+    expect(duplicateContact.startDelaySamples == 0
+               && ! duplicateContact.pendingRepickActive,
+           "a duplicate in a complete batch fell back to scalar strum pre-roll");
     duplicate->noteOff(45);
     expect(TestAccess::snapshot(*duplicate, duplicateString).keyDown,
            "the first duplicate Note Off released both owners");
@@ -4724,12 +5172,12 @@ void testNoteOnVelocitySanitisation()
 }
 
 // setVibrato()'s own guard - `clampf(std::isfinite(normalised) ? normalised :
-// 0.0f, 0.0f, 1.0f)` - is the channel-pressure counterpart to setPitchBend,
+// 0.0f, 0.0f, 1.0f)` - is the gesture counterpart to setPitchBend,
 // setResonance, setAcousticReturnLevel and setPalmMutePressure, all four of
 // which testParameterSanitisation() above already drives with NaN. setVibrato
 // itself is only ever called with ordinary in-range pressures (0.0f, 1.0f, or
 // a drawn 0..1 value) everywhere else in the suite, so nothing asserted that a
-// non-finite or out-of-[0,1] channel-pressure value is folded down rather than
+// non-finite or out-of-[0,1] gesture value is folded down rather than
 // latched into the fretting-hand vibrato target and, from there, into every
 // stopped string's pitch.
 void testSetVibratoSanitisation()
@@ -4744,28 +5192,28 @@ void testSetVibratoSanitisation()
     // EngineParameters guards use.
     engine.setVibrato(std::nanf(""));
     expect(TestAccess::vibratoTarget(engine) == 0.0f,
-           "a NaN channel pressure did not fall back to zero");
+           "a NaN vibrato gesture did not fall back to zero");
     engine.setVibrato(std::numeric_limits<float>::infinity());
     expect(TestAccess::vibratoTarget(engine) == 0.0f,
-           "a positive-infinite channel pressure did not fall back to zero");
+           "a positive-infinite vibrato gesture did not fall back to zero");
     engine.setVibrato(-std::numeric_limits<float>::infinity());
     expect(TestAccess::vibratoTarget(engine) == 0.0f,
-           "a negative-infinite channel pressure did not fall back to zero");
+           "a negative-infinite vibrato gesture did not fall back to zero");
 
     // A finite value outside [0, 1] clamps to the nearer boundary rather than
     // being rejected or left unclamped.
     engine.setVibrato(-3.0f);
     expect(TestAccess::vibratoTarget(engine) == 0.0f,
-           "a negative channel pressure did not clamp to zero");
+           "a negative vibrato gesture did not clamp to zero");
     engine.setVibrato(7.5f);
     expect(TestAccess::vibratoTarget(engine) == 1.0f,
-           "a channel pressure above 1.0 did not clamp to one");
+           "a vibrato gesture above 1.0 did not clamp to one");
 
     // An ordinary value still passes straight through, confirming the guard
     // is a genuine clamp rather than a filter that also stops valid input.
     engine.setVibrato(0.4f);
     expect(TestAccess::vibratoTarget(engine) == 0.4f,
-           "an in-range channel pressure was altered by the guard");
+           "an in-range vibrato gesture was altered by the guard");
 
     // And a hostile pressure held on a genuinely fingered, sounding string
     // must still render finite, bounded audio end to end rather than only
@@ -4776,7 +5224,7 @@ void testSetVibratoSanitisation()
     StereoBuffer buffer(static_cast<int>(0.2 * sampleRate));
     renderInto(engine, buffer);
     expect(allFinite(buffer),
-           "a hostile channel pressure produced non-finite audio");
+           "a hostile vibrato gesture produced non-finite audio");
 }
 
 // setPitchBend()'s own guard - `2.0f * clampf(std::isfinite(bend) ? bend :
@@ -4788,7 +5236,7 @@ void testSetVibratoSanitisation()
 // zero rather than latching NaN into the bend target, and a finite
 // out-of-[-1,1] bend clamps to the nearer boundary before being doubled to
 // the +/-2 semitone range - the way testSetVibratoSanitisation already does
-// for the channel-pressure guard right above.
+// for the vibrato-gesture guard right above.
 void testSetPitchBendSanitisation()
 {
     constexpr double sampleRate = 48000.0;
@@ -5544,7 +5992,7 @@ void testFrettingHandVibrato()
         for (std::size_t i = 0; i < withoutControl.left.size(); ++i)
             identical = identical
                 && withoutControl.left[i] == withSilentControl.left[i];
-        expect(identical, "a silent pressure control is not a bit-exact no-op");
+        expect(identical, "a zero vibrato gesture is not a bit-exact no-op");
     }
 
     // Measure the vibrato against the same note without it rather than against
@@ -5895,7 +6343,7 @@ void testVibratoIsAHandNotAnLfo()
             return buffer.left;
         };
         expect(render(false) == render(true),
-               "a silent pressure control is not a bit-exact no-op");
+               "a zero vibrato gesture is not a bit-exact no-op");
     }
 }
 
@@ -5930,7 +6378,8 @@ void testSlideArticulation()
         int settleSamples { 0 };
         int stringIndex { -1 };
         int fret { -1 };
-        float amplitude { 0.0f };
+        float frictionAmplitude { 0.0f };
+        float excitationAmplitude { 0.0f };
     };
 
     const auto renderSlide = [&] (int fromNote, int toNote, float fingerNoise,
@@ -5959,8 +6408,12 @@ void testSlideArticulation()
         result.stringIndex = TestAccess::stringForNote(engine, toNote);
         result.fret = result.stringIndex >= 0
             ? TestAccess::snapshot(engine, result.stringIndex).fret : -1;
-        result.amplitude = result.stringIndex >= 0
+        result.frictionAmplitude = result.stringIndex >= 0
             ? TestAccess::slideNoiseAmplitude(engine, result.stringIndex) : 0.0f;
+        result.excitationAmplitude = result.stringIndex >= 0
+            ? TestAccess::snapshot(engine, result.stringIndex)
+                  .excitationAmplitude
+            : 0.0f;
 
         // Render in short chunks so the moment the glide settles can be read
         // from the delay target the engine is actually driving: the glide is
@@ -6024,9 +6477,13 @@ void testSlideArticulation()
     // The winding drags: the scrape is what Finger Noise controls, and at zero
     // it is exactly absent rather than merely quiet.
     const auto silentSlide = renderSlide(45, 57, 0.0f, 0.28f);
-    expect(silentSlide.amplitude == 0.0f,
+    expect(silentSlide.frictionAmplitude == 0.0f,
            "the slide scrape survived a silent Finger Noise control");
-    expect(longSlide.amplitude > 0.0f, "the slide produced no scrape at all");
+    expect(longSlide.frictionAmplitude > 0.0f,
+           "the slide produced no scrape at all");
+    expect(longSlide.excitationAmplitude == 0.0f
+               && silentSlide.excitationAmplitude == 0.0f,
+           "a travelling finger injected a new pick-like string attack");
 
     const int frictionStart = slideStart;
     const int frictionLength = std::max(1024, longSlide.settleSamples);
@@ -6416,7 +6873,7 @@ void testVibratoOnlyMovesFingeredStrings()
     // The lowest playable note is the low string played open: nothing is
     // holding it down, so there is no contact for the hand to rock and a
     // fretting-hand vibrato cannot reach it. The bar can, but that is the
-    // pitch wheel, not channel pressure.
+    // pitch wheel, not the A#0 fretting gesture.
     const auto renderNote = [&](int midiNote, float vibrato)
     {
         ElectryEngine engine;
@@ -6451,15 +6908,15 @@ void testVibratoOnlyMovesFingeredStrings()
 
     expect(renderNote(ElectryEngine::lowestPlayableNote, 1.0f)
                == renderNote(ElectryEngine::lowestPlayableNote, 0.0f),
-           "channel pressure bent an open string, which no fretting hand can do");
+           "the vibrato gesture bent an open string, which no finger can do");
 
-    // The same pressure on a stopped note has to do something, or the check
+    // The same gesture on a stopped note has to do something, or the check
     // above would pass simply by the control being dead. 47 is two frets up
     // the same string that 45 plays open.
     const auto fretted = renderNote(47, 1.0f);
     const auto still = renderNote(47, 0.0f);
     expect(fretted != still,
-           "channel pressure left a fingered string alone");
+           "the vibrato gesture left a fingered string alone");
 }
 
 void testLegatoSlideDoesNotConsumeAPickStroke()
@@ -6518,6 +6975,44 @@ void testLegatoSlideDoesNotConsumeAPickStroke()
     expect(withSlide == withoutSlide,
            "a legato slide consumed an alternate pick stroke it never played, "
            "so the next picked note came out on the wrong stroke");
+
+    // The same fretting-hand move cannot move a real wrist stroke that is
+    // already in flight. Start with A2 ringing on string 3, schedule an E4
+    // downstroke from string 7 with Strum Spread, then slide A2 to B2 at the
+    // same clock. Re-anchoring the pending stroke from the slide's string used
+    // to push E4 several string crossings later even though no second pick was
+    // involved.
+    ElectryEngine scheduled;
+    scheduled.prepare(sampleRate, 512);
+    EngineParameters scheduledParameters;
+    scheduledParameters.artifactAmount = 0.0f;
+    scheduledParameters.sympatheticAmount = 0.0f;
+    scheduledParameters.strumSpreadSeconds = 0.020f;
+    scheduled.setParameters(scheduledParameters);
+    scheduled.reset();
+    scheduled.noteOn(45, 0.8f);
+    StereoBuffer firstContact(static_cast<int>(0.080 * sampleRate));
+    renderInto(scheduled, firstContact);
+    const int aString = TestAccess::stringForNote(scheduled, 45);
+
+    scheduled.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    scheduled.noteOn(64, 0.8f);
+    const int eString = TestAccess::stringForNote(scheduled, 64);
+    const int delayBeforeSlide = eString >= 0
+        ? TestAccess::snapshot(scheduled, eString).startDelaySamples : -1;
+
+    scheduled.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+    scheduled.noteOn(47, 0.8f);
+    const int delayAfterSlide = eString >= 0
+        ? TestAccess::snapshot(scheduled, eString).startDelaySamples : -1;
+    expect(aString == 3 && eString == 7 && delayBeforeSlide > 0,
+           "the pending-strum slide fixture did not use the intended strings");
+    expect(TestAccess::stringForNote(scheduled, 47) == aString,
+           "the scheduler fixture did not keep the slide on its ringing string");
+    expect(delayAfterSlide == delayBeforeSlide,
+           "a legato slide re-anchored and delayed a pending plectrum stroke ("
+               + std::to_string(delayBeforeSlide) + " to "
+               + std::to_string(delayAfterSlide) + " samples)");
 }
 
 void testParameterSanitisation()
@@ -6550,6 +7045,7 @@ void testParameterSanitisation()
     hostile.sympatheticAmount = std::numeric_limits<float>::quiet_NaN();
     hostile.palmMute = -7.0f;
     hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
+    hostile.tremoloRateHz = std::numeric_limits<float>::quiet_NaN();
     hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
     hostile.vibratoDepth = 12.0f;
     hostile.pickupSelector = static_cast<PickupSelector>(999);
@@ -6625,6 +7121,7 @@ void testParameterSanitisationFallsBackToDefaults()
     hostile.sympatheticAmount = std::numeric_limits<float>::quiet_NaN();
     hostile.palmMute = -7.0f;
     hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
+    hostile.tremoloRateHz = std::numeric_limits<float>::quiet_NaN();
     hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
     hostile.vibratoDepth = 12.0f;
     hostile.pickupSelector = static_cast<PickupSelector>(999);
@@ -6656,6 +7153,8 @@ void testParameterSanitisationFallsBackToDefaults()
            "NaN sympatheticAmount did not fall back to its default");
     expect(clean.strumSpreadSeconds == defaults.strumSpreadSeconds,
            "+inf strumSpreadSeconds did not fall back to its default");
+    expect(clean.tremoloRateHz == defaults.tremoloRateHz,
+           "NaN tremoloRateHz did not fall back to its default");
     expect(clean.resonanceDepth == defaults.resonanceDepth,
            "NaN resonanceDepth did not fall back to its default");
 
@@ -6714,6 +7213,15 @@ void testParameterSanitisationFallsBackToDefaults()
     spreadAboveRange.strumSpreadSeconds = 0.2f;
     expect(TestAccess::sanitise(spreadAboveRange).strumSpreadSeconds == 0.040f,
            "strumSpreadSeconds above 0.040 did not clamp to its ceiling");
+
+    EngineParameters tremoloBelowRange;
+    tremoloBelowRange.tremoloRateHz = 1.0f;
+    expect(TestAccess::sanitise(tremoloBelowRange).tremoloRateHz == 4.0f,
+           "tremoloRateHz below 4 did not clamp to its floor");
+    EngineParameters tremoloAboveRange;
+    tremoloAboveRange.tremoloRateHz = 80.0f;
+    expect(TestAccess::sanitise(tremoloAboveRange).tremoloRateHz == 20.0f,
+           "tremoloRateHz above 20 did not clamp to its ceiling");
 
     // outputGain has its own [0, 2] branch rather than the shared [0, 1]
     // lambda, so it needs its own finite-out-of-range boundary cases: the
@@ -6775,6 +7283,7 @@ void testParameterSanitisationFallsBackToDefaults()
     valid.sympatheticAmount = 0.68f;
     valid.palmMute = 0.24f;
     valid.strumSpreadSeconds = 0.02f;
+    valid.tremoloRateHz = 13.7f;
     valid.resonanceDepth = 0.71f;
     valid.vibratoDepth = 0.09f;
     valid.pickupSelector = PickupSelector::Neck;
@@ -6826,6 +7335,8 @@ void testParameterSanitisationFallsBackToDefaults()
            "in-range palmMute was altered by the guard");
     expect(passedThrough.strumSpreadSeconds == valid.strumSpreadSeconds,
            "in-range strumSpreadSeconds was altered by the guard");
+    expect(passedThrough.tremoloRateHz == valid.tremoloRateHz,
+           "in-range tremoloRateHz was altered by the guard");
     expect(passedThrough.resonanceDepth == valid.resonanceDepth,
            "in-range resonanceDepth was altered by the guard");
     expect(passedThrough.vibratoDepth == valid.vibratoDepth,
@@ -9240,8 +9751,159 @@ void testPalmImpactWaitsForStrokeAndClears()
 }
 
 // ---------------------------------------------------------------------------
-// Version 1.1: strum travel
+// Independent-player timing and strum travel
 // ---------------------------------------------------------------------------
+
+void testSeededPlayerTiming()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr std::uint32_t secondPlayerSeed = 0x9e3779b9u;
+
+    const auto makeEngine = [] (std::uint32_t seed, float spreadSeconds = 0.0f)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->setVariationSeed(seed);
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.strumSpreadSeconds = spreadSeconds;
+        engine->setParameters(parameters);
+        engine->reset();
+        return engine;
+    };
+
+    // The established/default player has no hidden onset offset. This is the
+    // exact bypass that keeps every Mono/Stereo render on its old clock.
+    auto primary = makeEngine(0u);
+    primary->noteOn(28, 0.9f);
+    expect(TestAccess::chordPerformanceDelaySamples(*primary) == 0
+               && TestAccess::snapshot(*primary, 0).startDelaySamples == 0,
+           "the default player acquired a hidden timing delay");
+
+    const auto timingSequence = [&] (std::uint32_t seed)
+    {
+        auto engine = makeEngine(seed);
+        std::array<int, 64> delays {};
+        const int maximumDelay = static_cast<int>(std::lround(
+            0.006 * TestAccess::internalSampleRate(*engine)));
+        for (std::size_t attack = 0; attack < delays.size(); ++attack)
+        {
+            engine->noteOn(28, 0.9f);
+            const int delay = TestAccess::chordPerformanceDelaySamples(*engine);
+            delays[attack] = delay;
+            const int stringIndex = TestAccess::stringForNote(*engine, 28);
+            expect(delay >= 0 && delay <= maximumDelay,
+                   "the second player's timing draw left the 0-6 ms bound ("
+                       + std::to_string(delay) + " of "
+                       + std::to_string(maximumDelay) + " internal samples)");
+            expect(stringIndex >= 0
+                       && TestAccess::snapshot(*engine, stringIndex)
+                              .startDelaySamples == delay,
+                   "a zero-spread pick did not receive its player's timing draw");
+
+            // More than the maximum delay, at the host rate: the pending pick
+            // lands before its matching release and the next stroke begins on
+            // a later engine clock.
+            StereoBuffer contact(static_cast<int>(0.008 * sampleRate));
+            renderInto(*engine, contact);
+            engine->noteOff(28);
+            StereoBuffer gap(static_cast<int>(0.008 * sampleRate));
+            renderInto(*engine, gap);
+        }
+        return delays;
+    };
+
+    const auto firstSequence = timingSequence(secondPlayerSeed);
+    const auto repeatedSequence = timingSequence(secondPlayerSeed);
+    const auto otherPlayerSequence = timingSequence(0x243f6a88u);
+    expect(firstSequence == repeatedSequence,
+           "the second player's timing stream was not deterministic");
+    const auto [minimumDelay, maximumDelay] = std::minmax_element(
+        firstSequence.begin(), firstSequence.end());
+    expect(*minimumDelay != *maximumDelay,
+           "the second player's per-stroke timing never moved");
+    expect(firstSequence != otherPlayerSequence,
+           "different players received the same timing stream");
+
+    // One wrist stroke crosses a chord: it has one player offset, then any
+    // requested strum travel. Canonical chord batching must not draw once per
+    // string.
+    auto chord = makeEngine(secondPlayerSeed);
+    const std::array<ElectryEngine::NoteOnEvent, 3> chordEvents {
+        ElectryEngine::NoteOnEvent { 28, 0.9f },
+        ElectryEngine::NoteOnEvent { 40, 0.9f },
+        ElectryEngine::NoteOnEvent { 45, 0.9f }
+    };
+    chord->noteOnChord(chordEvents);
+    const int chordDelay = TestAccess::chordPerformanceDelaySamples(*chord);
+    for (const int note : { 28, 40, 45 })
+    {
+        const int stringIndex = TestAccess::stringForNote(*chord, note);
+        expect(stringIndex >= 0
+                   && TestAccess::snapshot(*chord, stringIndex)
+                          .startDelaySamples == chordDelay,
+               "one block chord received more than one player-timing offset");
+    }
+
+    // Re-anchoring a strum against a later-discovered low edge recomputes its
+    // absolute onset. It must retain, rather than drop or double, the same
+    // player offset on every picked member.
+    constexpr float spreadSeconds = 0.020f;
+    auto strummed = makeEngine(secondPlayerSeed, spreadSeconds);
+    strummed->noteOn(50, 0.9f); // provisional middle-string anchor
+    const int strumPlayerDelay =
+        TestAccess::chordPerformanceDelaySamples(*strummed);
+    strummed->noteOn(28, 0.9f); // the real low edge, delivered at the same clock
+    const int preRoll = static_cast<int>(std::lround(
+        spreadSeconds * TestAccess::internalSampleRate(*strummed)));
+    int firstStringDelay = std::numeric_limits<int>::max();
+    for (int stringIndex = 0; stringIndex < ElectryEngine::stringCount;
+         ++stringIndex)
+    {
+        const auto snapshot = TestAccess::snapshot(*strummed, stringIndex);
+        if (snapshot.active)
+            firstStringDelay = std::min(firstStringDelay,
+                                        snapshot.startDelaySamples);
+    }
+    expect(std::abs(firstStringDelay - preRoll - strumPlayerDelay) <= 1,
+           "strum re-anchoring lost or duplicated the player timing offset ("
+               + std::to_string(firstStringDelay) + " vs "
+               + std::to_string(preRoll + strumPlayerDelay) + ")");
+
+    // A key lifted before the delayed physical contact never produces a late
+    // phantom pick. This is the ownership edge a processor-side MIDI delay
+    // would otherwise have to duplicate.
+    auto cancelled = makeEngine(secondPlayerSeed);
+    cancelled->noteOn(28, 0.9f);
+    expect(TestAccess::snapshot(*cancelled, 0).startDelaySamples > 0,
+           "the cancellation fixture did not receive a timing delay");
+    cancelled->noteOff(28);
+    StereoBuffer cancelledAudio(static_cast<int>(0.020 * sampleRate));
+    renderInto(*cancelled, cancelledAudio);
+    expect(cancelled->getActiveVoiceCount() == 0
+               && peakAbs(cancelledAudio.left) == 0.0f
+               && peakAbs(cancelledAudio.right) == 0.0f,
+           "a released pre-contact player delay produced a late attack");
+
+    // Hammer/tap timing belongs to the fretting hand. A separate player's
+    // plectrum pocket must not delay a fresh hammer articulation.
+    auto hammer = makeEngine(secondPlayerSeed, 0.020f);
+    hammer->noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+    hammer->noteOn(45, 0.9f);
+    const int hammerString = TestAccess::stringForNote(*hammer, 45);
+    const auto hammerContact = TestAccess::snapshot(*hammer, hammerString);
+    expect(hammerString >= 0 && hammerContact.startDelaySamples == 0
+               && TestAccess::chordPerformanceDelaySamples(*hammer) == 0,
+           "the wrist scheduler delayed a fresh Hammer contact");
+    expect(! hammerContact.excitationInContact
+               && hammerContact.contactFeedbackGain == 1.0f,
+           "a fresh Hammer entered the plectrum's contact-loss phase");
+    StereoBuffer immediateHammer(static_cast<int>(0.005 * sampleRate));
+    renderInto(*hammer, immediateHammer);
+    expect(peakAbs(immediateHammer.left) > 1.0e-6f,
+           "a fresh Hammer did not sound immediately with Strum Spread on");
+}
 
 void testStrumSpread()
 {
@@ -9330,6 +9992,165 @@ void testStrumSpread()
         strummed.second.left, 0, static_cast<int>(0.03 * sampleRate)));
     expect(strumPeak < blockPeak,
            "spreading a chord did not lower its stacked initial peak");
+
+    // A noteOnChord group is different from the scalar fallback above: the
+    // complete physical shape is known at one timestamp, so its leading edge
+    // needs no 20 ms causal lookahead. Travel remains physical and reverses
+    // with the stroke direction.
+    const auto completeChord = [&] (PickStyle pick, int blockSize = 512)
+    {
+        ElectryEngine complete;
+        complete.prepare(sampleRate, 512);
+        EngineParameters spread;
+        spread.artifactAmount = 0.0f;
+        spread.sympatheticAmount = 0.0f;
+        spread.strumSpreadSeconds = 0.020f;
+        complete.setParameters(spread);
+        complete.reset();
+        complete.noteOn(pickKeyswitch(pick), 1.0f);
+
+        std::array<ElectryEngine::NoteOnEvent, chord.size()> events {};
+        for (std::size_t index = 0; index < chord.size(); ++index)
+            events[index] = { chord[index], 0.85f };
+        complete.noteOnChord(events);
+
+        std::array<int, ElectryEngine::stringCount> delays {};
+        for (int stringIndex = 0;
+             stringIndex < ElectryEngine::stringCount; ++stringIndex)
+            delays[static_cast<std::size_t>(stringIndex)] =
+                TestAccess::snapshot(complete, stringIndex).startDelaySamples;
+        StereoBuffer audio(static_cast<int>(0.6 * sampleRate));
+        renderInto(complete, audio, blockSize);
+        return std::make_pair(delays, std::move(audio));
+    };
+
+    const auto completeDown = completeChord(PickStyle::Down);
+    const auto completeUp = completeChord(PickStyle::Up);
+    expect(completeDown.first[0] == 0 && completeUp.first[7] == 0,
+           "a complete strum batch retained the scalar path's re-anchor latency");
+    const std::array<int, 6> playedStrings { 0, 2, 3, 4, 5, 7 };
+    int downPrevious = -1;
+    int upPrevious = std::numeric_limits<int>::max();
+    for (const int stringIndex : playedStrings)
+    {
+        const int downDelay =
+            completeDown.first[static_cast<std::size_t>(stringIndex)];
+        const int upDelay =
+            completeUp.first[static_cast<std::size_t>(stringIndex)];
+        expect(downDelay > downPrevious,
+               "a complete down-strum did not retain monotone string travel");
+        expect(upDelay < upPrevious,
+               "a complete up-strum did not retain reversed string travel");
+        downPrevious = downDelay;
+        upPrevious = upDelay;
+    }
+    expect(completeDown.first[7] - completeDown.first[0]
+               == strummed.first[7] - strummed.first[0],
+           "removing complete-batch pre-roll changed the wrist's travel time");
+
+    // Rendering that scheduled batch in hostile client block sizes must not
+    // move an onset or change a sample.
+    const auto partitioned = completeChord(PickStyle::Down, 17);
+    expect(partitioned.second.left == completeDown.second.left
+               && partitioned.second.right == completeDown.second.right,
+           "complete strum audio depended on render block partitioning");
+
+    // A one-note complete batch has no strings to cross, so Strum Spread is an
+    // exact timing and audio no-op. This is the common live-riff case that was
+    // previously charged a fixed 20 ms before the instrument could respond.
+    const auto completeSingle = [&] (float spreadSeconds)
+    {
+        ElectryEngine single;
+        single.prepare(sampleRate, 512);
+        EngineParameters singleParameters;
+        singleParameters.artifactAmount = 0.0f;
+        singleParameters.sympatheticAmount = 0.0f;
+        singleParameters.strumSpreadSeconds = spreadSeconds;
+        single.setParameters(singleParameters);
+        single.reset();
+        const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+            { 40, 0.85f }
+        }};
+        single.noteOnChord(event);
+        const int delay = TestAccess::snapshot(
+            single, TestAccess::stringForNote(single, 40)).startDelaySamples;
+        StereoBuffer audio(4096);
+        renderInto(single, audio, 31);
+        return std::make_pair(delay, std::move(audio));
+    };
+    const auto flatSingle = completeSingle(0.0f);
+    const auto spreadSingle = completeSingle(0.020f);
+    expect(flatSingle.first == 0 && spreadSingle.first == 0,
+           "a complete single-note batch acquired Strum Spread latency");
+    expect(flatSingle.second.left == spreadSingle.second.left
+               && flatSingle.second.right == spreadSingle.second.right,
+           "Strum Spread changed a complete single-note attack");
+
+    // Separate host timestamps are separate performed strokes even inside the
+    // scalar chord window. Alternate must therefore advance, and the second
+    // one-note batch must also begin without hidden pre-roll.
+    {
+        ElectryEngine timed;
+        timed.prepare(sampleRate, 512);
+        EngineParameters timedParameters;
+        timedParameters.artifactAmount = 0.0f;
+        timedParameters.sympatheticAmount = 0.0f;
+        timedParameters.strumSpreadSeconds = 0.020f;
+        timed.setParameters(timedParameters);
+        timed.reset();
+        timed.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+        const std::array<ElectryEngine::NoteOnEvent, 1> first {{ { 28, 0.85f } }};
+        timed.noteOnChord(first);
+        StereoBuffer tenMilliseconds(static_cast<int>(0.010 * sampleRate));
+        renderInto(timed, tenMilliseconds);
+        const std::array<ElectryEngine::NoteOnEvent, 1> second {{ { 40, 0.85f } }};
+        timed.noteOnChord(second);
+        const int secondString = TestAccess::stringForNote(timed, 40);
+        const auto secondVoice = TestAccess::snapshot(timed, secondString);
+        expect(secondVoice.strokeIsUp && secondVoice.startDelaySamples == 0,
+               "a later complete batch merged into the preceding stroke");
+    }
+
+    // Releasing an un-crossed string cancels only that future contact. With
+    // the same low-string stroke left behind, the result is sample-identical
+    // to a one-string batch rather than growing a late phantom attack.
+    const auto cancelledCrossing = [&] (bool scheduleHighString)
+    {
+        ElectryEngine cancelled;
+        cancelled.prepare(sampleRate, 512);
+        EngineParameters cancelParameters;
+        cancelParameters.artifactAmount = 0.0f;
+        cancelParameters.sympatheticAmount = 0.0f;
+        cancelParameters.strumSpreadSeconds = 0.040f;
+        cancelled.setParameters(cancelParameters);
+        cancelled.reset();
+        if (scheduleHighString)
+        {
+            const std::array<ElectryEngine::NoteOnEvent, 2> events {{
+                { 28, 0.85f }, { 64, 0.85f }
+            }};
+            cancelled.noteOnChord(events);
+            cancelled.noteOff(64);
+            const auto high = TestAccess::snapshot(cancelled, 7);
+            expect(! high.active && high.startDelaySamples == 0,
+                   "an early Note Off left an un-crossed batch member pending");
+        }
+        else
+        {
+            const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+                { 28, 0.85f }
+            }};
+            cancelled.noteOnChord(event);
+        }
+        StereoBuffer audio(static_cast<int>(0.5 * sampleRate));
+        renderInto(cancelled, audio, 67);
+        return audio;
+    };
+    const auto lowOnly = cancelledCrossing(false);
+    const auto highCancelled = cancelledCrossing(true);
+    expect(lowOnly.left == highCancelled.left
+               && lowOnly.right == highCancelled.right,
+           "a cancelled future string changed the completed leading contact");
 
     // A note that arrives after the chord window starts a fresh stroke, so it
     // carries the pre-roll and nothing else - never the previous chord's
@@ -12006,6 +12827,7 @@ int main()
     testKeyswitchesSelectStylesSilently();
     testOverlappingSameNoteOffKeepsLatestRepickHeld();
     testHeldStringRepickKeys();
+    testHeldTremoloPickingGesture();
     testAlternateStrokeSequence();
     testAlternateChordSharesOneStroke();
     testRapidSameStringRepicksAreSeparateStrokes();
@@ -12017,6 +12839,7 @@ int main()
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
     testHammerOnLegatoContinuity();
+    testPullOffLegatoDirection();
     testHardPickingStaysInTune();
     testAttackStateTransitions();
     testPickupsToneAndBuildMorph();
@@ -12063,6 +12886,7 @@ int main()
     testPalmAttackContactsCompose();
     testPalmImpactIsSampleRateInvariant();
     testPalmImpactWaitsForStrokeAndClears();
+    testSeededPlayerTiming();
     testStrumSpread();
     testStrumTravelFollowsStroke();
     testResonanceControlRaisesSympatheticRing();

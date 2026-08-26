@@ -38,6 +38,7 @@ inline constexpr auto room           = "room";
 inline constexpr auto sympathetic    = "sympathetic";
 inline constexpr auto palmMute       = "palmMute";
 inline constexpr auto strumSpread    = "strumSpread";
+inline constexpr auto tremoloRate    = "tremoloRate";
 inline constexpr auto resonanceDepth = "resonanceDepth";
 } // namespace electry::parameters
 
@@ -78,6 +79,7 @@ public:
     // Message-thread entry points used by the editor. Both route through the
     // same bounded lock-free queue as on-screen keyboard notes.
     void triggerArticulation (int articulationIndex);
+    void triggerStringRepick (int stringIndex, float velocity = 1.0f);
     void setPlayStyleKeysHold (bool shouldHold);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
 
@@ -119,6 +121,14 @@ public:
     int getMidiMutePressureForDisplay() const noexcept
     {
         return midiMutePressureForDisplay.load (std::memory_order_relaxed);
+    }
+    int getVibratoGestureForDisplay() const noexcept
+    {
+        return vibratoGestureForDisplay.load (std::memory_order_relaxed);
+    }
+    int getTremoloGestureForDisplay() const noexcept
+    {
+        return tremoloGestureForDisplay.load (std::memory_order_relaxed);
     }
     double getCurrentSampleRateForDisplay() const noexcept
     {
@@ -170,6 +180,7 @@ private:
         std::atomic<float>* sympathetic = nullptr;
         std::atomic<float>* palmMute = nullptr;
         std::atomic<float>* strumSpread = nullptr;
+        std::atomic<float>* tremoloRate = nullptr;
         std::atomic<float>* resonanceDepth = nullptr;
     } parameterPointers;
 
@@ -208,6 +219,10 @@ private:
                                 bool selectsBaseArticulation,
                                 NoteOnBatch& batch) noexcept;
     void flushNoteOnBatch (NoteOnBatch& batch) noexcept;
+    void applyVibratoGesture (float amount) noexcept;
+    void clearVibratoGesture() noexcept;
+    void applyTremoloGesture (float velocity) noexcept;
+    void clearTremoloGesture() noexcept;
     void dispatchNoteOn (int note, float velocity,
                          bool selectsBaseArticulation) noexcept;
     void dispatchNoteOff (int note) noexcept;
@@ -256,11 +271,15 @@ private:
                electry::ElectryEngine::playStyleKeyswitchCount>
         heldPlayStyleOrder {};
     std::uint64_t heldPlayStyleSequence = 0;
+    std::uint16_t vibratoGestureOwners = 0;
+    std::uint16_t tremoloGestureOwners = 0;
     bool sustainPedalDown = false;
     // Raw CC2 is kept beside the other display-only atomics. The Mute Pressure
     // knob shows the host parameter; this value makes its live MIDI addition
     // visible without feeding UI state back into the engine.
     std::atomic<int> midiMutePressureForDisplay { 0 };
+    std::atomic<int> vibratoGestureForDisplay { 0 };
+    std::atomic<int> tremoloGestureForDisplay { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
     std::array<std::atomic<std::uint32_t>,
                electry::ElectryEngine::stringCount> stringVisuals {};

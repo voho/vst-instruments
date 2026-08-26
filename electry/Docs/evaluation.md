@@ -7,7 +7,7 @@ to one phrase is useful evidence; it is not a market-leading claim by itself.
 
 ## Current product surface
 
-The unreleased plug-in currently exposes 26 host parameters; development
+The unreleased plug-in currently exposes 27 host parameters; development
 snapshots have no backward-compatibility contract. One **Guitar Build**
 parameter replaces six separate construction axes and follows a smooth path
 through Slab fixed, Contoured, Angular set, Modern bolt, Dense extended and
@@ -16,7 +16,10 @@ modal shape, joint/bridge construction, scale and Drop-E gauge; the fitted
 Drop-E build at 0.8 is the default. Pickup selector and type, Tone, Body
 Resonance amount, string age and all player/contact controls remain independent.
 **Output Mode** is one three-choice Mono/Stereo/Double parameter; Double means
-two separately seeded complete engines, one mono performance per channel.
+two separately seeded complete engines, one mono performance per channel. The
+second player's picked wrist strokes also carry a deterministic 0-6 ms causal
+timing offset; the primary player and fretting-hand articulations keep their
+established clocks.
 
 The editor names the bridge-hand style **Mute** and its two controls **Mute
 Tightness** and **Mute Pressure**. This document retains “palm mute” where it
@@ -33,6 +36,201 @@ against a 250 V / 100 kOhm plate load with a residual-checked solver. Existing
 oversampling, sag, transformer-flux model and filter cabinet remain. These are
 circuit solves of the nonlinear modules, not a complete named pedal or amp
 schematic, a SPICE validation, or a measured cabinet impulse response.
+
+### Double-performance timing audit
+
+[HiMMP's FAQ and download index](https://himmp.net/faq.html) publish four raw,
+independently performed 44.1 kHz, 24-bit mono rhythm DIs for “In Solitude”
+under CC BY. The frozen exploratory audit used Python 3.11.0, NumPy 1.26.4 and
+SciPy 1.14.1. SciPy decoded each PCM24 file left-justified in `int32`; samples
+were converted to `float64` by dividing by `2^31`. The four downloaded files
+were `Rhythm 1 DI.wav` through `Rhythm 4 DI.wav`, with these SHA-256 digests in
+order:
+
+```text
+149af4b6419ec4f674457a7f7ac17bfd2e5e06b4feb77fe7fe7f8c31e936b371
+a51a73af7b74680e0ecec05fcf47aec1ae8b25fe8d79171ae659f7f52bc8f540
+aee3d4df31a86057088abe71b2e125c3d510b1d6b9d8121f1b21f00ae592bcc2
+5ec51e22b8f709de9ea6fba9dd3d1810375bd6d8ae11848ba10db603e1246842
+```
+
+The detector pre-emphasized each signal as `y[n] = x[n] - 0.97 x[n-1]`, then
+formed non-overlapping 44-sample frames. Its level was
+`L = 20 log10(max(RMS, 1e-12))`; the first six novelty frames were zero and
+the rest were `L[k] - L[k-6]`, smoothed by `[0.25, 0.5, 0.25]`. For each take,
+the threshold was NumPy's default-linear 93rd percentile of novelty where
+`L > -70 dBFS`.
+SciPy `find_peaks` used that height and an 18-frame minimum separation, after
+which the same level gate was applied at the peak. This found 4,173, 4,035,
+3,983 and 4,035 candidates in Rhythm 1-4. Each Rhythm-1 candidate was matched
+to the absolute-nearest candidate in every other take within 20 frames, with
+each match required to choose that same Rhythm-1 event on the reverse lookup.
+The 1,844 accepted four-take rows produced:
+
+| take pair | median absolute difference | 90th percentile |
+| --- | ---: | ---: |
+| Rhythm 1 / 2 | 5.986 ms | 12.671 ms |
+| Rhythm 1 / 3 | 5.986 ms | 11.973 ms |
+| Rhythm 1 / 4 | 6.984 ms | 12.971 ms |
+| Rhythm 2 / 3 | 6.984 ms | 16.961 ms |
+| Rhythm 2 / 4 | 7.982 ms | 17.959 ms |
+| Rhythm 3 / 4 | 6.984 ms | 17.959 ms |
+
+These are energy-rise candidates on a 0.998 ms grid, not hand-labelled pick
+contacts. The heuristic can select edits, noise and chord rises or miss weak
+contacts; its Rhythm-1 reference and recording alignment can also bias the
+result. The exact receipt replaces an earlier exploratory count whose silence
+gate was not preserved.
+
+This conventional six-string Drop-C corpus establishes that separately played
+metal takes are not sample-locked; it is not an eight-string timing fit. Double
+therefore uses only the tight edge of the evidence: its seeded second engine
+draws one bounded 0-6 ms offset per picked wrist stroke from a three-uniform
+distribution with 3 ms mean and 1 ms standard deviation. Every string crossed
+by a chord shares that player offset, which composes with—not replaces—the
+existing accelerating strum travel. Fresh Hammer contacts and all default-seed
+Mono/Stereo scheduling are unchanged. The offset lives at the engine's physical
+contact boundary, so a released pre-contact note cancels cleanly and a chord
+split across host blocks retains one absolute onset.
+
+A processor-side MIDI queue was rejected because it would duplicate note
+ownership, sustain, keyswitch, repick and panic behavior. A static audio delay
+was rejected because that would be a Haas copy, not a second performance. No
+new knob was added: players still choose only Mono, Stereo or Double. Licensed
+paired eight-string takes remain part of the commissioned listening gate below.
+
+No public source found combines exact eight-string provenance, raw DI,
+independently performed matched rhythms and explicit commercial
+model-calibration rights. [Ueberschall Metal Riffs](https://www.ueberschall.com/en/product/283/Metal-RiffsDOWNLOAD)
+is the closest lead: it contains 7/8-string B/F# material, matching DI versions
+and three performances per riff, but does not identify which groups use eight
+strings. Its [conclusive licensed-use list](https://www.ueberschall.com/en/faq)
+covers music production, not simulator calibration, so both permission and the
+eight-string mapping must be obtained in writing. The CC-BY ccMixter A/B stems
+already audited below are preamped and not identified as matched takes; the two
+CC0 eight-string sources contain only one phrase or isolated notes. They remain
+useful sanity checks, not a timing distribution.
+
+### Fretting-vibrato calibration audit
+
+The [Guitar-TECHS project site](https://guitar-techs.github.io/) and its
+[Zenodo release](https://zenodo.org/records/14963133) provide CC BY 4.0 raw-DI
+technique recordings, score/MIDI alignment and professional-player metadata.
+They are a useful lawful mechanism check, but not an eight-string calibration:
+P1 used an Ibanez PF300 with `.011-.050` strings and its bridge pickup; P2 used
+an EVH Wolfgang with `.009-.042` strings and its neck pickup. The downloaded
+technique archives were not committed. Their SHA-256 receipts are:
+
+```text
+P1_techniques.zip  1e4b80a464182d345e129f3e1158b6c05690c60b5f9be4bde3fb26f23263236e
+P2_techniques.zip  05fc065c010add9e5348095d7198fdc45b967c657e3e12ef8afdb74808371816
+```
+
+The P1 vibrato DI is 44.1 kHz, 24-bit stereo exact dual mono and 527.966667 s;
+its six open-string groups times frets 1-22 give 132 four-second slots. The P2
+DI is 48 kHz, 24-bit stereo exact dual mono and 440 s. The downloaded P2
+vibrato DI/MIDI contains five groups, or 110 slots; no D-string group was
+present. Both MIDI files are format 1 at 960 PPQN.
+
+This was an exploratory phase-tracking audit, not a frozen fit. Python 3.11.0,
+NumPy 1.26.4 and SciPy 1.14.1 analysed 0.25-2.60 s of each slot. For harmonics
+1-12 below 7 kHz, the detector selected the strongest local line between
+0.96 and 1.08 times its expected frequency, applied a fourth-order Butterworth
+band-pass spanning two semitones either side, divided the Hilbert
+instantaneous frequency by the harmonic number, and low-passed the trace at
+20 Hz. Samples below the trace's 20th-percentile envelope or farther than
+250 cents from the target were removed and interpolated. A below-1.5 Hz trend
+was removed; the vibrato rate was the strongest Welch component from 3-9 Hz,
+and excursion was the detrended 2.5-to-97.5-percentile cents span. The
+exploratory reliability gate required a 3-9 Hz peak-coherence score of at least
+0.25 and a 5-100 cent excursion.
+
+P1 yielded 130 usable pitch traces and 114 reliable cells. Their vibrato-rate
+median was 3.822 Hz (P10 3.822, P90 4.672, range 3.398-5.096 Hz); their
+excursion median was 24.81 cents (P10 14.19, P90 39.82, range 7.28-72.19
+cents). P2 did not replicate that result: only one of its 110 cells passed the
+same gate. Its raw candidates were much shallower and had median peak
+coherence 0.066, so treating their apparent 3.83 Hz rate or 5.18-cent depth as
+a player fit would turn detector uncertainty into a parameter.
+
+An independent published experiment broadens the player check without adding
+an eight-string claim. Magalhães et al.'s UFMG
+[master's thesis](https://musica.ufmg.br/lapis/wp-content/uploads/sites/9/2019/02/Tairone-Magalhaes-M-2015.pdf)
+recorded eight guitarists playing two vibrato/bending excerpts four times each,
+all through the same `.010`-strung Fender Stratocaster Deluxe and active DI;
+the clean guitar was captured while the players monitored an overdriven amp.
+The reviewed PDF's SHA-256 is
+`dd04335e0f76394a79a771e528fc452f53eb8fb557e59f16e7aeda388362558e`.
+Figure 28's four observations per player on the long final note place mean
+rates mostly around 4-6 Hz, with one player around 7-8 Hz, and visibly separate
+mean widths. The authors' text reports one growing performance moving from
+about 20 to 140 cents and another staying around 60-80 cents. This is a
+published multi-player range check, not an imported corpus fit: the underlying
+64 recordings are not distributed with an explicit product-calibration grant,
+and the instrument is a conventional six-string.
+
+Electry's settled full gesture is nominally 6.4 Hz with a default 40-cent
+excursion before bounded per-cycle variation; velocity 64 settles near 5.6 Hz
+and 20 cents. P1 points toward a slower/narrower typical hand, while the
+eight-player study shows that the existing upper gesture is still inside a
+real expressive range. P2 and the absence of exact extended-range material
+prevent a universal fit, so no coefficient changed.
+
+The playability surface is now explicit: A#0/MIDI 22 is a visible momentary
+**VIB** key whose Note On velocity sets amount and whose balanced Note Off
+eases the hand back to rest. It is attack-conditioning state, so an A#0 event
+cannot split a simultaneous chord solve; both Double players receive it even
+while the second is dormant. All Sound Off and Reset All Controllers preserve
+a physically held note, while All Notes Off, Panic, prepare and release clear
+it. Channel and polyphonic pressure remain discarded. Exact eight-string lead
+captures are still required before rate, depth and onset can be called frozen.
+
+### CC0 metal-cabinet audit
+
+[Jester Dyne's Brutal IR Pack](https://www.jester-dyne-productions.com/brutal-ir-pack/)
+supplies a lawful real 4x12 reference: its bundled handbook dedicates the pack
+under [CC0](https://creativecommons.org/publicdomain/zero/1.0/). The audited
+anchor is the 48 kHz, 24-bit mono `14_Cathode_Ray_Fleshburn.wav`, an SM57/V30
+capture. Its SHA-256 is
+`420280d44a6cb969d0599aa88f7bc733e13d39cdd051acf8b0eda1d82286ba5f`;
+the source ZIP's is
+`299dc053f01ebd1e980459adc48f9c6b8a8c7af91917b4f946512eefdbb311ea`.
+Neither file is committed.
+
+The current six-section cabinet and the IR were normalized over an equal-log
+70 Hz-8 kHz grid and compared after identical log-frequency smoothing. Their
+broad-magnitude RMSE is 4.40 dB. The largest useful directions are less output
+below the box and a shallower 430-470 Hz cut; the existing upper roll-off is
+already close. Fitting the same six sections to magnitude alone reduced that
+RMSE to 1.59 dB, but the candidate was rejected in the complete instrument:
+the rapid-Palm 30-80 ms upper-body share fell from 7.2913% to 3.0834%, the
+cabinet lost the integrated chain's low-mid-thump and presence rails, and the
+muted amp-plus-compressor level rose to +12.69 dB. A closer isolated magnitude
+curve is therefore not evidence of a better amplifier.
+
+The measured IR reaches its first peak at sample 7 (0.146 ms), contains 99% of
+its energy by 12.3 ms, and an onset-aligned 1,024-sample trim retains 99.636%
+of its energy with 0.495 dB smoothed response error against the full file over
+80 Hz-8 kHz. That makes one fixed, phase-preserved cabinet a defensible future
+upgrade without another user control.
+
+The CC-BY-4.0 [EG-IPT archive](https://zenodo.org/records/15205644) is the
+strongest lawful held-out downstream check found for that candidate. Its
+[primary paper](https://nime.org/proceedings/2025/nime2025_14.pdf) documents
+52,320 simultaneous 96 kHz/24-bit electric-guitar files and paired direct/mic
+paths through an EVH 5150 III 50W 6L6, Mesa 4x12 V30 and five microphone
+sources. Same-performance `_DI.wav`/`_dyn.wav` pairs can compare complete-chain
+attack envelopes and spectral trajectories after fixed level matching. They
+must not be deconvolved into another IR: the amplifier is nonlinear, its gain
+settings are not fully identified for that use, and the released guitar is a
+six-string whose range cannot validate Electry's E1 string mechanics.
+
+A direct stereo FIR would cost about
+98.3 million multiply-accumulates per second at 48 kHz, while a one-block
+1,024-sample convolver would add an unacceptable 21.3 ms. The production path
+therefore requires zero-added-latency partitioned convolution, prepare-time
+resampling, identical pre-cab level-matched renders and listener verification.
+Until then the shipping zero-latency filters stay unchanged.
 
 ## Reproducible model probes
 
@@ -126,6 +324,15 @@ unidentified signal chains are interchangeable:
   notes are mid-register E3/F#3 and G#3/A3 and the author does not call them
   palm mutes, so these stems inform repeated-note variation and timing only,
   not low-string or dry-DI calibration.
+- [8ridgelite](https://github.com/JamesStubbsEng/8ridgelite), frozen here at
+  commit `e69ebe0eb2752243de4678fe84df298555730c94`, is a GPL-3.0 eight-string
+  sampler repository containing 61 uncorrected `Natural` and 61
+  pitch-corrected `Tuned` stereo WAVs. The source maps the files chromatically
+  from MIDI E1 upward. It is the strongest openly downloadable exact-eight
+  open-note lead found, but the author does not document guitar, tuning,
+  string/fret, pickups, recording chain or a raw-DI guarantee, and it supplies
+  only one down-picked sustain per pitch with no mutes or round robins. It is
+  therefore an attack/decay/intonation direction check, not a fit corpus.
 
 The broader search found useful listening and permission leads, but no second
 calibration corpus. [JST Spirit of the Machine](https://joeysturgistones.com/collections/sample-packs/products/riff-vault-spirit-of-the-machine)
@@ -137,7 +344,13 @@ samples or products in its [usage terms](https://urmacademy.zendesk.com/hc/en-us
 [Uproar RAW](https://www.chocolateaudio.com/products/uproar-raw) is a strong
 F#1 eight-string sampled benchmark with standard/dead palm mutes and up to six
 round robins, but its [EULA](https://www.chocolateaudio.com/eula) requires
-written consent for a competitive product. Finally,
+written consent for a competitive product.
+[Pianobook's Clean 8 String Guitar](https://www.pianobook.co.uk/packs/clean-8-string-guitar/)
+is an unusually well-documented 27-inch exact-eight lead with gauges,
+C-G-C-G-C-G-C-E tuning, direct Hi-Z capture and five round robins per note, but
+the [site terms](https://www.pianobook.co.uk/terms-conditions/) expressly forbid
+use in or in relation to competitive products; it requires a separate written
+grant before even private Electry calibration. Finally,
 [aomartinezg/music-sheet-generator](https://github.com/aomartinezg/music-sheet-generator)
 documents an Ibanez RG8 Drop-E DI corpus, but the raw samples were never
 committed and the repository has no license. These are permission or paid
@@ -146,6 +359,84 @@ listening leads, not inputs to the figures below.
 No reference audio is committed. License, instrument identity, register and
 chain are recorded here precisely so a useful secondary reference cannot
 quietly become a calibration master later.
+
+### Exact-eight open-note direction check
+
+The two low `Natural` 8ridgelite anchors are 20-second, 48 kHz, 24-bit stereo
+WAVs. Their SHA-256 values are
+`1a9e05a3a2eeae067bdddd4fc102d50deb0c749bddfb0632c5e1f4a2ac866c5a`
+for `0_e1.wav` and
+`c95c1989892142246b291354bb808e98991a529fb52818920554581165f09018`
+for `13_e2.wav`. The two channels are not duplicates (whole-file correlations
+-0.0984 and -0.0806), but the repository does not identify what they represent,
+so they remain anonymous channels 1 and 2.
+
+Every real and Electry signal uses the same audio-domain alignment. With
+`N = round(0.002 Fs)`, the centred envelope is the RMS of those `N` samples;
+onset is its first crossing of 25% of its own maximum in the following second.
+MIDI Note On, modeled contact start and modeled string-slip time remain
+implementation diagnostics and are not substituted for that audio onset. For
+the model, onset occurs 1.542 ms (E1) and 1.451 ms (E2) after Note On; the
+absolute envelope maxima are 27.324 and 14.286 ms after Note On, yielding the
+table's 25.782 and 12.834 ms audio-onset-relative values. Every decay number is
+RMS relative to the same signal's 0-50 ms window:
+
+| note / signal | onset-to-peak | 50-150 ms | 150-500 ms | 500-1000 ms | 1000-2000 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 8ridgelite Natural E1, channel 1 | 1.79 ms | -2.09 dB | -2.87 dB | -4.39 dB | -6.76 dB |
+| 8ridgelite Natural E1, channel 2 | 2.40 ms | -1.64 dB | -2.97 dB | -4.48 dB | -4.66 dB |
+| Electry E1 Open | 25.78 ms | +0.45 dB | -0.90 dB | -2.15 dB | -4.76 dB |
+| 8ridgelite Natural E2, channel 1 | 1.75 ms | -0.92 dB | -2.24 dB | -3.93 dB | -6.13 dB |
+| 8ridgelite Natural E2, channel 2 | 1.29 ms | -1.49 dB | -2.38 dB | -4.14 dB | -5.50 dB |
+| Electry E2 Open | 12.83 ms | +0.35 dB | -1.46 dB | -4.00 dB | -8.00 dB |
+
+The late open decay is already near this reference: Electry E1's 1-2 second
+change lies between its two channels, and E2 falls only 1.87-2.50 dB farther.
+The global-peak column initially looks like a late low-string attack, but a
+code-path audit narrows the alarm. With `T = Fs/f0`, define the first-lobe crest
+as the envelope maximum from onset to `0.5T`, and the returned-lobe crest from
+`0.5T` to `1.5T`. Electry's first-lobe crests arrive 1.429 ms after E1 onset
+and 1.678 ms after E2 onset, comparable to the reference's 1.29-2.40 ms global
+peaks. Its returned lobe then wins by only +1.20 and +2.77 dB, moving the
+reported global maximum almost one period later. This is not a late MIDI event
+or pickup tap: the direct excitation is available immediately, and the
+bridge-pickup travel is only about 1.32 ms on E1 and 0.66 ms on E2.
+
+The returned maximum follows the far travelling-wave path represented by the
+folded loop's pluck-position image. For a pluck at `x = pL` from the bridge and
+a pickup at `qL < x`, the bridgeward wave reaches the pickup after
+`(p-q)T/2`; the nutward wave reflects and arrives after `T-(p+q)T/2`. Their
+separation is therefore `(1-p)T`, independent of pickup position. The current
+loop realizes that physically plausible separation by writing its image `pT`
+behind the write head while feedback reads a full period `T` behind. At the
+default near-bridge pick position, that geometry plus the two modal-pole rise
+times predicts about 25.2 ms on E1 and 12.6 ms on E2, close to the measured
+returned crests.
+
+That diagnosis does not establish a correction.
+[Lee, Depalle and Scavone's electric-guitar waveguide](https://jcaa.caa-aca.ca/index.php/jcaa/article/view/2443)
+splits an ideal acceleration pluck into both travelling-wave lines, while
+[Välimäki et al.'s single-delay-loop reduction](https://aaltodoc.aalto.fi/bitstreams/3e583e58-7367-48b0-a571-fc530b2a3d20/download)
+places its pluck-position FIR comb before the feedback loop. At the ideal string
+modes, using `pT` or `(1-p)T` for the comb delay is magnitude-equivalent but not
+a proof that either transient phase reference is superior at an inharmonic,
+filtered pickup output. Complementing the current history offset can remain a
+non-shipping phase-orientation diagnostic, not a presumed root fix. Because
+global onset-to-peak jumps by a whole period whenever the two nearly competing
+crests exchange rank, any capture study must retain first-crest timing and
+returned/first-crest ratio instead of fitting only that discontinuous maximum;
+it must decide path balance, termination loss and excitation phase separately.
+
+Eight inspected Natural pitch anchors from E1 through E4 put E1 at
++36.56/+49.05 cents while the remaining fourteen channel values have a median
+absolute deviation of 3.8 cents and a +0.3..+18.6-cent range. The repository's
+separately corrected E1 is -0.30/+1.67 cents, confirming that the large Natural
+E1 offset is source intonation or tuning rather than a target for Electry.
+
+One edited sampler take, no pickup identity and no repeats cannot set a release
+time or shipping threshold. Preserve the current excitation, tuning and decay
+rails; use the attack result to prioritize a controlled multi-player
+exact-eight pick capture, never to fit path balance directly to these files.
 
 ### CC0 seven-string muted/sustained matrix
 
@@ -1055,6 +1346,116 @@ and adds no fretting-key owner. Durable per-string ownership survives an audible
 Mute or Dead voice's retirement, keeps that stopped string out of open-string
 sympathetic and free-string allocation paths until normal voice stealing, and
 lets the picking hand restart it from silence.
+The live fretboard is the visible front end to that same path: clicking a held
+row sends one hard repick through the processor's bounded UI queue, while the
+MIDI lane keeps velocity and sequencer timing. It adds no second ownership or
+new articulation model and leaves an unheld row silent.
+
+### Tremolo-picking workflow and rate audit
+
+The per-string lane solved exact sequencer control, but it did not provide the
+single held gesture players expect for a long black-metal line. The official
+manuals show several distinct answers rather than one industry-standard rate
+control:
+
+| instrument/workflow | officially documented repeat surface |
+| --- | --- |
+| [Shreddage 3.5 Hydra](https://impactsoundworks.com/manuals/Shreddage%203.5%20Hydra%20Manual.pdf) | a looping recorded Tremolo articulation, per-string E6..B6 repicks and a D#0 last-note retrigger |
+| [Electric Storm Deluxe](https://docs.native-instruments.com/ni-tech-manuals/electric-storm-deluxe-manual/en/using-electric-storm-deluxe) | a recorded tremolo articulation plus tempo-scaled performed patterns and timing humanization |
+| [Evolution Dracus](https://www.orangetreesamples.com/download/manual/EvolutionEngine-UserGuide.pdf) | manual repeat keys and a pattern grid in the shared Evolution engine |
+| [Ample Metal Hellrazer](https://www.amplesound.net/en/Main_Panel_Manual-AMH.pdf) | D6 repeats all currently held notes |
+| [RealEight](https://www.musiclab.com/assets/files/RealEight.pdf) | manual repeat control and an automatic generator from 1/4 through 1/64-triplet divisions with 0-100 ms humanization |
+| [Heavier7Strings](https://download.threebodytech.com/Heavier7Strings/en/usermanual?type=download) | a held tremolo/manual-repeat performance control, without a published strokes-per-second scale |
+
+This supports one obvious, holdable wrist and continued access to exact repick
+events. It does not support copying a sampled loop, inventing an unmeasured
+human-error distribution or treating transport-synced patterns as the only
+workflow.
+
+The strongest rate evidence found is Armondes' 2026
+[five-player doctoral experiment](https://repositorio.ufmg.br/items/8f3c7648-dd7b-4768-868f-2283bfc7822b).
+Its second experiment contains 40 recordings: five players, two strings,
+direct-at-maximum and progressive strategies, and two takes. The 20 direct
+recordings' plotted inter-onset intervals visually occupy roughly 70-90 ms,
+or about 11-14 attacks/s; those values are read from boxplots rather than a
+published numeric table. The instrument is a conventional nylon-string guitar,
+not an electric eight-string, so that cluster only makes a 12 strokes/s default
+plausible. It cannot fit Electry's force, missed-stroke or timing distributions.
+
+The CC-BY-4.0
+[EG-IPT corpus](https://zenodo.org/records/15205644) contributes 52,320 raw
+96 kHz/24-bit electric-guitar files, including a tremolo class, but its released
+guitar is a six-string Gibson SG. The associated
+[NIME 2025 paper](https://www.nime.org/proc/nime2025_14/index.html) describes a
+seven-string holdout that is not part of the distributed licensed set. No
+commercially reusable exact-eight tremolo corpus was found. Accordingly, the
+8/12/16 strokes/s rows in Electry's capture protocol remain future commissioned
+TRAIN/HOLDOUT anchors, not validation data.
+
+Electry now makes B0/MIDI 23 a visible momentary **TRM** wrist. Velocity remains
+pick force and the appended `tremoloRate` parameter spans 4-20 strokes/s with a
+12 strokes/s default. Starting the gesture arms one immediate contact on the
+next internal sample for notes that are already physically held. A playable
+Note On at that same boundary consumes the armed contact instead of receiving a
+duplicate attack. One shared fractional phase repicks all physically held
+strings through the existing attack path, so Alternate advances once for a
+chord; sustain-only strings remain inert. A due contact is skipped while any
+held string still has an in-flight Strum delay rather than overwriting that
+pending attack. E6..B6 retain their established one-shot behavior.
+
+Overlapping B0 owners balance; a positive repeated Note On restarts the phase
+and updates force, while a zero-velocity Note On releases an owner. CC120 and
+CC121 preserve a physically held wrist, whereas CC123, Panic, prepare and
+release clear it. Output-mode changes route the gesture to both engines. The
+active hold is transient and never serialized; only its rate is saved. The
+scheduler is deliberately free-running rather than host-tempo synchronized,
+and adds no jitter, missed strokes, pattern editor or hidden direction bias.
+`22-tremolo-picking-study.wav` renders the planned 8/12/16 rate anchors,
+a moving single-note line, a vibrato lead and a held chord through the same
+physical path. It is audible workflow proof, not a human-performance fit.
+
+### Complete-batch strum latency check
+
+The exact-sample allocation solve below already gives the scheduler a complete
+physical chord before any voice starts. The retained strum implementation did
+not use that fact: it charged the scalar API's 20 ms causal re-anchor window to
+every nonzero-spread batch, including a batch containing only one note. This was
+not acoustic guitar latency or requested string travel; it was avoidable
+scheduler lookahead in the normal plug-in path.
+
+At a 48 kHz host rate the JUCE-free engine runs at 96 kHz. The scalar fallback
+continues to hold a provisionally anchored chord for 1,920 internal samples,
+because successive scalar calls may still reveal a different edge. A complete
+batch now schedules the solved Down or Up edge at delay 0. Its later strings
+retain the same accelerating offsets, and the seven-crossing duration is
+sample-identical to the scalar fixture after subtracting that common pre-roll.
+At a 12 ms setting the complete eight-string schedule is therefore 0.0, 14.7,
+28.1, 40.7, 52.4, 63.5, 73.9 and 84.0 ms rather than 20.0 through 104.0 ms.
+
+The frozen regressions establish the boundary rather than inferring it from a
+mixed demo waveform:
+
+- a complete one-note batch rendered for 4,096 samples is byte-identical at
+  zero and 20 ms/string spread, and both voice delays are zero;
+- complete Down and Up chords begin at their respective edge, reverse their
+  monotone travel, and preserve the scalar path's total crossing time;
+- the same scheduled chord rendered in 17- and 512-sample client blocks is
+  byte-identical stereo;
+- a second one-note batch 10 ms later advances Alternate to Up and begins at
+  delay zero instead of merging into the preceding chord window;
+- releasing the high string before a 40 ms/string stroke reaches it clears the
+  pending contact, and the resulting stereo is byte-identical to the same
+  low-string-only batch;
+- through the processor, a one-note host event at sample 137 is byte-identical
+  at zero and 12 ms/string spread, while a three-note spread chord begins on
+  the same sample as its zero-spread counterpart and remains permutation
+  invariant.
+
+No excitation, velocity, timbre or travel coefficient changed. The demo
+renderer now marks its written note/chord boundaries as complete batches, the
+same contract the processor uses. Later MIDI timestamps remain performed
+timing and start new strokes; only a client explicitly choosing successive
+scalar calls pays the causal fallback.
 
 The same audit exposed a fingering defect that sounded like broken tuning:
 simultaneous chord notes were allocated one at a time, so host insertion order
@@ -1078,7 +1479,7 @@ releasing-string obstacles and the deterministic lowest-eight overflow policy
 have their own gates. The solve is deliberately chord-local; it does not claim
 phrase-wide fingering look-ahead.
 
-`LATCH | HOLD` is saved as non-parameter state alongside the current 26 host
+`LATCH | HOLD` is saved as non-parameter state alongside the current 27 host
 parameters; transient held keys are never serialized. Because Electry is not
 released, the suite pins current-state round trips rather than migration from
 older development layouts. Play-style Note On, Note
@@ -1093,8 +1494,12 @@ Alternate, Mute/Dead capture, original-key release, full audio retirement,
 allocation, sympathetic exclusion and the live fretboard. These controls close
 the documented workflow gaps without copying discrete half/full/short layers:
 Mute Tightness, Mute Pressure (CC2) and stroke force remain one continuous
-bridge-hand surface. The rendered evaluator targets remain unchanged because
-the new path is a live performance gesture, not a new articulation model.
+bridge-hand surface. B0 is separately pinned for exact rate across four host
+sample rates, block-partition identity, shared chord direction, same-boundary
+attack conditioning, Strum deferral, sustain exclusion, owner/lifecycle rules,
+state round trips and UI/host parity. Demo 22 exposes the gesture, while the
+frozen model-evaluator targets remain unchanged because this is a performance
+path rather than a new articulation model.
 
 The adjacent specialist bar is
 [Outboard PalmML](https://outboard.audio/en/help/outboard-palmml): it is a
@@ -1163,10 +1568,10 @@ directory and validator remain unchanged.
 
 The [GOAT dataset](https://github.com/JackJamesLoth/GOAT-Dataset) was inspected
 rather than dismissed from its instrument list: its published corpus is six
-strings EADGBe, and the [archive terms](https://zenodo.org/records/15690894)
-restrict it to research use and explicitly exclude commercial-product use. A
-listed Strandberg therefore does not turn it into either an extended-range or
-lawful product-calibration source.
+strings EADGBe, and the [archive record](https://zenodo.org/records/15690894)
+is CC BY-NC 4.0 with an additional research-only, no-commercial-product
+statement. A listed Strandberg therefore does not turn it into either an
+extended-range or lawful product-calibration source.
 
 The 2025 [EG-IPT dataset](https://zenodo.org/records/15205644) contains 52,320
 files across 19 techniques from a six-string 2005 Gibson SG Standard, including
@@ -1176,6 +1581,14 @@ pair supplies the E2 mechanism check above; it remains unsuitable for E1
 fitting or an eight-string product benchmark because the pitch is measured
 rather than documented, the performances are unpaired, and no velocity,
 stroke-direction or pressure match is provided.
+
+The 2026
+[Longitudinal Guitar String Ageing dataset](https://zenodo.org/records/19823590)
+is another lawful CC BY 4.0 auxiliary: two conventional six-string players and
+guitars contribute raw 48 kHz DI across 28 daily sessions, including fixed
+60 BPM open-string repetitions, bends, slides and legato. It is a strong future
+source for repeat/age distributions, but neither guitar is extended-range and
+it cannot calibrate E1, eight-string pickup balance or Palm/Dead contact.
 
 Each player/guitar session contains ten unprocessed isolated-note files: E1 and
 E2, each as `open`, `palm-near`, `palm-middle`, `palm-far` and `dead`. Files are

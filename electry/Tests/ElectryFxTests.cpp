@@ -931,7 +931,7 @@ void testCabinetVoicing()
     const double top = ampPathMagnitudeDb(8000.0);
     const double beyond = ampPathMagnitudeDb(12000.0);
 
-    std::cout << "Cabinet response relative to 1 kHz: 60 Hz "
+    std::cout << "Cabinet response relative to 1 kHz: 45 Hz "
               << low - reference << ", 110 Hz " << thump - reference
               << ", 470 Hz " << honk - reference << ", 3.1 kHz "
               << presence - reference << ", 8 kHz " << top - reference

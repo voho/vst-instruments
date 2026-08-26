@@ -12,6 +12,178 @@ they were chosen on. Where a constant is voiced rather than literature-derived
 it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-26 — start a complete strum at its known edge
+
+The processor already collects all ordinary positive Note Ons at an exact MIDI
+timestamp and passes them through the engine's bounded whole-chord allocation
+solve. That solve knows every assigned physical string before any voice starts,
+but the strum scheduler still treated the group like an incomplete scalar
+stream: any nonzero Strum Spread charged its fixed 20 ms re-anchor pre-roll to
+the leading string. A single-note prog-metal line therefore felt 20 ms late even
+though there was no second string to wait for.
+
+Decision: an exact-sample `noteOnChord` group is one complete performed stroke.
+Pre-anchor its picked edge from the solved string assignment, start that edge at
+the MIDI timestamp and retain the existing accelerating travel for every later
+string. A one-note group has no crossing and is a sample-exact spread no-op. A
+group at a later timestamp is a new stroke even inside the scalar chord window,
+so Alternate advances and deliberate sequencer timing remains timing. Keep the
+20 ms pre-roll only on the public scalar note path, where a later call can still
+causally reveal an earlier edge; do not add plug-in latency or a new control.
+
+The regression pins down/up edge order, unchanged seven-crossing duration,
+one-note identity, hostile render-block partitioning, later-timestamp Alternate
+advance and early release of an un-crossed string. The demo renderer now sends
+its explicitly written chords and individual note boundaries through the same
+complete-batch path as the plug-in. This is a scheduling/playability correction,
+not a by-ear voicing decision.
+
+## 2026-08-26 — add one visible tremolo wrist; preserve one-shot repicks
+
+The official workflow audit found three commercial answers to fast repetition.
+Shreddage Hydra and Electric Storm Deluxe expose looping recorded tremolo;
+Dracus, Hellrazer and Heavier7 expose manual repeat gestures and/or pattern
+lanes; RealEight is the only audited product with a clearly documented
+automatic host-synchronised subdivision generator. The strongest direct-rate
+study found is Armondes' 2026 UFMG experiment: twenty direct-at-maximum takes
+from five conventional-guitar players place the plotted median IOIs roughly at
+70–90 ms, or about 11–14 attacks/s. That is useful scale evidence, not an
+electric eight-string fit. No commercially reusable exact-eight tremolo corpus
+was found; EG-IPT supplies CC-BY electric-guitar tremolo only on its published
+six-string set.
+
+Decision: expose B0/MIDI 23 as a visible momentary **TRM** gesture. Note On
+velocity remains pick force; balanced Note Off stops future contacts and lets
+the string ring. One shared fractional wrist phase repicks every physically
+held string through the existing E6..B6 contact path, so Alternate, Play Style,
+Strum, variation, fretting ownership and Double keep one implementation. A
+same-boundary playable Note On is already the first contact. A due tick is
+skipped while a prior Strum traversal is still travelling, preventing a newer
+repeat from replacing a contact that has not reached its string.
+
+The new `tremoloRate` parameter is deliberately free-running 4–20 strokes/s,
+defaults to 12, and is appended after the existing automation list so all old
+host indices remain stable. The exact-eight commissioning protocol's 8/12/16
+anchors correspond to sixteenths at 120/180/240 BPM. Keep E6..B6 one-shot and
+their Note Off inert: changing their established long-gate semantics would be
+a needless compatibility break. Defer host-transport divisions, a pattern
+editor, random timing, missed strokes and direction-level bias until licensed
+captures establish what should vary. B0 and CC120/121 preserve a physically
+held wrist; CC123, Panic, prepare and release clear it. The gesture is not saved.
+
+## 2026-08-26 — diagnose the low-string returned crest; retain its path timing
+
+The GPL-3.0 8ridgelite E1/E2 sustains put their global 2 ms RMS peaks about
+1.3-2.4 ms after audio onset, while Electry's occur 25.8 and 12.8 ms after
+onset. The model is not silent until then: its first-lobe crests arrive at 1.43
+and 1.68 ms, but a returned crest wins by 1.20 and 2.77 dB. A code trace explains
+the octave-scaled delay. A pluck at `pL` from the bridge produces one wave that
+travels directly bridgeward and a second that returns from the nut; at a pickup
+between bridge and pluck, their arrival separation is `(1-p)T`. The folded loop
+realizes that path with its image and one loop-filter pass. The predicted
+25.2/12.6 ms return matches the measured crests closely; pick-contact duration
+and pickup travel do not explain them.
+
+Decision: retain the shipping excitation and its path timing. The geometry is
+physically plausible; the unvalidated part is the returned path winning over
+the first by 1.20/2.77 dB. Published bidirectional waveguides split an ideal
+pluck into both travelling waves, while single-delay reductions may express
+the position effect as a pre-loop comb; their ideal-harmonic magnitude
+equivalence does not identify the better transient phase at Electry's filtered,
+inharmonic pickup output. Complementing the history offset is at most a
+non-shipping diagnostic, not a presumed fix. One undocumented sampled stroke
+per pitch cannot determine path balance, termination loss or excitation phase.
+First commission multi-player TRAIN/HOLDOUT captures and compare first-crest
+timing plus returned/first ratio before changing the core transient.
+
+## 2026-08-26 — expose the existing picking hand on the live fretboard
+
+The current official-product audit found that leading metal guitar libraries
+make direct string strikes and repetition controls discoverable. Electry
+already had a tested, velocity-sensitive E6..B6 lane that repicks a physically
+held string without changing its fretting owner, but the on-screen piano ends
+at the highest real pitch so that lane existed only in documentation and
+external MIDI.
+
+Decision: let a click on any live-fretboard row send one hard attack through
+the processor's existing bounded UI queue and repick path. The section title,
+accessible title and tooltip explain the gesture; an unheld row remains silent.
+External MIDI retains velocity and exact sequencer timing. Do not add another
+engine path, articulation, host parameter or pattern workstation for this
+surface. Host-tempo synchronisation and a pattern lane remain separate workflow
+candidates, not claims made by a mouse click or the later free-rate B0 wrist.
+
+## 2026-08-26 — keep fretting-hand gestures out of the plectrum path
+
+The engine already had one predicate saying whether a plectrum physically
+contacts a string, but the note scheduler and parts of the excitation did not
+consistently use it. With Strum Spread enabled, a fresh Hammer/tap waited for
+the wrist's pre-roll and Double-player offset, entered the pick-contact loss
+phase, and still changed with Pick Hardness. A legato Slide could re-anchor a
+real picked chord that was already in flight and added a small destination
+pluck despite its continuous-string design.
+
+Decision: use the existing contact predicate as the boundary for wrist timing,
+chord anchoring, Alternate-stroke consumption, contact loss and plectrum-only
+controls. A Hammer or pull-off retains its established default finger-impact
+voicing, but Pick Position, Pick Hardness, Pick Noise, Strum Spread and Double's
+player pocket cannot change when that contact occurs. A Slide that begins a
+phrase is still picked; a Slide on a ringing string preserves the loop and adds
+only its speed-dependent finger friction. No parameter, articulation or hidden
+controller was added.
+
+The Guitar-TECHS vibrato audit in the evaluation found one usable conventional
+six-string player cluster and one too shallow/incoherent for a stable fit. A
+second published UFMG study contributes four performances each from eight
+guitarists on one DI-captured `.010`-strung Stratocaster: its long-note means
+span roughly 4-8 Hz and distinctly narrow-to-wide hands. Together they place
+the existing 5.6 Hz / 20-cent mid-velocity gesture and 6.4 Hz / 40-cent full
+gesture inside a real six-string range, but still do not justify coefficient
+retuning or an exact eight-string claim.
+
+The extended solo and blues-lead demos made the remaining product problem
+concrete: an audible technique shown by the instrument was not playable from
+the instrument. Decision: preserve the DSP coefficients and expose A#0/MIDI 22
+as a visible momentary **VIB** key, with Note On velocity controlling amount
+and balanced Note Off ownership. It conditions a whole simultaneous chord,
+always mirrors both Double engines, preserves a physically held key through
+CC120/CC121 and clears on CC123, Panic, prepare and release. Channel and
+polyphonic pressure stay unassigned, and no host parameter or new panel control
+is added. Exact eight-string lead captures remain the calibration gate, not the
+gate for making the existing gesture understandable and playable.
+
+## 2026-08-26 — give Double a player's clock; defer a new repick contact
+
+Four CC-BY [HiMMP “In Solitude” rhythm DIs](https://himmp.net/faq.html)
+provided 1,844 four-way matched energy-rise onsets under the frozen exploratory
+detector recorded in the evaluation. The six pairwise absolute-timing medians
+span 5.99-7.98 ms and their 90th percentiles span 11.97-17.96 ms.
+They are conventional six-string Drop-C takes, not a licensed eight-string
+calibration set, so they establish nonzero human-take timing without setting a
+full-width target for Electry. The closest exact-performance lead,
+[Ueberschall Metal Riffs](https://www.ueberschall.com/en/product/283/Metal-RiffsDOWNLOAD),
+mixes 7/8-string sources and three DI performances without mapping
+the eight-string groups or licensing simulator calibration; it remains a
+written-permission target, not fitting data.
+
+Decision: retain the established seed-zero player sample exactly, while the
+fixed-seed second engine in Double draws one causal 0-6 ms picked-stroke offset
+(3 ms mean, 1 ms standard deviation). One wrist stroke gives a whole chord one
+offset and then composes with its existing string-crossing travel. Hammer
+contacts are not delayed. Put this inside the physical contact scheduler, where
+early releases, sustain, delayed repicks, panic and host-block crossings already
+have one owner. Reject a processor MIDI queue and a static channel delay: the
+former duplicates lifecycle state and the latter is a Haas copy, not another
+performance. The user surface remains the single Mono/Stereo/Double choice.
+
+The repick audit found the current event/state path correct but its legacy
+whole-loop contact loss nearly inert on E1/E2. A loss-only unilateral contact
+at the pick position has a pointwise passive prototype, but the available real
+repetitions establish only topology, not its boundary, depth or duration.
+Decision: do not ship or tune that mechanism before the commissioned dry
+eight-string TRAIN/HOLDOUT captures. Preserve the existing rapid-repick rails
+and the exact pre-contact state in the meantime.
+
 ## 2026-08-26 — keep displayed notes and MIDI bends in tune
 
 A user tuning report reproduced a presentation error, not a base-frequency

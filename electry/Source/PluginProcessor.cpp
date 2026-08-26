@@ -62,6 +62,13 @@ constexpr auto pickStyleProperty = "pickStyle";
 constexpr auto playStyleProperty = "playStyle";
 constexpr auto playStyleKeysHoldProperty = "playStyleKeysHold";
 
+bool isAttackConditioningNote (int note) noexcept
+{
+    return electry::ElectryEngine::isKeyswitchNote (note)
+        || electry::ElectryEngine::isVibratoGestureNote (note)
+        || electry::ElectryEngine::isTremoloGestureNote (note);
+}
+
 bool isAttackConditioningMidiEvent (
     const juce::MidiMessageMetadata& metadata) noexcept
 {
@@ -71,14 +78,14 @@ bool isAttackConditioningMidiEvent (
     const auto kind = static_cast<unsigned> (metadata.data[0]) & 0xf0u;
     if (kind == 0x90u && metadata.numBytes >= 3)
     {
-        return electry::ElectryEngine::isKeyswitchNote (
-            static_cast<int> (metadata.data[1] & 0x7fu));
+        const int note = static_cast<int> (metadata.data[1] & 0x7fu);
+        return isAttackConditioningNote (note);
     }
 
     if (kind == 0x80u && metadata.numBytes >= 3)
     {
-        return electry::ElectryEngine::isKeyswitchNote (
-            static_cast<int> (metadata.data[1] & 0x7fu));
+        const int note = static_cast<int> (metadata.data[1] & 0x7fu);
+        return isAttackConditioningNote (note);
     }
 
     if (kind != 0xb0u || metadata.numBytes < 3)
@@ -201,8 +208,8 @@ ElectryAudioProcessor::ElectryAudioProcessor()
 {
     using namespace electry::parameters;
 
-    // Fixed, distinct player stream: repeatable project renders, but not a
-    // phase-identical copy of the primary engine when DOUBLE is selected.
+    // Fixed, distinct player stream: repeatable contact and performance
+    // timing, but not a phase-identical copy of the primary engine in DOUBLE.
     doubleEngine->setVariationSeed (0x9e3779b9u);
 
     parameterPointers.pickupSelector = parameters.getRawParameterValue (pickupSelector);
@@ -230,6 +237,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.sympathetic    = parameters.getRawParameterValue (sympathetic);
     parameterPointers.palmMute       = parameters.getRawParameterValue (palmMute);
     parameterPointers.strumSpread    = parameters.getRawParameterValue (strumSpread);
+    parameterPointers.tremoloRate    = parameters.getRawParameterValue (tremoloRate);
     parameterPointers.resonanceDepth = parameters.getRawParameterValue (resonanceDepth);
 
     jassert (parameterPointers.pickupSelector != nullptr
@@ -243,6 +251,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.sympathetic != nullptr
              && parameterPointers.palmMute != nullptr
              && parameterPointers.strumSpread != nullptr
+             && parameterPointers.tremoloRate != nullptr
              && parameterPointers.resonanceDepth != nullptr);
     keyboardState.addListener (this);
 }
@@ -308,7 +317,7 @@ ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (26);
+    result.reserve (27);
 
     // Every default below is read from the engine's own struct rather than
     // written out again here. These two lists had drifted apart: the engine's
@@ -406,6 +415,18 @@ ElectryAudioProcessor::createParameterLayout()
                   .withLabel ("%")
                   .withStringFromValueFunction (percentText100)
                   .withValueFromStringFunction (plainNumericValue));
+    // New parameters append to the published list so existing host automation
+    // indices remain stable; editor order is independent of this layout.
+    addFloat (tremoloRate, "Tremolo picking rate", { 4.0f, 20.0f, 0.1f },
+              engineDefaults.tremoloRateHz,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("strokes/s")
+                  .withStringFromValueFunction (
+                      [] (float value, int)
+                      {
+                          return juce::String (value, 1) + " strokes/s";
+                      })
+                  .withValueFromStringFunction (plainNumericValue));
 
     return { result.begin(), result.end() };
 }
@@ -433,6 +454,8 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     resetEngineWithArticulations (
         pickStyleIndex.load (std::memory_order_relaxed),
         appliedBasePlayStyleIndex);
+    clearVibratoGesture();
+    clearTremoloGesture();
     engine.setPitchBend (0.0f);
     doubleEngine->setPitchBend (0.0f);
     engine.setResonance (0.0f);
@@ -463,6 +486,8 @@ void ElectryAudioProcessor::releaseResources()
     engine.setPalmMutePressure (0.0f);
     doubleEngine->setPalmMutePressure (0.0f);
     midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
+    clearVibratoGesture();
+    clearTremoloGesture();
     engine.allNotesOff();
     doubleEngine->allNotesOff();
     engine.reset();
@@ -509,6 +534,8 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // lost after its immediate display latch has changed.
         discardUiMidiEvents();
         clearHeldPlayStyles();
+        clearVibratoGesture();
+        clearTremoloGesture();
         appliedBasePlayStyleIndex = juce::jlimit (
             0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
             playStyleIndex.load (std::memory_order_relaxed));
@@ -740,6 +767,8 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             // ring-out remains musical. In HOLD mode the play-style
             // keyswitches are notes too, so they return to the saved base.
             clearHeldPlayStyles();
+            clearVibratoGesture();
+            clearTremoloGesture();
             applyPlayStyle (appliedBasePlayStyleIndex);
             engine.allNotesOff();
             doubleEngine->allNotesOff();
@@ -759,6 +788,32 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
 void ElectryAudioProcessor::dispatchNoteOn (
     int note, float velocity, bool selectsBaseArticulation) noexcept
 {
+    if (electry::ElectryEngine::isVibratoGestureNote (note))
+    {
+        if (velocity <= 0.0f)
+        {
+            dispatchNoteOff (note);
+            return;
+        }
+        if (vibratoGestureOwners < std::numeric_limits<std::uint16_t>::max())
+            ++vibratoGestureOwners;
+        applyVibratoGesture (velocity);
+        return;
+    }
+
+    if (electry::ElectryEngine::isTremoloGestureNote (note))
+    {
+        if (velocity <= 0.0f)
+        {
+            dispatchNoteOff (note);
+            return;
+        }
+        if (tremoloGestureOwners < std::numeric_limits<std::uint16_t>::max())
+            ++tremoloGestureOwners;
+        applyTremoloGesture (velocity);
+        return;
+    }
+
     const int articulation = note - electry::ElectryEngine::firstKeyswitchNote;
     if (articulation < 0
         || articulation >= electry::ElectryEngine::keyswitchCount)
@@ -805,6 +860,24 @@ void ElectryAudioProcessor::dispatchNoteOn (
 
 void ElectryAudioProcessor::dispatchNoteOff (int note) noexcept
 {
+    if (electry::ElectryEngine::isVibratoGestureNote (note))
+    {
+        if (vibratoGestureOwners == 0)
+            return;
+        if (--vibratoGestureOwners == 0)
+            applyVibratoGesture (0.0f);
+        return;
+    }
+
+    if (electry::ElectryEngine::isTremoloGestureNote (note))
+    {
+        if (tremoloGestureOwners == 0)
+            return;
+        if (--tremoloGestureOwners == 0)
+            applyTremoloGesture (0.0f);
+        return;
+    }
+
     const int style = note - electry::ElectryEngine::firstPlayStyleKeyswitchNote;
     if (! appliedPlayStyleKeysHold || style < 0
         || style >= electry::ElectryEngine::playStyleKeyswitchCount)
@@ -859,6 +932,45 @@ void ElectryAudioProcessor::clearHeldPlayStyles() noexcept
     heldPlayStyleCounts.fill (0);
     heldPlayStyleOrder.fill (0);
     heldPlayStyleSequence = 0;
+}
+
+void ElectryAudioProcessor::applyVibratoGesture (float amount) noexcept
+{
+    amount = juce::jlimit (0.0f, 1.0f, std::isfinite (amount) ? amount : 0.0f);
+    engine.setVibrato (amount);
+    doubleEngine->setVibrato (amount);
+    vibratoGestureForDisplay.store (
+        juce::roundToInt (127.0f * amount), std::memory_order_relaxed);
+}
+
+void ElectryAudioProcessor::clearVibratoGesture() noexcept
+{
+    vibratoGestureOwners = 0;
+    applyVibratoGesture (0.0f);
+}
+
+void ElectryAudioProcessor::applyTremoloGesture (float velocity) noexcept
+{
+    velocity = juce::jlimit (0.0f, 1.0f,
+                             std::isfinite (velocity) ? velocity : 0.0f);
+    if (velocity > 0.0f)
+    {
+        engine.beginTremoloPicking (velocity);
+        doubleEngine->beginTremoloPicking (velocity);
+    }
+    else
+    {
+        engine.endTremoloPicking();
+        doubleEngine->endTremoloPicking();
+    }
+    tremoloGestureForDisplay.store (
+        juce::roundToInt (127.0f * velocity), std::memory_order_relaxed);
+}
+
+void ElectryAudioProcessor::clearTremoloGesture() noexcept
+{
+    tremoloGestureOwners = 0;
+    applyTremoloGesture (0.0f);
 }
 
 void ElectryAudioProcessor::synchronisePlayStyleKeyMode() noexcept
@@ -930,6 +1042,7 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.sympatheticAmount = valueOf (parameterPointers.sympathetic);
     next.palmMute = valueOf (parameterPointers.palmMute);
     next.strumSpreadSeconds = 0.001f * valueOf (parameterPointers.strumSpread);
+    next.tremoloRateHz = valueOf (parameterPointers.tremoloRate);
     next.resonanceDepth = 0.01f * valueOf (parameterPointers.resonanceDepth);
     const auto mode = juce::jlimit (0, 2,
         juce::roundToInt (valueOf (parameterPointers.outputMode)));
@@ -1006,6 +1119,19 @@ void ElectryAudioProcessor::triggerArticulation (int articulationIndex)
         1.0f, true, true);
 }
 
+void ElectryAudioProcessor::triggerStringRepick (int stringIndex,
+                                                 float velocity)
+{
+    if (stringIndex < 0
+        || stringIndex >= electry::ElectryEngine::stringCount
+        || velocity <= 0.0f)
+        return;
+
+    enqueueUiMidiEvent (
+        electry::ElectryEngine::firstRepickNote + stringIndex,
+        velocity, true);
+}
+
 void ElectryAudioProcessor::setPlayStyleKeysHold (bool shouldHold)
 {
     if (playStyleKeysHold.exchange (shouldHold, std::memory_order_relaxed)
@@ -1070,7 +1196,7 @@ void ElectryAudioProcessor::dispatchUiMidiEventPass (unsigned begin,
     {
         const auto event = uiMidiQueue[read];
         const bool eventConditionsAttack =
-            electry::ElectryEngine::isKeyswitchNote (event.note);
+            isAttackConditioningNote (event.note);
         if (eventConditionsAttack == conditioning)
         {
             if (conditioning)

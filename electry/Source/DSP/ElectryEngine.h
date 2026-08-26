@@ -180,13 +180,17 @@ struct EngineParameters
     // Per-string offset of a strummed chord, in seconds of pick travel per
     // string crossed. 0 keeps simultaneous note-ons exactly simultaneous.
     float strumSpreadSeconds { 0.0f };
+    // Automatic held-string repick speed. The shipping 12 strokes/s is the
+    // centre of the commissioned 8/12/16-strokes/s capture protocol and maps
+    // to sixteenth notes at 180 BPM without making the engine transport-aware.
+    float tremoloRateHz { 12.0f };
     // Full-scale depth of the CC1 resonance control: how far a fully raised
     // modulation wheel can push the sympathetic coupling toward total and how
     // much amplified output is allowed to feed back into the strings. At 1 a
     // raised wheel lets a distorted tone self-resonate; at 0 CC1 does nothing.
     float resonanceDepth { 0.35f };
-    // Widest excursion the fretting-hand vibrato reaches at full channel
-    // pressure, mapped over the range a finger can actually cover: 10 cents
+    // Widest excursion the fretting-hand vibrato reaches at a full gesture,
+    // mapped over the range a finger can actually cover: 10 cents
     // at 0 is the narrow rock a player uses to keep a held note alive, and
     // 110 cents at 1 is the semitone-wide arc of a rock vibrato leaned all
     // the way in. The shipping default puts it at 40 cents, which is where
@@ -231,8 +235,10 @@ public:
     // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
     // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics/Pinch/
     // Slide/Dead). The two banks latch independently, so any of the twenty-one
-    // combinations can be reached in two keyswitches at most. Notes between
-    // the banks and the playable range (22..27) are ignored.
+    // combinations can be reached in two keyswitches at most. A#0 (22) is the
+    // plug-in's momentary fretting-vibrato gesture and B0 (23) its momentary
+    // tremolo-picking wrist; the remaining notes before the playable range
+    // (24..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
@@ -242,6 +248,8 @@ public:
                                         + playStyleKeyswitchCount;
     static constexpr int firstPlayStyleKeyswitchNote
         = firstKeyswitchNote + pickStyleKeyswitchCount;
+    static constexpr int vibratoGestureNote = 22; // A#0, hold; velocity = width
+    static constexpr int tremoloGestureNote = 23; // B0, hold; velocity = force
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
@@ -256,6 +264,12 @@ public:
 
     static_assert(keyswitchCount == 10,
                   "three picking styles and seven play styles need one keyswitch each");
+    static_assert(firstKeyswitchNote + keyswitchCount == vibratoGestureNote,
+                  "A#0 vibrato must immediately follow the keyswitch banks");
+    static_assert(vibratoGestureNote + 1 == tremoloGestureNote,
+                  "B0 tremolo must immediately follow A#0 vibrato");
+    static_assert(tremoloGestureNote < lowestPlayableNote,
+                  "B0 tremolo must remain below the playable range");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
     static_assert(highestPlayableNote + 2 == firstRepickNote,
@@ -271,14 +285,18 @@ public:
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
-    // Selects a deterministic player's stroke/strum variation stream. The
-    // default zero preserves the established render contract; a new seed
-    // takes effect at the next reset and never introduces wall-clock random.
+    // Selects a deterministic player's contact, timing and strum variation
+    // stream. The default zero preserves the established render contract; a
+    // new seed takes effect at the next reset and never introduces wall-clock
+    // random.
     void setVariationSeed(std::uint32_t seed) noexcept { variationSeed_ = seed; }
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
-    // Solves one sample-accurate chord as a whole, so host insertion order
-    // cannot change its physical strings, hand shape or variation stream.
+    // Solves one complete sample-accurate chord as a whole, so host insertion
+    // order cannot change its physical strings, hand shape or variation
+    // stream. Because the edge is known up front, a non-zero Strum Spread
+    // delays only the strings the pick has not reached; it does not add the
+    // scalar note path's causal re-anchor pre-roll to the leading string.
     void noteOnChord(std::span<const NoteOnEvent> events);
     void noteOff(int midiNote);
     void allNotesOff();
@@ -293,10 +311,16 @@ public:
     // MIDI CC2 adds continuous bridge-hand pressure on top of the Palm Pressure
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
-    // Internal fretting-hand vibrato model. The plug-in leaves MIDI pressure
-    // unassigned; callers must opt into this upward-only gesture explicitly.
-    // Zero is an exact no-op.
+    // Internal fretting-hand vibrato model. The plug-in maps its visible A#0
+    // momentary gesture here while leaving MIDI pressure unassigned. Zero is
+    // an exact no-op.
     void setVibrato(float normalised) noexcept;
+    // Arms one shared picking wrist. Starting it schedules an immediate
+    // contact on the next rendered sample; it then repicks every physically
+    // held string at EngineParameters::tremoloRateHz until stopped. The
+    // per-string E6..B6 commands remain compatible one-shot taps.
+    void beginTremoloPicking(float velocity) noexcept;
+    void endTremoloPicking() noexcept;
     // MIDI CC64. While held, a key-up leaves that string marked `sustained`
     // instead of releasing it immediately (see `noteOff()`); a string already
     // sounding when the pedal comes down is untouched either way, since it
@@ -341,6 +365,14 @@ public:
     {
         return midiNote >= firstKeyswitchNote
             && midiNote < firstKeyswitchNote + keyswitchCount;
+    }
+    [[nodiscard]] static bool isVibratoGestureNote(int midiNote) noexcept
+    {
+        return midiNote == vibratoGestureNote;
+    }
+    [[nodiscard]] static bool isTremoloGestureNote(int midiNote) noexcept
+    {
+        return midiNote == tremoloGestureNote;
     }
     [[nodiscard]] static bool isPlayableNote(int midiNote) noexcept
     {
@@ -1189,7 +1221,7 @@ private:
     void drawStrokeVariation(Voice& voice) noexcept;
     void seedVibratoFinger(Voice& voice) noexcept;
     void beginChordStroke(int stringIndex, bool strokeIsUp,
-                          float spreadSeconds) noexcept;
+                          float spreadSeconds, bool completeChord) noexcept;
     void reAnchorChordStroke(int stringIndex) noexcept;
     int strumTravelSamples(int crossings) const noexcept;
     void drawVibratoCycle(Voice& voice) noexcept;
@@ -1198,8 +1230,11 @@ private:
                     int startDelaySamples,
                     std::uint64_t reservedStartOrder = 0,
                     bool keyStateAlreadyApplied = false) noexcept;
+    void repickHeldString(int stringIndex, float velocity);
     void noteOnInternal(int midiNote, float velocity, int forcedStringIndex,
-                        bool addKeyOwner, bool handPositionPlanned);
+                        bool addKeyOwner, bool handPositionPlanned,
+                        bool completeChordStart = false,
+                        int completeChordAnchor = -1);
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
                         PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
@@ -1319,11 +1354,16 @@ private:
     bool chordContactOccurred_ { false };
     std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
     std::uint64_t chordSequence_ { 0 };
+    // A separately seeded player reaches one picked wrist stroke a little
+    // before or after another player. Causality makes this lane the later one;
+    // all strings crossed by the stroke share the same offset.
+    int chordPerformanceDelaySamples_ { 0 };
     int chordWindowSamples_ { 1680 };
-    // The pre-roll every voice of a strummed chord carries, in internal
-    // samples, and the travel time from the anchor to each further string.
-    // Both are zero at a zero Strum Spread, which keeps the block chord
-    // bit-exact.
+    // The causal pre-roll used only while a scalar note stream may still
+    // reveal a different chord edge, and the travel time from the anchor to
+    // each further string. A complete noteOnChord batch knows its edge and
+    // therefore uses zero pre-roll even when travel is active. Both remain
+    // zero at a zero Strum Spread, which keeps a block chord bit-exact.
     int strumPreRollSamples_ { 0 };
     int strumReAnchorSamples_ { 0 };
     std::array<int, stringCount> chordTravelSamples_ {};
@@ -1347,6 +1387,11 @@ private:
     // to its per-string picking-hand trigger.
     std::array<int, stringCount> heldMidiNotes_ {};
     std::array<int, stringCount> heldNoteCounts_ {};
+    // The visible B0 gesture is one picking wrist, not eight clocks. Its
+    // phase is measured in strokes so a rate change takes effect immediately
+    // without resetting time or accumulating integer-sample drift.
+    float tremoloPickingVelocity_ { 0.0f };
+    double tremoloPickingPhase_ { 0.0 };
 
     // Continuous bridge-hand damping: the parameter plus the CC2 pressure.
     float palmMutePressure_ { 0.0f };

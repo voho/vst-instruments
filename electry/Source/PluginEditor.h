@@ -95,8 +95,8 @@ class ElectryStatusDisplay final : public juce::Component
 {
 public:
     void setStatus (int activeVoices, int sympatheticStrings, bool ready,
-                    double sampleRate, int midiMutePressure,
-                    bool scheduleRepaint = true);
+                    double sampleRate, int midiMutePressure, int vibratoGesture,
+                    int tremoloGesture, bool scheduleRepaint = true);
     juce::String getStatusText() const;
     void paint (juce::Graphics&) override;
 
@@ -106,23 +106,32 @@ private:
     bool isReady = false;
     double rate = 0.0;
     int mutePressure = -1;
+    int vibrato = -1;
+    int tremolo = -1;
 };
 
 // Live eight-string fretboard. It shows which physical string carries every
 // sounding note, where it is stopped, how hard it is ringing, and which
-// strings are only ringing through the sympathetic bridge coupling. All of its
-// geometry and ballistics come from the JUCE-free electry::visuals helpers, so
-// the drawing code stays a thin renderer.
-class ElectryFretboardDisplay final : public juce::Component
+// strings are only ringing through the sympathetic bridge coupling. A click
+// on one row reuses the engine's existing held-string repick gesture. All of
+// its geometry and ballistics come from the JUCE-free electry::visuals helpers,
+// so the drawing code stays a thin renderer.
+class ElectryFretboardDisplay final : public juce::Component,
+                                       public juce::SettableTooltipClient
 {
 public:
     ElectryFretboardDisplay();
+
+    std::function<void (int)> onRepick;
 
     // Pulls one frame of per-string state. Returns true while the picture is
     // still changing, so the editor only repaints a moving display.
     bool refresh (const ElectryAudioProcessor&, float frameSeconds);
 
     void paint (juce::Graphics&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     struct StringRow
@@ -133,6 +142,9 @@ private:
     };
 
     std::array<StringRow, electry::ElectryEngine::stringCount> rows {};
+    int hoveredString = -1;
+
+    int stringAtY (float y) const noexcept;
 };
 
 class ElectryAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -217,6 +229,7 @@ private:
     ElectryKnob sympatheticKnob { "SYMPATHY" };
     ElectryKnob palmMuteKnob { "MUTE" };
     ElectryKnob strumSpreadKnob { "STRUM" };
+    ElectryKnob tremoloRateKnob { "TRM RATE" };
     ElectryKnob resonanceKnob { "RESONANCE" };
 
     ElectryKnob outputKnob { "OUTPUT" };
