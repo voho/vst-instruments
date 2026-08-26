@@ -12,6 +12,34 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep one picking hand across a chord
+
+Stroke variation described one player's pick position, force, angle and contact
+width, but the engine drew all four independently for every string voice. On a
+default-seed, equal-velocity open-string fixture `{28, 35, 40, 45}`, one wrist
+therefore spanned 6.790 mm of pick position, 0.723 dB of force, 9.859 degrees of
+angle and 13.262 percentage points of contact width inside a single chord. The
+downstream strings were physically different, but the player driving them had
+also become four unrelated hands.
+
+Decision: draw those four latent player coordinates once from the first
+accepted plectrum event and share them across every string the wrist crosses.
+Keep each string's gauge-, pitch-, velocity- and style-dependent excitation
+mapping independent. Preserve the former hash and draw order for the first
+member, every solo note and both deterministic player seeds; keep every
+per-string `startOrder` increment as before. A delayed same-note repick carries
+its originating stroke state until contact, so a newer chord cannot overwrite
+the hand already travelling toward it. Hammer-ons and legato slides neither
+consume nor apply the plectrum state.
+
+This is an ownership/topology correction, not a voiced coefficient choice: the
+4 mm, 0.6 dB, 6 degree and 8% distributions are unchanged. The regression
+covers complete and scalar chords, repeat variation, a newer-stroke/pending-
+contact overlap, legacy solo draws and the separately seeded Double player.
+A same-platform before/after render changed exactly the twelve scores containing
+multi-note contacts—demos 01, 07-09, 11-14, 18-20 and 22. The other ten demos
+and all ten raw E1/E2 evaluator probes remained byte-identical.
+
 ## 2026-08-27 — keep the fretting hand out of B0's wrist clock
 
 The same-boundary duplicate guard treated every playable Note On as a pick.

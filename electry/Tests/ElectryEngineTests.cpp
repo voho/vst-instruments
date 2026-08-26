@@ -56,6 +56,10 @@ struct ElectryEngineTestAccess
         float sympatheticEnergy { 0.0f };
         float excitationCombDelay { 0.0f };
         float excitationCombWidth { 0.0f };
+        float strokeContactOffsetMetres { 0.0f };
+        float strokeForceGain { 1.0f };
+        float strokeAngleOffset { 0.0f };
+        float strokeWidthScale { 1.0f };
         // The two the picking hand's force and contact patch reach.
         float excitationAmplitude { 0.0f };
         float verticalWeight { 0.0f };
@@ -111,6 +115,10 @@ struct ElectryEngineTestAccess
         result.sympatheticEnergy = voice.sympatheticEnergy;
         result.excitationCombDelay = voice.excitationCombDelay;
         result.excitationCombWidth = voice.excitationCombWidth;
+        result.strokeContactOffsetMetres = voice.strokeContactOffsetMetres;
+        result.strokeForceGain = voice.strokeForceGain;
+        result.strokeAngleOffset = voice.strokeAngleOffset;
+        result.strokeWidthScale = voice.strokeWidthScale;
         result.excitationAmplitude = voice.excitationAmplitude;
         result.verticalWeight = voice.verticalWeight;
         result.horizontalWeight = voice.horizontalWeight;
@@ -261,7 +269,9 @@ struct ElectryEngineTestAccess
     {
         engine.startVoice(
             engine.voices_[static_cast<std::size_t>(stringIndex)], midiNote,
-            velocity, PlayStyle::Sustain, false, 0);
+            velocity, PlayStyle::Sustain, false, 0,
+            engine.strokeVariationStateFor(engine.noteSequence_ + 1,
+                                           stringIndex));
     }
 
     // The hand's loss dip sits inside the feedback loop, so its magnitude must
@@ -2628,6 +2638,164 @@ void testAlternateChordSharesOneStroke()
            "the 35 ms chord window rolled past 40 ms of cross-string Palm notes");
 }
 
+void testChordSharesPickingHandVariation()
+{
+    // Pick position, force, angle and contact width belong to the wrist stroke,
+    // not independently to each string it crosses. The downstream excitation
+    // remains per-string; this checks only those four latent hand coordinates.
+    constexpr double sampleRate = 48000.0;
+    constexpr std::array<int, 3> notes { 28, 35, 40 };
+    constexpr std::array<ElectryEngine::NoteOnEvent, notes.size()> events {{
+        { 28, 0.85f }, { 35, 0.85f }, { 40, 0.85f }
+    }};
+    using Variation = std::array<float, 4>;
+    const auto variation = [] (const TestAccess::VoiceSnapshot& voice)
+    {
+        return Variation {
+            voice.strokeContactOffsetMetres,
+            voice.strokeForceGain,
+            voice.strokeAngleOffset,
+            voice.strokeWidthScale
+        };
+    };
+    const auto nearVariation = [] (const Variation& actual,
+                                   const Variation& expected)
+    {
+        for (std::size_t index = 0; index < actual.size(); ++index)
+            if (std::abs(actual[index] - expected[index]) > 1.0e-6f)
+                return false;
+        return true;
+    };
+
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.strumSpreadSeconds = 0.010f;
+    parameters.artifactAmount = 0.0f;
+    parameters.sympatheticAmount = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+
+    engine.noteOnChord(events);
+    const Variation firstStroke = variation(TestAccess::snapshot(engine, 0));
+    std::uint64_t previousOrder = 0;
+    for (int stringIndex = 0; stringIndex < 3; ++stringIndex)
+    {
+        const auto voice = TestAccess::snapshot(engine, stringIndex);
+        expect(variation(voice) == firstStroke,
+               "a complete chord drew a different picking hand per string");
+        expect(voice.startOrder > previousOrder,
+               "sharing one picking hand collapsed per-note ordering");
+        previousOrder = voice.startOrder;
+    }
+
+    // The scalar fallback discovers its edge causally, but it is the same hand
+    // and the first event must retain the exact legacy single-note draw.
+    engine.reset();
+    for (const int note : notes)
+        engine.noteOn(note, 0.85f);
+    for (int stringIndex = 0; stringIndex < 3; ++stringIndex)
+        expect(variation(TestAccess::snapshot(engine, stringIndex))
+                   == firstStroke,
+               "a scalar chord did not share the complete chord's hand");
+
+    // Up enters from the opposite physical edge, so its solved anchor is
+    // string 2 while the first canonical event remains string 0. Complete and
+    // causally re-anchored scalar paths must both retain that event's old draw.
+    engine.reset();
+    engine.noteOn(pickKeyswitch(PickStyle::Up), 1.0f);
+    engine.noteOnChord(events);
+    for (int stringIndex = 0; stringIndex < 3; ++stringIndex)
+        expect(variation(TestAccess::snapshot(engine, stringIndex))
+                   == firstStroke,
+               "an up-strum seeded its hand from the solved chord anchor");
+    engine.reset();
+    engine.noteOn(pickKeyswitch(PickStyle::Up), 1.0f);
+    for (const int note : notes)
+        engine.noteOn(note, 0.85f);
+    for (int stringIndex = 0; stringIndex < 3; ++stringIndex)
+        expect(variation(TestAccess::snapshot(engine, stringIndex))
+                   == firstStroke,
+               "a scalar up-strum changed its hand while re-anchoring");
+
+    // A later traversal is a new wrist motion, shared within itself but not a
+    // frozen gesture repeated forever.
+    StereoBuffer finishFirst(static_cast<int>(0.05 * sampleRate));
+    renderInto(engine, finishFirst);
+    engine.noteOnChord(events);
+    StereoBuffer finishSecond(static_cast<int>(0.05 * sampleRate));
+    renderInto(engine, finishSecond);
+    const Variation secondStroke = variation(TestAccess::snapshot(engine, 0));
+    expect(secondStroke != firstStroke,
+           "successive chord strokes reused one picking-hand variation");
+    for (int stringIndex = 1; stringIndex < 3; ++stringIndex)
+        expect(variation(TestAccess::snapshot(engine, stringIndex))
+                   == secondStroke,
+               "a repeated chord stopped sharing its picking hand");
+
+    // A same-note member commits only when the travelling pick reaches it. A
+    // newer chord may start first, so the pending contact must carry stroke A
+    // instead of reading the engine's now-current stroke B at commit time.
+    parameters.strumSpreadSeconds = 0.040f;
+    engine.setParameters(parameters);
+    engine.reset();
+    constexpr std::array<ElectryEngine::NoteOnEvent, 2> heldEvents {{
+        { 28, 0.85f }, { 35, 0.85f }
+    }};
+    engine.noteOnChord(heldEvents);
+    StereoBuffer settleHeld(static_cast<int>(0.08 * sampleRate));
+    renderInto(engine, settleHeld);
+    engine.noteOnChord(heldEvents);
+    const Variation pendingStroke = variation(TestAccess::snapshot(engine, 0));
+    expect(TestAccess::snapshot(engine, 1).pendingRepickActive,
+           "pending-stroke fixture did not delay its second string");
+    constexpr std::array<ElectryEngine::NoteOnEvent, 1> newerEvent {{
+        { 40, 0.85f }
+    }};
+    engine.noteOnChord(newerEvent);
+    const Variation newerStroke = variation(TestAccess::snapshot(engine, 2));
+    expect(newerStroke != pendingStroke,
+           "pending-stroke fixture did not advance to a distinct hand");
+    StereoBuffer commitPending(static_cast<int>(0.08 * sampleRate));
+    renderInto(engine, commitPending);
+    expect(variation(TestAccess::snapshot(engine, 1)) == pendingStroke,
+           "a delayed string adopted a newer chord's picking hand");
+
+    // Pin the old single-note states as well as their relational behaviour.
+    // These exact values are the default-seed draws before chord sharing.
+    engine.setParameters(EngineParameters {});
+    engine.reset();
+    engine.noteOn(40, 0.85f);
+    expect(nearVariation(
+               variation(TestAccess::snapshot(engine, 2)), Variation {
+                   -0.0045802216f, 0.992183566f, -0.0217061788f, 0.972075164f
+               }),
+           "the first legacy single-note picking-hand draw changed");
+    engine.noteOn(40, 0.85f);
+    expect(nearVariation(
+               variation(TestAccess::snapshot(engine, 2)), Variation {
+                   -0.000900611922f, 0.96214819f, 0.124393389f, 1.00315654f
+               }),
+           "the second legacy single-note picking-hand draw changed");
+
+    // Double's second player starts from a nonzero deterministic seed. It gets
+    // a different hand, but the same one-stroke ownership and solo identity.
+    engine.setVariationSeed(0x9e3779b9u);
+    engine.reset();
+    engine.noteOnChord(events);
+    const Variation seededStroke = variation(TestAccess::snapshot(engine, 0));
+    expect(seededStroke != firstStroke,
+           "a separately seeded player reused the primary picking hand");
+    for (int stringIndex = 1; stringIndex < 3; ++stringIndex)
+        expect(variation(TestAccess::snapshot(engine, stringIndex))
+                   == seededStroke,
+               "a separately seeded chord did not share one picking hand");
+    engine.reset();
+    engine.noteOn(28, 0.85f);
+    expect(variation(TestAccess::snapshot(engine, 0)) == seededStroke,
+           "chord sharing changed a separately seeded solo note");
+}
+
 void testRapidSameStringRepicksAreSeparateStrokes()
 {
     // The chord window groups different strings crossed by one wrist motion.
@@ -2906,11 +3074,11 @@ void testStyleAndStrokeCombinations()
 
 /** A note played without a plectrum draws no picking-hand variation.
 
-    Every attack draws four numbers describing where the hand put the pick this
-    stroke: how hard, how wide the contact patch, at what angle, and how far
-    along the string. They are a pure function of the note counter, so two
-    otherwise identical notes at different points in a sequence get different
-    draws - which is the point of them, on a picked note.
+    Every physical plectrum stroke draws four numbers describing where the hand
+    put the pick: how hard, how wide the contact patch, at what angle, and how
+    far along the string. They are a pure function of the first note counter,
+    so two otherwise identical solo notes at different points in a sequence get
+    different draws - which is the point of them, on a picked note.
 
     A hammer-on is the fretting hand landing on the fingerboard and a legato
     slide is a finger already down that simply moves. The engine says so itself:
@@ -11766,8 +11934,8 @@ void testHumbuckerTwoCoilNotch()
 
     // 4. Broadband balance. The humbucker has to stay the dark pickup of the
     // pair: on a full eight-string chord its 2-16 kHz to sub-500 Hz ratio may
-    // not move more than 3 dB against the shipping engine's -68.369 dB, and
-    // in every octave band from 4 to 16 kHz on a low, a middle and a plain
+    // not move more than 3 dB against the coherent-stroke engine's -71.949 dB,
+    // and in every octave band from 4 to 16 kHz on a low, a middle and a plain
     // string it must stay at least 12 dB below the single coil (today's
     // narrowest gap is 13.16 dB).
     {
@@ -11779,9 +11947,9 @@ void testHumbuckerTwoCoilNotch()
             - bandEnergyDb(chord.left, start, window, sampleRate, 60.0, 500.0);
         std::cout << "PROBE humbucker chord 2-16k/sub-500 ratio: " << ratio
                   << " dB\n";
-        expect(std::abs(ratio - (-68.369)) < 3.0,
+        expect(std::abs(ratio - (-71.949)) < 3.0,
                "the humbucker's broadband balance on a chord moved from "
-                   "-68.369 dB to " + std::to_string(ratio) + " dB");
+                   "-71.949 dB to " + std::to_string(ratio) + " dB");
 
         struct Band { double lowHz; double highHz; };
         const std::array<Band, 2> bands {{ { 4000.0, 8000.0 },
@@ -12772,6 +12940,7 @@ int main()
     testHeldTremoloPickingGesture();
     testAlternateStrokeSequence();
     testAlternateChordSharesOneStroke();
+    testChordSharesPickingHandVariation();
     testRapidSameStringRepicksAreSeparateStrokes();
     testZeroSpreadAlternateRunChangesStrings();
     testArticulationsSoundDistinct();

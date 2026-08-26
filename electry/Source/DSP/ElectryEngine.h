@@ -813,6 +813,7 @@ private:
         float velocity { 0.0f };
         PlayStyle playStyle { PlayStyle::Sustain };
         bool strokeIsUp { false };
+        std::uint32_t strokeVariationState { 0u };
         std::uint64_t startOrder { 0 };
     };
 
@@ -850,17 +851,17 @@ private:
         // rewriting how this note was attacked.
         PlayStyle dampingStyle { PlayStyle::Sustain };
         // The concrete stroke this note was picked with, resolved from the
-        // latched PickStyle (Alternate resolves per note).
+        // latched PickStyle (Alternate resolves per wrist stroke).
         bool strokeIsUp { false };
         float velocity { 0.0f };
         VelocityProfile velocityProfile {};
         std::uint64_t startOrder { 0 };
         std::uint32_t noiseState { 1u };
 
-        // What the picking hand did not repeat about this stroke. All four are
-        // drawn once per attack from the note counter, so identical MIDI still
-        // renders identical audio, and all four are neutral until an attack
-        // draws them.
+        // What the picking hand did not repeat about this stroke. One draw is
+        // shared by every string the wrist crosses and latched on each voice,
+        // so delayed contacts keep their originating gesture and identical
+        // MIDI still renders identical audio.
         float strokeContactOffsetMetres { 0.0f }; // along the string, from the nominal
         float strokeForceGain { 1.0f };           // linear, on the pick's amplitude
         float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
@@ -1142,6 +1143,8 @@ private:
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
     static float midiToHz(float midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
+    static std::uint32_t strokeVariationStateFor(
+        std::uint64_t startOrder, int stringIndex) noexcept;
     // Both run inside the per-sample excitation and artifact paths, so they
     // are defined here to inline rather than call.
     static float bipolarNoise(std::uint32_t& state) noexcept
@@ -1214,7 +1217,7 @@ private:
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     [[nodiscard]] static bool plectrumContacts(PlayStyle style, bool legato) noexcept;
-    void drawStrokeVariation(Voice& voice) noexcept;
+    void drawStrokeVariation(Voice& voice, std::uint32_t state) noexcept;
     void seedVibratoFinger(Voice& voice) noexcept;
     void beginChordStroke(int stringIndex, bool strokeIsUp,
                           float spreadSeconds, bool completeChord) noexcept;
@@ -1224,6 +1227,7 @@ private:
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
                     int startDelaySamples,
+                    std::uint32_t strokeVariationState,
                     std::uint64_t reservedStartOrder = 0,
                     bool keyStateAlreadyApplied = false) noexcept;
     void repickHeldString(int stringIndex, float velocity,
@@ -1358,6 +1362,7 @@ private:
     bool chordReanchorsTremolo_ { true };
     std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
     std::uint64_t chordSequence_ { 0 };
+    std::uint32_t chordStrokeVariationState_ { 0u };
     // A separately seeded player reaches one picked wrist stroke a little
     // before or after another player. Causality makes this lane the later one;
     // all strings crossed by the stroke share the same offset.

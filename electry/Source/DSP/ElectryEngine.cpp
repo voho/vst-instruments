@@ -1088,6 +1088,7 @@ void ElectryEngine::reset()
     chordReanchorsTremolo_ = true;
     chordFirstNoteOnClock_ = -(1ll << 40);
     chordSequence_ = variationSeed_;
+    chordStrokeVariationState_ = 0u;
     chordPerformanceDelaySamples_ = 0;
     strumPreRollSamples_ = 0;
     chordTravelSamples_.fill(0);
@@ -1891,6 +1892,12 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
                 completeChordStart && completeChordAnchor >= 0
                     ? completeChordAnchor : stringIndex,
                 strokeCandidateIsUp, spreadSeconds, completeChordStart);
+            // The first accepted event retains its legacy per-note draw, and
+            // every later string receives that same physical wrist stroke.
+            // Use that event rather than the solved chord edge:
+            // an up-strum's anchor is deliberately at the opposite edge.
+            chordStrokeVariationState_ = strokeVariationStateFor(
+                noteSequence_ + 1, stringIndex);
             chordReanchorsTremolo_ = reanchorTremolo;
         }
         else if (strumPreRollSamples_ > 0
@@ -1943,7 +1950,11 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
         legatoRetarget(voice, midiNote, velocity, playStyle_);
     else
         startVoice(voice, midiNote, velocity, playStyle_, strokeIsUp,
-                   startDelaySamples);
+                   startDelaySamples,
+                   plectrumStroke
+                       ? chordStrokeVariationState_
+                       : strokeVariationStateFor(noteSequence_ + 1,
+                                                 stringIndex));
 
     const auto heldIndex = static_cast<std::size_t>(stringIndex);
     if (addKeyOwner)
@@ -3088,25 +3099,31 @@ bool ElectryEngine::plectrumContacts(PlayStyle style, bool legato) noexcept
     return ! (style == PlayStyle::Hammer || (style == PlayStyle::Slide && legato));
 }
 
-void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
+std::uint32_t ElectryEngine::strokeVariationStateFor(
+    std::uint64_t startOrder, int stringIndex) noexcept
 {
-    // A hand does not put the pick down twice in the same place. Four things
-    // about the contact move from stroke to stroke, and they are the four the
-    // excitation already reads: where along the string the pick lands, how hard
-    // it is pushed, at what angle it meets the string, and how much of its tip
-    // is touching. Nothing else in the attack is randomised - the pluck is
-    // still the same mechanism, differently placed.
-    //
-    // Every draw is a pure function of the note counter and the string, so
-    // `Identical MIDI always renders identical audio` survives it: the same
-    // sequence of note-ons produces the same sequence of draws. `startOrder`
-    // is taken rather than `noteSequence_` because a strummed chord's later
-    // strings excite several blocks after their note-on, by which time the
-    // counter has moved on.
-    std::uint32_t state = hash32(
-        static_cast<std::uint32_t>(voice.startOrder * 2654435761u)
-        ^ static_cast<std::uint32_t>(voice.stringIndex * 40503u)
+    return hash32(
+        static_cast<std::uint32_t>(startOrder * 2654435761u)
+        ^ static_cast<std::uint32_t>(stringIndex * 40503u)
         ^ 0x5bf03635u);
+}
+
+void ElectryEngine::drawStrokeVariation(Voice& voice,
+                                        std::uint32_t state) noexcept
+{
+    // A hand does not put the pick down twice in the same place, but one wrist
+    // stroke does not become a different hand as it crosses a chord. Four
+    // things about the shared contact move from stroke to stroke, and they are
+    // the four the excitation already reads: where along the string the pick
+    // lands, how hard it is pushed, at what angle it meets the string, and how
+    // much of its tip is touching. Nothing else in the attack is randomised -
+    // the pluck is still the same mechanism, differently placed.
+    //
+    // The state is a pure function of the originating plectrum event's start
+    // order and assigned string, so `Identical MIDI always renders identical
+    // audio` survives it: the same sequence of note-ons produces the same
+    // sequence of draws. The caller carries it to delayed contacts because
+    // later MIDI can arrive first.
     // Three uniforms on [-1, 1] sum to unit variance and cannot leave +/-3
     // sigma, which is the bound the physical quantities need: the contact
     // cannot move further along the string than the plectrum's width lets the
@@ -3959,6 +3976,7 @@ void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
 void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                PlayStyle playStyle, bool strokeIsUp,
                                int startDelaySamples,
+                               std::uint32_t strokeVariationState,
                                std::uint64_t reservedStartOrder,
                                bool keyStateAlreadyApplied) noexcept
 {
@@ -3987,7 +4005,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         voice.startDelaySamples = std::max(1, startDelaySamples);
         voice.pendingContactPreservesRing = preservesExistingRing;
         voice.pendingRepick = {
-            true, velocity, playStyle, strokeIsUp, ++noteSequence_
+            true, velocity, playStyle, strokeIsUp, strokeVariationState,
+            ++noteSequence_
         };
         return;
     }
@@ -4024,7 +4043,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = reservedStartOrder != 0
         ? reservedStartOrder : ++noteSequence_;
-    drawStrokeVariation(voice);
+    drawStrokeVariation(voice, strokeVariationState);
     voice.handContactScale = clampf(
         voice.velocityProfile.amplitude
             * (plectrumContacts(playStyle, false)
@@ -4146,7 +4165,8 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.sustained = false;
     voice.releasing = false;
     voice.startOrder = ++noteSequence_;
-    drawStrokeVariation(voice);
+    drawStrokeVariation(
+        voice, strokeVariationStateFor(voice.startOrder, voice.stringIndex));
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.handContactScale = clampf(
@@ -5672,6 +5692,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                     voice.pendingRepick.active = false;
                     startVoice(voice, voice.midiNote, pending.velocity,
                                pending.playStyle, pending.strokeIsUp, 0,
+                               pending.strokeVariationState,
                                pending.startOrder, true);
                     // Note Off and CC64 may have changed ownership during the
                     // pre-roll; committing the sound must not erase them.

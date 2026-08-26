@@ -21,6 +21,11 @@ second player's picked wrist strokes also carry a deterministic 0-6 ms causal
 timing offset; the primary player and fretting-hand articulations keep their
 established clocks.
 
+Within each engine, pick position offset, force, angle and contact width are
+drawn once per physical wrist stroke and shared by every crossed string; each
+string still maps that common gesture through its own gauge, pitch and contact
+mechanics.
+
 The editor names the bridge-hand style **Mute** and its two controls **Mute
 Tightness** and **Mute Pressure**. This document retains “palm mute” where it
 names the physical technique, public-corpus annotation or frozen evaluator
