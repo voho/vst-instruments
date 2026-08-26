@@ -108,7 +108,7 @@ if(ELECTRY_BUILD_PLUGIN)
     juce_generate_juce_header(Electry)
 
     juce_add_binary_data(ElectryAssets
-        SOURCES Assets/electry-guitar-top.png)
+        SOURCES Assets/electry-mahogany-satin-v2.png)
 
     target_sources(Electry PRIVATE
         Source/PluginProcessor.cpp

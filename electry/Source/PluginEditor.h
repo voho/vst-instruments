@@ -22,6 +22,11 @@ public:
     void drawButtonText (juce::Graphics&, juce::TextButton&,
                          bool isHighlighted, bool isDown) override;
     void drawLabel (juce::Graphics&, juce::Label&) override;
+    void drawComboBox (juce::Graphics&, int width, int height,
+                       bool isButtonDown, int buttonX, int buttonY,
+                       int buttonW, int buttonH, juce::ComboBox&) override;
+    void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+    juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
@@ -76,7 +81,6 @@ class ElectryKnob final : public juce::Component
 {
 public:
     explicit ElectryKnob (juce::String name);
-    void paint (juce::Graphics&) override;
     void resized() override;
 
     juce::Slider slider;
@@ -198,7 +202,7 @@ private:
     ElectryKnob pickPositionKnob { "PICK POS" };
     ElectryKnob pickHardnessKnob { "HARDNESS" };
     ElectryKnob bendTimeKnob { "BEND TIME" };
-    ElectryKnob muteDampingKnob { "MUTE" };
+    ElectryKnob muteDampingKnob { "TIGHTNESS" };
     ElectryKnob velocityKnob { "VELOCITY" };
 
     ElectryKnob pickNoiseKnob { "PLECTRUM" };
@@ -207,7 +211,7 @@ private:
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob sympatheticKnob { "SYMPATHY" };
-    ElectryKnob palmMuteKnob { "MUTE PRESS" };
+    ElectryKnob palmMuteKnob { "MUTE" };
     ElectryKnob strumSpreadKnob { "STRUM" };
     ElectryKnob resonanceKnob { "RESONANCE" };
 
