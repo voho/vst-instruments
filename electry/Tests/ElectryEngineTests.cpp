@@ -8193,6 +8193,7 @@ void testPalmMuteSpectralLoss()
         double openBody { 0.0 };
         double palmOnset { 0.0 };
         double palmBody { 0.0 };
+        std::array<double, 11> palmOpenTrajectoryDb {};
     };
     const auto measureF2Contraction = [&] (double analysisSampleRate)
     {
@@ -8223,9 +8224,34 @@ void testPalmMuteSpectralLoss()
             openBody / std::max(openOnset, 1.0e-30)));
         const double palmChange = decibels(std::sqrt(
             palmBody / std::max(palmOnset, 1.0e-30)));
+        std::array<double, 11> palmOpenTrajectoryDb {};
+        if (analysisSampleRate == 44100.0)
+        {
+            // F2 needs more than the tempting 5-10 ms sub-cycle slices. Slide
+            // one 30 ms (>2.5-cycle) window instead; the four-rate endpoint
+            // sweep below already guards sample-rate invariance, so paying for
+            // the overlapping harmonic scans once is enough.
+            const int trajectoryLength = static_cast<int>(
+                0.030 * analysisSampleRate);
+            const int trajectoryStep = static_cast<int>(
+                0.005 * analysisSampleRate);
+            for (std::size_t i = 0; i < palmOpenTrajectoryDb.size(); ++i)
+            {
+                const int start = static_cast<int>(i) * trajectoryStep;
+                const double openShare = upperShare(bandPowers(
+                    open, start, trajectoryLength, analysisSampleRate,
+                    fundamental));
+                const double palmShare = upperShare(bandPowers(
+                    palm, start, trajectoryLength, analysisSampleRate,
+                    fundamental));
+                palmOpenTrajectoryDb[i] = decibels(std::sqrt(
+                    palmShare / std::max(openShare, 1.0e-30)));
+            }
+        }
         return F2Contraction {
             palmChange - openChange,
-            openOnset, openBody, palmOnset, palmBody
+            openOnset, openBody, palmOnset, palmBody,
+            palmOpenTrajectoryDb
         };
     };
     // Re-running this exact tracked-harmonic extractor on the licensed F2
@@ -8256,6 +8282,20 @@ void testPalmMuteSpectralLoss()
                   << result.paired << " dB; Open " << result.openOnset
                   << " -> " << result.openBody << ", Palm "
                   << result.palmOnset << " -> " << result.palmBody << '\n';
+        if (analysisSampleRate == 44100.0)
+        {
+            // Two public player/guitar cells establish the mechanism's
+            // direction, not a population rail for eleven highly overlapping
+            // windows. Report the shape without freezing it until the
+            // commissioned TRAIN clusters can set a defensible bound.
+            for (const double value : result.palmOpenTrajectoryDb)
+                expect(std::isfinite(value),
+                       "F2 Palm/Open selective-loss trajectory was not finite");
+            std::cout << "PROBE F2 Palm/Open 30 ms trajectory at 0..50 ms: ";
+            for (const double value : result.palmOpenTrajectoryDb)
+                std::cout << value << ' ';
+            std::cout << "dB\n";
+        }
     }
 
     for (const int midiNote : { 28, 40 })

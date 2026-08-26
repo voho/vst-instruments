@@ -638,6 +638,10 @@ six-cubic-read passive contact. It holds for 70 ms and releases linearly over
 10 ms; Open, Dead and the other styles do not retain that Palm heel. The
 existing 0.74 excitation-modal darkener is unchanged.
 
+The 70 ms hold remains a provisional development duration, not a fitted hand
+pressure or acoustic-loss constant. The 10 ms release is only a generic
+discontinuity-smoothing heuristic, not a measured Palm-lift trajectory.
+
 The third-order Lagrange magnitude identity bounds each individual cubic read;
 the production-transfer regression then sweeps representative production
 phases and the combined finite contact at unity magnitude, preserves exact
@@ -664,6 +668,28 @@ The onset lies inside the two real cells' -2.61..+0.73 dB bracket and the body
 is within 0.04 dB of P1's -5.37 dB, but the time contraction remains weaker
 than either real cell. Dead was not retuned; its contextual regression RMSE
 remains 4.92754 dB.
+
+A sliding check makes that trajectory visible without imposing two coarse
+endpoint windows. Each value below is
+`10 log10(Palm upper-share / Open upper-share)` over a 30 ms Hann window, using
+the same 44.1 kHz tracked F2 harmonics below 2.6 kHz and the same 500 Hz split;
+columns are window-start times in ms:
+
+| F2 path | 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35 | 40 | 45 | 50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| P1 | +0.73 | -0.48 | -1.73 | -2.71 | -3.44 | -4.26 | -4.71 | -5.21 | -5.45 | -5.55 | -6.01 |
+| P2 | -2.61 | -4.71 | -6.43 | -7.71 | -9.69 | -11.71 | -14.04 | -16.45 | -18.83 | -21.22 | -22.00 |
+| Electry | -1.806 | -2.122 | -2.621 | -3.065 | -3.554 | -3.995 | -4.503 | -5.013 | -5.443 | -5.999 | -6.422 |
+
+Through every window wholly inside the 70 ms hold (starts 0-40 ms), the
+current fixed contact already yields monotonic accumulated selective loss; the
+45 and 50 ms windows that overlap its provisional release continue in the same
+direction. An explicit per-note low-at-pick/recovery ramp was therefore
+rejected at this checkpoint. The audio identifies a loss trajectory, but
+cannot identify changing hand pressure separately from the accumulated action
+of a fixed contact. Reinitializing such a per-note ramp at every attack would
+also impose a false pressure reset on rapid chugs instead of preserving the
+preceding contact.
 
 The paired proxy stays between -3.598 and -3.631 dB at 44.1, 48, 96 and
 192 kHz. In the rapid E1/E2 repick-state grid, median absolute phrase/isolated
@@ -737,8 +763,9 @@ Freed's pressure-sensor study on a Gibson Les Paul
 found that hand distance from the bridge mattered more than applied force and
 that pressure dropped sharply at each pick, with an anticipatory movement for
 single-direction strokes that differed under alternate picking. It does not
-support a hand loss that fades in for 40 ms after note-on. Reboursière et al.'s
-six-string hexaphonic study
+measure simultaneous acoustic loss, so those pressure dips establish neither
+the sign of a loop-loss change nor its recovery timing and cannot be copied
+directly into an attack ramp. Reboursière et al.'s six-string hexaphonic study
 ([NIME 2012](https://www.nime.org/proceedings/2012/nime2012_213.pdf)) used the
 post-attack energy slope above 500 Hz to separate 96 palm-muted notes from
 ordinary notes, because the muted high-frequency envelope fell much faster.
