@@ -2659,7 +2659,7 @@ void testEditorRendering()
         std::vector<juce::Rectangle<int>> modeButtonBounds;
         juce::TextButton* monoButton = nullptr;
         juce::TextButton* stereoButton = nullptr;
-        juce::TextButton* doubleButton = nullptr;
+        juce::TextButton* twoXButton = nullptr;
         for (auto* child : outputModeControl->getChildren())
         {
             auto* button = dynamic_cast<juce::TextButton*> (child);
@@ -2676,11 +2676,11 @@ void testEditorRendering()
                 monoButton = button;
             else if (button->getButtonText() == "STEREO")
                 stereoButton = button;
-            else if (button->getButtonText() == "DOUBLE")
-                doubleButton = button;
+            else if (button->getButtonText() == "2X")
+                twoXButton = button;
         }
         expect (modeButtons == 3,
-                "output controls did not expose Mono, Stereo and Double");
+                "output controls did not expose Mono, Stereo and 2X");
         for (std::size_t first = 0; first < modeButtonBounds.size(); ++first)
             for (std::size_t second = first + 1;
                  second < modeButtonBounds.size(); ++second)
@@ -2688,15 +2688,15 @@ void testEditorRendering()
                             modeButtonBounds[second]),
                         "output-mode buttons overlap");
         expect (monoButton != nullptr && stereoButton != nullptr
-                    && doubleButton != nullptr,
+                    && twoXButton != nullptr,
                 "output-mode buttons lost a full readable label");
         if (monoButton != nullptr && stereoButton != nullptr
-            && doubleButton != nullptr)
+            && twoXButton != nullptr)
         {
-            doubleButton->onClick();
+            twoXButton->onClick();
             expect (parameterValue (processor, electry::parameters::outputMode)
                         > 1.5f,
-                    "DOUBLE editor button did not enable the second engine");
+                    "2X editor button did not enable the second engine");
             stereoButton->onClick();
             expect (std::abs (parameterValue (
                                processor, electry::parameters::outputMode) - 1.0f)
@@ -2707,6 +2707,29 @@ void testEditorRendering()
                         processor, electry::parameters::outputMode) < 0.5f,
                     "MONO editor button did not restore the summed DI");
         }
+    }
+
+    auto* pickupControl = findControl (electry::parameters::pickupSelector);
+    expect (pickupControl != nullptr,
+            "Core panel is missing the pickup selector");
+    if (pickupControl != nullptr)
+    {
+        int pickupButtons = 0;
+        int previousBottom = -1;
+        for (auto* child : pickupControl->getChildren())
+        {
+            if (dynamic_cast<juce::TextButton*> (child) == nullptr)
+                continue;
+            ++pickupButtons;
+            expect (child->getX() == 0
+                        && child->getWidth() == pickupControl->getWidth()
+                        && child->getHeight() >= 40
+                        && child->getY() > previousBottom,
+                    "pickup buttons are not a clear vertical stack");
+            previousBottom = child->getBottom();
+        }
+        expect (pickupButtons == 3,
+                "pickup selector lost Neck, Both or Bridge");
     }
 
     const std::array<const char*, 7> heroControls {
@@ -2762,7 +2785,7 @@ void testEditorRendering()
     const auto* pickStrip = findControl ("pickStyleStrip");
     const auto* styleStrip = findControl ("playStyleStrip");
     const auto* styleKeyMode = findControl ("playStyleKeyMode");
-    const auto* keyboard = findControl ("keyboard");
+    auto* keyboard = findControl ("keyboard");
     const auto* keyboardHint = findControl ("keyboardHint");
     expect (pickStrip != nullptr && styleStrip != nullptr
                 && styleKeyMode != nullptr && keyboard != nullptr
@@ -2772,8 +2795,8 @@ void testEditorRendering()
         && styleKeyMode != nullptr && keyboard != nullptr
         && keyboardHint != nullptr)
     {
-        const auto* midiKeyboard =
-            dynamic_cast<const juce::MidiKeyboardComponent*> (keyboard);
+        auto* midiKeyboard =
+            dynamic_cast<ElectryKeyboardComponent*> (keyboard);
         const auto* hintLabel = dynamic_cast<const juce::Label*> (keyboardHint);
         expect (midiKeyboard != nullptr
                     && midiKeyboard->getRangeStart()
@@ -2781,6 +2804,9 @@ void testEditorRendering()
                     && midiKeyboard->getRangeEnd()
                         == electry::ElectryEngine::highestPlayableNote,
                 "keyboard does not stop at the highest pitched note D6");
+        expect (midiKeyboard != nullptr
+                    && midiKeyboard->getWhiteNoteText (24).isEmpty(),
+                "keyboard labels the silent C1 dead zone as playable");
         expect (keyboard->getTitle().contains ("D6")
                     && ! keyboard->getTitle().contains ("E6")
                     && ! keyboard->getTitle().contains ("B6"),
@@ -2806,7 +2832,7 @@ void testEditorRendering()
             expect (knob->getBottom() <= keyboard->getY(),
                     "sound control overlaps the keyboard");
         }
-        expect (keyboard->getHeight() >= 90
+        expect (keyboard->getHeight() >= 100
                     && keyboard->getWidth() * 10 >= editor->getWidth() * 9,
                 "keyboard lost its practical playing area");
         expect (keyboard->getBottom() <= keyboardHint->getY(),
@@ -2830,14 +2856,29 @@ void testEditorRendering()
         };
         expect (countButtons (pickStrip) == 3,
                 "editor did not retain the three picking-style buttons");
+        bool hasAltButton = false;
+        bool hasLongAlternateButton = false;
+        for (auto* child : pickStrip->getChildren())
+            if (auto* button = dynamic_cast<juce::TextButton*> (child))
+            {
+                hasAltButton = hasAltButton || button->getButtonText() == "ALT";
+                hasLongAlternateButton = hasLongAlternateButton
+                                      || button->getButtonText() == "ALTERNATE";
+            }
+        expect (hasAltButton && ! hasLongAlternateButton,
+                "pick stroke did not reclaim space with the ALT label");
         expect (countButtons (styleStrip)
                     == electry::ElectryEngine::playStyleKeyswitchCount,
                 "editor did not retain one button per play style");
         bool hasMuteButton = false;
         for (auto* child : styleStrip->getChildren())
             if (auto* button = dynamic_cast<juce::TextButton*> (child))
+            {
+                expect (button->getWidth() >= 80,
+                        "play-style button lost its added horizontal padding");
                 hasMuteButton = hasMuteButton
                              || button->getButtonText() == "MUTE";
+            }
         expect (hasMuteButton,
                 "the bridge-hand articulation is not labelled MUTE");
         expect (countButtons (styleKeyMode) == 2,

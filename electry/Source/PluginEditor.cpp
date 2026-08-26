@@ -121,7 +121,7 @@ void layoutKnobRow (juce::Rectangle<int> rowArea,
 }
 
 constexpr std::array<const char*, keyswitchCount> keyswitchLabels {
-    "DN", "UP", "ALT", "SUS", "MUTE", "H/P", "HARM", "PNCH", "SLD", "DEAD"
+    "DN", "UP", "ALT", "SUS", "MUT", "H/P", "HRM", "PNC", "SLD", "X"
 };
 
 bool isKeyswitch (int midiNoteNumber) noexcept
@@ -141,25 +141,22 @@ bool isDeadZoneNote (int midiNoteNumber) noexcept
 void drawKeyswitchDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
                               int keyswitchIndex, bool selected, bool blackKey)
 {
-    const auto originalArea = area;
-    const auto tabHeight = blackKey ? 3.0f : 4.0f;
-    graphics.setColour ((selected ? colours::accentBright : colours::accent)
-                            .withAlpha (selected ? 1.0f : 0.78f));
-    graphics.fillRect (area.removeFromBottom (tabHeight));
-
-    auto labelArea = area.removeFromBottom (blackKey ? 14.0f : 19.0f).reduced (0.5f);
-    graphics.setColour (selected ? colours::accentBright : colours::binding);
-    graphics.setFont (juce::FontOptions (blackKey ? 7.8f : 9.8f, juce::Font::bold));
+    auto badge = area.removeFromBottom (blackKey ? 16.0f : 20.0f)
+                     .reduced (blackKey ? 1.0f : 2.0f, 2.0f);
+    graphics.setColour (selected ? colours::accentBright
+                                 : juce::Colours::black.withAlpha (0.34f));
+    graphics.fillRoundedRectangle (badge, 2.5f);
+    graphics.setColour (selected ? colours::rosewoodDark : colours::binding);
+    graphics.setFont (juce::FontOptions (blackKey ? 7.4f : 9.0f, juce::Font::bold));
     graphics.drawFittedText (
         keyswitchLabels[static_cast<std::size_t> (keyswitchIndex)],
-        labelArea.getSmallestIntegerContainer(), juce::Justification::centred,
-        1, 0.58f);
+        badge.getSmallestIntegerContainer(), juce::Justification::centred,
+        1, 0.72f);
 
     if (selected)
     {
-        graphics.setColour (colours::accentBright);
-        graphics.drawRoundedRectangle (originalArea.reduced (1.0f),
-                                       blackKey ? 2.0f : 1.5f, 2.0f);
+        graphics.setColour (colours::oxblood.withAlpha (0.55f));
+        graphics.drawRoundedRectangle (badge.reduced (0.5f), 2.0f, 0.8f);
     }
 }
 
@@ -188,6 +185,8 @@ ElectryLookAndFeel::ElectryLookAndFeel()
     setColour (juce::TooltipWindow::textColourId, colours::text);
     setColour (juce::MidiKeyboardComponent::whiteNoteColourId, colours::warmBone);
     setColour (juce::MidiKeyboardComponent::blackNoteColourId, colours::ebony);
+    setColour (juce::MidiKeyboardComponent::textLabelColourId,
+               colours::rosewoodDark);
     setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId,
                juce::Colour (0xff6d573b));
     setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId,
@@ -448,7 +447,7 @@ bool ElectryKeyboardComponent::isKeyswitchSelected (int keyswitchIndex) const no
 
 juce::String ElectryKeyboardComponent::getWhiteNoteText (int midiNoteNumber)
 {
-    if (isKeyswitch (midiNoteNumber))
+    if (isKeyswitch (midiNoteNumber) || isDeadZoneNote (midiNoteNumber))
         return {};
 
     if (midiNoteNumber == firstPlayableNote || midiNoteNumber % 12 == 0)
@@ -474,6 +473,11 @@ void ElectryKeyboardComponent::drawWhiteNote (
     MidiKeyboardComponent::drawWhiteNote (
         midiNoteNumber, graphics, area, isDown, isOver, lineColour, textColour);
 
+    graphics.setColour (juce::Colours::white.withAlpha (0.12f));
+    graphics.fillRect (area.withHeight (1.0f));
+    graphics.setColour (juce::Colours::black.withAlpha (0.11f));
+    graphics.fillRect (area.withTop (area.getBottom() - 2.0f));
+
     if (keyswitch)
     {
         const auto index = midiNoteNumber - firstKeyboardNote;
@@ -491,6 +495,12 @@ void ElectryKeyboardComponent::drawWhiteNote (
         graphics.setColour (colours::accentBright.withAlpha (0.9f));
         graphics.fillRect (area.withWidth (2.0f));
     }
+
+    if (isDown && ! isDeadZoneNote (midiNoteNumber))
+    {
+        graphics.setColour (colours::accentBright.withAlpha (0.92f));
+        graphics.drawRoundedRectangle (area.reduced (1.0f), 1.5f, 1.5f);
+    }
 }
 
 void ElectryKeyboardComponent::drawBlackNote (
@@ -498,9 +508,29 @@ void ElectryKeyboardComponent::drawBlackNote (
     bool isDown, bool isOver, juce::Colour noteFillColour)
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
-    MidiKeyboardComponent::drawBlackNote (
-        midiNoteNumber, graphics, area, isDown, isOver,
-        keyswitch ? colours::keyswitchBlack : noteFillColour);
+    const auto fill = keyswitch ? colours::keyswitchBlack : noteFillColour;
+
+    graphics.setColour (juce::Colours::black.withAlpha (0.48f));
+    graphics.fillRoundedRectangle (area.translated (0.0f, 1.0f), 2.0f);
+    graphics.setGradientFill ({ fill.brighter (0.15f), area.getCentreX(), area.getY(),
+                                fill.darker (0.28f), area.getCentreX(),
+                                area.getBottom(), false });
+    graphics.fillRoundedRectangle (area, 2.0f);
+    if (isOver)
+    {
+        graphics.setColour (findColour (
+            juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId));
+        graphics.fillRoundedRectangle (area, 2.0f);
+    }
+    if (isDown)
+    {
+        graphics.setColour (findColour (
+            juce::MidiKeyboardComponent::keyDownOverlayColourId));
+        graphics.fillRoundedRectangle (area, 2.0f);
+    }
+    graphics.setColour (juce::Colours::white.withAlpha (0.10f));
+    graphics.drawLine (area.getX() + 1.0f, area.getY() + 1.0f,
+                       area.getRight() - 1.0f, area.getY() + 1.0f, 0.8f);
 
     if (keyswitch)
     {
@@ -513,14 +543,23 @@ void ElectryKeyboardComponent::drawBlackNote (
         graphics.setColour (juce::Colours::black.withAlpha (0.55f));
         graphics.fillRect (area);
     }
+
+    if (isDown && ! isDeadZoneNote (midiNoteNumber))
+    {
+        graphics.setColour (colours::accentBright.withAlpha (0.92f));
+        graphics.drawRoundedRectangle (area.reduced (0.8f), 1.8f, 1.4f);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Choice strip
 // ---------------------------------------------------------------------------
 
-ElectryChoiceStrip::ElectryChoiceStrip (juce::String title, juce::StringArray choices)
-    : titleText (std::move (title))
+ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
+                                        juce::StringArray choices,
+                                        int maximumColumns)
+    : titleText (std::move (title)),
+      maxColumns (juce::jmax (1, maximumColumns))
 {
     for (int index = 0; index < choices.size(); ++index)
     {
@@ -575,7 +614,6 @@ void ElectryChoiceStrip::resized()
         return;
 
     const int gap = 4;
-    const int maxColumns = 8;
     const int buttonCount = static_cast<int> (buttons.size());
     const int rowCount = (buttonCount + maxColumns - 1) / maxColumns;
     const int buttonHeight = (area.getHeight() - gap * (rowCount - 1)) / rowCount;
@@ -1082,8 +1120,8 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     }
     outputModeStrip.setTooltipText (
         "Mono is an authentic summed DI. Stereo spreads one guitar's eight "
-        "strings through a phase-coherent divided-pickup field. Double runs "
-        "two independent Electry performances, one per channel. Choose Double "
+        "strings through a phase-coherent divided-pickup field. 2X runs "
+        "two independent Electry performances, one per channel. Choose 2X "
         "before the phrase; it does not clone notes already ringing.");
     outputModeStrip.setComponentID (electry::parameters::outputMode);
     addAndMakeVisible (outputModeStrip);
@@ -1153,6 +1191,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     keyboard.setLowestVisibleKey (firstKeyboardNote);
     keyboard.setScrollButtonsVisible (false);
     keyboard.setKeyWidth (24.0f);
+    keyboard.setBlackNoteLengthProportion (0.64f);
     keyboard.setOctaveForMiddleC (4);
     keyboard.setTitle (
         "MIDI keyboard: E1 to D6 plays at the displayed pitch");
@@ -1299,18 +1338,18 @@ void ElectryAudioProcessorEditor::resized()
     area.removeFromTop (6);
 
     // Keyboard and hint at the bottom.
-    keyboardHintLabel.setBounds (area.removeFromBottom (20).reduced (2, 0));
-    keyboard.setBounds (area.removeFromBottom (96));
+    keyboardHintLabel.setBounds (area.removeFromBottom (18).reduced (2, 0));
+    keyboard.setBounds (area.removeFromBottom (100));
     keyboard.setKeyWidth (static_cast<float> (keyboard.getWidth())
                           / static_cast<float> (keyboardWhiteKeyCount));
-    area.removeFromBottom (8);
+    area.removeFromBottom (6);
 
     // The two keyswitch strips and their compact play-style operating mode.
     auto articulationArea = area.removeFromTop (76);
     sectionBounds[articulationSection] = articulationArea;
     auto stripRow = articulationArea.reduced (12, 8);
     const int pickWidth = juce::roundToInt (
-        static_cast<float> (stripRow.getWidth()) * 0.29f);
+        static_cast<float> (stripRow.getWidth()) * 0.24f);
     const int modeWidth = juce::roundToInt (
         static_cast<float> (stripRow.getWidth()) * 0.15f);
     pickStyleStrip.setBounds (stripRow.removeFromLeft (pickWidth));
@@ -1354,8 +1393,7 @@ void ElectryAudioProcessorEditor::resized()
     area.removeFromTop (8);
     auto secondaryRow = area;
 
-    // Three complete words must remain readable here at the minimum editor
-    // size; squeezing this panel turns STEREO/DOUBLE into ellipses.
+    // Output mode stays comfortably operable beside the primary tone panel.
     auto masterArea = mainRow.removeFromRight (184);
     mainRow.removeFromRight (8);
     auto coreArea = mainRow;
@@ -1365,9 +1403,8 @@ void ElectryAudioProcessorEditor::resized()
     {
         auto inner = coreArea.reduced (16, 10)
                              .withTrimmedTop (sectionContentTrim);
-        auto selectorArea = inner.removeFromLeft (juce::jmin (150, inner.getWidth()));
-        pickupStrip.setBounds (selectorArea.withSizeKeepingCentre (
-            selectorArea.getWidth(), juce::jmin (64, selectorArea.getHeight())));
+        auto selectorArea = inner.removeFromLeft (juce::jmin (80, inner.getWidth()));
+        pickupStrip.setBounds (selectorArea);
         inner.removeFromLeft (juce::jmin (6, inner.getWidth()));
         layoutKnobRow (
             inner,

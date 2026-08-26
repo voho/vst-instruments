@@ -61,7 +61,8 @@ private:
 class ElectryChoiceStrip final : public juce::Component
 {
 public:
-    ElectryChoiceStrip (juce::String title, juce::StringArray choices);
+    ElectryChoiceStrip (juce::String title, juce::StringArray choices,
+                        int maximumColumns = 8);
 
     std::function<void (int)> onChoice;
     void setSelectedIndex (int newIndex);
@@ -74,6 +75,7 @@ public:
 private:
     juce::String titleText;
     std::vector<std::unique_ptr<juce::TextButton>> buttons;
+    int maxColumns;
     int selectedIndex = 0;
 };
 
@@ -179,7 +181,7 @@ private:
     // hands do. Any combination of the two is reachable.
     ElectryChoiceStrip pickStyleStrip {
         "PICK STROKE  (KEYSWITCHES C0..D0)",
-        { "DOWN", "UP", "ALTERNATE" }
+        { "DOWN", "UP", "ALT" }
     };
     ElectryChoiceStrip playStyleStrip {
         "PLAY STYLE  (KEYSWITCHES D#0..A0)",
@@ -189,8 +191,10 @@ private:
     ElectryChoiceStrip playStyleKeyModeStrip {
         "PLAY-STYLE KEYS", { "LATCH", "HOLD" }
     };
-    ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
-    ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "DOUBLE" } };
+    ElectryChoiceStrip pickupStrip {
+        "PICKUP", { "NECK", "BOTH", "BRIDGE" }, 1
+    };
+    ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "2X" } };
 
     ElectryKnob guitarBuildKnob { "BUILD" };
     ElectryKnob bodyResonanceKnob { "BODY RES" };
