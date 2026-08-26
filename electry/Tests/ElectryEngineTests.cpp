@@ -7460,7 +7460,7 @@ void testPushAcousticReturnSanitisation()
 
 void testSharedHandRetunesActiveStringDamping()
 {
-    constexpr double sampleRate = 48000.0;
+    static constexpr double sampleRate = 48000.0;
     EngineParameters parameters;
     parameters.sympatheticAmount = 0.0f;
     parameters.artifactAmount = 0.0f;
