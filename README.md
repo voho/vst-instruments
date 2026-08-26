@@ -74,7 +74,7 @@ bends every string like a vibrato bar, a resonance wheel that reaches
 self-sustaining feedback, and a 4×-oversampled amplifier with supply sag, output
 transformer and modeled cabinet.
 
-[Fourteen audio demos](electry/README.md#audio-demos) · [How it works](electry/README.md#how-it-works)
+[Twenty-two audio demos](electry/README.md#audio-demos) · [How it works](electry/README.md#how-it-works)
 
 ---
 

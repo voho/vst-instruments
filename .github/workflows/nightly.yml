@@ -54,7 +54,7 @@ jobs:
             "vocalor:VocalorRenderDemos:10"
             "drumalor:DrumalorRenderDemos:7"
             "neuramar:NeuramarRenderDemos:8"
-            "electry:ElectryRenderDemos:14"
+            "electry:ElectryRenderDemos:22"
             "taikor:TaikorRenderDemos:27"
             "youknow106:YouKnow106RenderDemos:10"
             "septum:SeptumRenderDemos:11"
@@ -69,7 +69,7 @@ jobs:
           # than the untouched one. Restoring the tracked files and removing any
           # new ones puts the directory back exactly as it was checked out.
           discard() {
-            git checkout -- "$1/Docs/audio" || true
+            git checkout -- "$1/Docs/audio" "$1/README.md" || true
             git clean -fdq "$1/Docs/audio" || true
           }
 
@@ -131,7 +131,10 @@ jobs:
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
             neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
-            youknow106/Docs/audio septum/Docs/audio ghostar/Docs/audio
+            youknow106/Docs/audio septum/Docs/audio ghostar/Docs/audio \
+            vocalor/README.md drumalor/README.md neuramar/README.md \
+            electry/README.md taikor/README.md youknow106/README.md \
+            septum/README.md ghostar/README.md
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
