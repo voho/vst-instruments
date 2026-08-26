@@ -1226,11 +1226,13 @@ private:
                     int startDelaySamples,
                     std::uint64_t reservedStartOrder = 0,
                     bool keyStateAlreadyApplied = false) noexcept;
-    void repickHeldString(int stringIndex, float velocity);
+    void repickHeldString(int stringIndex, float velocity,
+                          bool reanchorTremolo = true);
     void noteOnInternal(int midiNote, float velocity, int forcedStringIndex,
                         bool addKeyOwner, bool handPositionPlanned,
                         bool completeChordStart = false,
-                        int completeChordAnchor = -1);
+                        int completeChordAnchor = -1,
+                        bool reanchorTremolo = true);
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
                         PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
@@ -1348,6 +1350,9 @@ private:
     bool chordStrokeIsUp_ { false };
     bool chordAlternateConsumed_ { false };
     bool chordContactOccurred_ { false };
+    // Manual/playable strokes reset a held B0 wrist at their first physical
+    // contact. B0's own generated strokes retain its fractional clock.
+    bool chordReanchorsTremolo_ { true };
     std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
     std::uint64_t chordSequence_ { 0 };
     // A separately seeded player reaches one picked wrist stroke a little

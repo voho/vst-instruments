@@ -2191,6 +2191,32 @@ void testHeldTremoloPickingGesture()
                && ! afterFirstFrame.strokeIsUp,
            "same-boundary B0 doubled a newly fretted note");
 
+    // An empty armed wrist may be anywhere in its cycle when the fretting hand
+    // enters. The played note is the new first contact, so the old empty phase
+    // must not create a near-immediate flam after it.
+    auto preArmedStorage = std::make_unique<ElectryEngine>();
+    auto& preArmed = *preArmedStorage;
+    preArmed.prepare(sampleRate, 512);
+    preArmed.setParameters(parameters);
+    preArmed.reset();
+    preArmed.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    preArmed.beginTremoloPicking(0.9f);
+    StereoBuffer emptyWrist(framesPerStroke - 50);
+    renderInto(preArmed, emptyWrist);
+    preArmed.noteOn(heldNote, 0.82f);
+    const auto preArmedFirst = TestAccess::snapshot(preArmed, 0);
+    StereoBuffer fullInterval(framesPerStroke);
+    renderInto(preArmed, fullInterval);
+    expect(TestAccess::snapshot(preArmed, 0).startOrder
+               == preArmedFirst.startOrder,
+           "pre-held B0 repeated from its empty phase instead of the note");
+    StereoBuffer preArmedBoundary(1);
+    renderInto(preArmed, preArmedBoundary);
+    const auto preArmedSecond = TestAccess::snapshot(preArmed, 0);
+    expect(preArmedSecond.startOrder > preArmedFirst.startOrder
+               && ! preArmedFirst.strokeIsUp && preArmedSecond.strokeIsUp,
+           "pre-held B0 missed the full interval after the played contact");
+
     // With no physically held key the gesture is silent and allocates no
     // voice. This also proves that velocity is not being treated as a pitch.
     auto emptyStorage = std::make_unique<ElectryEngine>();
@@ -2327,6 +2353,44 @@ void testHeldTremoloPickingGesture()
     renderInto(wideChord, throughNextTick);
     expect(TestAccess::noteSequence(wideChord) == firstWideSequence + 2,
            "wide-chord tremolo did not resume after its traversal completed");
+
+    // B0's own delayed contacts must not restart its clock. A non-integer rate
+    // exposes both an accidental extra 20 ms scalar pre-roll and lost
+    // fractional remainder in successive contact intervals.
+    auto spreadGridStorage = std::make_unique<ElectryEngine>();
+    auto& spreadGrid = *spreadGridStorage;
+    auto spreadGridParameters = parameters;
+    spreadGridParameters.strumSpreadSeconds = 0.004f;
+    spreadGridParameters.tremoloRateHz = 13.0f;
+    spreadGrid.prepare(sampleRate, 512);
+    spreadGrid.setParameters(spreadGridParameters);
+    spreadGrid.reset();
+    spreadGrid.noteOn(heldNote, 0.82f);
+    StereoBuffer settleSpread(static_cast<int>(0.05 * sampleRate));
+    renderInto(spreadGrid, settleSpread);
+    spreadGrid.beginTremoloPicking(0.9f);
+    std::array<int, 3> contactFrames {};
+    int contactCount = 0;
+    auto previousOrder = TestAccess::snapshot(spreadGrid, 0).startOrder;
+    StereoBuffer oneFrame(1);
+    for (int frame = 0; frame < 12000 && contactCount < 3; ++frame)
+    {
+        renderInto(spreadGrid, oneFrame);
+        const auto order = TestAccess::snapshot(spreadGrid, 0).startOrder;
+        if (order != previousOrder)
+        {
+            previousOrder = order;
+            contactFrames[static_cast<std::size_t>(contactCount++)] = frame;
+        }
+    }
+    expect(contactCount == 3,
+           "spread B0 fixture did not produce three automatic contacts");
+    const double expectedSpreadInterval = sampleRate / 13.0;
+    for (int contact = 1; contact < contactCount; ++contact)
+        expect(std::abs(static_cast<double>(contactFrames[contact]
+                                            - contactFrames[contact - 1])
+                        - expectedSpreadInterval) <= 1.0,
+               "automatic B0 contact restarted its fractional wrist clock");
 
     // A sustain-pedal tail is sounding but no longer physically fingered; B0
     // must leave it untouched, just like the one-shot per-string commands.

@@ -12,6 +12,26 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — make a played note the tremolo wrist's first contact
+
+B0's fractional wrist clock kept running even when no string was physically
+held. If the fretting hand entered near the end of that empty cycle, the normal
+played attack could be followed by an automatic repick only a few samples
+later. At 48 kHz and the default 12 strokes/s, holding an empty wrist for 3,950
+of the 4,000 host-sample interval reproduced a second contact about 50 samples
+after the note: a phase-dependent flam rather than one picking cadence.
+
+Decision: the leading physical plectrum contact of a new playable stroke
+re-anchors the active B0 phase. Use the scheduler's existing first-contact flag,
+so a delayed strum resets at contact rather than MIDI reservation and later
+strings in the same traversal do not restart the clock. B0-generated strokes
+retain their fractional phase through delayed Strum contact, so the fix cannot
+slow its own cadence. Hammer-ons and legato slides remain fretting-hand gestures
+and do not move it. A regression holds B0 in silence until just before its
+boundary, then requires one full interval from the played Down contact to the
+next Up contact. Demo 22 now enters its moving 16-stroke/s line with the wrist
+already held just short of one interval.
+
 ## 2026-08-26 — retire the finite Palm heel and restore low body
 
 The provisional 4 mm Palm heel had been added on top of an existing bridge-hand

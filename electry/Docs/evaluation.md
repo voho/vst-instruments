@@ -1381,11 +1381,15 @@ pick force and the appended `tremoloRate` parameter spans 4-20 strokes/s with a
 12 strokes/s default. Starting the gesture arms one immediate contact on the
 next internal sample for notes that are already physically held. A playable
 Note On at that same boundary consumes the armed contact instead of receiving a
-duplicate attack. One shared fractional phase repicks all physically held
-strings through the existing attack path, so Alternate advances once for a
-chord; sustain-only strings remain inert. A due contact is skipped while any
-held string still has an in-flight Strum delay rather than overwriting that
-pending attack. E6..B6 retain their established one-shot behavior.
+duplicate attack. A wrist held earlier in silence also re-anchors at the first
+physical contact; a near-complete empty phase cannot put the next repeat only a
+few samples after that played note. One shared fractional phase repicks all
+physically held strings through the existing attack path, while automatic
+contacts retain its fractional remainder through Strum delay. Alternate
+advances once for a chord; sustain-only strings remain inert. A due contact is
+skipped while any held string still has an in-flight Strum delay rather than
+overwriting that pending attack. E6..B6 retain their established one-shot
+behavior.
 
 Overlapping B0 owners balance; a positive repeated Note On restarts the phase
 and updates force, while a zero-velocity Note On releases an owner. CC120 and

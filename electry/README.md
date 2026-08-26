@@ -87,7 +87,7 @@ real-recording boundaries and blind-study plan live in the
 | `19-modern-metalcore-study.wav` | −12.8 dBFS | +9.8 dB |
 | `20-odd-meter-prog-study.wav` | −8.8 dBFS | +5.8 dB |
 | `21-blues-rock-lead-study.wav` | −11.0 dBFS | +8.0 dB |
-| `22-tremolo-picking-study.wav` | −14.0 dBFS | +11.0 dB |
+| `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
 <!-- peaks-table-end -->
 
 `15-mute-and-dead-audition.wav` is the quickest dry vocabulary check: the same
@@ -113,8 +113,10 @@ genre vocabularies rather than copying a composition, riff or production:
 
 `22-tremolo-picking-study.wav` is the playable black/progressive-metal repeat
 proof: the visible B0 **TRM** wrist runs the ordinary physical attack path at
-8, 12 and 16 strokes/s, then follows moving single notes, fretting vibrato and
-a held chord. Those three anchors equal sixteenth notes at 120, 180 and 240 BPM.
+8, 12 and 16 strokes/s, enters a moving line after being held in silence,
+then follows fretting vibrato and a held chord. The played entrance becomes
+the wrist's first contact, so its next pick is one complete interval later.
+Those three anchors equal sixteenth notes at 120, 180 and 240 BPM.
 
 They are original Electry studies, not endorsements or artist sound-alikes.
 The finger-vibrato moments in files 17 and 21 use the same model available from
@@ -212,6 +214,9 @@ The visible B0 **TRM** key drives those same one-shot contacts from one shared
 wrist clock. At the default 12 strokes/s, the first repeat is exactly 4,000
 host samples after the initial contact at 48 kHz; phase remains sample-accurate
 across host block partitions at every supported rate and oversampling mode.
+If the wrist was already held while no string was fretted, the first played
+contact re-anchors that phase instead of inheriting a nearly finished empty
+cycle and creating a flam against its own next pick.
 Multiple held strings share one
 stroke direction and Strum traversal. If a wide traversal is still in flight,
 the next grid contact is skipped rather than replacing a pick that has not yet

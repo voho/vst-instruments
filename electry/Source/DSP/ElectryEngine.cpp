@@ -1084,6 +1084,7 @@ void ElectryEngine::reset()
     chordStrokeIsUp_ = false;
     chordAlternateConsumed_ = false;
     chordContactOccurred_ = false;
+    chordReanchorsTremolo_ = true;
     chordFirstNoteOnClock_ = -(1ll << 40);
     chordSequence_ = variationSeed_;
     chordPerformanceDelaySamples_ = 0;
@@ -1764,7 +1765,8 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
     }
 }
 
-void ElectryEngine::repickHeldString(int stringIndex, float velocity)
+void ElectryEngine::repickHeldString(int stringIndex, float velocity,
+                                     bool reanchorTremolo)
 {
     if (stringIndex < 0 || stringIndex >= stringCount)
         return;
@@ -1779,14 +1781,16 @@ void ElectryEngine::repickHeldString(int stringIndex, float velocity)
     // physical string also revives a Mute or Dead voice that has already
     // decayed below the audio-retirement floor; noteOnInternal restores the
     // durable fretting-key owner instead of adding a trigger-key owner.
-    noteOnInternal(heldMidiNotes_[index], velocity, stringIndex, false, false);
+    noteOnInternal(heldMidiNotes_[index], velocity, stringIndex, false, false,
+                   false, -1, reanchorTremolo);
 }
 
 void ElectryEngine::noteOnInternal(int midiNote, float velocity,
                                    int forcedStringIndex, bool addKeyOwner,
                                    bool handPositionPlanned,
                                    bool completeChordStart,
-                                   int completeChordAnchor)
+                                   int completeChordAnchor,
+                                   bool reanchorTremolo)
 {
     if (! prepared_)
         return;
@@ -1881,10 +1885,13 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     if (plectrumStroke)
     {
         if (newChord)
+        {
             beginChordStroke(
                 completeChordStart && completeChordAnchor >= 0
                     ? completeChordAnchor : stringIndex,
                 strokeCandidateIsUp, spreadSeconds, completeChordStart);
+            chordReanchorsTremolo_ = reanchorTremolo;
+        }
         else if (strumPreRollSamples_ > 0
                  && engineClock_ - chordFirstNoteOnClock_
                         < static_cast<std::int64_t>(strumPreRollSamples_))
@@ -3390,7 +3397,17 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float hardnessGain = lerp(0.98f, 1.26f, effectivePickHardness);
 
     if (plectrumContact && voice.strumChordId == chordSequence_)
+    {
+        // A played note is the wrist's first contact even when B0 was armed
+        // earlier in silence. Re-anchor at the physical leading contact—not
+        // at MIDI arrival and not at every later string in a strum—so the
+        // next automatic pick is one complete interval away instead of an
+        // arbitrary remainder of the empty wrist's old phase.
+        if (! chordContactOccurred_ && chordReanchorsTremolo_
+            && tremoloPickingVelocity_ > 0.0f)
+            tremoloPickingPhase_ = 0.0;
         chordContactOccurred_ = true;
+    }
 
     // A picked attack can graze a fret on the way. Start this opportunity at
     // the actual plectrum contact: scheduling it in startVoice() spent part—or
@@ -5231,7 +5248,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             if (lastNoteOnClock_ != engineClock_ && ! traversalInFlight)
                 for (int stringIndex = 0; stringIndex < stringCount;
                      ++stringIndex)
-                    repickHeldString(stringIndex, tremoloPickingVelocity_);
+                    repickHeldString(stringIndex, tremoloPickingVelocity_, false);
         }
         tremoloPickingPhase_ += static_cast<double>(
             targetParameters_.tremoloRateHz) / sampleRate_;

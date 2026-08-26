@@ -1537,16 +1537,17 @@ Take renderTremoloPickingStudy()
     lowRate(12.0f, 28, 0.92f, 1.50);  // 180 BPM sixteenths
     lowRate(16.0f, 28, 0.96f, 1.50);  // 240 BPM sixteenths
 
-    // Keep the wrist running while the fretting hand moves through a compact
-    // black-metal answer. Each new pitch is its own boundary, then the shared
-    // 16/s clock resumes without inventing a second attack lane.
+    // Let the wrist run just short of one interval before the fretting hand
+    // enters a compact black-metal answer. The first note re-anchors that old
+    // empty phase, then each new pitch is its own boundary and the shared 16/s
+    // clock resumes without a near-immediate flam or a second attack lane.
     parameters.tremoloRateHz = 16.0f;
     take.setEngineParameters(parameters);
     take.style(PlayStyle::Sustain);
+    take.beginTremoloPicking(0.90f);
+    take.wait(0.060);
     int currentNote = 40;
     take.noteOn(currentNote, 0.82f);
-    take.wait(0.12);
-    take.beginTremoloPicking(0.90f);
     for (const int note : { 40, 43, 45, 47, 45, 43, 40, 38 })
     {
         if (note != currentNote)
@@ -1687,7 +1688,7 @@ const std::array<Demo, 22>& demos()
           renderBluesRockLeadStudy },
         { "22-tremolo-picking-study.wav",
           "the visible B0 tremolo-picking gesture at 8, 12 and 16 strokes/s, "
-          "then moving single-note, vibrato-lead and chord applications",
+          "then a pre-held moving entrance, vibrato lead and chord applications",
           renderTremoloPickingStudy },
     }};
     return table;
