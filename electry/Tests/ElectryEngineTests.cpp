@@ -1205,155 +1205,12 @@ void testPassiveContactFoldedRingReference()
     expect(maximumContactDifference < 1.0e-15,
            "paired folded-ring contact did not match the two-rail impulse response");
 
-    // The production Palm prototype uses a finite-width FIR rather than this
-    // integer two-rail junction. Third-order Lagrange interpolation is
-    // non-expansive at every fractional phase; the symmetric footprint and
-    // outer depth blend are convex combinations of those actual cubic reads.
-    // Recreate the production coefficients and verify the complete transfer.
-    const auto cubicTap = [] (double omega, double delay)
-    {
-        const double position = -delay;
-        const int index = static_cast<int>(position)
-                        - (position < 0.0 ? 1 : 0);
-        const double t = position - static_cast<double>(index);
-        const double tMinus1 = t - 1.0;
-        const double tMinus2 = t - 2.0;
-        const double tPlus1 = t + 1.0;
-        const std::array<double, 4> coefficient {
-            -t * tMinus1 * tMinus2 / 6.0,
-            tPlus1 * tMinus1 * tMinus2 / 2.0,
-            -tPlus1 * t * tMinus2 / 2.0,
-            tPlus1 * t * tMinus1 / 6.0
-        };
-        const std::array<int, 4> offset {
-            -(index - 1), -index, -(index + 1), -(index + 2)
-        };
-        double real = 0.0;
-        double imag = 0.0;
-        for (std::size_t tap = 0; tap < coefficient.size(); ++tap)
-        {
-            const double phase = omega
-                               * static_cast<double>(offset[tap]);
-            real += coefficient[tap] * std::cos(phase);
-            imag -= coefficient[tap] * std::sin(phase);
-        }
-        return std::array<double, 2> {
-            real, imag
-        };
-    };
-    double maximumFiniteMagnitude = 0.0;
-    double maximumCubicMagnitude = 0.0;
-    double maximumZeroDepthDifference = 0.0;
-    double maximumFundamentalPhaseCents = 0.0;
-    double maximumAudibleHarmonicPhaseCents = 0.0;
-    double minimumModalRelativeReal = 1.0;
-    const auto finiteContactTap = [&] (double omega, double contactPeriod,
-                                       double centreFraction,
-                                       double halfSpanFraction, double depth)
-    {
-        const auto pairedAt = [&] (double fraction)
-        {
-            const auto shorter = cubicTap(
-                omega, contactPeriod * (1.0 - fraction));
-            const auto longer = cubicTap(
-                omega, contactPeriod * (1.0 + fraction));
-            return std::array<double, 2> {
-                0.5 * (shorter[0] + longer[0]),
-                0.5 * (shorter[1] + longer[1])
-            };
-        };
-        const auto lower = pairedAt(centreFraction - halfSpanFraction);
-        const auto centre = pairedAt(centreFraction);
-        const auto upper = pairedAt(centreFraction + halfSpanFraction);
-        const double footprintReal = 0.25 * lower[0] + 0.50 * centre[0]
-                                   + 0.25 * upper[0];
-        const double footprintImag = 0.25 * lower[1] + 0.50 * centre[1]
-                                   + 0.25 * upper[1];
-        const auto base = cubicTap(omega, contactPeriod);
-        const double weight = 0.5 * depth;
-        return std::array<double, 2> {
-            (1.0 - weight) * base[0] + weight * footprintReal,
-            (1.0 - weight) * base[1] + weight * footprintImag
-        };
-    };
-    for (const double depth : contactAmounts)
-    for (const double contactPeriod : { 73.41, 1165.37, 2330.73 })
-    for (const double centreFraction : { 0.005, 0.018, 0.20, 0.48 })
-    for (const double halfSpanFraction : { 0.0, 0.003, 0.015 })
-    for (int bin = 0; bin <= 1024; ++bin)
-    {
-        const double omega = 3.14159265358979323846
-                           * static_cast<double>(bin) / 1024.0;
-        const auto base = cubicTap(omega, contactPeriod);
-        const auto finite = finiteContactTap(
-            omega, contactPeriod, centreFraction, halfSpanFraction, depth);
-        const double real = finite[0];
-        const double imag = finite[1];
-        const double magnitude = std::hypot(real, imag);
-        maximumFiniteMagnitude = std::max(maximumFiniteMagnitude, magnitude);
-        maximumCubicMagnitude = std::max(
-            maximumCubicMagnitude, std::hypot(base[0], base[1]));
-        if (depth == 0.0)
-            maximumZeroDepthDifference = std::max(
-                maximumZeroDepthDifference,
-                std::hypot(real - base[0], imag - base[1]));
-    }
-    for (const double depth : contactAmounts)
-    for (const double contactPeriod : { 40.87, 73.41, 1165.37, 2330.73 })
-    for (const double centreFraction : { 0.006, 0.030, 0.110 })
-    for (const double halfSpanFraction : { 0.003, 0.011 })
-    for (int harmonic = 1; harmonic <= 64; ++harmonic)
-    {
-        const double omega = 2.0 * 3.14159265358979323846
-                           * static_cast<double>(harmonic) / contactPeriod;
-        if (omega > 3.14159265358979323846)
-            break;
-        const auto base = cubicTap(omega, contactPeriod);
-        const auto finite = finiteContactTap(
-            omega, contactPeriod, centreFraction, halfSpanFraction, depth);
-        const double basePower = base[0] * base[0] + base[1] * base[1];
-        const double relativeReal = (finite[0] * base[0]
-                                   + finite[1] * base[1]) / basePower;
-        const double relativeImaginary = (finite[1] * base[0]
-                                        - finite[0] * base[1]) / basePower;
-        minimumModalRelativeReal = std::min(
-            minimumModalRelativeReal, relativeReal);
-        const double phase = std::atan2(relativeImaginary, relativeReal);
-        const double phaseCents = std::abs(phase) * 1200.0
-            / (2.0 * 3.14159265358979323846 * harmonic);
-        if (harmonic == 1)
-            maximumFundamentalPhaseCents = std::max(
-                maximumFundamentalPhaseCents, phaseCents);
-        // Above 10 kHz the contact is already outside the fitted F2 region.
-        // A mode below -26 dB of its free amplitude is intentionally removed,
-        // so its phase is ill-conditioned and cannot create audible pitch.
-        const double modeHzAt48k = 48000.0 * harmonic / contactPeriod;
-        if (modeHzAt48k <= 10000.0
-                && std::hypot(relativeReal, relativeImaginary) >= 0.05)
-            maximumAudibleHarmonicPhaseCents = std::max(
-                maximumAudibleHarmonicPhaseCents, phaseCents);
-    }
-    expect(maximumCubicMagnitude <= 1.0 + 1.0e-12,
-           "production cubic delay read exceeded unity transfer magnitude");
-    expect(maximumFiniteMagnitude <= 1.0 + 1.0e-12,
-           "finite-width contact exceeded unity transfer magnitude");
-    expect(maximumZeroDepthDifference < 1.0e-15,
-           "zero-depth finite contact changed the production cubic read");
-    expect(maximumFundamentalPhaseCents < 0.001
-               && maximumAudibleHarmonicPhaseCents < 1.0
-               && minimumModalRelativeReal >= -1.0e-12,
-           "finite-width contact shifted or inverted a string mode");
-
-    // The folded-ring reference checks the reciprocal two-rail topology; the
-    // production-transfer sweep above separately bounds the cubic finite-width
-    // contact that Electry actually renders.
+    // Point-touch rendering and cubic-delay interpolation have their own
+    // production regressions. This fixture only proves that the reciprocal
+    // two-rail contact reference folds exactly into one signed ring.
     std::cout << "PROBE passive contact folded-ring reference: free max delta "
               << maximumFreeDifference << ", contact max delta "
-              << maximumContactDifference << ", cubic/finite max magnitude "
-              << maximumCubicMagnitude << "/" << maximumFiniteMagnitude
-              << ", max f0/audible-mode phase "
-              << maximumFundamentalPhaseCents << "/"
-              << maximumAudibleHarmonicPhaseCents << " cents"
+              << maximumContactDifference
               << '\n';
 }
 
@@ -5784,7 +5641,7 @@ void testDeadNote()
         phraseMedian[window] = 0.5 * (values[1] + values[2]);
     }
     constexpr std::array<double, 3> documentedMedian {
-        -8.101, -15.123, -23.433
+        -8.114, -14.919, -23.040
     };
     for (std::size_t window = 0; window < phraseMedian.size(); ++window)
     {
@@ -8516,7 +8373,7 @@ void testPalmMuteHandContactDynamics()
                "soft-to-hard palm-mute tail spread left its calibrated range "
                    "on note " + std::to_string(midiNote) + " ("
                    + std::to_string(spread) + " dB)");
-        std::cout << "PROBE palm-contact note " << midiNote
+        std::cout << "PROBE palm-hand note " << midiNote
                   << " normalised tails: " << tails[0] << ", " << tails[1]
                   << ", " << tails[2] << " dB; spread " << spread << " dB\n";
     }
@@ -8747,27 +8604,21 @@ void testPalmMuteSpectralLoss()
     };
     // Re-running this exact tracked-harmonic extractor on the licensed F2
     // ordinary/Palm cells gives -6.098930 dB for P1 and -15.289719 dB for P2.
-    // Their two-player midpoint is only a secondary development reference,
-    // never a robust population estimate or the commissioned holdout gate.
-    // Require a 25% reduction of the frozen pre-contact error and reject
-    // overshoot equally.
-    constexpr double referenceContraction = -10.694324433;
-    constexpr double preContactContraction = -0.790061;
-    const double maximumCandidateError = 0.75 * std::abs(
-        preContactContraction - referenceContraction);
-    constexpr double numericMarginDb = 0.05;
+    // Two player/guitar cells establish direction, not a robust population
+    // rail. The retired finite-contact prototype overfit that sparse proxy and
+    // audibly removed too much low body, so keep only the observed contraction
+    // direction and the implementation's sample-rate invariance here. The
+    // commissioned holdout remains the actual fit gate.
+    std::array<double, 4> contractions {};
+    std::size_t contractionIndex = 0;
     for (const double analysisSampleRate : { 44100.0, 48000.0,
                                              96000.0, 192000.0 })
     {
         const auto result = measureF2Contraction(analysisSampleRate);
-        expect(std::isfinite(result.paired),
-               "F2 Palm early selective contraction was not finite at "
+        expect(std::isfinite(result.paired) && result.paired < -0.25,
+               "F2 Palm early upper share did not contract at "
                    + std::to_string(analysisSampleRate) + " Hz");
-        expect(std::abs(result.paired - referenceContraction)
-                   <= maximumCandidateError + numericMarginDb,
-               "F2 Palm finite contact did not reduce early selective error "
-               "by 25% at " + std::to_string(analysisSampleRate) + " Hz ("
-                   + std::to_string(result.paired) + " dB)");
+        contractions[contractionIndex++] = result.paired;
         std::cout << "PROBE F2 Palm " << analysisSampleRate
                   << " Hz paired 0-30 -> 30-80 ms upper-share contraction: "
                   << result.paired << " dB; Open " << result.openOnset
@@ -8788,6 +8639,10 @@ void testPalmMuteSpectralLoss()
             std::cout << "dB\n";
         }
     }
+    const auto contractionExtremes = std::minmax_element(
+        contractions.begin(), contractions.end());
+    expect(*contractionExtremes.second - *contractionExtremes.first < 0.05,
+           "F2 Palm early selective contraction changed with sample rate");
 
     for (const int midiNote : { 28, 40 })
     {
@@ -8807,6 +8662,12 @@ void testPalmMuteSpectralLoss()
                                          sampleRate, fundamentalHz);
         const auto mutedLate = bandPowers(muted, lateStart, lateLength,
                                           sampleRate, fundamentalHz);
+        const int bodyOnsetLength = static_cast<int>(0.030 * sampleRate);
+        const int bodyLength = static_cast<int>(0.050 * sampleRate);
+        const double mutedBodyOnsetDb = decibels(
+            rmsInRange(muted.left, bodyOnsetLength,
+                       bodyOnsetLength + bodyLength)
+            / std::max(rmsInRange(muted.left, 0, bodyOnsetLength), 1.0e-30));
 
         const double lowPairedDecay = decibels(std::sqrt(
             mutedLate[0] / std::max(mutedEarly[0], 1.0e-30)))
@@ -8822,18 +8683,24 @@ void testPalmMuteSpectralLoss()
             - decibels(std::sqrt(
                 openEarly[1] / std::max(openEarly[0], 1.0e-30)));
 
-        // Current defaults measure 23.256/22.697 dB of extra high-band loss and
-        // 32.820/30.202 dB of absolute high-band loss on E1/E2. These floors
-        // leave several dB for numeric variation while rejecting a materially
-        // weaker hand tilt or a uniformly darkened string.
+        // The body-corrected defaults measure 9.397/14.770 dB of extra
+        // high-band loss and 19.622/22.941 dB of absolute high-band loss on
+        // E1/E2. These floors reject a materially weaker hand tilt. The
+        // separate 30-80 ms floor rejects the opposite failure: a blanket
+        // contact that erases the low body while satisfying a spectral ratio.
         const double minimumExtraLoss = midiNote == 28 ? 7.0 : 10.0;
         const double minimumHighLoss = midiNote == 28 ? 15.0 : 18.0;
+        const double minimumBody = midiNote == 28 ? -4.5 : -3.75;
         expect(std::isfinite(extraHighLoss)
                    && extraHighLoss > minimumExtraLoss
                    && highPairedDecay < -minimumHighLoss,
                "palm mute lost too little >500 Hz body energy on "
                    + std::to_string(midiNote));
-        // The early attack is also darker at the defaults (-10.132/-3.142 dB),
+        expect(std::isfinite(mutedBodyOnsetDb)
+                   && mutedBodyOnsetDb > minimumBody,
+               "palm mute lost too much 30-80 ms body on "
+                   + std::to_string(midiNote));
+        // The early attack is also darker at the defaults (-4.558/-0.397 dB),
         // but E2 is close enough to flat that this is deliberately secondary.
         const double maximumEarlyTilt = midiNote == 28 ? -2.0 : -0.25;
         expect(std::isfinite(earlyTiltDelta)
@@ -8844,7 +8711,8 @@ void testPalmMuteSpectralLoss()
                   << ": paired 150-500 ms low/high " << lowPairedDecay << "/"
                   << highPairedDecay << " dB, extra high loss "
                   << extraHighLoss << " dB; 0-50 ms high/low delta "
-                  << earlyTiltDelta << " dB\n";
+                  << earlyTiltDelta << " dB; 30-80/0-30 body "
+                  << mutedBodyOnsetDb << " dB\n";
     }
 }
 
@@ -9345,31 +9213,8 @@ void testPalmHandLossStartsEngaged()
                + std::to_string(greatestLater) + " later)");
     std::cout << "PROBE palm hand-loss depth: " << firstTick
               << " at first tick, greatest later " << greatestLater << '\n';
-
-    // The finite heel patch is shared hand state, not a property an old Palm
-    // voice may keep after a newer physical Sustain or Dead contact lifts or
-    // replaces that hand.
-    for (const auto replacement : { PlayStyle::Sustain, PlayStyle::Dead })
-    {
-        ElectryEngine transition;
-        transition.prepare(sampleRate, 512);
-        transition.setParameters(EngineParameters {});
-        transition.reset();
-        transition.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
-        transition.noteOn(28, 0.90f);
-        StereoBuffer palmBody(static_cast<int>(0.010 * sampleRate));
-        renderInto(transition, palmBody);
-        const int palmString = TestAccess::stringForNote(transition, 28);
-        expect(palmString >= 0
-                   && TestAccess::touchDepth(transition, palmString) > 0.0f,
-               "Palm finite contact was not active before the hand transition");
-
-        transition.noteOn(styleKeyswitch(replacement), 1.0f);
-        transition.noteOn(40, 0.90f);
-        expect(palmString >= 0
-                   && TestAccess::touchDepth(transition, palmString) == 0.0f,
-               "a newer non-Palm hand contact left the old finite heel active");
-    }
+    expect(TestAccess::touchDepth(engine, stringIndex) == 0.0f,
+           "Palm allocated a point-touch transient instead of steady hand loss");
 }
 
 void testPalmAttackContactsCompose()
@@ -12677,8 +12522,9 @@ void testCpuGuardrail()
 {
     constexpr double sampleRate = 96000.0;
     constexpr int totalSamples = static_cast<int>(2.0 * 96000.0);
-    // Time the complete finite-contact path: 100 ms hold plus 10 ms release.
-    constexpr int palmContactSamples = static_cast<int>(0.110 * sampleRate);
+    // Time a representative Palm attack/body window separately from the full
+    // two-second render above.
+    constexpr int palmSamples = static_cast<int>(0.110 * sampleRate);
 
     // All eight physical strings ringing in Drop-E tuning. With every string
     // played there is no coupled string left to render, so this isolates the
@@ -12702,7 +12548,7 @@ void testCpuGuardrail()
     };
 
     StereoBuffer buffer(totalSamples);
-    StereoBuffer palmContactBuffer(palmContactSamples);
+    StereoBuffer palmBuffer(palmSamples);
     const auto timeRender = [&] (ElectryEngine& engine, StereoBuffer& audio)
     {
         const auto begin = std::chrono::steady_clock::now();
@@ -12747,19 +12593,19 @@ void testCpuGuardrail()
     expect(defaultCase < ceiling,
            "default-configuration render exceeded the portable CPU ceiling");
 
-    double palmContactCase = 1.0e9;
+    double palmCase = 1.0e9;
     for (int attempt = 0; attempt < 5; ++attempt)
     {
         ElectryEngine palmEngine;
         strike (palmEngine, PickupSelector::Both,
                 electry::OutputMode::Stereo, PlayStyle::PalmMute);
-        palmContactCase = std::min(
-            palmContactCase, timeRender(palmEngine, palmContactBuffer));
+        palmCase = std::min(
+            palmCase, timeRender(palmEngine, palmBuffer));
     }
-    std::cout << "Eight-string Palm-contact CPU ratio over 0-110 ms at 96 kHz: "
-              << palmContactCase << "x\n";
-    expect(palmContactCase < ceiling,
-           "eight-string Palm-contact render exceeded the portable CPU ceiling");
+    std::cout << "Eight-string Palm CPU ratio over 0-110 ms at 96 kHz: "
+              << palmCase << "x\n";
+    expect(palmCase < ceiling,
+           "eight-string Palm render exceeded the portable CPU ceiling");
 
     // The default configuration is cheaper than the worst case, and it is
     // deliberately not asserted here. It used to be, as `defaultCase <

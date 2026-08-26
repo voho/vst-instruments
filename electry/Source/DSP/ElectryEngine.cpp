@@ -3331,14 +3331,13 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                 configureVoicePitch(activeVoice, false);
                 if (voice.playStyle != PlayStyle::PalmMute)
                 {
-                    // The latest physical contact lifted or replaced the
-                    // bridge heel. Its short finite patch belongs to that hand
-                    // state, so it cannot survive on an older ringing voice.
+                    // Preserve the established shared-hand transition: a
+                    // newer non-Palm contact also ends an older temporary
+                    // harmonic/thumb point touch.
                     activeVoice.touchDepth = 0.0f;
                     activeVoice.touchHoldRemaining = 0;
                     activeVoice.touchReleaseStep = 0.0f;
                     activeVoice.touchFraction = 0.0f;
-                    activeVoice.touchHalfSpanFraction = 0.0f;
                 }
             }
         }
@@ -3473,7 +3472,9 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             pulseCutoff *= 0.72f;
             pluckFraction *= 0.8f;
             noiseLevel *= 1.5f;
-            modalBrightness *= 0.74f;
+            // Keep more of the string's low modal body after retiring the
+            // stacked finite heel, while the steady hand supplies the decay.
+            modalBrightness *= 0.85f;
             break;
         case PlayStyle::Hammer:
             amplitude *= legato ? 0.30f : 0.42f;
@@ -3720,7 +3721,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     {
         case PlayStyle::Harmonics:
             voice.touchFraction = 0.5f;
-            voice.touchHalfSpanFraction = 0.0f;
             voice.touchDepth = 0.92f;
             voice.touchHoldRemaining = static_cast<int>(0.045 * sampleRate_);
             voice.touchReleaseStep = 0.92f
@@ -3728,53 +3728,17 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             break;
         case PlayStyle::Pinch:
             voice.touchFraction = combFraction;
-            voice.touchHalfSpanFraction = 0.0f;
             voice.touchDepth = 1.0f;
             voice.touchHoldRemaining = static_cast<int>(0.090 * sampleRate_);
             voice.touchReleaseStep = 1.0f
                 / std::max(1.0f, 0.130f * sampleRate);
             break;
         case PlayStyle::PalmMute:
-        {
-            // A Palm heel covers a patch rather than the ideal point used by
-            // the harmonic articulations above. Mute Tightness travels through
-            // the capture protocol's 4-20 mm saddle landmarks. The contact is
-            // still provisional and remains train-owned when matched captures
-            // arrive.
-            constexpr float heelNearMetres = 0.004f;
-            constexpr float heelFarMetres = 0.020f;
-            constexpr float heelHalfSpanMetres = 0.002f;
-            const float heelCentreMetres = lerp(
-                heelNearMetres, heelFarMetres, parameters.muteDamping);
-            voice.touchFraction = heelCentreMetres / soundingMetres;
-            voice.touchHalfSpanFraction = heelHalfSpanMetres / soundingMetres;
-            // The 1.25 amplitude mapping is provisional/train-owned with the
-            // footprint above. It is the smallest post-baseline increase
-            // tested: it improves the low-string selective decay over 1.10
-            // against both controlled F2 Palm cells and the secondary
-            // extended-range muted-note matrix, while 1.40 was already
-            // saturated. Stroke force already moves the calibrated hand decay;
-            // applying it again here doubled the velocity-dependent tail spread
-            // instead of adding an independent spatial contact.
-            voice.touchDepth = clampf(
-                1.25f * bridgeHandDepth, 0.0f, 1.0f);
-            voice.touchHoldRemaining = static_cast<int>(0.100f * sampleRate);
-            // The fixed contact stays into the secondary matrix's 60-160 ms
-            // body window, then clears smoothly from 100-110 ms. Its accumulated
-            // loop loss persists after release. Longer tested holds moved that
-            // proxy farther in the same direction but erased too much of the
-            // existing soft-to-hard tail range; the calibrated steady
-            // bridge-hand damping remains after this contact has gone.
-            voice.touchReleaseStep = voice.touchDepth
-                / std::max(1.0f, 0.010f * sampleRate);
-            break;
-        }
         case PlayStyle::Sustain:
         case PlayStyle::Hammer:
         case PlayStyle::Slide:
         case PlayStyle::Dead:
             voice.touchFraction = 0.0f;
-            voice.touchHalfSpanFraction = 0.0f;
             voice.touchDepth = 0.0f;
             voice.touchHoldRemaining = 0;
             voice.touchReleaseStep = 0.0f;
@@ -4399,7 +4363,6 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.touchDepth = 0.0f;
     voice.touchHoldRemaining = 0;
     voice.touchFraction = 0.0f;
-    voice.touchHalfSpanFraction = 0.0f;
     voice.slideNoiseAmplitude = 0.0f;
     voice.slideNoiseLevel = 0.0f;
     voice.slideShaperHigh.reset();
@@ -4724,38 +4687,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         float sample = loop.readFractional(loop.currentDelay);
         if (touchWeight > 0.0f)
         {
-            // A point touch keeps the established one-sided path bit-exact. A
-            // Palm heel instead averages symmetric cubic taps across its finite
-            // patch. Cubic Lagrange is non-expansive at every fractional phase;
-            // the non-negative read-combination weights therefore stay passive.
-            float touched = 0.0f;
-            if (voice.touchHalfSpanFraction > 0.0f)
-            {
-                // Read both travelling directions at each point of the heel.
-                // Equal shorter/longer cubic reads cancel the spatial phase;
-                // their tiny interpolation residual is covered at the string's
-                // actual modes by the folded-ring transfer regression.
-                const auto pairedAt = [&] (float fraction)
-                {
-                    return 0.5f * (
-                        loop.readFractional(
-                            loop.currentDelay * (1.0f - fraction))
-                        + loop.readFractional(
-                            loop.currentDelay * (1.0f + fraction)));
-                };
-                const float lower = voice.touchFraction
-                                  - voice.touchHalfSpanFraction;
-                const float upper = voice.touchFraction
-                                  + voice.touchHalfSpanFraction;
-                touched = 0.25f * pairedAt(lower)
-                        + 0.50f * pairedAt(voice.touchFraction)
-                        + 0.25f * pairedAt(upper);
-            }
-            else
-            {
-                touched = loop.readFractional(
-                    loop.currentDelay * touchDelayScale);
-            }
+            const float touched = loop.readFractional(
+                loop.currentDelay * touchDelayScale);
             sample += touchWeight * (touched - sample);
         }
         sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);

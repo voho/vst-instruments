@@ -4,13 +4,46 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
-**No by-ear decisions have been recorded yet.** Electry's voicing choices so
-far have been settled by measurement against reference recordings rather than
-by listening test — see "The default voicing" and the palm-mute derivation in
-the [README](../README.md#how-it-works), both of which quote the joint error
-they were chosen on. Where a constant is voiced rather than literature-derived
-it is labelled as voicing in the
+One informal by-ear observation is now recorded: the user described the
+finite-contact Palm renders as “squishy” and short of body. It is product
+feedback, not a blinded A–Z result. The correction below was selected with
+same-build waveform, spectrum, envelope and regression comparisons rather than
+recasting that observation as a measurement. Where a constant is voiced rather
+than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
+
+## 2026-08-26 — retire the finite Palm heel and restore low body
+
+The provisional 4 mm Palm heel had been added on top of an existing bridge-hand
+model that already supplied selective steady loss. The user then reported that
+the rendered chugs felt squishy and lacked body. A controlled source-history
+A/B confirmed the mechanism: the finite-contact commit moved demo 04's
+30-80/0-30 ms body from -5.36 to -6.77 dB, reduced its 80-500 Hz share from
+54.68% to 39.51%, and raised crest from 13.74 to 14.66 dB. It improved one
+two-player F2 selective-loss proxy, but stacked a 100 ms transient loss on the
+steady hand and contradicted the broader low-body result.
+
+Decision: remove the Palm-only finite-contact path, its width state and six
+extra cubic reads. Retain the existing additive hand-loss law, velocity latch,
+Mute Tightness, Mute Pressure and short pick-impact path. Raise only Palm's
+existing modal-excitation factor from 0.74 to 0.85; do not add output gain,
+another resonator, a control or a dependency.
+
+At the shipping default, the raw evaluator's E1/E2 30-80 ms body moves from
+-5.4608/-4.8192 to -4.1939/-3.2506 dB and peak rises 2.23/2.44 dB. Open and
+Dead evaluator WAVs are byte-identical. The noise-free guard still measures
+9.397/14.770 dB more high- than low-band Palm loss over 150-500 ms, keeps the
+early attack darker than Open, and preserves strict Light -> Medium -> Hard
+ordering. The high-gain rapid-Mute body remains above its 6% upper-share floor.
+
+The cost is explicit: the controlled F2 paired contraction retreats from
+-4.009 dB to -0.681 dB at 44.1 kHz, versus two public cells at -6.099 and
+-15.290 dB. Two conventional-guitar player cells are useful direction evidence,
+not a defensible coefficient; optimizing that sparse proxy while the rendered
+instrument lost low body was the wrong trade. The test now guards negative
+selective direction and 44.1-192 kHz invariance, plus independent long-band and
+E1/E2 body floors. Commissioned exact-eight TRAIN/HOLDOUT captures remain the
+only gate allowed to fit a stronger time-varying contact.
 
 ## 2026-08-26 — start a complete strum at its known edge
 
@@ -214,7 +247,7 @@ do not detune the Mute DSP to compensate for an estimator following its
 deliberately reshaped, inharmonic upper partials. Mute tuning remains guarded
 on the dry fundamental.
 
-## 2026-08-26 — deepen and lengthen the fixed Palm contact
+## 2026-08-26 — deepen and lengthen the fixed Palm contact (superseded)
 
 The CC0 [`50hz-guitar`](https://freesound.org/people/inspektral/packs/42559/)
 matrix adds two matched muted/sustained takes at nominal 50, 75 and 100 Hz from
@@ -250,13 +283,16 @@ Eight active strings render it at 0.205x realtime at 96 kHz on the checkpoint
 machine. The isolated all-string tuning spread remains 0..2.5 cents and the
 simultaneous low chord remains -4.25..+0.75 cents.
 
-## 2026-08-26 — keep the fixed Palm contact; reject an attack/recovery ramp
+The later Palm-body decision above removes this contact. These figures remain
+only as the recorded result of the rejected development checkpoint.
 
-The retained finite-width contact already produces monotonically increasing
+## 2026-08-26 — keep the fixed Palm contact; reject an attack/recovery ramp (superseded)
+
+At that superseded checkpoint, the finite-width contact produced monotonically increasing
 Palm-versus-Open upper-band loss across sliding 30 ms F2 windows. That is the
 expected accumulated action of a fixed loss inside the feedback loop; the
 exact P1, P2 and Electry trajectories are recorded in
-[the evaluation](evaluation.md#provisional-finite-width-palm-checkpoint).
+[the evaluation](evaluation.md#retired-finite-width-palm-experiment-and-current-body-checkpoint).
 
 [Biral, d'Alessandro and Freed](https://www.icmc14-smc14.net/images/proceedings/PS4-B10-TowardsaDynamicModel.pdf)
 measured pressure dips around picks, not the simultaneous acoustic loss or a
