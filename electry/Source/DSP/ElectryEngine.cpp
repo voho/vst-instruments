@@ -3660,9 +3660,9 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         {
             // A Palm heel covers a patch rather than the ideal point used by
             // the harmonic articulations above. Mute Tightness travels through
-            // the capture protocol's 4-20 mm saddle landmarks; the 4 mm full
-            // footprint is deliberately the smallest plausible provisional
-            // value and remains train-owned when matched captures arrive.
+            // the capture protocol's 4-20 mm saddle landmarks. The contact is
+            // still provisional and remains train-owned when matched captures
+            // arrive.
             constexpr float heelNearMetres = 0.004f;
             constexpr float heelFarMetres = 0.020f;
             constexpr float heelHalfSpanMetres = 0.002f;
@@ -3670,16 +3670,23 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                 heelNearMetres, heelFarMetres, parameters.muteDamping);
             voice.touchFraction = heelCentreMetres / soundingMetres;
             voice.touchHalfSpanFraction = heelHalfSpanMetres / soundingMetres;
-            // The 1.10 amplitude mapping is provisional/train-owned with the
-            // footprint above. Stroke force already moves the calibrated hand
-            // decay; applying it again here doubled the velocity-dependent tail
-            // spread instead of adding an independent spatial contact.
+            // The 1.25 amplitude mapping is provisional/train-owned with the
+            // footprint above. It is the smallest post-baseline increase
+            // tested: it improves the low-string selective decay over 1.10
+            // against both controlled F2 Palm cells and the secondary
+            // extended-range muted-note matrix, while 1.40 was already
+            // saturated. Stroke force already moves the calibrated hand decay;
+            // applying it again here doubled the velocity-dependent tail spread
+            // instead of adding an independent spatial contact.
             voice.touchDepth = clampf(
-                1.10f * bridgeHandDepth, 0.0f, 1.0f);
-            voice.touchHoldRemaining = static_cast<int>(0.070f * sampleRate);
-            // The controlled F2 body is already periodic by 30-80 ms. Let the
-            // short extra contact clear by that boundary; the calibrated
-            // steady bridge-hand damping remains after it has gone.
+                1.25f * bridgeHandDepth, 0.0f, 1.0f);
+            voice.touchHoldRemaining = static_cast<int>(0.100f * sampleRate);
+            // The fixed contact stays into the secondary matrix's 60-160 ms
+            // body window, then clears smoothly from 100-110 ms. Its accumulated
+            // loop loss persists after release. Longer tested holds moved that
+            // proxy farther in the same direction but erased too much of the
+            // existing soft-to-hard tail range; the calibrated steady
+            // bridge-hand damping remains after this contact has gone.
             voice.touchReleaseStep = voice.touchDepth
                 / std::max(1.0f, 0.010f * sampleRate);
             break;

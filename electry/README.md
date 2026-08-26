@@ -67,7 +67,7 @@ renderer, real-recording boundaries and blind-study plan live in the
 | `01-range-open-strings.wav` | −12.4 dBFS | +9.4 dB |
 | `02-range-full-fretboard.wav` | −11.3 dBFS | +8.3 dB |
 | `03-play-styles.wav` | −3.2 dBFS | +0.2 dB |
-| `04-drop-e-rhythm-dry.wav` | −13.4 dBFS | +10.4 dB |
+| `04-drop-e-rhythm-dry.wav` | −13.5 dBFS | +10.5 dB |
 | `05-drop-e-rhythm-amp.wav` | −14.3 dBFS | +11.3 dB |
 | `06-lead-amp-delay-room.wav` | −7.3 dBFS | +4.3 dB |
 | `07-pickups-and-tone.wav` | −14.2 dBFS | +11.2 dB |
@@ -526,7 +526,7 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   For the Mute style only, Mute Tightness also moves a provisional finite heel
   centre from 4 to 20 mm at the saddle. Its 4 mm full footprint averages three
   symmetric pairs of cubic delay reads, then enters the free string through a
-  passive non-negative blend for a 70 ms hold and 10 ms release. Other styles
+  passive non-negative blend for a 100 ms hold and 10 ms release. Other styles
   retain their existing damping without this Palm heel.
 
   Mute uses the same sustained triangular-displacement load as Open; contact,
@@ -836,7 +836,7 @@ crossfade over roughly 4 ms.
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
 | Dead note | Fretting-hand dead-note distinctions and distributed player/string contact; four CC0 Drop-E eight-string ghost attacks | An independent additive fretting-hand loss with a 1.6 s low-order target, its upper fit at the eighth partial, and a lightly darkened pick attack; Mute Pressure may stack as the separate bridge hand | A contact loss inside the loop whose stateful E1 envelope and centroid track the four-hit reference; not a gate, maximum palm mute, distributed finger-force solve, or universal calibration of dead-note hand coverage |
-| Bridge-hand damping | Palm-muting practice; pressure sensing by Biral, d'Alessandro and Freed; post-attack spectral evidence from Reboursiere et al. and Guitar-TECHS; the same decay-targeted loop design; and dry muted power-chord references for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; its solved spectral loss is present when the pick releases and can relax only after the string establishes a measured energy peak. The raw hand rate is multiplied by 4.5 at the high reference and divided by twenty-two at the fundamental, an effective 99:1 ratio between the two fitted points. For the Mute style only, Mute Tightness places a provisional 4 mm heel footprint 4–20 mm from the saddle; three symmetric shorter/longer cubic pairs make a passive six-read contact for a 70 ms hold plus 10 ms release. Continuous Mute Pressure retains the reference-informed absorber on every style, and the newest actual contact updates the shared hand on already-ringing strings without rewriting their attack style | Progressive additive damping plus a stable finite-position Palm development model; not a distributed hand/string force solve, measured heel footprint, commissioned per-harmonic fit, or capture fit to a named eight-string |
+| Bridge-hand damping | Palm-muting practice; pressure sensing by Biral, d'Alessandro and Freed; post-attack spectral evidence from Reboursiere et al. and Guitar-TECHS; HiMMP's score-matched rhythm DIs; the CC0 extended-range `50hz-guitar` muted/sustained matrix; the same decay-targeted loop design; and dry muted power-chord references for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; its solved spectral loss is present when the pick releases and can relax only after the string establishes a measured energy peak. The raw hand rate is multiplied by 4.5 at the high reference and divided by twenty-two at the fundamental, an effective 99:1 ratio between the two fitted points. For the Mute style only, Mute Tightness places a provisional 4 mm heel footprint 4–20 mm from the saddle; three symmetric shorter/longer cubic pairs make a passive six-read contact for a 100 ms hold plus 10 ms release. Continuous Mute Pressure retains the reference-informed absorber on every style, and the newest actual contact updates the shared hand on already-ringing strings without rewriting their attack style | Progressive additive damping plus a stable finite-position Palm development model; not a distributed hand/string force solve, measured heel footprint, commissioned per-harmonic fit, or capture fit to a named eight-string |
 | Fretting hand | Ordinary left-hand kinematics; [Itoh and Hayashida's constrained fingering optimisation](https://www.jstage.jst.go.jp/article/ieejeiss/124/7/124_7_1396/_article/-char/en) and [Yazawa et al.'s playable-configuration enumeration](https://cir.nii.ac.jp/crid/1573387452726377216); the position/reach controls exposed by sampled guitars | Exact-sample chord attacks are matched across all eight strings as one bounded problem: held-note and legato continuity, occupied strings, a four-fret hand shape, fret effort and uncrossed pitch order resolve before any voice starts. The chosen shape then enters the ordinary physical attack path in canonical pitch order, so host event order cannot alter the fingering or player-variation stream. Single notes retain the floating hand, out-of-reach shift and phrase return | A deterministic chord-local configuration solver with a fixed four-fret reach; not finger-by-finger anatomy, chord naming, or phrase-wide look-ahead |
 | Strum travel | Ordinary plectrum kinematics | Note-ons on different strings no more than 35 ms from the chord's first event are one stroke; its direction and extreme string set an accelerating travel order, every crossed string shares that direction, and Alternate advances once for the chord. Reusing a string starts a new stroke; a fully cancelled pre-contact chord consumes none | Deterministic, jittered accelerating pick travel across the string plane; not a model of pick angle, chord recognition, or the player's wrist trajectory |
 | Pitch-wheel bar | The elastic string-tension relation `dF/F = dT/2T` with `dT = E A dl/l` (Fletcher and Rossing) applied to a whole-bridge stretch, as a vibrato bar applies it | The wheel stretches every string - fingered and sympathetically ringing alike - over a nominal +/-2 semitone range; each string's share follows its elastic core stiffness against its tension (which reduces to core-fraction squared over open frequency squared for one scale length), compressed toward the two-to-one spread measured on real tremolo bridges and normalised so the most compliant string spans the full range; the strings travel over the Bend Time glide rather than snapping | The documented per-string compliance direction with a voiced compression exponent; not a model of a specific bridge's geometry, spring balance, or friction |
@@ -997,19 +997,20 @@ The exact Guitar-TECHS F2 replication uses the corpus detector's zero-phase
 fourth-order 500 Hz high-pass. With the same tracked-harmonic extractor capped
 below 2.6 kHz, the two real ordinary/Palm cells contract by -6.098930 and
 -15.289719 dB. Electry moves from its frozen -0.790061 dB baseline to
--3.6039 dB, reducing its distance to their -10.694324 dB two-player midpoint
-by 28.4%. That midpoint is only a secondary development reference. Open's
-tracked-harmonic above-500 Hz share moves 0.348896 -> 0.337349 from onset to
-body; Palm moves 0.230412 -> 0.0971626. Palm/Open is -1.80 dB at onset and
--5.41 dB in the body: the onset is inside the two real cells' bracket, while
+-4.00942 dB, reducing its distance to their -10.694324 dB two-player midpoint
+by 32.5%. That midpoint is only a secondary development reference. At 44.1
+kHz, Open's tracked-harmonic above-500 Hz share moves 0.348460 -> 0.336936
+from onset to body; Palm moves 0.223310 -> 0.0857751. Palm/Open is -1.93 dB at
+onset and -5.94 dB in the body: the onset is inside the two real cells'
+bracket, while
 the time contraction remains weaker than either real cell.
 
 That result comes from the provisional Palm-only finite contact: Mute Tightness
 moves a 4 mm footprint centre from 4 to 20 mm at the saddle, six symmetric
-cubic reads form a passive blend, and the contact holds 70 ms before a 10 ms
+cubic reads form a passive blend, and the contact holds 100 ms before a 10 ms
 release. Fundamental-phase and audible-mode phase errors are 0.000039/0.553
 cents. The 0.74 excitation-modal darkener is unchanged. Dead is also unchanged;
-its contextual regression RMSE remains 4.92754 dB. An independent EG-IPT E2
+its contextual regression RMSE remains 4.93049 dB. An independent EG-IPT E2
 Palm reaches 0.9971 harmonicity and 1.3923% upper share at 30-80 ms, likewise
 rejecting an audible ongoing stochastic hand tail. Dataset, chain and pairing
 limits are recorded in the [`evaluation contract`](Docs/evaluation.md).
@@ -1020,10 +1021,10 @@ and exactly two untouched HOLDOUT clusters; no capture-parity or market claim
 follows from the provisional result.
 
 The current shared-hand regression isolates the new E2 while an old E1 rings.
-Palm -> Open raises the old E1's 30-80 ms power above 500 Hz by 19.9444 dB and
-its upper share by 0.192465 percentage points; Open -> Palm lowers them by
-7.33406 dB and 0.151510 points. Contact/control maximum steps are
-0.00134604/0.000206784 and 0.000973204/0.00116122, inside the declared
+Palm -> Open raises the old E1's 30-80 ms power above 500 Hz by 24.3787 dB and
+its upper share by 0.189167 percentage points; Open -> Palm lowers them by
+7.33406 dB and 0.151510 percentage points. Contact/control maximum steps are
+0.00134036/0.000178591 and 0.000973204/0.00116122, inside the declared
 `1.5 * control + 0.005` bound. Same-style Palm remains exact and delayed
 lookahead is exact until physical contact. Adjacent CC2 movement is below
 0.040 dB on E1/E2. The checkpoint passes the full five-target CTest suite.
@@ -1036,8 +1037,13 @@ hashes and the model measurements used by the evaluation contract.
 
 Engineering tests and public datasets do not replace licensed Drop-E hardware
 validation. No public source found closes the licensed, controlled, genuinely
-dry E1 and open-string E2 Open/Mute/Dead gate. The best lawful CC0 leads each
-cover only part of it: [Freesound 557299](https://freesound.org/people/minus_28_and_falling/sounds/557299/)
+dry E1 and open-string E2 Open/Mute/Dead gate. The best lawful sources each
+cover only part of it: [inspektral's CC0 seven-string baritone matrix](https://freesound.org/people/inspektral/packs/42559/)
+matches muted and sustained low notes but does not identify the muting hand,
+raw-DI chain or exact tuning; this pass could access only its public previews.
+[HiMMP](https://himmp.net/faq.html) supplies CC-BY score-matched raw Palm DIs,
+but from a conventional six-string Drop-C guitar.
+[Freesound 557299](https://freesound.org/people/minus_28_and_falling/sounds/557299/)
 is a real Drop-E phrase but its hand labels, chain and public-preview codec are
 not controlled, while [cabled_mess's eight-string pack](https://freesound.org/people/cabled_mess/packs/29585/)
 documents clean dry chromatic one-shots on its lowest F# string, but only F#1
@@ -1067,6 +1073,21 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-26 licensed low-register mute checkpoint
+
+- Added reproducible direction-only comparisons against a CC0 seven-string
+  baritone muted/sustained matrix and HiMMP's CC-BY score-matched rhythm DIs.
+- Deepened the provisional finite contact from 1.10 to 1.25 times the solved
+  bridge-hand depth and extended its hold from 70 to 100 ms. A 1.40 mapping
+  was already saturated; 120 and 140 ms holds failed the retained E2
+  soft-to-hard expression rail.
+- Kept the 4 mm fixed footprint and rejected per-hit heel jitter: the public
+  sources do not identify enough contact geometry to justify another random
+  player dimension.
+- Preserved the all-string tuning rails and the rapid-repick grid; the full
+  100 ms hold plus 10 ms release renders eight Palm voices at 0.205x realtime
+  at 96 kHz on the checkpoint machine.
+
 ### 2026-08-26 tuning and picking-hand checkpoint
 
 - Corrected hard-pick pitch across all eight strings; the default isolated
@@ -1080,7 +1101,8 @@ regression-measured model—not capture parity or market leadership.
   of the host's Mute Pressure knob.
 - Stabilized a provisional Palm-only finite heel: Mute Tightness moves its
   4 mm footprint centre from 4 to 20 mm at the saddle, and a passive symmetric
-  six-cubic-read contact holds 70 ms and releases over 10 ms. The 0.74 attack
+  six-cubic-read contact initially held 70 ms and released over 10 ms; the
+  licensed low-register checkpoint above extends that hold. The 0.74 attack
   darkener and Dead path remain unchanged.
 - Added the blue E6..B6 per-string repick lane. Its picking hand can restart a
   fully decayed held Mute or Dead string without adding note ownership, and it

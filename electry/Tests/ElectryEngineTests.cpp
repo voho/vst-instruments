@@ -8331,8 +8331,8 @@ void testPalmMuteSpectralLoss()
             - decibels(std::sqrt(
                 openEarly[1] / std::max(openEarly[0], 1.0e-30)));
 
-        // Current defaults measure 17.198/19.450 dB of extra high-band loss and
-        // 26.651/26.774 dB of absolute high-band loss on E1/E2. These floors
+        // Current defaults measure 23.256/22.697 dB of extra high-band loss and
+        // 32.820/30.202 dB of absolute high-band loss on E1/E2. These floors
         // leave several dB for numeric variation while rejecting a materially
         // weaker hand tilt or a uniformly darkened string.
         const double minimumExtraLoss = midiNote == 28 ? 7.0 : 10.0;
@@ -8342,7 +8342,7 @@ void testPalmMuteSpectralLoss()
                    && highPairedDecay < -minimumHighLoss,
                "palm mute lost too little >500 Hz body energy on "
                    + std::to_string(midiNote));
-        // The early attack is also darker at the defaults (-9.268/-2.855 dB),
+        // The early attack is also darker at the defaults (-10.132/-3.142 dB),
         // but E2 is close enough to flat that this is deliberately secondary.
         const double maximumEarlyTilt = midiNote == 28 ? -2.0 : -0.25;
         expect(std::isfinite(earlyTiltDelta)
@@ -8562,6 +8562,252 @@ void testRapidPalmMuteChugs()
     std::cout << "PROBE rapid palm repick-state aggregate: median absolute mean "
               << median(repickMeanErrors) << " dB, median worst absolute "
               << median(repickWorstErrors) << " dB\n";
+}
+
+void testScoreMatchedC2PalmProxy()
+{
+    // HiMMP's CC-BY "In Solitude" multitrack provides four independent raw
+    // Drop-C rhythm DIs and a score that marks this exact low-C2 Palm pattern:
+    // four quarter-note strikes at 0, 300, 600 and 900 ms in bar 18 at
+    // 200 BPM. It is a conventional six-string proxy, not an E1 eight-string
+    // fit target, but matching its repick schedule gives the dry engine a
+    // useful behavioural audit without importing or redistributing third-party
+    // audio.
+    constexpr double sampleRate = 44100.0;
+    constexpr int hitCount = 4;
+    constexpr int note = 36;
+    constexpr int tailSamples = static_cast<int>(0.120 * sampleRate);
+    constexpr std::array<int, hitCount> hitStarts {{
+        0,
+        static_cast<int>(0.300 * sampleRate),
+        static_cast<int>(0.600 * sampleRate),
+        static_cast<int>(0.900 * sampleRate)
+    }};
+    constexpr int totalSamples = hitStarts.back() + tailSamples;
+
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+    // The score does not identify stroke direction, so keep one repeatable
+    // down-pick control; the separate rapid-Palm grid covers Alternate.
+    engine.noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
+    engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+
+    StereoBuffer phrase(totalSamples);
+    int cursor = 0;
+    for (const int start : hitStarts)
+    {
+        if (start > cursor)
+            engine.process(phrase.left.data() + cursor,
+                           phrase.right.data() + cursor, start - cursor);
+        engine.noteOn(note, 0.90f);
+        cursor = start;
+    }
+    engine.process(phrase.left.data() + cursor,
+                   phrase.right.data() + cursor, totalSamples - cursor);
+    expect(allFinite(phrase), "score-matched C2 Palm proxy was not finite");
+
+    constexpr int shapePoints = 104;
+    constexpr int halfWindow = static_cast<int>(0.0075 * sampleRate);
+    constexpr int firstCentre = static_cast<int>(0.008 * sampleRate);
+    constexpr int shapeStep = static_cast<int>(0.001 * sampleRate);
+    std::array<std::array<double, shapePoints>, hitCount> shapes {};
+    std::array<double, hitCount> bodyDb {};
+    std::array<double, hitCount> tailDb {};
+    std::array<double, hitCount> contractionDb {};
+
+    const auto bandPowers = [&] (int start, int length)
+    {
+        std::array<double, 2> power {};
+        constexpr double fundamentalHz = 65.40639133;
+        for (int partial = 1; partial <= 64; ++partial)
+        {
+            const double frequency = fundamentalHz * partial;
+            if (frequency >= 2600.0)
+                break;
+            const double magnitude = scannedPartialMagnitude(
+                phrase.left, start, length, sampleRate,
+                fundamentalHz, partial);
+            power[frequency < 500.0 ? 0u : 1u] += magnitude * magnitude;
+        }
+        return power;
+    };
+    const auto upperShare = [] (const std::array<double, 2>& power)
+    {
+        return power[1] / std::max(power[0] + power[1], 1.0e-30);
+    };
+
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        const int start = hitStarts[static_cast<std::size_t>(hit)];
+        const int onsetEnd = start + static_cast<int>(0.030 * sampleRate);
+        const int bodyEnd = start + static_cast<int>(0.080 * sampleRate);
+        const int tailEnd = start + tailSamples;
+        const double onsetRms = rmsInRange(phrase.left, start, onsetEnd);
+        bodyDb[static_cast<std::size_t>(hit)] = decibels(
+            rmsInRange(phrase.left, onsetEnd, bodyEnd)
+            / std::max(onsetRms, 1.0e-15));
+        tailDb[static_cast<std::size_t>(hit)] = decibels(
+            rmsInRange(phrase.left, bodyEnd, tailEnd)
+            / std::max(onsetRms, 1.0e-15));
+        const auto onsetPower = bandPowers(start, onsetEnd - start);
+        const auto bodyPower = bandPowers(onsetEnd, bodyEnd - onsetEnd);
+        contractionDb[static_cast<std::size_t>(hit)] = decibels(std::sqrt(
+            upperShare(bodyPower)
+            / std::max(upperShare(onsetPower), 1.0e-30)));
+
+        for (int point = 0; point < shapePoints; ++point)
+        {
+            const int centre = start + firstCentre + point * shapeStep;
+            shapes[static_cast<std::size_t>(hit)]
+                  [static_cast<std::size_t>(point)] =
+                rmsInRange(phrase.left, centre - halfWindow,
+                            centre + halfWindow)
+                / std::max(onsetRms, 1.0e-15);
+        }
+    }
+
+    const auto correlation = [] (const auto& a, const auto& b)
+    {
+        double meanA = 0.0, meanB = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            meanA += a[i];
+            meanB += b[i];
+        }
+        meanA /= static_cast<double>(a.size());
+        meanB /= static_cast<double>(b.size());
+        double covariance = 0.0, powerA = 0.0, powerB = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            const double da = a[i] - meanA;
+            const double db = b[i] - meanB;
+            covariance += da * db;
+            powerA += da * da;
+            powerB += db * db;
+        }
+        return covariance / std::sqrt(std::max(powerA * powerB, 1.0e-30));
+    };
+    std::array<double, 6> correlations {};
+    int pair = 0;
+    for (int first = 0; first < hitCount; ++first)
+        for (int second = first + 1; second < hitCount; ++second)
+            correlations[static_cast<std::size_t>(pair++)] = correlation(
+                shapes[static_cast<std::size_t>(first)],
+                shapes[static_cast<std::size_t>(second)]);
+    std::sort(correlations.begin(), correlations.end());
+    const double medianCorrelation =
+        0.5 * (correlations[2] + correlations[3]);
+
+    std::cout << "PROBE score-matched C2 Palm four-hit envelope correlation "
+              << medianCorrelation << "; body/onset ";
+    for (const double value : bodyDb)
+        std::cout << value << ' ';
+    std::cout << "dB; tail/onset ";
+    for (const double value : tailDb)
+        std::cout << value << ' ';
+    std::cout << "dB; upper-share contraction ";
+    for (const double value : contractionDb)
+        std::cout << value << ' ';
+    std::cout << "dB\n";
+}
+
+void testExtendedRangeMutedMatrixProxy()
+{
+    // Freesound's CC0 "50hz-guitar" pack supplies two bridge-pickup takes of
+    // matched sustained/muted 50, 75 and 100 Hz notes from a tagged seven-
+    // string baritone. The uploader does not identify which hand performs the
+    // mute, so these remain direction-only low-register probes rather than
+    // Palm calibration rails. MIDI 31/38/43 are the nearest playable G1/D2/G2
+    // notes and keep the comparison on wound strings at nearly full scale.
+    constexpr double sampleRate = 48000.0;
+    constexpr int onsetLength = static_cast<int>(0.050 * sampleRate);
+    constexpr std::array<std::array<int, 2>, 4> windows {{
+        std::array<int, 2> { static_cast<int>(0.050 * sampleRate),
+                             static_cast<int>(0.150 * sampleRate) },
+        std::array<int, 2> { static_cast<int>(0.150 * sampleRate),
+                             static_cast<int>(0.500 * sampleRate) },
+        std::array<int, 2> { static_cast<int>(0.500 * sampleRate),
+                             static_cast<int>(1.000 * sampleRate) },
+        std::array<int, 2> { static_cast<int>(1.000 * sampleRate),
+                             static_cast<int>(2.000 * sampleRate) }
+    }};
+
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    for (const int note : { 31, 38, 43 })
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        const auto open = renderNote(engine, sampleRate, note, 0.90f,
+                                     PlayStyle::Sustain, 2.0);
+        const auto muted = renderNote(engine, sampleRate, note, 0.90f,
+                                      PlayStyle::PalmMute, 2.0);
+        expect(allFinite(open) && allFinite(muted),
+               "extended-range muted-matrix proxy was not finite on note "
+                   + std::to_string(note));
+
+        const double openOnset = rmsInRange(open.left, 0, onsetLength);
+        const double mutedOnset = rmsInRange(muted.left, 0, onsetLength);
+        std::array<double, windows.size()> pairedDecay {};
+        for (std::size_t i = 0; i < windows.size(); ++i)
+        {
+            const auto& window = windows[i];
+            const double openDecay = decibels(
+                rmsInRange(open.left, window[0], window[1])
+                / std::max(openOnset, 1.0e-15));
+            const double mutedDecay = decibels(
+                rmsInRange(muted.left, window[0], window[1])
+                / std::max(mutedOnset, 1.0e-15));
+            pairedDecay[i] = mutedDecay - openDecay;
+        }
+
+        const auto upperShare = [&] (const StereoBuffer& audio,
+                                     int start, int length)
+        {
+            const double fundamentalHz = midiHz(note);
+            std::array<double, 2> power {};
+            for (int partial = 1; partial <= 80; ++partial)
+            {
+                const double frequency = fundamentalHz * partial;
+                if (frequency >= 2600.0)
+                    break;
+                const double magnitude = scannedPartialMagnitude(
+                    audio.left, start, length, sampleRate,
+                    fundamentalHz, partial);
+                power[frequency < 500.0 ? 0u : 1u] += magnitude * magnitude;
+            }
+            return power[1] / std::max(power[0] + power[1], 1.0e-30);
+        };
+        constexpr int spectralOnsetLength = static_cast<int>(0.060 * sampleRate);
+        constexpr int spectralBodyStart = spectralOnsetLength;
+        constexpr int spectralBodyLength = static_cast<int>(0.100 * sampleRate);
+        const double openContraction = decibels(std::sqrt(
+            upperShare(open, spectralBodyStart, spectralBodyLength)
+            / std::max(upperShare(open, 0, spectralOnsetLength), 1.0e-30)));
+        const double mutedContraction = decibels(std::sqrt(
+            upperShare(muted, spectralBodyStart, spectralBodyLength)
+            / std::max(upperShare(muted, 0, spectralOnsetLength), 1.0e-30)));
+
+        std::cout << "PROBE extended-range muted matrix note " << note
+                  << " paired decay ";
+        for (const double value : pairedDecay)
+            std::cout << value << ' ';
+        std::cout << "dB; paired 0-60 -> 60-160 ms upper-share contraction "
+                  << mutedContraction - openContraction << " dB\n";
+    }
 }
 
 void testPalmHandLossStartsEngaged()
@@ -11630,7 +11876,8 @@ void testCpuGuardrail()
 {
     constexpr double sampleRate = 96000.0;
     constexpr int totalSamples = static_cast<int>(2.0 * 96000.0);
-    constexpr int palmContactSamples = static_cast<int>(0.080 * sampleRate);
+    // Time the complete finite-contact path: 100 ms hold plus 10 ms release.
+    constexpr int palmContactSamples = static_cast<int>(0.110 * sampleRate);
 
     // All eight physical strings ringing in Drop-E tuning. With every string
     // played there is no coupled string left to render, so this isolates the
@@ -11708,7 +11955,7 @@ void testCpuGuardrail()
         palmContactCase = std::min(
             palmContactCase, timeRender(palmEngine, palmContactBuffer));
     }
-    std::cout << "Eight-string Palm-contact CPU ratio over 0-80 ms at 96 kHz: "
+    std::cout << "Eight-string Palm-contact CPU ratio over 0-110 ms at 96 kHz: "
               << palmContactCase << "x\n";
     expect(palmContactCase < ceiling,
            "eight-string Palm-contact render exceeded the portable CPU ceiling");
@@ -11830,6 +12077,8 @@ int main()
     testPalmMuteHandContactDynamics();
     testPalmMuteSpectralLoss();
     testRapidPalmMuteChugs();
+    testScoreMatchedC2PalmProxy();
+    testExtendedRangeMutedMatrixProxy();
     testPalmHandLossStartsEngaged();
     testPalmAttackContactsCompose();
     testPalmImpactIsSampleRateInvariant();

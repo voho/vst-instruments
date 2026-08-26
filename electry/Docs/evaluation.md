@@ -147,6 +147,74 @@ No reference audio is committed. License, instrument identity, register and
 chain are recorded here precisely so a useful secondary reference cannot
 quietly become a calibration master later.
 
+### CC0 seven-string muted/sustained matrix
+
+[inspektral's `50hz-guitar` pack](https://freesound.org/people/inspektral/packs/42559/)
+adds a real extended-range comparison that the isolated Drop-E phrase above
+cannot supply. It is tagged `7-string` and `baritone` and contains matched
+bridge- and neck-humbucker recordings labelled sustained or muted at nominal
+50, 75 and 100 Hz, two takes per condition. The originals are mono 48 kHz,
+24-bit WAV under CC0. This pass used the public high-quality previews; no
+third-party audio is committed.
+
+The bridge files are muted IDs 783919/783920, 783921/783922 and 783913/783914,
+paired respectively with sustained IDs 783701/783702, 783703/783704 and
+783695/783696. The uploader says only “muted”: Palm technique, raw-DI status,
+recording chain, instrument model and exact tuning are unknown. G1/D2/G2 and
+model MIDI 31/38/43 are nearest-note inferences from the nominal frequencies,
+not source metadata. These limitations make normalized muted-minus-sustained
+shape useful and absolute level or a Palm coefficient inadmissible.
+
+Each take is normalized to its own 0-50 ms onset. The four decay entries below
+are muted change minus its paired sustained change in 50-150, 150-500,
+500-1000 and 1000-2000 ms windows. The final column tracks harmonic power
+above 500 Hz relative to all tracked power below 2.6 kHz, subtracting the
+sustained 0-60-to-60-160 ms change from the muted one. Preview/noise floor can
+dominate the late upper band, so that last value is a direction alarm only.
+
+| nominal source / model note | CC0 paired decay | model 1.10 / 70 ms | model 1.25 / 100 ms | upper-share contraction, CC0 / before / current |
+| --- | --- | --- | --- | --- |
+| 50 Hz / G1 | -4.47, -9.43, -14.14, -17.48 dB | -4.42, -8.89, -12.51, -13.78 dB | -4.89, -9.22, -12.57, -13.79 dB | -23.72 / -8.31 / -14.71 dB |
+| 75 Hz / D2 | -2.73, -8.24, -13.44, -16.15 dB | -4.09, -7.77, -10.51, -11.14 dB | -4.48, -8.08, -10.57, -11.15 dB | -22.07 / -5.85 / -9.26 dB |
+| 100 Hz / G2 | -3.27, -6.46, -8.71, -11.05 dB | -4.47, -7.54, -9.47, -9.31 dB | -4.93, -7.92, -9.58, -9.33 dB | -15.85 / -7.08 / -10.62 dB |
+
+Broadband decay was already close enough that the post-baseline change is
+mixed rather than uniformly better. The retained change instead addresses the
+clearer common mismatch: every model pitch loses upper share too slowly. The
+current contact closes part of that gap on all three notes without making the
+preview-derived values a hard test rail.
+
+### Score-matched repeated-Palm proxy
+
+[HiMMP's FAQ and download index](https://himmp.net/faq.html) license the raw
+multitracks and score for “In Solitude” under CC BY. Four independent 44.1 kHz
+rhythm DIs accompany a six-string Drop-C score at 200 BPM. Bar 18 explicitly
+marks four quarter-note low-C2 Palm strikes at 0, 300, 600 and 900 ms. Bar 78
+is sample-exactly the same audio in all four DIs and was excluded, leaving 16
+unique real strikes. The model probe renders the same four-hit schedule on MIDI
+36 with one fixed Down stroke because the score does not identify direction.
+
+RMS shapes are onset-aligned from each DI's own high-passed 2 ms envelope and
+sampled at approximately 1 ms steps from 8 to 111 ms with 15 ms windows. Body
+and tail are relative to 0-30 ms onset; the selective metric is the same
+tracked above-500 Hz share contraction from
+0-30 to 30-80 ms used for F2. Model medians summarize its four hits:
+
+| measure | real, four DIs | model 1.10 / 70 ms | model 1.25 / 100 ms |
+| --- | ---: | ---: | ---: |
+| within-phrase envelope correlation | 0.9416 | 0.996875 | 0.997303 |
+| 30-80 ms body / onset | -3.6737 dB | -2.5546 dB | -2.7242 dB |
+| 80-120 ms tail / onset | -8.4291 dB | -6.1413 dB | -6.7686 dB |
+| upper-share contraction | -9.3158 dB | -4.2231 dB | -4.7476 dB |
+
+The retained contact moves all three decay measures toward the real phrase,
+but does not solve its human repetition spread. Per-hit heel-position jitter
+was rejected: it worsened the controlled F2 contraction, while the separate
+CC0 isolated muted pairs have highly repeatable envelope correlations of
+0.9885-0.9964. A conventional six-string phrase and an unlabelled extended-
+range mute cannot identify a new randomness source. This remains a
+score-matched behavioural probe, not an eight-string fit target.
+
 ### Clean E1 attack/body direction
 
 The clean CC0 phrase now also has the exact model-only 0-30/30-80 ms alarm
@@ -164,7 +232,7 @@ finite-width checkpoint.
 | real CC0 E1 open, median | +2.8801 dB | 234.34 / 256.93 Hz | 6.3775% / 5.7216% | 0.911636 |
 | real CC0 E1 “muted string,” median | +0.9272 dB | 420.76 / 309.83 Hz | 17.1698% / 11.5592% | 0.850485 |
 | Electry E1 open | -1.2161 dB | 267.44 / 226.98 Hz | 5.3662% / 1.1851% | 0.987064 |
-| Electry E1 Palm, medium | -5.3435 dB | 93.77 / 176.27 Hz | 0.4143% / 0.1436% | 0.984109 |
+| Electry E1 Palm, medium | -5.4608 dB | 92.81 / 173.70 Hz | 0.3875% / 0.1207% | 0.983527 |
 
 The two real muted candidates begin brighter than their open neighbours and
 then lose upper power, while the current medium Palm begins much darker and
@@ -338,9 +406,10 @@ Clearance is now expressed as 2.08..0.96 mm and converted through the existing
 SI calibration; its window begins only after the travelling string motion
 reaches the loop output, and excess is clamped to real contact before every
 downstream use. A deterministic regression requires the dedicated collision
-PRNG to advance for maximum-force Palm and Dead on both E1 and E2. At the
-shipping 18% Artifacts setting the E1 Palm/Dead 0-150 ms change remains subtle,
-about -55.18 to -59.97 dB relative to the previous render. This repairs a
+PRNG to advance for maximum-force Palm and Dead on both E1 and E2. At that
+correction's frozen 70 ms-contact checkpoint, the shipping 18% Artifacts
+setting changed E1 Palm/Dead 0-150 ms by only about -55.18 to -59.97 dB
+relative to the previous render. This repairs a
 dead/inverted mechanism without pretending it fills the Palm-body gap; the
 current circuit-chain alarm is frozen separately below.
 
@@ -354,7 +423,7 @@ this removes absolute level and asks how closely the envelope shape repeats.
 
 The model side is the two MIDI-identical bars in
 `Docs/audio/04-drop-e-rhythm-dry.wav` (SHA-256
-`0417830ade561e5bbc2d3395717f7c1e4c0456fbf6c19179fb3decabd799093b`).
+`beb0d759708d7824ebb15ce247e72c88d68a2f343fc4756f1f944ae62c445de6`).
 Its exact bar starts are frames 11,025 and 148,601 at 44.1 kHz—the renderer
 truncates every scored hold and gap to an integer frame—and the corresponding
 E1 Palm Mute score hits are 0, 1, 2, 4, 5, 7, 8, 10, 11 and 13.
@@ -362,7 +431,7 @@ E1 Palm Mute score hits are 0, 1, 2, 4, 5, 7, 8, 10, 11 and 13.
 | source | corresponding pairs | 120 ms envelope correlation (raw; best within +/-2 ms) | paired 0-30 ms RMS difference |
 | --- | ---: | ---: | ---: |
 | real CC0 Drop-E E1 muted-string candidates | 1 | 0.742; 0.789 | 2.44 dB |
-| current Electry dry E1 bars | 10 | median 0.988, range 0.974-0.994; median 0.988, range 0.978-0.996 | median 0.575 dB, range 0.041-2.813 dB |
+| current Electry dry E1 bars | 10 | median 0.988, range 0.975-0.994; median 0.988, range 0.978-0.996 | median 0.580 dB, range 0.039-2.813 dB |
 
 Electry already spans the real pair's short-attack level difference, so this
 does not support more random gain or timing. Its later envelope repeats more
@@ -395,7 +464,7 @@ the smoother from 12-40 ms keeps both annotations within 13 ms.
 The comparison below uses the safe 0-30 and 30-80 ms windows common to the
 real phrase and the new 83.31 ms-IOI
 [`16-mute-and-dead-metal.wav`](audio/16-mute-and-dead-metal.wav), SHA-256
-`1e320992081a02a5212f787aad007f4f955e1d648136d555b6d8f38ecfaeb58d`.
+`f22f51a1e4c5b8a9bd98934ff4f642359fe6956f60e645ee137f2bc617075015`.
 Centroid and power share are mean-removed and Hann-windowed. Centroid and the
 power-share denominator use bins with `20 <= f <= 8,000 Hz`; the power-share
 numerator uses the strict upper band `500 < f <= 8,000 Hz`. Harmonicity is
@@ -404,20 +473,20 @@ normalized autocorrelation over the E1 lag range.
 | output/context | 30-80 ms RMS vs 0-30 | centroid 0-30 / 30-80 | 30-80 ms power, `500 < f <= 8,000` / `20 <= f <= 8,000` | harmonicity |
 | --- | ---: | ---: | ---: | ---: |
 | real distorted “muted string” | +0.87 dB | 1,033 / 1,506 Hz | 73.0696% | 0.212544 |
-| Electry common-chain Mute | -5.30 dB | 131 / 305 Hz | 7.2878% | 0.847595 |
+| Electry common-chain Mute | -5.31 dB | 131 / 306 Hz | 7.2910% | 0.847377 |
 | real first ghost after Palm | +3.12 dB | 652 / 310 Hz | 9.9994% | 0.786 |
 | real second repick | +1.30 dB | 754 / 1,314 Hz | 64.6730% | 0.247 |
 | Electry common-chain Dead | -3.39 dB | 275 / 323 Hz | 8.8983% | 0.866851 |
 
-The muted-candidate/model-Mute upper-band-share gap is 65.7818 percentage
+The muted-candidate/model-Mute upper-band-share gap is 65.7786 percentage
 points on that exact predicate. It remains a confounded processed-output alarm,
 not a dry tuning target.
 
 An independent chain audit locates this gap upstream of `ElectryFx`. For the
 last muted E1 of demo 04's first bar (known contact frame 103,622), the 30-100
-ms dry body has a 0.0071% upper-band share under the same predicate and 0.9852
+ms dry body has a 0.0071% upper-band share under the same predicate and 0.9837
 harmonicity; the identical frame in demo 05's common chain raises those to
-0.0209% and 0.9825. The FX adds
+0.0212% and 0.9814. The FX adds
 upper harmonics rather than removing them. Only about 1.2%
 of the real region's power lies above 5 kHz, so the cabinet's fourth-order
 5 kHz roll-off cannot explain the missing 500 Hz-5 kHz content either. At the
@@ -434,10 +503,10 @@ source cannot establish a missing dry mechanism. Electry's
 common-chain Palm is also substantially darker and more periodic here. On the
 existing 120 ms envelope method, the two real distorted muted candidates
 correlate 0.240
-(0.348 after best alignment within +/-2 ms), against 0.9871 raw and 0.9904
+(0.348 after best alignment within +/-2 ms), against 0.9882 raw and 0.9908
 best-aligned medians for the final common-chain model bars, so their output
 trajectories repeat less alike. Paired 0-30 ms level displacement is 0.431 dB
-for the real pair versus a 0.308 dB model median (0.031-1.502 dB range).
+for the real pair versus a 0.311 dB model median (0.029-1.506 dB range).
 
 This file is not a dry calibration target. It is a separate performance, not a
 paired reamp of 557299: its two ghost IOIs are 332.6 and 329.3 ms where the
@@ -460,9 +529,9 @@ repeatedly show nonperiodic 60-80 ms energy above their measured noise floors.
 without downloading reference audio. It renders the exact twelve-hit E1 score
 and common metal voicing, mean-removes each scheduled 30-80 ms body, applies
 Hann only for spectral power, and computes harmonicity from unwindowed
-normalized autocorrelation at E1 lags. The current in-test medians are 7.287963%
-upper-body power and 0.847598 harmonicity; loose one-sided rails require more
-than 6% and less than 0.97 respectively. They reject a materially darker or
+normalized autocorrelation at E1 lags. The current in-test medians are
+7.291250% upper-body power and 0.847379 harmonicity; loose one-sided rails
+require more than 6% and less than 0.97 respectively. They reject a materially darker or
 more periodic regression while leaving commissioned dry evidence free to
 support a different contact model.
 
@@ -634,13 +703,16 @@ from 4 to 20 mm at the saddle; its full footprint is provisionally 4 mm. At the
 lower edge, centre and upper edge, equal shorter/longer cubic delay reads sample
 the two travelling directions. The three symmetric pairs are combined with
 non-negative 0.25/0.50/0.25 weights and blended with the free string, making a
-six-cubic-read passive contact. It holds for 70 ms and releases linearly over
+six-cubic-read passive contact. It holds for 100 ms and releases linearly over
 10 ms; Open, Dead and the other styles do not retain that Palm heel. The
 existing 0.74 excitation-modal darkener is unchanged.
 
-The 70 ms hold remains a provisional development duration, not a fitted hand
-pressure or acoustic-loss constant. The 10 ms release is only a generic
-discontinuity-smoothing heuristic, not a measured Palm-lift trajectory.
+The 100 ms hold remains a provisional development duration, not a fitted hand
+pressure or acoustic-loss constant. It extends the fixed contact into the
+60-160 ms extended-range comparison window; the loss accumulated in the loop
+persists after the contact releases from 100-110 ms. The 10 ms release is only
+a generic discontinuity-smoothing heuristic, not a measured Palm-lift
+trajectory.
 
 The third-order Lagrange magnitude identity bounds each individual cubic read;
 the production-transfer regression then sweeps representative production
@@ -652,22 +724,22 @@ a distributed hand/string force solve or a measured heel footprint.
 
 The tracked-harmonic F2 proxy, capped below 2.6 kHz, improved its paired
 0-30-to-30-80 ms selective contraction from the frozen -0.790061 dB baseline
-to -3.6039 dB. The identical extractor gives -6.098930 dB for P1 and
+to -4.00942 dB. The identical extractor gives -6.098930 dB for P1 and
 -15.289719 dB for P2. Relative to their two-player midpoint of -10.694324 dB,
-the candidate reduces the baseline error by 28.4%; that midpoint is a secondary
+the candidate reduces the baseline error by 32.5%; that midpoint is a secondary
 development reference, not a robust population estimate. The underlying
-tracked-harmonic above-500 Hz shares are:
+44.1 kHz tracked-harmonic above-500 Hz shares are:
 
 | F2 path | 0-30 ms onset | 30-80 ms body |
 | --- | ---: | ---: |
-| Open | 0.348896 | 0.337349 |
-| Palm | 0.230412 | 0.0971626 |
+| Open | 0.348460 | 0.336936 |
+| Palm | 0.223310 | 0.0857751 |
 
-Palm is therefore 1.80 dB below Open at onset and 5.41 dB below it in the body.
+Palm is therefore 1.93 dB below Open at onset and 5.94 dB below it in the body.
 The onset lies inside the two real cells' -2.61..+0.73 dB bracket and the body
-is within 0.04 dB of P1's -5.37 dB, but the time contraction remains weaker
-than either real cell. Dead was not retuned; its contextual regression RMSE
-remains 4.92754 dB.
+is 0.57 dB beyond P1's -5.37 dB, but the time contraction remains weaker than
+either real cell. Dead was not retuned; its contextual regression RMSE remains
+4.93049 dB.
 
 A sliding check makes that trajectory visible without imposing two coarse
 endpoint windows. Each value below is
@@ -679,22 +751,21 @@ columns are window-start times in ms:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | P1 | +0.73 | -0.48 | -1.73 | -2.71 | -3.44 | -4.26 | -4.71 | -5.21 | -5.45 | -5.55 | -6.01 |
 | P2 | -2.61 | -4.71 | -6.43 | -7.71 | -9.69 | -11.71 | -14.04 | -16.45 | -18.83 | -21.22 | -22.00 |
-| Electry | -1.806 | -2.122 | -2.621 | -3.065 | -3.554 | -3.995 | -4.503 | -5.013 | -5.443 | -5.999 | -6.422 |
+| Electry | -1.932 | -2.290 | -2.847 | -3.345 | -3.886 | -4.386 | -4.943 | -5.517 | -5.989 | -6.610 | -7.074 |
 
-Through every window wholly inside the 70 ms hold (starts 0-40 ms), the
-current fixed contact already yields monotonic accumulated selective loss; the
-45 and 50 ms windows that overlap its provisional release continue in the same
-direction. An explicit per-note low-at-pick/recovery ramp was therefore
-rejected at this checkpoint. The audio identifies a loss trajectory, but
+Every listed window ends by 80 ms and is wholly inside the 100 ms hold. The
+current fixed contact yields monotonic accumulated selective loss throughout.
+An explicit per-note low-at-pick/recovery ramp was therefore rejected at this
+checkpoint. The audio identifies a loss trajectory, but
 cannot identify changing hand pressure separately from the accumulated action
 of a fixed contact. Reinitializing such a per-note ramp at every attack would
 also impose a false pressure reset on rapid chugs instead of preserving the
 preceding contact.
 
-The paired proxy stays between -3.598 and -3.631 dB at 44.1, 48, 96 and
+The paired proxy stays between -4.009 and -4.044 dB at 44.1, 48, 96 and
 192 kHz. In the rapid E1/E2 repick-state grid, median absolute phrase/isolated
-error is 2.232 dB and median worst-cell error is 3.470 dB; twelve deterministic
-E1 Mute strokes span 1.991 dB of attack-normalized tail. Those are model
+error is 2.240 dB and median worst-cell error is 3.428 dB; twelve deterministic
+E1 Mute strokes span 1.981 dB of attack-normalized tail. Those are model
 stability checks, not evidence that the variation distribution matches players.
 
 This F2 proxy is a pre-capture development guard, not the commissioned
@@ -836,8 +907,8 @@ RMS, so ordinary MIDI level does not masquerade as a decay change:
 
 | palm-mute probe | velocity 0.20 | velocity 0.60 | velocity 1.00 | soft-to-hard spread |
 | --- | ---: | ---: | ---: | ---: |
-| E1 (MIDI 28) | -12.966 dB | -14.986 dB | -16.596 dB | 3.63 dB |
-| E2 (MIDI 40) | -11.700 dB | -13.259 dB | -14.562 dB | 2.86 dB |
+| E1 (MIDI 28) | -13.050 dB | -15.027 dB | -16.614 dB | 3.56 dB |
+| E2 (MIDI 40) | -11.802 dB | -13.325 dB | -14.603 dB | 2.80 dB |
 
 This is a conservative attack latch, not another audio follower: the existing
 velocity amplitude and deterministic stroke-force draw are multiplied, clamped
@@ -861,13 +932,13 @@ The raw probes expose the present envelope without level matching:
 | model probe | onset-to-peak | 0-50 ms | 50-150 ms | 150-500 ms | 500-1000 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | E1 open | 25.78 ms | 0.00 dB | +0.45 dB | -0.90 dB | -2.15 dB |
-| E1 palm mute, medium/default | 2.13 ms | 0.00 dB | -4.87 dB | -11.10 dB | -16.41 dB |
+| E1 palm mute, medium/default | 2.13 ms | 0.00 dB | -5.16 dB | -11.28 dB | -16.43 dB |
 | E2 open | 12.83 ms | 0.00 dB | +0.35 dB | -1.46 dB | -4.00 dB |
-| E2 palm mute, medium/default | 1.29 ms | 0.00 dB | -4.57 dB | -9.93 dB | -14.33 dB |
+| E2 palm mute, medium/default | 1.29 ms | 0.00 dB | -4.95 dB | -10.18 dB | -14.38 dB |
 
 The real CC0 E1 open take falls 9.29 dB by the last window while Electry falls
 2.15 dB. That clip's muted take falls only 3.96 dB there, against Electry's
-16.41 dB, and its two muted onset-to-peak times are 90.57 and 21.59 ms (median
+16.43 dB, and its two muted onset-to-peak times are 90.57 and 21.59 ms (median
 56.08 ms). The fourfold spread between two attacks, unknown hand depth and
 preview chain already ruled out a blind retune; Guitar-TECHS now confirms that
 the slow median is not a general palm-mute requirement.
@@ -879,14 +950,14 @@ energy peak before its existing energy-driven relaxation can begin. Mute
 also keeps the sustained triangular release displacement at the Sustain value
 of 1.55 instead of pre-shrinking it to 1.28: the hand damps a loaded string; it
 does not prevent the pick from loading it. In the current noise-free regression,
-Palm's tracked-harmonic high/low ratio is 9.27 dB below Open on E1 and 2.86 dB
+Palm's tracked-harmonic high/low ratio is 10.13 dB below Open on E1 and 3.14 dB
 below it on E2 during 0-50 ms. These changes add no parameter, keyswitch,
 random source or performance rule.
 
 At the default depth, paired mute-minus-open deltas in the same four windows
-are `[0, -3.96, -9.57, -13.01]` dB below 500 Hz and
-`[0, -12.95, -25.95, -29.45]` dB above it on E1. On E2 they are
-`[0, -3.55, -7.40, -9.33]` and `[0, -9.81, -27.66, -40.21]` dB. The current
+are `[0, -4.32, -9.67, -13.00]` dB below 500 Hz and
+`[0, -17.38, -31.81, -34.36]` dB above it on E1. On E2 they are
+`[0, -4.00, -7.58, -9.35]` and `[0, -12.77, -31.06, -44.31]` dB. The current
 model has the evidence-backed faster high-band contraction in every measured
 post-attack window on both strings.
 
@@ -895,15 +966,15 @@ labels over one sound:
 
 | probe and depth | 0-50 ms | 50-150 ms | 150-500 ms | 500-1000 ms |
 | --- | ---: | ---: | ---: | ---: |
-| E1 palm light (0.00) | 0.00 dB | -2.36 dB | -7.84 dB | -14.31 dB |
-| E1 palm medium/default (0.55) | 0.00 dB | -4.87 dB | -11.10 dB | -16.41 dB |
-| E1 palm hard (1.00) | 0.00 dB | -7.94 dB | -13.84 dB | -19.28 dB |
-| E2 palm hard (1.00) | 0.00 dB | -6.90 dB | -11.59 dB | -16.01 dB |
+| E1 palm light (0.00) | 0.00 dB | -2.40 dB | -7.89 dB | -14.32 dB |
+| E1 palm medium/default (0.55) | 0.00 dB | -5.16 dB | -11.28 dB | -16.43 dB |
+| E1 palm hard (1.00) | 0.00 dB | -8.09 dB | -13.98 dB | -19.34 dB |
+| E2 palm hard (1.00) | 0.00 dB | -7.15 dB | -11.83 dB | -16.13 dB |
 
 On E2 the palm-minus-open high-band deltas at 50-150, 150-500 and
-500-1000 ms are respectively `[-2.70, -11.33, -24.78]` dB at light,
-`[-9.81, -27.66, -40.21]` dB at the default and
-`[-25.45, -48.39, -52.02]` dB at hard. This monotonic sweep is the physical
+500-1000 ms are respectively `[-2.97, -11.65, -25.20]` dB at light,
+`[-12.77, -31.06, -44.31]` dB at the default and
+`[-29.53, -51.51, -52.17]` dB at hard. This monotonic sweep is the physical
 model's answer to sample libraries' discrete mute layers: one understandable
 control remains continuous across the modeled range.
 
