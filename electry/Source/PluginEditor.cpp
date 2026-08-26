@@ -40,11 +40,9 @@ constexpr int timerHz = 30;
 constexpr int lastDrawnFret = electry::ElectryEngine::fretCount;
 constexpr int firstKeyboardNote = electry::ElectryEngine::firstKeyswitchNote; // C0
 constexpr int firstPlayableNote = electry::ElectryEngine::lowestPlayableNote; // E1
-constexpr int firstRepickNote = electry::ElectryEngine::firstRepickNote; // E6
-constexpr int lastKeyboardNote = firstRepickNote
-                               + electry::ElectryEngine::repickNoteCount - 1; // B6
+constexpr int lastKeyboardNote = electry::ElectryEngine::highestPlayableNote; // D6
 constexpr int keyswitchCount = electry::ElectryEngine::keyswitchCount;
-constexpr int keyboardWhiteKeyCount = 49; // C0..B6 inclusive
+constexpr int keyboardWhiteKeyCount = 44; // C0..D6 inclusive
 constexpr auto visualWeightProperty = "electryVisualWeight";
 
 enum class KnobTier
@@ -130,10 +128,8 @@ bool isKeyswitch (int midiNoteNumber) noexcept
 // they are drawn muted so nobody hunts for a sound there.
 bool isDeadZoneNote (int midiNoteNumber) noexcept
 {
-    return (midiNoteNumber >= firstKeyboardNote + keyswitchCount
-             && midiNoteNumber < firstPlayableNote)
-        || (midiNoteNumber > electry::ElectryEngine::highestPlayableNote
-             && midiNoteNumber < firstRepickNote);
+    return midiNoteNumber >= firstKeyboardNote + keyswitchCount
+        && midiNoteNumber < firstPlayableNote;
 }
 
 void drawKeyswitchDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
@@ -161,23 +157,6 @@ void drawKeyswitchDecoration (juce::Graphics& graphics, juce::Rectangle<float> a
     }
 }
 
-void drawRepickDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
-                           int midiNoteNumber, bool blackKey)
-{
-    const int stringNumber = electry::ElectryEngine::stringCount
-                           - (midiNoteNumber - firstRepickNote);
-    graphics.setColour (colours::sympatheticRing.withAlpha (0.92f));
-    graphics.fillRect (area.removeFromBottom (blackKey ? 3.0f : 4.0f));
-
-    const auto labelArea = area.removeFromBottom (blackKey ? 14.0f : 19.0f)
-                               .reduced (0.5f);
-    graphics.setColour (blackKey ? colours::text : colours::rosewoodDark);
-    graphics.setFont (juce::FontOptions (blackKey ? 8.0f : 10.0f,
-                                         juce::Font::bold));
-    graphics.drawFittedText (juce::String (stringNumber),
-                             labelArea.getSmallestIntegerContainer(),
-                             juce::Justification::centred, 1);
-}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -397,8 +376,7 @@ bool ElectryKeyboardComponent::isKeyswitchSelected (int keyswitchIndex) const no
 
 juce::String ElectryKeyboardComponent::getWhiteNoteText (int midiNoteNumber)
 {
-    if (isKeyswitch (midiNoteNumber)
-        || electry::ElectryEngine::isRepickNote (midiNoteNumber))
+    if (isKeyswitch (midiNoteNumber))
         return {};
 
     if (midiNoteNumber == firstPlayableNote || midiNoteNumber % 12 == 0)
@@ -413,13 +391,10 @@ void ElectryKeyboardComponent::drawWhiteNote (
     bool isDown, bool isOver, juce::Colour lineColour, juce::Colour textColour)
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
-    const auto repick = electry::ElectryEngine::isRepickNote (midiNoteNumber);
     const auto top = keyswitch ? colours::oxblood.brighter (0.22f)
-                   : repick ? colours::sympatheticRing.brighter (0.25f)
-                            : colours::warmBone.brighter (0.08f);
+                               : colours::warmBone.brighter (0.08f);
     const auto bottom = keyswitch ? colours::oxblood.darker (0.32f)
-                      : repick ? colours::sympatheticRing.darker (0.35f)
-                               : colours::warmBone.darker (0.12f);
+                                  : colours::warmBone.darker (0.12f);
     graphics.setGradientFill ({ top, area.getCentreX(), area.getY(),
                                 bottom, area.getCentreX(), area.getBottom(), false });
     graphics.fillRect (area);
@@ -432,17 +407,6 @@ void ElectryKeyboardComponent::drawWhiteNote (
         const auto index = midiNoteNumber - firstKeyboardNote;
         drawKeyswitchDecoration (graphics, area, index,
                                  isKeyswitchSelected (index), false);
-    }
-    else if (repick)
-    {
-        graphics.setColour (colours::sympatheticRing.withAlpha (0.30f));
-        graphics.fillRect (area);
-        drawRepickDecoration (graphics, area, midiNoteNumber, false);
-        if (midiNoteNumber == firstRepickNote)
-        {
-            graphics.setColour (colours::sympatheticRing.brighter (0.45f));
-            graphics.fillRect (area.withWidth (3.0f));
-        }
     }
     else if (isDeadZoneNote (midiNoteNumber))
     {
@@ -462,22 +426,15 @@ void ElectryKeyboardComponent::drawBlackNote (
     bool isDown, bool isOver, juce::Colour noteFillColour)
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
-    const auto repick = electry::ElectryEngine::isRepickNote (midiNoteNumber);
     MidiKeyboardComponent::drawBlackNote (
         midiNoteNumber, graphics, area, isDown, isOver,
-        keyswitch ? colours::keyswitchBlack
-                  : repick ? colours::sympatheticRing.darker (0.62f)
-                           : noteFillColour);
+        keyswitch ? colours::keyswitchBlack : noteFillColour);
 
     if (keyswitch)
     {
         const auto index = midiNoteNumber - firstKeyboardNote;
         drawKeyswitchDecoration (graphics, area, index,
                                  isKeyswitchSelected (index), true);
-    }
-    else if (repick)
-    {
-        drawRepickDecoration (graphics, area, midiNoteNumber, true);
     }
     else if (isDeadZoneNote (midiNoteNumber))
     {
@@ -957,7 +914,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     addAndMakeVisible (factoryProgramSelector);
 
     keyboardHintLabel.setText (
-        "C0..D0 latch pick stroke. D#0..A0 use LATCH/HOLD. E1..D6 plays; blue E6..B6 REPICK held strings 8..1.",
+        "C0..D0 latch pick stroke. D#0..A0 use LATCH/HOLD. E1..D6 is the playable guitar range.",
         juce::dontSendNotification);
     keyboardHintLabel.setFont (juce::FontOptions (11.0f));
     keyboardHintLabel.setColour (juce::Label::textColourId, colours::dimText);
@@ -1129,7 +1086,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     keyboard.setKeyWidth (24.0f);
     keyboard.setOctaveForMiddleC (4);
     keyboard.setTitle (
-        "MIDI keyboard: E1 to D6 plays; E6 to B6 repicks held strings 8 to 1");
+        "MIDI keyboard: E1 to D6 plays at the displayed pitch");
     keyboard.setComponentID ("keyboard");
     addAndMakeVisible (keyboard);
 

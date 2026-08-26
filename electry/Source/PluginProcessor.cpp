@@ -440,8 +440,6 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     engine.setPalmMutePressure (0.0f);
     doubleEngine->setPalmMutePressure (0.0f);
     midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
-    engine.setVibrato (0.0f);
-    doubleEngine->setVibrato (0.0f);
     effects.prepare (sampleRate);
     updateEffectParameters();
     effects.reset();
@@ -465,8 +463,6 @@ void ElectryAudioProcessor::releaseResources()
     engine.setPalmMutePressure (0.0f);
     doubleEngine->setPalmMutePressure (0.0f);
     midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
-    engine.setVibrato (0.0f);
-    doubleEngine->setVibrato (0.0f);
     engine.allNotesOff();
     doubleEngine->allNotesOff();
     engine.reset();
@@ -609,6 +605,13 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 continue;
             }
 
+            // Pressure is deliberately unassigned. Ignore it without splitting
+            // a simultaneous chord into separate allocation batches.
+            const auto kind = data != nullptr && metadata.numBytes >= 1
+                ? static_cast<unsigned> (data[0]) & 0xf0u : 0u;
+            if (kind == 0xa0u || kind == 0xd0u)
+                continue;
+
             // Anything that can change ownership or performance state splits
             // the chord. Dispatch it in source order between the two batches.
             flushNoteOnBatch (groupBatch);
@@ -710,8 +713,6 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             engine.setPalmMutePressure (0.0f);
             doubleEngine->setPalmMutePressure (0.0f);
             midiMutePressureForDisplay.store (0, std::memory_order_relaxed);
-            engine.setVibrato (0.0f);
-            doubleEngine->setVibrato (0.0f);
             engine.setSustainPedal (false);
             doubleEngine->setSustainPedal (false);
         }
@@ -744,25 +745,9 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             doubleEngine->allNotesOff();
         }
     }
-    else if (kind == 0xd0u && numBytes >= 2)
-    {
-        // Channel pressure is the fretting hand leaning into a string it is
-        // already holding: a vibrato on the strings being fingered, and
-        // deliberately not on the sympathetically ringing ones, which is what
-        // separates a finger from the bar the pitch wheel models.
-        engine.setVibrato (static_cast<float> (data[1] & 0x7fu) / 127.0f);
-        doubleEngine->setVibrato (
-            static_cast<float> (data[1] & 0x7fu) / 127.0f);
-    }
-    else if (kind == 0xa0u && numBytes >= 3)
-    {
-        // Polyphonic aftertouch drives the same hand. Electry has one fretting
-        // hand rather than one per key, so the most recent key's pressure is
-        // what that hand is doing.
-        engine.setVibrato (static_cast<float> (data[2] & 0x7fu) / 127.0f);
-        doubleEngine->setVibrato (
-            static_cast<float> (data[2] & 0x7fu) / 127.0f);
-    }
+    // Pressure is deliberately unassigned: mapping either channel pressure or
+    // one note's poly pressure to global pitch pulls otherwise tuned chords
+    // apart without a visible control.
     else if (kind == 0xe0u && numBytes >= 3)
     {
         const auto bend = decodePitchBend14 (data[1], data[2]);

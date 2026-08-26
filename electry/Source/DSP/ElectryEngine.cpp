@@ -470,18 +470,16 @@ ElectryEngine::stringSpecs() noexcept
     // what left the low register sounding hollow - the fundamental faded while
     // the upper partials were still going.
     static constexpr std::array<StringSpec, stringCount> specs {{
-        // The flexural core is the dispersion fit; the separate axial core is
-        // the pitch-wheel compliance coordinate. A winding can slip
-        // differently under bending and tension, so those two fits need not
-        // share a diameter fraction.
-        { 28, true, 2.0320f, 0.22f, 0.22f, 20.0f }, // E1, wound (.080)
-        { 35, true, 1.5240f, 0.25f, 0.25f, 19.0f }, // B1, wound (.060)
-        { 40, true, 1.0668f, 0.28f, 0.28f, 18.0f }, // E2, wound
-        { 45, true, 0.8128f, 0.30f, 0.30f, 16.5f }, // A2, wound
-        { 50, true, 0.6096f, 0.32f, 0.32f, 15.0f }, // D3, wound
-        { 55, false, 0.4064f, 1.0f, 1.0f, 12.0f }, // G3, plain
-        { 59, false, 0.2794f, 1.0f, 1.0f, 10.0f }, // B3, plain
-        { 64, false, 0.2286f, 1.0f, 1.0f, 8.5f },  // E4, plain
+        // The flexural core is the dispersion fit. A winding can slip under
+        // bending, so it need not share the string's full diameter.
+        { 28, true, 2.0320f, 0.22f, 20.0f }, // E1, wound (.080)
+        { 35, true, 1.5240f, 0.25f, 19.0f }, // B1, wound (.060)
+        { 40, true, 1.0668f, 0.28f, 18.0f }, // E2, wound
+        { 45, true, 0.8128f, 0.30f, 16.5f }, // A2, wound
+        { 50, true, 0.6096f, 0.32f, 15.0f }, // D3, wound
+        { 55, false, 0.4064f, 1.0f, 12.0f }, // G3, plain
+        { 59, false, 0.2794f, 1.0f, 10.0f }, // B3, plain
+        { 64, false, 0.2286f, 1.0f, 8.5f },  // E4, plain
     }};
     return specs;
 }
@@ -584,45 +582,6 @@ float ElectryEngine::stringFluxScale(int stringIndex) noexcept
     return lerp(1.55f, 0.72f,
                 static_cast<float>(index) / static_cast<float>(stringCount - 1))
          * magneticMassBalance;
-}
-
-float ElectryEngine::bendSensitivity(int stringIndex) noexcept
-{
-    // A vibrato bar (and this instrument's pitch wheel) works by stretching
-    // every string by a comparable amount, and the pitch that stretch buys is
-    // dF/F = dT/2T with dT = E*A*(dl/l): the string's elastic core stiffness
-    // against its standing tension. For strings tuned over one scale length
-    // that ratio reduces to (core fraction)^2 / (mass factor * f_open^2) - the
-    // overall gauge cancels, because both the core area and the tension scale
-    // with the diameter squared. The floppy low strings and the plain G are
-    // therefore the deepest benders and the taut plain E the shallowest, which
-    // is exactly the chord smear a real bar produces.
-    //
-    // The exponent compresses the raw physical spread (about six to one)
-    // toward the two-to-one range measured on real tremolo bridges - the raw
-    // law assumes the bar stretches every string equally, and a real bridge's
-    // geometry evens the travel out. Normalised so the most compliant string
-    // reaches the wheel's full nominal range and no string exceeds it.
-    static const std::array<float, stringCount> sensitivities = []
-    {
-        std::array<float, stringCount> raw {};
-        float maximum = 0.0f;
-        for (int index = 0; index < stringCount; ++index)
-        {
-            const auto& spec = stringSpecs()[static_cast<std::size_t>(index)];
-            const float fOpen = midiToHz(static_cast<float>(spec.openMidiNote));
-            const float massScale = spec.wound ? 0.85f : 1.0f;
-            raw[static_cast<std::size_t>(index)] =
-                spec.axialCoreScale * spec.axialCoreScale
-                / (massScale * fOpen * fOpen);
-            maximum = std::max(maximum, raw[static_cast<std::size_t>(index)]);
-        }
-        for (auto& value : raw)
-            value = std::pow(value / maximum, 0.35f);
-        return raw;
-    }();
-    return sensitivities[static_cast<std::size_t>(
-        std::clamp(stringIndex, 0, stringCount - 1))];
 }
 
 float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
@@ -1059,12 +1018,6 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     vibratoOnsetIncrement_ = static_cast<float>(controlPeriod)
                            / (vibratoOnsetSeconds
                               * static_cast<float>(sampleRate_));
-
-    // The compliance table lives behind a guarded function-local static (its
-    // initializer is not constexpr-able); touch it here so the one-time
-    // initialization - and the lock an implementation may take for it -
-    // happens on this thread rather than inside the first audio callback.
-    (void) bendSensitivity(0);
 
     prepared_ = true;
     reset();
@@ -2570,25 +2523,17 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         legatoOffset = fromSemis * (1.0f - smoothStep(voice.legatoBlend));
     }
 
-    // The wheel bends this string by its own physical share of the nominal
-    // range - a bar stretches every string, and each string's pitch answers
-    // with its own compliance - so a bent chord smears exactly the way a real
-    // tremolo bridge smears one.
-    // The bar's share is the string's own elastic compliance; the finger's is
-    // not, because a finger is controlling a pitch rather than a stretch and
-    // adjusts its displacement to reach it. Only fingered strings get it - the
-    // sympathetically ringing ones are configured elsewhere and never see it,
-    // which is exactly what separates a finger from the bar.
+    // MIDI pitch bend is an interval, so every string receives the same
+    // semitone offset and a chord stays in tune while it moves. Fretting-hand
+    // vibrato is separate and reaches only stopped strings.
     //
     // An open string is not fingered either. Nothing is holding it down, so
     // there is no contact to rock and no way for the hand to raise its pitch;
     // that is the same distinction the finger-noise term already draws at
-    // fret 0. The bar still reaches it, because the bar stretches the whole
-    // instrument rather than one stopped note.
+    // fret 0.
     const float vibrato = voice.fret > 0 ? voice.vibratoSemitones : 0.0f;
     const float semitones = legatoOffset
                           + pitchBendSemitones_
-                            * bendSensitivity(voice.stringIndex)
                           + vibrato;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
@@ -2945,12 +2890,10 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
-    // The wheel is a bar: it bends the strings nobody is fingering too, each
-    // by its own compliance. The control tick retunes a ringing coupled
-    // string whenever the wheel moves.
+    // Sympathetic strings follow the same standard MIDI pitch interval as
+    // played strings.
     const float f0 = midiToHz(static_cast<float>(spec.openMidiNote))
-        * std::exp2(pitchBendSemitones_
-                    * bendSensitivity(voice.stringIndex) / 12.0f);
+        * std::exp2(pitchBendSemitones_ / 12.0f);
     const float period = sampleRate / f0;
     const float omega = twoPi * f0 * inverseSampleRate_;
 
@@ -5412,8 +5355,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         {
             // The pitch follows the *square* of the finger's displacement.
             // Rocking a stopped string sideways by x lengthens its path by
-            // dL = k x^2 - the same dL/L relation bendSensitivity() solves for
-            // the bar - so a wrist rocking as the raised cosine s(t) moves the
+            // dL = k x^2, so a wrist rocking as the raised cosine s(t) moves the
             // pitch by depth * s(t)^2. That is not a flat top: s^2 is
             // fourth-order small where s is second-order small, so the note
             // dwells at the fretted pitch between excursions and the
@@ -5466,8 +5408,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         if (std::abs(pitchBendSemitones_ - pitchBendTarget_) < 5.0e-4f)
             pitchBendSemitones_ = pitchBendTarget_;
 
-        // The bar bends the strings nobody is fingering too: retune the
-        // ringing coupled strings in place whenever the wheel has moved.
+        // Retune ringing coupled strings in place whenever the wheel moves.
         if (sympatheticActive_
             && std::abs(pitchBendSemitones_ - sympatheticAppliedBend_) > 1.0e-3f)
         {
@@ -5931,11 +5872,6 @@ void ElectryEngine::getStringVisualState(
                 : 0.0f;
         }
     }
-}
-
-float ElectryEngine::currentSoundingSemitoneOffset(const Voice& voice) const noexcept
-{
-    return pitchBendSemitones_ * bendSensitivity(voice.stringIndex);
 }
 
 } // namespace electry

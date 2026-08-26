@@ -282,11 +282,9 @@ public:
     void noteOnChord(std::span<const NoteOnEvent> events);
     void noteOff(int midiNote);
     void allNotesOff();
-    // The pitch wheel bends every string - fingered and sympathetically
-    // ringing alike - over a nominal -2..+2 semitone range, like a vibrato
-    // bar. Each string follows with its own physically derived sensitivity
-    // (elastic core stiffness against tension), and the strings travel to the
-    // new pitch over the Bend Time parameter rather than jumping.
+    // Standard MIDI pitch bend moves every played and sympathetically ringing
+    // string by the same nominal -2..+2 semitone interval. Bend Time controls
+    // how long the strings take to reach the target.
     void setPitchBend(float normalisedBipolar) noexcept;
     // MIDI CC1 controls the performance resonance (0 = the Sympathetic Ring
     // parameter alone, 1 = full bridge coupling plus acoustic feedback from
@@ -295,12 +293,9 @@ public:
     // MIDI CC2 adds continuous bridge-hand pressure on top of the Palm Pressure
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
-    // Channel pressure is the fretting hand leaning into a string it is
-    // already holding: a vibrato. It is a finger rather than the bar the
-    // pitch wheel models, so it moves only the strings that are being
-    // fingered, leaves the sympathetically ringing ones alone, and is
-    // upward-biased, because a finger can raise a string's tension and cannot
-    // lower it below the fret. Zero pressure is an exact no-op.
+    // Internal fretting-hand vibrato model. The plug-in leaves MIDI pressure
+    // unassigned; callers must opt into this upward-only gesture explicitly.
+    // Zero is an exact no-op.
     void setVibrato(float normalised) noexcept;
     // MIDI CC64. While held, a key-up leaves that string marked `sustained`
     // instead of releasing it immediately (see `noteOff()`); a string already
@@ -1098,7 +1093,6 @@ private:
         bool wound { true };
         float plainDiameterMm { 0.4064f }; // light-set reference gauge
         float bendingCoreScale { 0.30f };  // empirical flexural-core fraction
-        float axialCoreScale { 0.30f };    // empirical tensile-core diameter fraction
         float t60Seconds { 6.0f };
     };
 
@@ -1179,12 +1173,6 @@ private:
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;
-    // How far the wheel's nominal bend reaches on each string. A bar changes
-    // every string's tension by stretching it, and the pitch that change buys
-    // follows the string's elastic core stiffness against its tension, so the
-    // strings do not move by equal semitones. Depends only on the string set.
-    static float bendSensitivity(int stringIndex) noexcept;
-
     [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
@@ -1226,7 +1214,6 @@ private:
     void returnFrettingHandIfIdle(bool newChord) noexcept;
     // The hand moves only when it has to, and only at the start of a chord.
     void updateFrettingHand(int fret, bool newChord) noexcept;
-    [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
     // Splits a neck/bridge-summed contribution across the stereo field the
     // same way renderVoice() and renderSympatheticString() each did with
@@ -1279,15 +1266,13 @@ private:
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
     float sympatheticAppliedBend_ { 0.0f };
-    // Fretting-hand vibrato from channel pressure. One hand, but not one
-    // finger: the phase, the rate and the excursion live on the voice, and
-    // only the pressure and the onset are shared. Upward-biased, so its
+    // Optional fretting-hand vibrato. One hand, but not one finger: the phase,
+    // rate and excursion live on the voice, while amount and onset are shared.
+    // Upward-biased, so its
     // minimum is the fretted pitch rather than its mean, because a finger can
     // only lengthen the string's path. Its depth is deliberately expressed in
-    // equal semitones rather than through the per-string elastic compliance
-    // the wheel's bar uses: a bar stretches every string by the same length
-    // and each answers differently, while a finger is controlling a pitch and
-    // adjusts its own displacement to get it.
+    // equal semitones: a finger controls pitch and adjusts its displacement to
+    // get it.
     static constexpr float vibratoMinimumSemitones = 0.10f;
     static constexpr float vibratoMaximumSemitones = 1.10f;
     // The pressure ramps at a bounded rate and is then shaped by smoothStep,

@@ -12,6 +12,36 @@ they were chosen on. Where a constant is voiced rather than literature-derived
 it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-26 — keep displayed notes and MIDI bends in tune
+
+A user tuning report reproduced a presentation error, not a base-frequency
+failure. The saved 44.1 kHz standalone state measured 0..+4.5 cents over every
+isolated MIDI note from E1 through D6 and -0.5..+6.5 cents when the same range
+was played sequentially. The next eight visible piano keys, however, were the
+MIDI-only E6..B6 held-string repick triggers: clicking one replayed an existing
+low pitch or stayed silent while still looking like a high note. Decision: end
+the on-screen piano at the highest pitched note, D6. Keep E6..B6 available to a
+host or external controller as performance triggers, but do not draw them as
+piano pitches.
+
+Two hidden controller paths could independently create a real tuning failure.
+The channel-wide MIDI pitch wheel had been interpreted as a physical bar, so a
+full bend moved the eight strings by roughly 107..200 cents and pulled a chord
+apart by as much as 93 cents. Channel pressure and even unrelated polyphonic
+aftertouch globally enabled an upward-only fretting vibrato, affecting stopped
+notes but not open strings. Decision: make MIDI pitch bend one uniform +/-2
+semitone interval for every played and sympathetic string, and leave pressure
+messages unassigned. A physical bar or pressure gesture needs a separate,
+visible control rather than surprising standard MIDI input.
+
+The saved high-gain Mute path also produced a +11.5-cent result in the broad
+five-partial short-window estimator. Its dry E1 fundamental measured exactly
+0.0 cents; partial-implied offsets rose from 0.0 at P1 to +16.5 cents at P5,
+and later windows pulled the series estimate back toward +5 cents. Decision:
+do not detune the Mute DSP to compensate for an estimator following its
+deliberately reshaped, inharmonic upper partials. Mute tuning remains guarded
+on the dry fundamental.
+
 ## 2026-08-26 — deepen and lengthen the fixed Palm contact
 
 The CC0 [`50hz-guitar`](https://freesound.org/people/inspektral/packs/42559/)

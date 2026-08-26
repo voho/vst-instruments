@@ -11,11 +11,10 @@ phase compensation. A fretting hand with a position and a reach decides where ea
 note is played; a point-touch model produces natural and pinch harmonics as the
 string's own mode shapes rather than as transpositions; slides are a distance
 over a hand speed, their squeak the winding passing under the finger; a picking
-hand never puts the plectrum down in exactly the same place twice. The pitch
-wheel bends every string like a vibrato bar, channel pressure is the fretting
-hand's own one-sided vibrato with a separate finger on each string it is
-actually stopping, and a resonance wheel can push a distorted tone into
-self-sustaining amplifier feedback. One bridge is shared by all eight strings:
+hand never puts the plectrum down in exactly the same place twice. The standard
+pitch wheel moves every string together over a uniform ±2 semitone range,
+and a resonance wheel can push a distorted tone into self-sustaining amplifier
+feedback. One bridge is shared by all eight strings:
 the ones you are not fingering ring off it, and the ones you are exchange
 energy through it. The pickups follow a published signal structure — position
 comb, two coils for the humbucker and one for the single coil, finite magnetic
@@ -54,8 +53,8 @@ Sixteen takes, rendered by [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp)
 from the same JUCE-free code the plug-in runs: the full playable range, every
 pick-stroke and play style, dry and amplified rhythm, lead tone, pickup and
 tone contrasts, sympathetic strum, guitar-build contrasts, velocity dynamics,
-power chords, a long arrangement, the whammy and feedback wheels, a focused dry
-Sustain/Mute/Dead audition and a matched high-gain Mute/Dead comparison. They
+power chords, a long arrangement, the pitch-bend and feedback wheels, a focused
+dry Sustain/Mute/Dead audition and a matched high-gain Mute/Dead comparison. They
 are demonstrations, not evidence — an audible example is not a measurement,
 and none of the claims below rest on them. The reproducible ten-probe model
 renderer, real-recording boundaries and blind-study plan live in the
@@ -77,7 +76,7 @@ renderer, real-recording boundaries and blind-study plan live in the
 | `11-power-chords-dry.wav` | −8.5 dBFS | +5.5 dB |
 | `12-power-chords-amp.wav` | −12.9 dBFS | +9.9 dB |
 | `13-long-rhythm-arrangement.wav` | −14.4 dBFS | +11.4 dB |
-| `14-whammy-and-feedback.wav` | −12.4 dBFS | +9.4 dB |
+| `14-whammy-and-feedback.wav` | −12.5 dBFS | +9.5 dB |
 | `15-mute-and-dead-audition.wav` | −12.4 dBFS | +9.4 dB |
 | `16-mute-and-dead-metal.wav` | −14.0 dBFS | +11.0 dB |
 <!-- peaks-table-end -->
@@ -101,10 +100,12 @@ the `LATCH | HOLD` choice alone.
 - **Mute / Dead DI:** dry, +6 dB, hard near-bridge pick, no sympathetic ring
   and middle Mute Tightness, exposing the two hand contacts without an amp.
 
-1. Load **Drop-E Metal**, leave the built-in amp on, and play MIDI E1..D6
-   (notes 28..86). C0/C#0/D0 select Down, Up or Alternate picking.
-2. Keep a note or chord held and tap the blue E6..B6 zone to repick physical
-   strings 8..1 without releasing the fretting keys.
+1. Load **Drop-E Metal**, leave the built-in amp on, and play E1..D6
+   (MIDI notes 28..86), the full range drawn on the on-screen piano.
+   C0/C#0/D0 select Down, Up or Alternate picking.
+2. Keep a note or chord held and send MIDI E6..B6 to repick physical strings
+   8..1 without releasing the fretting keys. These performance triggers remain
+   available to a host or external controller but are not drawn as pitched keys.
 3. Select E0 **Mute** for chugs. **Mute Tightness** is the articulation's
    loose-to-tight construction and moves its provisional heel centre from
    4–20 mm at the saddle; **Mute Pressure** and MIDI CC 2 are the live bridge
@@ -124,8 +125,8 @@ latch what the hands do or, in HOLD mode, override the PLAY STYLE strip's saved
 base only while pressed; newest held key wins and release reveals an older held
 key or the base. The two banks stay independent, so any of the twenty-one
 combinations — an up-stroke Mute, alternate-picked pinch harmonics — is
-reachable in at most two keyswitches. The editor and on-screen keyboard use the
-same contract. A play-style release changes future attacks only: sounding
+reachable in at most two keyswitches. The editor and on-screen keyboard expose
+both banks. A play-style release changes future attacks only: sounding
 notes, delayed strums and pending repicks keep the style captured at Note On.
 
 | MIDI note | Key | Picking style |
@@ -153,7 +154,9 @@ current Pick Stroke and Play Style; an unheld string stays silent. It never
 adds fretting-key ownership, so its Note Off is inert and the original note's
 Note Off still releases normally. Held ownership survives the old sound's
 natural decay, allowing a silent Mute or Dead note to be struck again. Notes
-outside these ranges are ignored. Each playable note is
+outside these ranges are ignored. The on-screen piano ends at D6: E6..B6 remain
+available as MIDI-only performance triggers and are not shown as pitched keys.
+Each playable note is
 allocated to one of the eight physical strings by a fretting hand that has a
 position and a reach: a repick of a sounding note grabs the same string,
 hammer-on continues the nearest sounding string, otherwise the free string
@@ -168,20 +171,11 @@ could produce the note, so an open string won every contest and most of the
 fretboard - and the sounding length, inharmonicity and pickup-comb geometry
 that come with it - was unreachable.
 
-The pitch wheel is a vibrato bar: it bends every string — the
-sympathetically ringing open strings included — over a nominal ±2 semitone
-range, each string by its own physically derived compliance (the slack low
-E1 and the plain G bend deepest, the stiff wound D-string least, the
-two-to-one smear a real bar puts on a chord), and the strings travel to the
-wheel over the Bend Time parameter rather than snapping. Channel pressure is
-the other half of that distinction: it is a finger rather than the bar, so it
-leans only into the strings the hand is stopping, pushes them sharp and never
-flat, and leaves an open string exactly where it is — nothing is holding an
-open string down for the hand to rock, and reaching it would need the bar. It
-is a hand rather than an oscillator: every stopped string gets its own finger,
-with its own phase and its own rate and excursion redrawn each cycle, and the
-hand leans into and out of the gesture from rest instead of at full slew (see
-**Fretting-hand vibrato** below). The modulation wheel (CC 1) is the
+The pitch wheel applies the same standard ±2 semitone bend to every played and
+sympathetically ringing string, so a chord stays in tune while all strings
+travel over the Bend Time parameter rather than snapping. Channel pressure and
+polyphonic aftertouch are deliberately unassigned, so controller pressure
+cannot silently alter pitch. The modulation wheel (CC 1) is the
 performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
@@ -317,29 +311,10 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   different strings sharp by different amounts and made low chords sour. Real
   plucked strings can show nonlinear attack glide, but that path remains
   withheld until matched, absolute-pitch, multi-string and multi-velocity
-  captures can bound it. The pitch wheel still moves the delay target along the
-  Bend Time glide, each string by its own compliance.
-- **Fretting-hand vibrato:** channel pressure rocks the finger, and the pitch
-  follows the *square* of the finger's displacement, because rocking a stopped
-  string sideways by `x` lengthens its path by `k x^2` — the same `dL/L`
-  relation the pitch wheel's per-string compliance is solved from. That is not a
-  flat-topped wave: the note dwells at the fretted pitch between excursions and
-  the excursions themselves are briefer and sharper-cornered than the rock that
-  makes them, so each cycle spends 36.4% of itself above half its own peak where
-  a raised cosine spends 50%. Every stopped string carries its own finger — its
-  own phase, drawn at note-on and deliberately not redrawn by a hammer-on or a
-  slide, which are the same finger arriving somewhere else, and its own rate and
-  excursion redrawn once per cycle at 12% and 15% of standard deviation. So a
-  double stop's two strings drift apart instead of moving in lockstep (mean
-  phase separation 0.19 cycles, exactly zero before) and the cycle period varies
-  by 14.2% of its mean where the single shared oscillator this replaced repeated
-  to 0.05%. The pressure ramps at a bounded rate and is then shaped by a
-  smoothstep, so the hand leaves rest with zero slope instead of at its
-  steepest: at a tenth of the time it takes to reach 90% of settled depth the
-  excursion is 1.9% of settled, where a one-pole sits at 20.6% whatever its time
-  constant, and 90% of settled still arrives at 207 ms. The nominal excursion is
-  40 cents with the per-cycle draw riding on top of it, so the widest cycles
-  reach about 55 cents. Zero pressure is bit-exact identical to no pressure.
+  captures can bound it. The pitch wheel moves every delay target by the same
+  ±2 semitone ratio over the Bend Time glide. Channel pressure and polyphonic
+  aftertouch are unassigned; the internal fretting-vibrato path is not exposed
+  as a product control.
 - **Low-register voicing:** the wound strings' decay law and the plectrum's
   release spectrum are calibrated against a dry electric low-E reference
   recording. A solid-body electric's low strings ring for tens of seconds while
@@ -602,9 +577,9 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   inside the run-to-run spread. The bridge coupling between played strings is
   one subtract, one multiply and two adds per voice per sample and leaves the
   CPU guardrail unmoved; the humbucker's second coil is one fractional read per
-  pickup per voice; and the picking hand's per-attack draws, the vibrato's
-  per-cycle draws and the strum's ramp solve are once per note, per cycle and
-  per chord rather than per sample. A pickup the
+  pickup per voice; and the picking hand's per-attack draws, the internal
+  vibrato's per-cycle draws and the strum's ramp solve are once per note, per
+  cycle and per chord rather than per sample. A pickup the
   selector has
   faded out is skipped outright, including its two fractional reads, aperture
   window, flux polynomial and induced-EMF guard. Mono runs one shared coil, DC
@@ -839,8 +814,7 @@ crossfade over roughly 4 ms.
 | Bridge-hand damping | Palm-muting practice; pressure sensing by Biral, d'Alessandro and Freed; post-attack spectral evidence from Reboursiere et al. and Guitar-TECHS; HiMMP's score-matched rhythm DIs; the CC0 extended-range `50hz-guitar` muted/sustained matrix; the same decay-targeted loop design; and dry muted power-chord references for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; its solved spectral loss is present when the pick releases and can relax only after the string establishes a measured energy peak. The raw hand rate is multiplied by 4.5 at the high reference and divided by twenty-two at the fundamental, an effective 99:1 ratio between the two fitted points. For the Mute style only, Mute Tightness places a provisional 4 mm heel footprint 4–20 mm from the saddle; three symmetric shorter/longer cubic pairs make a passive six-read contact for a 100 ms hold plus 10 ms release. Continuous Mute Pressure retains the reference-informed absorber on every style, and the newest actual contact updates the shared hand on already-ringing strings without rewriting their attack style | Progressive additive damping plus a stable finite-position Palm development model; not a distributed hand/string force solve, measured heel footprint, commissioned per-harmonic fit, or capture fit to a named eight-string |
 | Fretting hand | Ordinary left-hand kinematics; [Itoh and Hayashida's constrained fingering optimisation](https://www.jstage.jst.go.jp/article/ieejeiss/124/7/124_7_1396/_article/-char/en) and [Yazawa et al.'s playable-configuration enumeration](https://cir.nii.ac.jp/crid/1573387452726377216); the position/reach controls exposed by sampled guitars | Exact-sample chord attacks are matched across all eight strings as one bounded problem: held-note and legato continuity, occupied strings, a four-fret hand shape, fret effort and uncrossed pitch order resolve before any voice starts. The chosen shape then enters the ordinary physical attack path in canonical pitch order, so host event order cannot alter the fingering or player-variation stream. Single notes retain the floating hand, out-of-reach shift and phrase return | A deterministic chord-local configuration solver with a fixed four-fret reach; not finger-by-finger anatomy, chord naming, or phrase-wide look-ahead |
 | Strum travel | Ordinary plectrum kinematics | Note-ons on different strings no more than 35 ms from the chord's first event are one stroke; its direction and extreme string set an accelerating travel order, every crossed string shares that direction, and Alternate advances once for the chord. Reusing a string starts a new stroke; a fully cancelled pre-contact chord consumes none | Deterministic, jittered accelerating pick travel across the string plane; not a model of pick angle, chord recognition, or the player's wrist trajectory |
-| Pitch-wheel bar | The elastic string-tension relation `dF/F = dT/2T` with `dT = E A dl/l` (Fletcher and Rossing) applied to a whole-bridge stretch, as a vibrato bar applies it | The wheel stretches every string - fingered and sympathetically ringing alike - over a nominal +/-2 semitone range; each string's share follows its elastic core stiffness against its tension (which reduces to core-fraction squared over open frequency squared for one scale length), compressed toward the two-to-one spread measured on real tremolo bridges and normalised so the most compliant string spans the full range; the strings travel over the Bend Time glide rather than snapping | The documented per-string compliance direction with a voiced compression exponent; not a model of a specific bridge's geometry, spring balance, or friction |
-| Fretting-hand vibrato | The same elastic tension relation the bar uses, applied by one finger rather than by the whole bridge; ordinary rock vibrato practice for the rate and depth | Channel pressure drives each stopped string's own 4.8-6.4 Hz raised-cosine offset of up to 40 cents, easing in over 90 ms, never going below the fret and redrawing small rate/depth changes per cycle | The documented asymmetry, locality and imperfect finger motion against a bar's; not a force-, displacement-geometry-, or phrase-fitted vibrato model |
+| Pitch control | Channel-wide MIDI pitch bend | The wheel applies the same ±2 semitone offset to every played and sympathetically ringing string over the Bend Time glide. Channel pressure and polyphonic aftertouch are deliberately unassigned | Uniform, chord-safe MIDI pitch bend; not a physical vibrato-bar simulation, and no pressure message silently changes tuning |
 | Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, and each string answers at its own resonances | The host pushes its previous processed block back as a bounded mono acoustic return with one block of latency (the air path); a soft-clipped, gain-scaled copy drives the string loops and the sympathetic bus, scaled by the CC1 resonance, the Resonance Depth parameter and the rig's acoustic loudness derived from the amplifier controls, so a distorted tone at full wheel regenerates while a dry DI never can; every element of the loop is bounded, so the howl saturates instead of growing | A one-block-latent, level-gated, saturating regeneration path; not a room acoustics, speaker directivity, or standing-wave model |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
@@ -880,10 +854,9 @@ above an ordinary pick stroke's, whose strongest partial is at least the sixth
 near the bridge and exactly the octave with the hand over the neck, which gains
 more than 10 dB on the fundamental, and which renders as neither a pick stroke
 nor a natural harmonic; palm-mute decay
-contraction; the per-string wheel-compliance table's physical ordering and
-the rendered audio following it on two strings; wheel travel time following
-Bend Time with an exact settle on the target; a ringing coupled string
-retuned by the wheel; hammer-on
+contraction; the same ±2 semitone wheel ratio on played voices and a ringing
+coupled string, with travel following Bend Time and settling exactly on the
+target; hammer-on
 same-string continuation, pitch settling, and click-free transition;
 maximum-velocity attack tuning within 8 cents on every open string, less than
 6 cents of cross-string spread, and the same rails on low-string Mute and Dead;
@@ -935,11 +908,8 @@ plain one and exactly absent at a silent Finger Noise control; a
 fretting hand that keeps a lead phrase in one position instead of falling back
 to open strings, leaves the open-position shapes untouched, and relaxes to the
 nut when the phrase ends;
-pitch-wheel travel and sustain-pedal hold; a
-fretting-hand vibrato at the modelled depth and rate that is sharp of the fret
-and never flat of it, eases in rather than switching on, leaves the
-bridge-coupled strings alone where the bar moves them, and is a bit-exact no-op
-at zero pressure; hostile parameter and performance
+pitch-wheel travel and sustain-pedal hold; channel pressure and polyphonic
+aftertouch remaining pitch-neutral; hostile parameter and performance
 input safety; and a portable CPU ceiling with the eight-string render ratio
 printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
 Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
@@ -947,8 +917,9 @@ physical low/high string orientation, coherent fold-down, bounded side level,
 energy balance, determinism, and opposite string endpoints. The plug-in suite
 additionally pins the 26-parameter layout, Guitar Build's named anchors,
 formatted values, current-state round trips, bus layout, sample-accurate
-note starts, MIDI controller behavior (sustain, all-sound-off,
-all-notes-off), UI keyswitch triggering of both banks, panic, output-gain and APVTS
+note starts, MIDI controller behavior (uniform pitch bend, unassigned channel
+pressure and polyphonic aftertouch, sustain, all-sound-off, all-notes-off), UI
+keyswitch triggering of both banks, panic, output-gain and APVTS
 output-mode effects, three visible non-overlapping mode buttons, deterministic
 distinct Double channels and clean
 Double re-entry,
@@ -1073,6 +1044,16 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-26 MIDI tuning checkpoint
+
+- Made the standard MIDI pitch wheel move every played and sympathetically
+  ringing string uniformly over ±2 semitones and the existing Bend Time.
+- Left channel pressure and polyphonic aftertouch unassigned so controller
+  pressure cannot silently sharpen fretted notes.
+- Ended the on-screen piano at the playable D6. MIDI E6..B6 per-string repick
+  triggers remain available to hosts and external controllers without being
+  drawn as pitched keys.
+
 ### 2026-08-26 licensed low-register mute checkpoint
 
 - Added reproducible direction-only comparisons against a CC0 seven-string
@@ -1104,7 +1085,7 @@ regression-measured model—not capture parity or market leadership.
   six-cubic-read contact initially held 70 ms and released over 10 ms; the
   licensed low-register checkpoint above extends that hold. The 0.74 attack
   darkener and Dead path remain unchanged.
-- Added the blue E6..B6 per-string repick lane. Its picking hand can restart a
+- Added the E6..B6 per-string repick range. Its picking hand can restart a
   fully decayed held Mute or Dead string without adding note ownership, and it
   follows current velocity, Pick Stroke, Play Style, CC2 and Double state.
 
@@ -1150,10 +1131,9 @@ Standalone:
 - Point-touch harmonics as an exact first-order contact loss inside the loop —
   natural, pinch and touch — plus slides, hammer-ons and pull-offs, dead notes,
   palm muting as an additive absorber, and incidental fret collisions.
-- The pitch wheel as a vibrato bar with per-string elastic compliance, channel
-  pressure as the fretting hand's one-sided vibrato, and a resonance wheel that
-  drives a bounded, saturating amplifier-feedback path through the host's own
-  processed block.
+- A uniform ±2 semitone MIDI pitch wheel over the Bend Time glide, and a
+  resonance wheel that drives a bounded, saturating amplifier-feedback path
+  through the host's own processed block; pressure messages are unassigned.
 - A published pickup signal structure: per-string position comb following each
   fret, an O(1) fractional moving average for the finite aperture's exact sinc
   response, bounded flux nonlinearity differentiated into induced EMF, and a

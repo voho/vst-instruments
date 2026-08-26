@@ -555,13 +555,6 @@ struct ElectryEngineTestAccess
         return engine.frettingHandPosition_;
     }
 
-    // The per-string pitch-wheel compliance, so the audio checks can assert
-    // against exactly the constants the engine runs.
-    static float bendSensitivity(int stringIndex) noexcept
-    {
-        return ElectryEngine::bendSensitivity(stringIndex);
-    }
-
     // The parameter guard setParameters() runs before anything else sees a
     // host's automation, so the fallback and clamp behaviour can be asserted
     // on directly rather than only inferred from the audio it protects.
@@ -570,8 +563,8 @@ struct ElectryEngineTestAccess
         return ElectryEngine::sanitise(parameters);
     }
 
-    // The pitch a bridge-coupled string is running at - its open note, bent by
-    // the wheel through its own compliance - computed the way
+    // The pitch a bridge-coupled string is running at - its open note, shifted
+    // by the wheel's MIDI interval - computed the way
     // configureSympatheticString computes it, so the decay checks can invert
     // the loop's response at exactly the frequency it was solved for.
     static float sympatheticFrequency(const ElectryEngine& engine,
@@ -580,8 +573,7 @@ struct ElectryEngineTestAccess
         const auto& spec =
             ElectryEngine::stringSpecs()[static_cast<std::size_t>(stringIndex)];
         return ElectryEngine::midiToHz(static_cast<float>(spec.openMidiNote))
-             * std::exp2(engine.pitchBendSemitones_
-                         * ElectryEngine::bendSensitivity(stringIndex) / 12.0f);
+             * std::exp2(engine.pitchBendSemitones_ / 12.0f);
     }
 };
 } // namespace electry
@@ -2777,30 +2769,11 @@ void testFingeredNotesDrawNoPickingHandVariation()
            "stroke, so the picking-hand variation has gone altogether");
 }
 
-void testPitchWheelPerStringSensitivity()
+void testPitchWheelUsesUniformSemitoneInterval()
 {
-    // The wheel is a bar: every string bends, each by its own compliance.
-    // The constants themselves must be physical - the most compliant string
-    // reaches the nominal range exactly, none exceeds it, and the ordering
-    // follows the string set: the slack low E1 bends deepest, the plain G
-    // beats its neighbours, and the taut plain top E is among the shallowest.
-    expect(std::abs(TestAccess::bendSensitivity(0) - 1.0f) < 1.0e-6f,
-           "the low E1 is not the full-range reference string");
-    for (int string = 0; string < ElectryEngine::stringCount; ++string)
-    {
-        const float sensitivity = TestAccess::bendSensitivity(string);
-        expect(sensitivity > 0.30f && sensitivity <= 1.0f,
-               "bend sensitivity escaped its plausible range on string "
-                   + std::to_string(string));
-    }
-    expect(TestAccess::bendSensitivity(5) > TestAccess::bendSensitivity(4)
-               && TestAccess::bendSensitivity(5) > TestAccess::bendSensitivity(6),
-           "the plain G does not bend deeper than its neighbours");
-    expect(TestAccess::bendSensitivity(7) < TestAccess::bendSensitivity(5),
-           "the taut top E does not bend shallower than the plain G");
-
-    // And the audio must follow those constants: bend two strings with
-    // clearly different compliance and measure the travel of each.
+    // Standard MIDI pitch bend is one interval for the whole instrument. E1
+    // and D3 must therefore reach the same +/-2-semitone targets rather than
+    // pulling a chord apart according to per-string compliance.
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
@@ -2819,39 +2792,47 @@ void testPitchWheelPerStringSensitivity()
         engine.reset();
         engine.setPitchBend(0.0f);
         engine.noteOn(openNote, 0.35f);
-        StereoBuffer buffer(static_cast<int>(2.0 * sampleRate));
-        engine.process(buffer.left.data(), buffer.right.data(),
-                       static_cast<int>(0.6 * sampleRate));
-        engine.setPitchBend(1.0f);
-        engine.process(buffer.left.data() + static_cast<int>(0.6 * sampleRate),
-                       buffer.right.data() + static_cast<int>(0.6 * sampleRate),
-                       buffer.size() - static_cast<int>(0.6 * sampleRate));
+        StereoBuffer centre(static_cast<int>(0.6 * sampleRate));
+        renderInto(engine, centre);
 
-        const int stringIndex = TestAccess::stringForNote(engine, openNote);
-        const double sensitivity = TestAccess::bendSensitivity(stringIndex);
         const double before = measureFrequency(
-            buffer.left, static_cast<int>(0.2 * sampleRate),
+            centre.left, static_cast<int>(0.2 * sampleRate),
             static_cast<int>(0.35 * sampleRate), sampleRate, midiHz(openNote));
-        const double expectedAfter = midiHz(openNote)
-            * std::pow(2.0, 2.0 * sensitivity / 12.0);
-        const double after = measureFrequency(
-            buffer.left, static_cast<int>(1.2 * sampleRate),
-            static_cast<int>(0.6 * sampleRate), sampleRate, expectedAfter);
-        const double travel = centsBetween(after, before);
-        const double expectedTravel = 200.0 * sensitivity;
-        expect(std::abs(travel - expectedTravel) < 15.0,
-               "note " + std::to_string(openNote) + " wheel travel measured "
-                   + std::to_string(travel) + " cents, expected "
-                   + std::to_string(expectedTravel));
+
+        engine.setPitchBend(1.0f);
+        StereoBuffer up(static_cast<int>(1.0 * sampleRate));
+        renderInto(engine, up);
+        const double upHz = measureFrequency(
+            up.left, static_cast<int>(0.4 * sampleRate),
+            static_cast<int>(0.5 * sampleRate), sampleRate,
+            midiHz(openNote) * std::pow(2.0, 2.0 / 12.0));
+
+        engine.setPitchBend(-1.0f);
+        StereoBuffer down(static_cast<int>(1.0 * sampleRate));
+        renderInto(engine, down);
+        const double downHz = measureFrequency(
+            down.left, static_cast<int>(0.4 * sampleRate),
+            static_cast<int>(0.5 * sampleRate), sampleRate,
+            midiHz(openNote) * std::pow(2.0, -2.0 / 12.0));
+
+        const double centsUp = centsBetween(upHz, before);
+        const double centsDown = centsBetween(downHz, before);
+        expect(std::abs(centsUp - 200.0) < 15.0,
+               "note " + std::to_string(openNote)
+                   + " full-up wheel travel measured "
+                   + std::to_string(centsUp) + " cents, expected 200");
+        expect(std::abs(centsDown + 200.0) < 15.0,
+               "note " + std::to_string(openNote)
+                   + " full-down wheel travel measured "
+                   + std::to_string(centsDown) + " cents, expected -200");
     }
 }
 
 void testPitchWheelGlideFollowsBendTime()
 {
-    // The strings travel to the wheel over the Bend Time parameter, exactly
-    // as the finger bends it used to drive did: shortly after a full-range
-    // wheel move, a slow bend has covered far less of the distance than a
-    // fast one, and both settle on the same target.
+    // The strings travel to the wheel over the Bend Time parameter: shortly
+    // after a full-range move, a slow bend has covered far less of the
+    // distance than a fast one, and both settle on the same target.
     constexpr double sampleRate = 48000.0;
 
     const auto travelAfter = [&] (float bendTimeSeconds, double measureAt)
@@ -2867,7 +2848,7 @@ void testPitchWheelGlideFollowsBendTime()
         parameters.bendTimeSeconds = bendTimeSeconds;
         engine.setParameters(parameters);
         engine.reset();
-        engine.noteOn(28, 0.35f); // E1: full-range reference string
+        engine.noteOn(28, 0.35f); // E1
         StereoBuffer settle(static_cast<int>(0.6 * sampleRate));
         renderInto(engine, settle);
         engine.setPitchBend(1.0f);
@@ -2900,8 +2881,8 @@ void testPitchWheelGlideFollowsBendTime()
 
 void testPitchWheelBendsSympatheticStrings()
 {
-    // The bar bends the strings nobody is fingering too: a ringing coupled
-    // string follows the wheel at its own compliance.
+    // A ringing coupled string follows the same MIDI interval as a played
+    // string.
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
@@ -2935,8 +2916,7 @@ void testPitchWheelBendsSympatheticStrings()
     renderInto(engine, bent);
 
     constexpr double openHighE = 329.62756;
-    const double sensitivity = TestAccess::bendSensitivity(highString);
-    const double bentHighE = openHighE * std::pow(2.0, 2.0 * sensitivity / 12.0);
+    const double bentHighE = openHighE * std::pow(2.0, 2.0 / 12.0);
     const int start = static_cast<int>(0.6 * sampleRate);
     const int length = static_cast<int>(0.7 * sampleRate);
     const double atOpen = dftMagnitude(bent.left, start, length, sampleRate,
@@ -12033,7 +12013,7 @@ int main()
     testArticulationsSoundDistinct();
     testStyleAndStrokeCombinations();
     testFingeredNotesDrawNoPickingHandVariation();
-    testPitchWheelPerStringSensitivity();
+    testPitchWheelUsesUniformSemitoneInterval();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
     testHammerOnLegatoContinuity();

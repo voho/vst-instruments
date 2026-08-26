@@ -1720,9 +1720,9 @@ void testRepickMidiContract()
     const auto uiAlternate = renderAlternateRepick (true, false, true);
     expect (hostAlternate.beganDown && hostAlternate.repickedUp
                 && uiAlternate.beganDown && uiAlternate.repickedUp,
-            "host or on-screen repick did not advance Alternate from Down to Up");
+            "host or UI-queue repick did not advance Alternate from Down to Up");
     expect (uiAlternate.audio == hostAlternate.audio,
-            "on-screen Alternate repick did not match host MIDI");
+            "UI-queue Alternate repick did not match host MIDI");
     expect (hostAlternate.unchangedByVelocityZero,
             "velocity-zero repick created an attack and advanced Alternate");
 
@@ -1842,19 +1842,16 @@ void testPitchWheelByteReconstruction()
 // clamp or a sign flip here would still pass every existing test while
 // bending every host's pitch wheel by the wrong amount or the wrong
 // direction, so this measures the actual rendered pitch raw pitch-wheel
-// messages produce on both the full-range low string and a less-compliant open
-// string, as an end-to-end check alongside
+// messages produce on two different strings, as an end-to-end check alongside
 // testPitchWheelByteReconstruction()'s exact one.
 void testPitchWheelMidiDispatch()
 {
     constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
-    constexpr int lessCompliantOpenNote = 50;   // D3
-    constexpr double lessCompliantOpenHz = 146.83238;
+    constexpr int openD3Note = 50;
+    constexpr double openD3Hz = 146.83238;
 
     // measureFundamentalHz() only scans +/-120 cents around its seed, so each
-    // case is seeded near the pitch its string should produce. E1 has bend
-    // sensitivity 1.0; D3's search uses the halfway-wheel pitch because its
-    // smaller full-up travel lies near one semitone.
+    // case is seeded near the pitch its string should produce.
     const auto nominalHz = [] (double openHz, int wheelPosition14) -> double
     {
         const double excursion = wheelPosition14 < 8192
@@ -1946,23 +1943,19 @@ void testPitchWheelMidiDispatch()
             "low string to its matched unbent pitch (measured "
                 + std::to_string (recenterErrorCents) + " cents)");
 
-    // The identical raw full-up message produces less travel on the stiffer
-    // open D3 than on the maximally compliant E1. This keeps the processor
-    // integration check coupled to the engine's per-string bar behaviour.
-    const auto lessCompliantCentre = measuredHz (
-        lessCompliantOpenNote, 8192,
-        nominalHz (lessCompliantOpenHz, 8192));
-    const auto lessCompliantBentUp = measuredHz (
-        lessCompliantOpenNote, 16383,
-        nominalHz (lessCompliantOpenHz, 12288));
-    const auto lessCompliantTravelCents = 1200.0
-        * std::log2 (lessCompliantBentUp / lessCompliantCentre);
-    expect (lessCompliantTravelCents > 60.0
-                && centsUp - lessCompliantTravelCents > 50.0,
-            "the same full-up MIDI wheel message did not bend open D3 "
-            "materially less than open E1 (measured "
-                + std::to_string (lessCompliantTravelCents) + " versus "
-                + std::to_string (centsUp) + " cents)");
+    // A standard pitch-wheel interval is uniform across strings: D3 must
+    // travel the same two semitones as E1, preserving chord tuning.
+    const auto d3Centre = measuredHz (
+        openD3Note, 8192, nominalHz (openD3Hz, 8192));
+    const auto d3BentUp = measuredHz (
+        openD3Note, 16383, nominalHz (openD3Hz, 16383));
+    const auto d3TravelCents = 1200.0 * std::log2 (d3BentUp / d3Centre);
+    expect (d3TravelCents > 170.0 && d3TravelCents < 230.0
+                && std::abs (d3TravelCents - centsUp) < 15.0,
+            "the same full-up MIDI wheel message did not move open E1 and "
+            "D3 by the same two semitones (measured "
+                + std::to_string (centsUp) + " and "
+                + std::to_string (d3TravelCents) + " cents)");
 }
 
 // The CC1 resonance and the acoustic-return wiring live in the shell: the
@@ -2012,58 +2005,14 @@ void testResonanceWheelFeedback()
     processor.releaseResources();
 }
 
-// Channel pressure (status nibble 0xd0, one data byte) and polyphonic
-// aftertouch (status nibble 0xa0, note number then pressure) both dispatch to
-// ElectryEngine::setVibrato() through raw MIDI byte reads in
-// dispatchMidiData() - data[1] for channel pressure, but data[2] for
-// polyphonic aftertouch, since its data[1] is the note number instead - a
-// path with no coverage anywhere else: ElectryEngineTests drives
-// setVibrato() directly with already-decoded floats, and this file's own
-// testMidiControllersAndVoiceLifecycle() and testPerformanceControls() only
-// ever send 7-bit CCs (status 0xb0). A status-nibble typo, a swapped data
-// index, a dropped clamp or a missing "/ 127.0f" here would leave every
-// host's pressure/aftertouch vibrato silently inert (or scaled wrong) while
-// still passing every existing test. This measures the actual rendered pitch
-// on a fretted (not open) string: the vibrato is documented to push a
-// fingered string sharp and never flat (see ElectryEngine.h's setVibrato()
-// and README.md's "Fretting-hand vibrato"), so once its 258 ms onset ramp has
-// settled, a window spanning several of its ~5-6 Hz swing cycles reads
-// measurably sharper than the same window with no pressure applied, even
-// though the finger dwells at the fretted pitch between excursions.
-void testChannelPressureAndAftertouchVibratoDispatch()
+// MIDI pressure is deliberately unassigned. Inserting channel pressure or
+// unrelated poly aftertouch between simultaneous notes must neither retune the
+// guitar nor split the notes out of their canonical chord allocation batch.
+void testMidiPressureLeavesChordUnchanged()
 {
-    // A2 open (45) + 2 frets, the same fixture ElectryEngineTests' own
-    // testFrettingHandVibrato() uses: fretted, so the hand has a string to
-    // rock. An open string is deliberately left alone by design and would
-    // make this a no-op either way.
-    constexpr int frettedNote = 47;
-    const double frettedHz = 440.0 * std::pow (2.0, (frettedNote - 69) / 12.0);
+    enum class Pressure { None, Channel, Poly };
 
-    enum class Pressure
-    {
-        None,
-        ChannelPressure,
-        // Half-value, not full-value: both dispatch branches clamp their
-        // decoded float into setVibrato(), so a full-value 127 alone cannot
-        // tell a genuine "/ 127.0f" scale apart from a missing one - either
-        // way the clamp lands on the same 1.0f. A half-value message only
-        // reproduces the full-value bias if the byte was actually divided
-        // down first.
-        HalfChannelPressure,
-        // Channel 9, not channel 1: dispatchMidiData masks the status byte
-        // with "& 0xf0u" before comparing it, so the channel nibble should
-        // never matter. Sending channel 1 only would let a regression that
-        // compared the whole status byte (0xd0 exactly) instead of the
-        // masked nibble pass unnoticed on every channel but the one tested.
-        ChannelPressureOtherChannel,
-        PolyAftertouch,
-        // Same half-value reasoning as HalfChannelPressure, applied to the
-        // independent data[2] scale in the aftertouch branch: a full-value
-        // 127 alone cannot tell "data[2] / 127.0f" apart from a missing
-        // divisor, since both clamp to the same 1.0f.
-        HalfPolyAftertouch,
-    };
-    const auto measuredHz = [&] (Pressure kind) -> double
+    const auto renderChord = [] (Pressure pressure)
     {
         ElectryAudioProcessor processor;
         processor.prepareToPlay (sampleRate, blockSize);
@@ -2071,114 +2020,36 @@ void testChannelPressureAndAftertouchVibratoDispatch()
         juce::AudioBuffer<float> audio;
         juce::MidiBuffer midi;
         midi.addEvent (juce::MidiMessage::noteOn (
-            1, frettedNote, (juce::uint8) 100), 0);
-        if (kind == Pressure::ChannelPressure)
+            1, 40, (juce::uint8) 100), 0);
+        if (pressure == Pressure::Channel)
             midi.addEvent (juce::MidiMessage::channelPressureChange (1, 127), 0);
-        else if (kind == Pressure::HalfChannelPressure)
-            midi.addEvent (juce::MidiMessage::channelPressureChange (1, 64), 0);
-        else if (kind == Pressure::ChannelPressureOtherChannel)
-            midi.addEvent (juce::MidiMessage::channelPressureChange (9, 127), 0);
-        else if (kind == Pressure::PolyAftertouch)
-            // The note byte deliberately does not name the fretted note:
-            // dispatchMidiData never reads it (Electry has one fretting hand
-            // for the whole engine, not one per key), so a swapped-index
-            // regression that read this byte as the pressure instead of
-            // data[2] would decode to 3 / 127 - far too small to sharpen the
-            // note - rather than accidentally producing a passing result the
-            // way reusing frettedNote (47) here would.
-            midi.addEvent (
-                juce::MidiMessage::aftertouchChange (1, 3, 127), 0);
-        else if (kind == Pressure::HalfPolyAftertouch)
-            midi.addEvent (
-                juce::MidiMessage::aftertouchChange (1, 3, 64), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, 43, (juce::uint8) 100), 0);
+        if (pressure == Pressure::Poly)
+            midi.addEvent (juce::MidiMessage::aftertouchChange (1, 64, 127), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, 47, (juce::uint8) 100), 0);
         renderBlock (processor, audio, midi);
 
-        // Let the attack settle and the vibrato's onset ramp (258 ms, see
-        // ElectryEngine.h's vibratoOnsetSeconds) reach its steady swing
-        // before measuring, then capture several full cycles so the window's
-        // own frequency estimate reflects the vibrato's genuine time-average
-        // rather than one arbitrary phase of it.
-        renderSeconds (processor, audio, 0.5);
-        const auto settled = renderCapture (processor, audio, 0.6);
+        const auto* channel = audio.getReadPointer (0);
+        std::vector<float> rendered (channel, channel + audio.getNumSamples());
+        auto tail = renderCapture (processor, audio, 0.6);
+        rendered.insert (rendered.end(), tail.begin(), tail.end());
         processor.releaseResources();
-        return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
-                                     sampleRate, frettedHz);
+        return rendered;
     };
 
-    const auto still = measuredHz (Pressure::None);
-    const auto pressed = measuredHz (Pressure::ChannelPressure);
-    const auto halfPressed = measuredHz (Pressure::HalfChannelPressure);
-    const auto pressedOtherChannel =
-        measuredHz (Pressure::ChannelPressureOtherChannel);
-    const auto touched = measuredHz (Pressure::PolyAftertouch);
-    const auto halfTouched = measuredHz (Pressure::HalfPolyAftertouch);
-
-    const auto centsStill = 1200.0 * std::log2 (still / frettedHz);
-    const auto centsPressed = 1200.0 * std::log2 (pressed / frettedHz);
-    const auto centsHalfPressed = 1200.0 * std::log2 (halfPressed / frettedHz);
-    const auto centsPressedOtherChannel =
-        1200.0 * std::log2 (pressedOtherChannel / frettedHz);
-    const auto centsTouched = 1200.0 * std::log2 (touched / frettedHz);
-    const auto centsHalfTouched = 1200.0 * std::log2 (halfTouched / frettedHz);
-
-    expect (std::abs (centsStill) < 10.0,
-            "an unpressed fretted note drifted " + std::to_string (centsStill)
-                + " cents off its fretted pitch");
-    // Differential rather than an absolute cents target, for the same reason
-    // ElectryEngineTests' own testFrettingHandVibrato() compares two engines
-    // instead of asserting one fixed value: the vibrato's average bias over a
-    // multi-cycle window (rock^2 time-averages to a fraction of the nominal
-    // 40-cent excursion, not the excursion itself) is a function of the
-    // depth/rate constants rather than a documented number, so the robust
-    // assertion is that applying either message sharpens the note well beyond
-    // the unpressed measurement's own noise floor. An upper bound catches a
-    // runaway/nonsense measurement without pinning the exact bias.
-    expect (centsPressed - centsStill > 5.0 && centsPressed < 100.0,
-            "full-value channel pressure (status 0xd0) did not sharpen the "
-            "fretted note by the vibrato's documented upward bias (measured "
-                + std::to_string (centsPressed) + " cents against "
-                + std::to_string (centsStill) + " unpressed)");
-    // Half-value pressure must still clear the noise floor - it is a real
-    // press, not a no-op - but land measurably below the full-value bias, the
-    // signature of an actual "/ 127.0f" scale rather than a clamp that
-    // saturates at 1.0f for any nonzero byte.
-    expect (centsHalfPressed - centsStill > 2.0
-                && centsHalfPressed < centsPressed - 2.0,
-            "half-value channel pressure did not land strictly between "
-            "unpressed and full-value pressure (measured "
-                + std::to_string (centsHalfPressed) + " cents against "
-                + std::to_string (centsStill) + " unpressed and "
-                + std::to_string (centsPressed) + " full-value)");
-    // Same message on channel 9 rather than channel 1: dispatchMidiData is
-    // documented to mask the channel nibble out of the status byte before
-    // comparing it, so this should sharpen the note exactly as the channel-1
-    // case does.
-    expect (centsPressedOtherChannel - centsStill > 5.0
-                && centsPressedOtherChannel < 100.0,
-            "full-value channel pressure on channel 9 did not sharpen the "
-            "fretted note the same way channel 1 does (measured "
-                + std::to_string (centsPressedOtherChannel)
-                + " cents against " + std::to_string (centsStill)
-                + " unpressed)");
-    expect (centsTouched - centsStill > 5.0 && centsTouched < 100.0,
-            "full-value polyphonic aftertouch (status 0xa0) did not sharpen "
-            "the fretted note by the vibrato's documented upward bias "
-            "(measured " + std::to_string (centsTouched) + " cents against "
-                + std::to_string (centsStill) + " unpressed)");
-    // Same half-value-versus-full-value reasoning as the channel-pressure
-    // case, applied to the aftertouch branch's own independent data[2] scale.
-    expect (centsHalfTouched - centsStill > 2.0
-                && centsHalfTouched < centsTouched - 2.0,
-            "half-value polyphonic aftertouch did not land strictly between "
-            "unpressed and full-value aftertouch (measured "
-                + std::to_string (centsHalfTouched) + " cents against "
-                + std::to_string (centsStill) + " unpressed and "
-                + std::to_string (centsTouched) + " full-value)");
+    const auto reference = renderChord (Pressure::None);
+    expect (renderChord (Pressure::Channel) == reference,
+            "channel pressure changed a simultaneous chord's pitch, audio or "
+            "canonical string allocation");
+    expect (renderChord (Pressure::Poly) == reference,
+            "unrelated poly aftertouch changed a simultaneous chord's pitch, "
+            "audio or canonical string allocation");
 }
 
 // dispatchMidiData()'s handling of MIDI CC121 (Reset All Controllers) fans
-// out into five separate engine calls - setPitchBend(0), setResonance(0),
-// setPalmMutePressure(0), setVibrato(0) and setSustainPedal(false) - a path no
+// out into pitch-bend, resonance, mute-pressure and sustain resets - a path no
 // existing test drives: testMidiControllersAndVoiceLifecycle() only ever
 // sends CC64, CC120 and CC123, and every other performance control is
 // exercised through its own dedicated controller number, never CC121. A
@@ -2901,21 +2772,24 @@ void testEditorRendering()
         && styleKeyMode != nullptr && keyboard != nullptr
         && keyboardHint != nullptr)
     {
-        const auto* midiKeyboard = dynamic_cast<const ElectryKeyboardComponent*> (
-            keyboard);
+        const auto* midiKeyboard =
+            dynamic_cast<const juce::MidiKeyboardComponent*> (keyboard);
         const auto* hintLabel = dynamic_cast<const juce::Label*> (keyboardHint);
         expect (midiKeyboard != nullptr
                     && midiKeyboard->getRangeStart()
                         == electry::ElectryEngine::firstKeyswitchNote
                     && midiKeyboard->getRangeEnd()
-                        == electry::ElectryEngine::firstRepickNote
-                           + electry::ElectryEngine::repickNoteCount - 1,
-                "keyboard does not expose keyswitches through all eight repick triggers");
+                        == electry::ElectryEngine::highestPlayableNote,
+                "keyboard does not stop at the highest pitched note D6");
+        expect (keyboard->getTitle().contains ("D6")
+                    && ! keyboard->getTitle().contains ("E6")
+                    && ! keyboard->getTitle().contains ("B6"),
+                "keyboard title presents out-of-range E6..B6 keys as pitched notes");
         expect (hintLabel != nullptr
-                    && hintLabel->getText().containsIgnoreCase ("repick")
-                    && hintLabel->getText().contains ("E6..B6")
-                    && hintLabel->getText().contains ("8..1"),
-                "keyboard hint does not explain the per-string repick zone");
+                    && hintLabel->getText().contains ("E1..D6")
+                    && ! hintLabel->getText().contains ("E6")
+                    && ! hintLabel->getText().contains ("B6"),
+                "keyboard hint presents out-of-range E6..B6 keys as pitched notes");
         if (factoryProgramControl != nullptr)
             expect (factoryProgramControl->getBottom() <= pickStrip->getY(),
                     "factory-rig selector overlaps the performance section");
@@ -3070,7 +2944,7 @@ int main()
     testPitchWheelByteReconstruction();
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
-    testChannelPressureAndAftertouchVibratoDispatch();
+    testMidiPressureLeavesChordUnchanged();
     testResetAllControllersDispatch();
     testMutePressureDisplayFeedback();
     testUiArticulationTriggerAndPanic();
