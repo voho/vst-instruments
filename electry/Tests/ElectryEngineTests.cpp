@@ -36,6 +36,9 @@ struct ElectryEngineTestAccess
         bool pendingRepickActive { false };
         PlayStyle pendingPlayStyle { PlayStyle::Sustain };
         bool pendingStrokeIsUp { false };
+        bool pendingPreservesVibratoFinger { false };
+        std::uint32_t pendingStrokeVariationState { 0u };
+        std::uint64_t pendingStartOrder { 0 };
         float verticalDelayTarget { 0.0f };
         float verticalDelayCurrent { 0.0f };
         float horizontalDelayTarget { 0.0f };
@@ -50,8 +53,10 @@ struct ElectryEngineTestAccess
         float loopGain { 0.0f };
         float baseFrequency { 0.0f };
         std::uint64_t startOrder { 0 };
+        std::uint64_t strumChordId { 0 };
         std::uint64_t ageSamples { 0 };
         int startDelaySamples { 0 };
+        bool pendingContactPreservesRing { false };
         bool sympatheticReady { false };
         float sympatheticEnergy { 0.0f };
         float excitationCombDelay { 0.0f };
@@ -60,6 +65,7 @@ struct ElectryEngineTestAccess
         float strokeForceGain { 1.0f };
         float strokeAngleOffset { 0.0f };
         float strokeWidthScale { 1.0f };
+        std::uint32_t strokeVariationState { 0u };
         // The two the picking hand's force and contact patch reach.
         float excitationAmplitude { 0.0f };
         float verticalWeight { 0.0f };
@@ -100,6 +106,11 @@ struct ElectryEngineTestAccess
         result.pendingRepickActive = voice.pendingRepick.active;
         result.pendingPlayStyle = voice.pendingRepick.playStyle;
         result.pendingStrokeIsUp = voice.pendingRepick.strokeIsUp;
+        result.pendingPreservesVibratoFinger =
+            voice.pendingRepick.preservesVibratoFinger;
+        result.pendingStrokeVariationState =
+            voice.pendingRepick.strokeVariationState;
+        result.pendingStartOrder = voice.pendingRepick.startOrder;
         result.verticalDelayTarget = voice.vertical.targetDelay;
         result.verticalDelayCurrent = voice.vertical.currentDelay;
         result.horizontalDelayTarget = voice.horizontal.targetDelay;
@@ -114,8 +125,11 @@ struct ElectryEngineTestAccess
         result.loopGain = voice.vertical.loopGain;
         result.baseFrequency = voice.baseFrequency;
         result.startOrder = voice.startOrder;
+        result.strumChordId = voice.strumChordId;
         result.ageSamples = voice.ageSamples;
         result.startDelaySamples = voice.startDelaySamples;
+        result.pendingContactPreservesRing =
+            voice.pendingContactPreservesRing;
         result.sympatheticReady = voice.sympatheticReady;
         result.sympatheticEnergy = voice.sympatheticEnergy;
         result.excitationCombDelay = voice.excitationCombDelay;
@@ -124,6 +138,7 @@ struct ElectryEngineTestAccess
         result.strokeForceGain = voice.strokeForceGain;
         result.strokeAngleOffset = voice.strokeAngleOffset;
         result.strokeWidthScale = voice.strokeWidthScale;
+        result.strokeVariationState = voice.strokeVariationState;
         result.excitationAmplitude = voice.excitationAmplitude;
         result.verticalWeight = voice.verticalWeight;
         result.horizontalWeight = voice.horizontalWeight;
@@ -2511,6 +2526,57 @@ void testAlternateStrokeSequence()
                "a cancelled pre-contact Palm note consumed an Alternate stroke");
     }
 
+    // A hammer or slide can move the fretting finger while a reserved pick is
+    // still travelling. Cancelling one moved finger must not return the shared
+    // Alternate direction while another member's original pick is still due.
+    {
+        ElectryEngine partiallyCancelled;
+        partiallyCancelled.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.strumSpreadSeconds = 0.040f;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        partiallyCancelled.setParameters(parameters);
+        partiallyCancelled.reset();
+        partiallyCancelled.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+        partiallyCancelled.noteOn(35, 0.90f);
+        partiallyCancelled.noteOn(40, 0.90f);
+        partiallyCancelled.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        partiallyCancelled.noteOn(37, 0.90f);
+        partiallyCancelled.noteOn(42, 0.90f);
+
+        const auto movedLow = TestAccess::snapshot(partiallyCancelled, 1);
+        const auto movedHigh = TestAccess::snapshot(partiallyCancelled, 2);
+        expect(movedLow.startDelaySamples > 0 && movedHigh.startDelaySamples > 0
+                   && movedLow.pendingRepickActive
+                   && movedHigh.pendingRepickActive
+                   && movedLow.pendingPlayStyle == PlayStyle::Sustain
+                   && movedHigh.pendingPlayStyle == PlayStyle::Sustain,
+               "moved-finger cancellation fixture lost its travelling picks");
+
+        partiallyCancelled.noteOff(37);
+        const int factor = TestAccess::oversamplingFactor(partiallyCancelled);
+        StereoBuffer remainingContact(
+            (movedHigh.startDelaySamples - 1) / factor + 1);
+        renderInto(partiallyCancelled, remainingContact);
+        const auto contactedHigh = TestAccess::snapshot(partiallyCancelled, 2);
+        expect(contactedHigh.startDelaySamples == 0
+                   && ! contactedHigh.pendingRepickActive
+                   && contactedHigh.excitationInContact,
+               "surviving moved-finger pick did not reach the string");
+        partiallyCancelled.noteOff(42);
+        StereoBuffer nextStrokeGap(static_cast<int>(0.050 * sampleRate));
+        renderInto(partiallyCancelled, nextStrokeGap);
+        partiallyCancelled.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        partiallyCancelled.noteOn(45, 0.90f);
+        const auto nextStroke = TestAccess::snapshot(
+            partiallyCancelled,
+            TestAccess::stringForNote(partiallyCancelled, 45));
+        expect(nextStroke.valid && nextStroke.strokeIsUp,
+               "cancelling one moved finger returned another travelling "
+               "pick's Alternate stroke");
+    }
+
     engine.noteOn(40, 0.8f);
     const auto first = TestAccess::snapshot(engine,
                                             TestAccess::stringForNote(engine, 40));
@@ -3840,6 +3906,179 @@ void testAttackStateTransitions()
         expect(TestAccess::snapshot(pendingRepick, 0).startDelaySamples == 0
                    && repickThroughContact.left != controlThroughContact.left,
                "the staged Palm repick never committed at pick contact");
+    }
+
+    // A fretting-hand move can land while a strummed repick is already
+    // travelling toward that string. The finger changes the speaking length;
+    // it cannot make the reserved plectrum disappear. Its captured stroke must
+    // reach the latest moving pitch after the original remaining travel time.
+    for (const auto legatoStyle : { PlayStyle::Hammer, PlayStyle::Slide })
+    {
+        ElectryEngine engine;
+        auto parameters = quietParameters();
+        parameters.strumSpreadSeconds = 0.040f;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        constexpr std::array<ElectryEngine::NoteOnEvent, 2> chord {{
+            { 28, 0.85f }, { 35, 0.85f }
+        }};
+        engine.noteOnChord(chord);
+        StereoBuffer establish(static_cast<int>(0.080 * sampleRate));
+        renderInto(engine, establish);
+        engine.noteOnChord(chord);
+        const auto reserved = TestAccess::snapshot(engine, 1);
+        const int factor = TestAccess::oversamplingFactor(engine);
+        const int moveLeadFrames = static_cast<int>(0.005 * sampleRate);
+        const int approachFrames = std::max(
+            0, reserved.startDelaySamples / factor - moveLeadFrames);
+        StereoBuffer approach(approachFrames);
+        renderInto(engine, approach);
+        const auto travelling = TestAccess::snapshot(engine, 1);
+        expect(travelling.pendingRepickActive
+                   && travelling.startDelaySamples > 0
+                   && travelling.strumChordId != 0
+                   && travelling.pendingContactPreservesRing
+                   && travelling.pendingPlayStyle == PlayStyle::Sustain,
+               "the legato/repick fixture had no travelling plectrum");
+
+        engine.noteOn(styleKeyswitch(legatoStyle), 1.0f);
+        engine.noteOn(37, 0.80f);
+        const auto moved = TestAccess::snapshot(engine, 1);
+        expect(moved.midiNote == 37 && moved.pendingRepickActive,
+               "a same-string legato move erased the travelling plectrum");
+        expect(moved.startDelaySamples == travelling.startDelaySamples
+                   && moved.strumChordId == travelling.strumChordId
+                   && moved.pendingContactPreservesRing,
+               "a same-string legato move rewrote the travelling pick");
+
+        const int framesBeforeContact =
+            (moved.startDelaySamples - 1) / factor;
+        StereoBuffer beforeContact(framesBeforeContact);
+        renderInto(engine, beforeContact);
+        const auto nearlyThere = TestAccess::snapshot(engine, 1);
+        const float blendBeforeContact = TestAccess::legatoBlend(engine, 1);
+        expect(nearlyThere.pendingRepickActive
+                   && nearlyThere.startDelaySamples > 0
+                   && nearlyThere.startDelaySamples <= factor
+                   && blendBeforeContact > 0.0f
+                   && blendBeforeContact < 1.0f,
+               "the legato/repick fixture missed the pre-contact boundary");
+
+        StereoBuffer contact(1);
+        renderInto(engine, contact);
+        const auto contacted = TestAccess::snapshot(engine, 1);
+        expect(contacted.midiNote == 37 && ! contacted.pendingRepickActive
+                   && contacted.startDelaySamples == 0
+                   && contacted.playStyle == PlayStyle::Sustain
+                   && contacted.excitationInContact,
+               "the travelling pick did not contact the legato target fret");
+        expect(TestAccess::legatoBlend(engine, 1) >= blendBeforeContact
+                   && TestAccess::legatoBlend(engine, 1) < 1.0f,
+               "pick contact snapped an unfinished legato glide to its fret");
+
+        engine.noteOff(35);
+        expect(TestAccess::snapshot(engine, 1).keyDown,
+               "the old fret released the moved string");
+        engine.noteOff(37);
+        expect(TestAccess::snapshot(engine, 1).releasing,
+               "the moved fret did not retain release ownership");
+    }
+
+    // A fully damped held string has no PendingRepick until a legato gesture
+    // gives its delayed revival a ringing state. Promote that reserved contact
+    // before the finger overwrites its captured wrist data.
+    {
+        ElectryEngine engine;
+        auto parameters = quietParameters();
+        parameters.strumSpreadSeconds = 0.040f;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(styleKeyswitch(PlayStyle::Dead), 1.0f);
+        engine.noteOn(35, 0.90f);
+        StereoBuffer retire(static_cast<int>(2.50 * sampleRate));
+        renderInto(engine, retire);
+        expect(! TestAccess::snapshot(engine, 1).active,
+               "the held Dead fixture did not retire before its revival");
+
+        engine.noteOn(ElectryEngine::firstRepickNote + 1, 0.95f);
+        const auto reserved = TestAccess::snapshot(engine, 1);
+        expect(reserved.active && reserved.startDelaySamples > 0
+                   && ! reserved.pendingRepickActive
+                   && reserved.playStyle == PlayStyle::Dead,
+               "the retired string did not reserve a fresh delayed pick");
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(47, 0.80f);
+        const auto moved = TestAccess::snapshot(engine, 1);
+        expect(moved.midiNote == 47 && moved.pendingRepickActive
+                   && moved.pendingPlayStyle == PlayStyle::Dead
+                   && moved.pendingStrokeIsUp == reserved.strokeIsUp
+                   && moved.pendingStrokeVariationState
+                          == reserved.strokeVariationState
+                   && moved.pendingStartOrder == reserved.startOrder
+                   && moved.startDelaySamples == reserved.startDelaySamples
+                   && moved.strumChordId == reserved.strumChordId
+                   && moved.pendingContactPreservesRing,
+               "legato lost a retired string's reserved plectrum state");
+
+        const int factor = TestAccess::oversamplingFactor(engine);
+        StereoBuffer beforeContact((moved.startDelaySamples - 1) / factor);
+        renderInto(engine, beforeContact);
+        expect(TestAccess::snapshot(engine, 1).pendingRepickActive
+                   && TestAccess::legatoBlend(engine, 1) < 1.0f,
+               "the retired-string contact did not remain pending mid-slide");
+        StereoBuffer contact(1);
+        renderInto(engine, contact);
+        const auto contacted = TestAccess::snapshot(engine, 1);
+        expect(contacted.midiNote == 47 && ! contacted.pendingRepickActive
+                   && contacted.playStyle == PlayStyle::Dead
+                   && contacted.excitationInContact
+                   && TestAccess::legatoBlend(engine, 1) < 1.0f,
+               "the retired string's pick missed its moving target fret");
+    }
+
+    // A released/refretted note reserves a new finger as well as a later pick.
+    // If legato moves it before contact, assign that new finger at the move and
+    // then preserve it through the plectrum; never revive the released one.
+    {
+        ElectryEngine engine;
+        auto parameters = quietParameters();
+        parameters.strumSpreadSeconds = 0.040f;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(37, 0.85f);
+        StereoBuffer establish(static_cast<int>(0.10 * sampleRate));
+        renderInto(engine, establish);
+        const auto oldFinger = TestAccess::snapshot(engine, 1);
+        expect(oldFinger.active && oldFinger.midiNote == 37,
+               "the delayed-refret finger fixture missed physical string 1");
+        engine.noteOff(37);
+        engine.noteOn(37, 0.82f);
+        const auto refret = TestAccess::snapshot(engine, 1);
+        expect(refret.pendingRepickActive
+                   && refret.startDelaySamples > 0
+                   && ! refret.pendingPreservesVibratoFinger,
+               "the delayed refret did not reserve a fresh finger");
+
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(49, 0.80f);
+        const auto moved = TestAccess::snapshot(engine, 1);
+        expect(moved.pendingRepickActive
+                   && moved.pendingPreservesVibratoFinger
+                   && moved.vibratoSeed != oldFinger.vibratoSeed,
+               "legato reused the released finger before pending contact");
+        const auto movedSeed = moved.vibratoSeed;
+        const int factor = TestAccess::oversamplingFactor(engine);
+        StereoBuffer throughContact(
+            (moved.startDelaySamples - 1) / factor + 1);
+        renderInto(engine, throughContact);
+        const auto contacted = TestAccess::snapshot(engine, 1);
+        expect(! contacted.pendingRepickActive
+                   && contacted.vibratoSeed == movedSeed
+                   && TestAccess::legatoBlend(engine, 1) < 1.0f,
+               "pending contact replaced the newly assigned moving finger");
     }
 }
 

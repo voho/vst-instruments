@@ -1932,7 +1932,11 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
         startDelaySamples = static_cast<int>(
             std::max<std::int64_t>(0, onset - engineClock_));
     }
-    voice.strumChordId = plectrumStroke ? chordSequence_ : 0;
+    // A legato fret move has no new wrist stroke. legatoRetarget() clears an
+    // old chord identity unless a plectrum is already travelling toward this
+    // string, in which case that reservation still belongs to its old stroke.
+    if (! legato)
+        voice.strumChordId = plectrumStroke ? chordSequence_ : 0;
     const bool strokeIsUp = plectrumStroke && chordStrokeIsUp_;
 
     // One chord is one wrist stroke: every crossed string keeps the direction
@@ -3111,6 +3115,7 @@ std::uint32_t ElectryEngine::strokeVariationStateFor(
 void ElectryEngine::drawStrokeVariation(Voice& voice,
                                         std::uint32_t state) noexcept
 {
+    voice.strokeVariationState = state;
     // A hand does not put the pick down twice in the same place, but one wrist
     // stroke does not become a different hand as it crosses a chord. Four
     // things about the shared contact move from stroke to stroke, and they are
@@ -4100,8 +4105,14 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         -twoPi * (3400.0f + 280.0f * static_cast<float>(voice.stringIndex))
         * inverseSampleRate_);
     voice.artifactNoiseBandState = 0.0f;
-    voice.legatoBlend = 1.0f;
-    voice.legatoFromFrequency = 0.0f;
+    const bool legatoStillMoving = sameHeldFinger
+                                && voice.legatoBlend < 1.0f
+                                && voice.legatoFromFrequency > 0.0f;
+    if (! legatoStillMoving)
+    {
+        voice.legatoBlend = 1.0f;
+        voice.legatoFromFrequency = 0.0f;
+    }
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
@@ -4167,6 +4178,23 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
 {
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const int fromFret = voice.fret;
+    const bool travellingContact = voice.startDelaySamples > 0;
+    const bool freshFingerPending = travellingContact
+                                 && voice.pendingRepick.active
+                                 && ! voice.pendingRepick.preservesVibratoFinger;
+    // A retired held voice stores a fresh delayed pick directly on the voice,
+    // not in pendingRepick. Once a legato finger makes that silent allocation
+    // ring, promote the captured wrist state so the later contact can restore
+    // it after this function applies the finger gesture.
+    if (travellingContact && ! voice.pendingRepick.active)
+    {
+        voice.pendingRepick = {
+            true, voice.velocity, voice.playStyle, voice.strokeIsUp,
+            voice.strokeVariationState, voice.startOrder, true
+        };
+    }
+    if (travellingContact)
+        voice.pendingRepick.preservesVibratoFinger = true;
     voice.legatoFromFrequency = voice.baseFrequency;
     voice.midiNote = midiNote;
     voice.fret = std::clamp(midiNote - spec.openMidiNote, 0, fretCount);
@@ -4178,6 +4206,8 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.sustained = false;
     voice.releasing = false;
     voice.startOrder = ++noteSequence_;
+    if (freshFingerPending)
+        seedVibratoFinger(voice);
     drawStrokeVariation(
         voice, strokeVariationStateFor(voice.startOrder, voice.stringIndex));
     voice.velocity = velocity;
@@ -4190,9 +4220,13 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.artifactCollisionRemaining = 0;
-    voice.startDelaySamples = 0;
-    voice.pendingRepick.active = false;
-    voice.pendingContactPreservesRing = false;
+    if (! travellingContact)
+    {
+        voice.startDelaySamples = 0;
+        voice.pendingRepick.active = false;
+        voice.pendingContactPreservesRing = false;
+        voice.strumChordId = 0;
+    }
 
     // A hammered finger lands over roughly ten milliseconds rather than
     // instantly. A slide does not land at all: it stays down and travels, so
@@ -4257,6 +4291,11 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     configureVoicePitch(voice, false);
     configureVoicePickups(voice);
     startExcitation(voice, velocity, true);
+    // startExcitation() consumes the current finger contact's preservation
+    // flag. The plectrum reservation still needs one so a Note Off before
+    // arrival cancels the pick without silencing the now-ringing note.
+    if (travellingContact)
+        voice.pendingContactPreservesRing = true;
 
     if (playStyle == PlayStyle::Hammer && voice.fret < fromFret)
     {
@@ -4307,8 +4346,11 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
             bool anotherPickedMember = false;
             for (const auto& member : voices_)
             {
+                const PlayStyle effectiveStyle = member.pendingRepick.active
+                    ? member.pendingRepick.playStyle
+                    : member.playStyle;
                 if (member.active && member.strumChordId == cancelledChord
-                    && plectrumContacts(member.playStyle, false))
+                    && plectrumContacts(effectiveStyle, false))
                 {
                     anotherPickedMember = true;
                     break;

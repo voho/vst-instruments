@@ -12,6 +12,35 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — let a travelling pick reach the moving fret
+
+`legatoRetarget()` treated every Hammer or Slide as authority to erase the
+voice's delayed attack state. If a repeated chord had already reserved a
+same-string plectrum contact, moving that fret before contact cleared the
+pending stroke, its remaining Strum travel and its chord identity. The finger
+therefore made a physically committed pick disappear.
+
+Decision: a pending repick remains owned by its original wrist stroke. If a
+fully damped held voice has only a fresh delayed contact, promote its cached
+wrist state to the same reservation before the finger changes it. The legato
+gesture immediately changes the speaking length and contributes its ordinary
+finger impact or slide friction; the plectrum retains its captured style,
+direction, player variation, remaining delay and chord identity, then strikes
+the voice's latest moving pitch without finishing the glide early. A legato
+move with no pending plectrum keeps the previous behavior and creates no pick
+of its own.
+
+The regression reserves a two-string, 40 ms Strum repick, moves the second
+string from B1 to C#2 with both Hammer and Slide 5 ms before contact, and
+requires the captured Sustain plectrum to arrive on the exact internal-sample
+boundary while the glide remains unfinished. A second case revives a retired
+held Dead B1 and slides it to B2 before its fresh delayed pick, pinning the same
+payload and ownership path. A released/refretted note that moves before contact
+draws its new finger at the legato event and retains it through the pick rather
+than reviving the released finger. Demo 22 moves its closing low-string slide
+5 ms beyond the B0 grid point so the collision is audible while the repeat is
+still travelling.
+
 ## 2026-08-27 — keep the live fretting finger through a repick
 
 Every same-string plectrum contact re-entered `startVoice()` and seeded a new

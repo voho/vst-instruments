@@ -870,6 +870,9 @@ private:
         float strokeForceGain { 1.0f };           // linear, on the pick's amplitude
         float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
         float strokeWidthScale { 1.0f };          // on the contact's duration
+        // Raw draw retained so a delayed fresh contact can be promoted if a
+        // legato finger reaches the string before the plectrum does.
+        std::uint32_t strokeVariationState { 0u };
         // Latched stroke force applied to the bridge hand's loss rate. It uses
         // the same pick draw, so mute variation does not invent another player.
         float handContactScale { 1.0f };
