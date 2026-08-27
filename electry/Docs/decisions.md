@@ -12,6 +12,37 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep amplifier feedback on the performed pitch class
+
+The acoustic return drove every idle sympathetic string as hard as the string
+the player had actually sounded. Those eight parallel resonators did not model
+normal high-gain playing technique, where spare fingers and the picking hand
+control unused strings. In demos 06 and 14, the seventh mode of the untouched
+open high E near 2.31 kHz consequently displaced the performed note's howl. In
+demo 14, the B2-derived mode near 2.72 kHz led as feedback opened, then the
+unrelated high-E mode took over for the rest of the audible sustain.
+
+Decision: played or releasing voices retain the full bounded loudspeaker
+return. An idle sympathetic loop receives one quarter of that direct return,
+a voiced partial-isolation assumption for controlled metal technique. Its
+ordinary bridge-bus drive is unchanged, so idle strings still answer the
+instrument and the CC1 coupling lift still reaches its original endpoint. No
+state, control, filter or extra signal path was added. This is not a measured
+finger-by-finger mute model, speaker-directivity model, or guarantee that a
+particular physical voice owns the tail after Note Off. It reduces unrelated
+open-string takeover; the regression pins the held A4 case and the two affected
+demos pin their audible pitch families rather than claiming a universal
+all-note, all-rig guarantee.
+
+The 44.1 kHz closed engine/amplifier regression leaves A4 held on the G string
+after releasing the upper notes of a three-note shape. At one-half idle drive,
+the open high E still wins 0.452 to 0.115 in loop amplitude; at one quarter, A4
+wins 0.553 to 0.060 and clears a two-to-one ownership rail. Equal direct drive
+loses 0.764 to 0.117. Zero direct drive was rejected because an open string can
+plausibly answer the loudspeaker. Same-build demo comparisons keep demo 14 on
+its B-derived 2.72 kHz family and demo 06 on the fretted A4 harmonic family
+until the wheel closes; their scores and durations are unchanged.
+
 ## 2026-08-27 — continue chained legato from the live fret and loop period
 
 `legatoRetarget()` began every new Slide or Hammer at the preceding gesture's

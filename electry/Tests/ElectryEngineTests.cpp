@@ -11588,6 +11588,97 @@ void testResonanceFeedbackSelfSustains()
                + std::to_string(decibels(fed.lateRms
                                          / std::max(fed.earlyRms, 1.0e-15)))
                + " dB after four seconds)");
+    // Pin the direct feedback routing. A three-note shape puts A4 on the G
+    // string, then leaves it held after the upper two
+    // strings are released. Equal or half-strength direct drive lets the idle
+    // high E win this exact closed loop; the voiced quarter share leaves the
+    // performed string comfortably in charge without removing bridge bloom.
+    {
+        constexpr double ownershipRate = 44100.0;
+        constexpr int ownershipBlockSize = 256;
+        ElectryEngine engine;
+        engine.prepare(ownershipRate, ownershipBlockSize);
+        EngineParameters parameters;
+        parameters.pickupSelector = PickupSelector::Bridge;
+        parameters.pickupType = 0.4f;
+        parameters.toneKnob = 0.9f;
+        parameters.bodyResonance = 0.45f;
+        parameters.stringAge = 0.08f;
+        parameters.pickPosition = 0.30f;
+        parameters.resonanceDepth = 1.0f;
+        parameters.bendTimeSeconds = 0.20f;
+        parameters.sympatheticAmount = 0.35f;
+        parameters.outputGain = 1.5f;
+        parameters.outputMode = electry::OutputMode::Stereo;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        electry::ElectryFx fx;
+        fx.prepare(ownershipRate);
+        electry::FxParameters fxParameters;
+        fxParameters.distortion = 0.30f;
+        fxParameters.amp = 0.82f;
+        fxParameters.compressor = 0.35f;
+        fxParameters.delay = 0.30f;
+        fxParameters.room = 0.35f;
+        fx.setParameters(fxParameters);
+        fx.reset();
+        engine.setAcousticReturnLevel(
+            std::min(1.0f, fxParameters.amp
+                         + 0.6f * fxParameters.distortion));
+
+        std::vector<float> left(ownershipBlockSize);
+        std::vector<float> right(ownershipBlockSize);
+        const auto render = [&] (double seconds)
+        {
+            int remaining = static_cast<int>(seconds * ownershipRate);
+            while (remaining > 0)
+            {
+                const int count = std::min(ownershipBlockSize, remaining);
+                engine.process(left.data(), right.data(), count);
+                fx.process(left.data(), right.data(), count);
+                engine.pushAcousticReturn(left.data(), right.data(), count);
+                remaining -= count;
+            }
+        };
+
+        render(0.25);
+        engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+        engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        const std::array<ElectryEngine::NoteOnEvent, 3> chord {{
+            { 69, 1.0f }, { 74, 1.0f }, { 79, 1.0f }
+        }};
+        engine.noteOnChord(chord);
+        render(0.10);
+        engine.noteOff(74);
+        engine.noteOff(79);
+        render(0.80);
+        engine.setResonance(1.0f);
+        render(2.20);
+
+        constexpr int playedString = 5;
+        constexpr int idleHighEString = 7;
+        const auto played = TestAccess::snapshot(engine, playedString);
+        const auto idleHighE = TestAccess::snapshot(engine, idleHighEString);
+        expect(played.active && played.keyDown && played.midiNote == 69,
+               "the feedback-ownership fixture did not retain A4 on string 5");
+        expect(! idleHighE.active && idleHighE.sympatheticReady,
+               "the feedback-ownership fixture did not leave high E idle");
+        const double playedAmplitude = std::sqrt(
+            std::max<double>(TestAccess::voiceOutputEnergy(
+                                 engine, playedString),
+                             0.0));
+        const double idleHighEAmplitude = std::sqrt(
+            std::max<double>(idleHighE.sympatheticEnergy, 0.0));
+        std::cout << "PROBE held A4/high-E feedback energy ratio: "
+                  << decibels(playedAmplitude
+                              / std::max(idleHighEAmplitude, 1.0e-15))
+                  << " dB\n";
+        expect(playedAmplitude > 2.0 * idleHighEAmplitude,
+               "the idle high E stole a held A4 feedback loop ("
+                   + std::to_string(playedAmplitude) + " played, "
+                   + std::to_string(idleHighEAmplitude) + " idle)");
+    }
 
     const auto wheelDown = runClosedLoop(0.0f, 0.75f, 0.8f);
     expect(wheelDown.finite && wheelDown.peak < 4.0f,

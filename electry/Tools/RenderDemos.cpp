@@ -899,10 +899,9 @@ Take renderLongRhythmArrangement()
     return take;
 }
 
-// The wheel as a vibrato bar and the modulation wheel as the player's distance
-// from a loud amplifier: a chord dived and returned with every string - the
-// ringing open ones included - following at its own compliance, then a single
-// note pushed into self-sustaining feedback and closed off again.
+// The pitch wheel and the modulation wheel as the player's distance from a
+// loud amplifier: a chord bent and returned uniformly, then a single note
+// pushed into self-sustaining feedback and closed off again.
 Take renderWhammyAndFeedback()
 {
     EngineParameters parameters;
@@ -922,9 +921,9 @@ Take renderWhammyAndFeedback()
     Take take(parameters, fx, false);
     take.style(PlayStyle::Sustain);
 
-    // The bar: a ringing chord dived two semitones and brought back, then
-    // pushed sharp. The strings do not move by equal amounts - the slack low
-    // eighth string travels furthest - which is the smear a real bar has.
+    // The pitch wheel: a ringing chord bent down two semitones and brought
+    // back, then pushed sharp. Every string follows the standard channel-wide
+    // MIDI interval over the configured Bend Time glide.
     take.chord({ 28, 35, 40, 47 }, 0.95f);
     take.wait(0.9);
     take.pitchBend(-1.0f);

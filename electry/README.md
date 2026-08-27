@@ -14,7 +14,8 @@ over a hand speed, their squeak the winding passing under the finger; a picking
 hand never puts the plectrum down in exactly the same place twice. The standard
 pitch wheel moves every string together over a uniform ±2 semitone range,
 and a resonance wheel can push a distorted tone into self-sustaining amplifier
-feedback. One bridge is shared by all eight strings:
+feedback with performance-controlled idle-string drive. One bridge is shared
+by all eight strings:
 the ones you are not fingering ring off it, and the ones you are exchange
 energy through it. The pickups follow a published signal structure — position
 comb, two coils for the humbucker and one for the single coil, finite magnetic
@@ -71,7 +72,7 @@ real-recording boundaries and blind-study plan live in the
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −12.9 dBFS | +9.9 dB |
 | `05-drop-e-rhythm-amp.wav` | −14.3 dBFS | +11.3 dB |
-| `06-lead-amp-delay-room.wav` | −7.3 dBFS | +4.3 dB |
+| `06-lead-amp-delay-room.wav` | −9.2 dBFS | +6.2 dB |
 | `07-pickups-and-tone.wav` | −11.7 dBFS | +8.7 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
 | `09-guitar-build-contrasts.wav` | −8.1 dBFS | +5.1 dB |
@@ -79,7 +80,7 @@ real-recording boundaries and blind-study plan live in the
 | `11-power-chords-dry.wav` | −7.9 dBFS | +4.9 dB |
 | `12-power-chords-amp.wav` | −12.9 dBFS | +9.9 dB |
 | `13-long-rhythm-arrangement.wav` | −14.4 dBFS | +11.4 dB |
-| `14-whammy-and-feedback.wav` | −12.5 dBFS | +9.5 dB |
+| `14-whammy-and-feedback.wav` | −13.6 dBFS | +10.6 dB |
 | `15-mute-and-dead-audition.wav` | −12.4 dBFS | +9.4 dB |
 | `16-mute-and-dead-metal.wav` | −14.0 dBFS | +11.0 dB |
 | `17-extended-technique-solo.wav` | −11.5 dBFS | +8.5 dB |
@@ -274,7 +275,10 @@ performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
 Depth parameter — with the amp or distortion up and the wheel raised, a held
-note regenerates into self-sustaining feedback, and a dry DI never can. The
+note regenerates into self-sustaining feedback, and a dry DI never can. Played
+strings receive the full bounded acoustic return; idle strings retain their
+bridge-driven sympathetic bloom but receive one quarter of the direct return,
+modeling the light unused-string control of a high-gain performance. The
 sustain pedal (CC 64) holds released strings; breath/CC 2 adds continuous
 bridge-hand pressure on top of the Mute Pressure parameter. While CC 2 is above
 zero, the engine status shows `CC2 MUTE +NN%`; the Mute Pressure knob remains
@@ -926,7 +930,7 @@ output-mode changes crossfade over roughly 4 ms.
 | Tremolo picking | Official Shreddage Hydra, RealEight, Electric Storm Deluxe, Evolution Dracus and Heavier7Strings repetition workflows; Armondes' five-player direct/progressive tremolo experiment; Electry's planned exact-eight capture protocol at 8/12/16 strokes/s | Hold visible B0 to run one deterministic wrist through the existing physical repick path. One shared fractional phase preserves Alternate/chord direction, velocity remains force, rate is 4..20 strokes/s with a 12/s default, an in-flight Strum traversal cannot be overwritten, a same-string legato move retargets rather than cancels its travelling pick, and each contact on a live, ringing held note leaves its vibrato finger intact | A playable sample-accurate repeat scheduler whose 12/s default overlaps the published conventional-guitar direct-speed cluster and whose 8/12/16 anchors are ready for commissioned exact-eight capture; not host-synced pattern generation, a human timing distribution, or an exact eight-string rate/force fit |
 | Fretting vibrato | Guitar-TECHS CC-BY raw DIs; Magalhães et al.'s eight-player electric-guitar vibrato study | Hold the visible A#0 gesture; velocity controls a smooth-onset, upward-only width, with independent rate, depth and phase draws per stopped string. Picking-hand repicks preserve the live finger; a released/refretted note assigns another. Velocity 64 is nominally about 5.6 Hz / 20 cents and 127 about 6.4 Hz / 40 cents; open strings remain fixed | A playable finger-rock model whose existing range overlaps published six-string players; not an exact eight-string calibration or a finger/string force solve |
 | Pitch control | Channel-wide MIDI pitch bend | The wheel applies the same ±2 semitone offset to every played and sympathetically ringing string over the Bend Time glide. Channel pressure and polyphonic aftertouch are deliberately unassigned | Uniform, chord-safe MIDI pitch bend; not a physical vibrato-bar simulation, and no pressure message silently changes tuning |
-| Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, and each string answers at its own resonances | The host pushes its previous processed block back as a bounded mono acoustic return with one block of latency (the air path); a soft-clipped, gain-scaled copy drives the string loops and the sympathetic bus, scaled by the CC1 resonance, the Resonance Depth parameter and the rig's acoustic loudness derived from the amplifier controls, so a distorted tone at full wheel regenerates while a dry DI never can; every element of the loop is bounded, so the howl saturates instead of growing | A one-block-latent, level-gated, saturating regeneration path; not a room acoustics, speaker directivity, or standing-wave model |
+| Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, while high-gain players control unused strings | The host pushes its previous processed block back as a bounded mono acoustic return with one block of latency (the air path); a soft-clipped, gain-scaled copy drives played strings fully and idle sympathetic strings at a voiced one-quarter direct share while leaving their bridge drive unchanged. CC1 resonance, Resonance Depth and rig acoustic loudness scale the path, so a distorted tone at full wheel regenerates while a dry DI never can; every element is bounded, so the howl saturates instead of growing | A one-block-latent, level-gated, saturating regeneration path with a performance-voiced unused-string share; not measured finger-by-finger muting, room acoustics, speaker directivity, or a standing-wave model |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
@@ -1003,7 +1007,9 @@ the CC1 resonance lifting the sympathetic ring with Resonance Depth scaling
 its reach and a bit-exact bypass at a lowered wheel; the closed
 engine-amplifier loop self-sustaining after note release at full wheel and
 distortion while the same loop decays with the wheel down or the amplifier
-dry, all bounded; pluck position following the fretted sounding length by 2^(fret/12);
+dry, all bounded; a held A4 loop exceeding the idle high E by at least 6.02 dB
+where a one-half idle return instead loses by 11.9 dB; pluck position following
+the fretted sounding length by 2^(fret/12);
 fretboard geometry, meter ballistics, standing-wave shape, colour knee and a
 lossless packed audio-to-editor round trip; per-string display readout naming
 the right string, fret, note and articulation; selector-driven pickup culling,
@@ -1186,6 +1192,19 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-27 feedback-focus correction
+
+- Reduced only the direct loudspeaker return into idle sympathetic loops to a
+  voiced one-quarter share; played/releasing voices keep the full return and
+  bridge-driven sympathetic coupling is unchanged.
+- Added a closed engine/amplifier rail that keeps held A4's loop at least 6.02
+  dB above the idle high E and distinguishes the quarter share from a
+  still-hijacked one-half share. Equal and one-half direct drive lose by 16.2
+  and 11.9 dB; one-quarter wins by 19.2 dB.
+- Corrected demo 14's stale comments: the standard MIDI pitch wheel is uniform,
+  not a per-string physical whammy-bar model. Demos 06 and 14 were regenerated
+  without changing their scores or durations.
 
 ### 2026-08-26 Palm-body correction
 

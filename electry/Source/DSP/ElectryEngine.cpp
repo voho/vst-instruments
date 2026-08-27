@@ -5326,10 +5326,13 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
     }
 
     // The bridge bus carries the played strings' force; the acoustic return
-    // carries the loudspeaker's. Both are starved by the muting hand, which
-    // is what keeps a palm-muted passage from howling even at full resonance.
+    // carries the loudspeaker's. In a playable metal performance, spare
+    // fingers and the picking hand normally control strings that are not being
+    // played. Model that partial isolation with a quarter of the direct drive:
+    // the idle strings still bloom through the shared bridge above, while the
+    // performed pitch class wins in the calibrated feedback performances.
     const float total = sample + sympatheticInjection_ * drive
-                      + feedbackDrive_ * feedbackHandScale_;
+                      + 0.25f * feedbackDrive_ * feedbackHandScale_;
     loop.line[static_cast<std::size_t>(loop.writeIndex & (delayLineSize - 1))]
         = total;
     // The same physical pickup senses this string, so it cancels no better here
