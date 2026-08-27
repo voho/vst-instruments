@@ -104,7 +104,7 @@ real-recording boundaries and blind-study plan live in the
 | `20-odd-meter-prog-study.wav` | +0.8 dBFS | −3.8 dB |
 | `21-blues-rock-lead-study.wav` | −9.5 dBFS | +6.5 dB |
 | `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
-| `23-amp-voices.wav` | −15.2 dBFS | +12.2 dB |
+| `23-amp-voices.wav` | −15.4 dBFS | +12.4 dB |
 <!-- peaks-table-end -->
 
 `15-mute-and-dead-audition.wav` is the quickest dry vocabulary check: the same
