@@ -8387,6 +8387,239 @@ void testPushAcousticReturnSanitisation()
 // Version 1.1: bridge-coupled sympathetic strings
 // ---------------------------------------------------------------------------
 
+void testLiveDampingRefitsPreservePitch()
+{
+    static constexpr std::array<double, 5> sampleRates {
+        44100.0, 48000.0, 96000.0, 192000.0, 384000.0
+    };
+
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    const auto loopFrequencies = [] (const ElectryEngine& engine,
+                                     int stringIndex)
+    {
+        return std::array {
+            TestAccess::effectiveLoopFrequency(engine, stringIndex),
+            TestAccess::effectiveLoopFrequency(engine, stringIndex, true)
+        };
+    };
+    const auto maximumCentsBetween = [] (const std::array<float, 2>& first,
+                                         const std::array<float, 2>& second)
+    {
+        const double vertical = std::abs(centsBetween(first[0], second[0]));
+        const double horizontal = std::abs(centsBetween(first[1], second[1]));
+        if (! std::isfinite(vertical) || ! std::isfinite(horizontal))
+            return std::numeric_limits<double>::infinity();
+        return std::max(vertical, horizontal);
+    };
+    struct RingingFixture
+    {
+        int stringIndex;
+        int controlFrames;
+    };
+    const auto prepareRinging = [&] (ElectryEngine& engine, double sampleRate,
+                                     int midiNote, PlayStyle style,
+                                     const EngineParameters& setup)
+    {
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(setup);
+        engine.reset();
+        engine.noteOn(styleKeyswitch(style), 1.0f);
+        engine.noteOn(midiNote, 0.95f);
+        const int controlFrames =
+            TestAccess::hostFramesPerControlPeriod(engine);
+        const int establishFrames = controlFrames * static_cast<int>(
+            std::ceil(0.080 * sampleRate
+                      / static_cast<double>(controlFrames)));
+        StereoBuffer establish(establishFrames);
+        renderInto(engine, establish);
+        return RingingFixture {
+            TestAccess::stringForNote(engine, midiNote), controlFrames
+        };
+    };
+
+    // The newest plectrum contact moves one bridge hand across every ringing
+    // string. Re-solving an older string's damping filters must not move that
+    // string's sounding period: the delay line and filter phase are one
+    // coordinate, even though its attack descriptor stays unchanged.
+    for (const double sampleRate : sampleRates)
+    {
+        for (const auto& [fromStyle, toStyle] : {
+                 std::pair { PlayStyle::Sustain, PlayStyle::PalmMute },
+                 std::pair { PlayStyle::PalmMute, PlayStyle::Sustain } })
+        {
+            ElectryEngine engine;
+            const auto fixture = prepareRinging(
+                engine, sampleRate, 28, fromStyle, parameters);
+            const auto before = loopFrequencies(engine, fixture.stringIndex);
+            engine.noteOn(styleKeyswitch(toStyle), 1.0f);
+            engine.noteOn(40, 0.95f);
+            const auto oldVoice = TestAccess::snapshot(
+                engine, fixture.stringIndex);
+            const int newString = TestAccess::stringForNote(engine, 40);
+            const auto after = loopFrequencies(engine, fixture.stringIndex);
+            const double pitchMove = maximumCentsBetween(after, before);
+
+            expect(fixture.stringIndex >= 0 && newString >= 0
+                       && newString != fixture.stringIndex
+                       && oldVoice.midiNote == 28
+                       && oldVoice.dampingStyle == toStyle,
+                   "invalid live shared-hand pitch-refit fixture at "
+                       + std::to_string(sampleRate) + " Hz");
+            expect(pitchMove < 0.25,
+                   "a shared-hand damping refit moved a ringing period by "
+                       + std::to_string(pitchMove)
+                       + " cents at " + std::to_string(sampleRate) + " Hz");
+        }
+    }
+
+    // CC2 is continuous, so walk every MIDI value in both directions and
+    // inspect every control boundary. This catches both a single phase jump
+    // and small coordinate errors that accumulate over a pressure sweep.
+    for (const double sampleRate : sampleRates)
+    {
+        ElectryEngine engine;
+        const auto fixture = prepareRinging(
+            engine, sampleRate, 28, PlayStyle::Sustain, parameters);
+        const auto reference = loopFrequencies(engine, fixture.stringIndex);
+
+        // Read the hard 0->127 throw after its first host sample, not after a
+        // whole control period in which the 6 ms delay smoother could hide
+        // most of a bad coordinate jump. Finish that period before returning
+        // to zero so the adjacent sweep below remains boundary-aligned.
+        engine.setPalmMutePressure(1.0f);
+        StereoBuffer firstEventFrame(1);
+        renderInto(engine, firstEventFrame, 1);
+        const double hardMove = maximumCentsBetween(
+            loopFrequencies(engine, fixture.stringIndex), reference);
+        expect(hardMove < 0.25,
+               "a full CC2 throw moved E1 by "
+                   + std::to_string(hardMove)
+                   + " cents at " + std::to_string(sampleRate) + " Hz");
+        if (fixture.controlFrames > 1)
+        {
+            StereoBuffer eventRemainder(fixture.controlFrames - 1);
+            renderInto(engine, eventRemainder, fixture.controlFrames - 1);
+        }
+        engine.setPalmMutePressure(0.0f);
+        StereoBuffer returnTick(fixture.controlFrames);
+        renderInto(engine, returnTick, fixture.controlFrames);
+
+        auto previous = reference;
+        double worstStep = 0.0;
+        double worstOffset = 0.0;
+        StereoBuffer controlTick(fixture.controlFrames);
+
+        const auto applyPressure = [&] (int cc)
+        {
+            engine.setPalmMutePressure(static_cast<float>(cc) / 127.0f);
+            renderInto(engine, controlTick, fixture.controlFrames);
+            const auto current = loopFrequencies(engine, fixture.stringIndex);
+            worstStep = std::max(
+                worstStep, maximumCentsBetween(current, previous));
+            worstOffset = std::max(
+                worstOffset, maximumCentsBetween(current, reference));
+            previous = current;
+        };
+
+        for (int cc = 1; cc <= 127; ++cc)
+            applyPressure(cc);
+        const int holdTicks = static_cast<int>(std::ceil(
+            0.030 * sampleRate
+            / static_cast<double>(fixture.controlFrames)));
+        for (int tick = 0; tick < holdTicks; ++tick)
+            applyPressure(127);
+        for (int cc = 126; cc >= 0; --cc)
+            applyPressure(cc);
+
+        const auto final = loopFrequencies(engine, fixture.stringIndex);
+        expect(worstStep < 0.25,
+               "one CC2 damping step moved a ringing period by "
+                   + std::to_string(worstStep) + " cents at "
+                   + std::to_string(sampleRate) + " Hz");
+        expect(worstOffset < 0.5,
+               "a CC2 sweep accumulated "
+                   + std::to_string(worstOffset) + " cents at "
+                   + std::to_string(sampleRate) + " Hz");
+        expect(maximumCentsBetween(final, reference) < 0.25,
+               "returning CC2 to zero did not restore the ringing period at "
+                   + std::to_string(sampleRate) + " Hz");
+    }
+
+    // The feedback close in demo 14 holds B2 when CC2 makes its full throw.
+    // Pin that exposed mid-register case directly rather than relying on the
+    // lower E1's longer period to represent every filter-phase proportion.
+    for (const double sampleRate : sampleRates)
+    {
+        ElectryEngine engine;
+        const auto fixture = prepareRinging(
+            engine, sampleRate, 47, PlayStyle::Sustain, parameters);
+        const auto before = loopFrequencies(engine, fixture.stringIndex);
+        engine.setPalmMutePressure(1.0f);
+        StereoBuffer firstEventFrame(1);
+        renderInto(engine, firstEventFrame, 1);
+        const double pitchMove = maximumCentsBetween(
+            loopFrequencies(engine, fixture.stringIndex), before);
+        expect(pitchMove < 0.25,
+               "a full CC2 throw moved B2 by "
+                   + std::to_string(pitchMove)
+                   + " cents at " + std::to_string(sampleRate) + " Hz");
+    }
+
+    // Pressure can arrive while the pitch wheel is moving. Its filter phase
+    // correction must stay separate from the genuine target-period motion:
+    // a residual-to-new-target restore would make this trace jump ahead of an
+    // otherwise identical wheel glide on every damping refit.
+    {
+        constexpr double sampleRate = 44100.0;
+        EngineParameters glideParameters = parameters;
+        glideParameters.bendTimeSeconds = 0.04f;
+        ElectryEngine reference;
+        ElectryEngine pressured;
+        const auto referenceFixture = prepareRinging(
+            reference, sampleRate, 28, PlayStyle::Sustain, glideParameters);
+        const auto pressuredFixture = prepareRinging(
+            pressured, sampleRate, 28, PlayStyle::Sustain, glideParameters);
+        reference.setPitchBend(1.0f);
+        pressured.setPitchBend(1.0f);
+        pressured.setPalmMutePressure(1.0f);
+
+        StereoBuffer referenceTick(referenceFixture.controlFrames);
+        StereoBuffer pressuredTick(pressuredFixture.controlFrames);
+        double worstDifference = 0.0;
+        const int traceTicks = static_cast<int>(
+            std::ceil(0.18 * sampleRate
+                      / static_cast<double>(referenceFixture.controlFrames)));
+        for (int tick = 0; tick < traceTicks; ++tick)
+        {
+            renderInto(reference, referenceTick,
+                       referenceFixture.controlFrames);
+            renderInto(pressured, pressuredTick,
+                       pressuredFixture.controlFrames);
+            worstDifference = std::max(
+                worstDifference,
+                maximumCentsBetween(
+                    loopFrequencies(pressured,
+                                    pressuredFixture.stringIndex),
+                    loopFrequencies(reference,
+                                    referenceFixture.stringIndex)));
+        }
+        const float finalVertical = loopFrequencies(
+            pressured, pressuredFixture.stringIndex)[0];
+        expect(worstDifference < 0.5,
+               "CC2 changed a live wheel glide by "
+                   + std::to_string(worstDifference) + " cents");
+        expect(centsBetween(finalVertical, midiHz(28)) > 190.0,
+               "the simultaneous pressure/wheel fixture did not reach its "
+               "pitch target");
+    }
+}
+
 void testSharedHandRetunesActiveStringDamping()
 {
     static constexpr double sampleRate = 48000.0;
@@ -13935,6 +14168,7 @@ int main()
     testSustainPedal();
     testVibratoOnlyMovesFingeredStrings();
     testLegatoSlideDoesNotConsumeAPickStroke();
+    testLiveDampingRefitsPreservePitch();
     testSharedHandRetunesActiveStringDamping();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

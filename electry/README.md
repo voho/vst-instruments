@@ -209,6 +209,9 @@ destination never sounds, and direction, remaining travel and scrape speed all
 follow the live hand position. Phase changes from the destination's damping and
 dispersion fit are absorbed into the raw delay coordinate, so the complete loop
 period—not merely its MIDI control value—stays continuous.
+Live Mute Pressure and shared Palm/Open hand contacts use the same complete-loop
+invariant: changing loss changes decay and colour, not the pitch of a string
+that was already ringing.
 
 | MIDI note | Key | Momentary gesture |
 | --- | --- | --- |
@@ -609,8 +612,12 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   Mute Pressure and MIDI CC 2 span 4.0 s to 0.080 s for the live bridge hand
   and further tilt the high-frequency ratio by `1 - 0.38 p`. Every positive
   target goes through the bounded loop-filter solve and analytic phase
-  compensation, so a mute stays in tune and adjacent CC2 values remain smooth.
-  Zero pressure with a non-Mute style is an exact no-op.
+  compensation. When a ringing loop is refitted, the old-to-new damping-phase
+  difference at its previous compensated period is translated immediately into
+  the raw delay coordinate; requested bend, vibrato and refret motion stays on
+  the pitch smoother. A live contact therefore changes decay and colour without
+  detuning the established string, and adjacent CC2 values remain smooth. Zero
+  pressure with a non-Mute style is an exact no-op.
 
   Mute uses the same sustained triangular-displacement load as Open. Its
   lighter attack voicing supplies the pick edge while the selective steady
@@ -928,7 +935,7 @@ output-mode changes crossfade over roughly 4 ms.
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
 | Dead note | Fretting-hand dead-note distinctions and distributed player/string contact; four CC0 Drop-E eight-string ghost attacks | An independent additive fretting-hand loss with a 1.6 s low-order target, its upper fit at the eighth partial, and a lightly darkened pick attack; Mute Pressure may stack as the separate bridge hand | A contact loss inside the loop whose stateful E1 envelope and centroid track the four-hit reference; not a gate, maximum palm mute, distributed finger-force solve, or universal calibration of dead-note hand coverage |
-| Bridge-hand damping | Palm-muting practice; pressure sensing by Biral, d'Alessandro and Freed; post-attack spectral evidence from Reboursiere et al. and Guitar-TECHS; HiMMP's score-matched rhythm DIs; the CC0 extended-range `50hz-guitar` muted/sustained matrix; the same decay-targeted loop design; and dry muted power-chord references for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; its solved spectral loss is present when the pick releases and can relax only after the string establishes a measured energy peak. The raw hand rate is multiplied by 4.5 at the high reference and divided by twenty-two at the fundamental, an effective 99:1 ratio between the two fitted points. Mute Tightness continuously controls that loss for the Mute style; Mute Pressure retains it on every style, the newest actual picked contact updates the shared hand on already-ringing strings without rewriting their attack style, and non-plectrum legato retains an existing Palm | Progressive additive damping with an independently voiced pick attack; not a distributed hand/string force solve, measured heel footprint, commissioned per-harmonic fit, or capture fit to a named eight-string |
+| Bridge-hand damping | Palm-muting practice; pressure sensing by Biral, d'Alessandro and Freed; post-attack spectral evidence from Reboursiere et al. and Guitar-TECHS; HiMMP's score-matched rhythm DIs; the CC0 extended-range `50hz-guitar` muted/sustained matrix; the same decay-targeted loop design; and dry muted power-chord references for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; its solved spectral loss is present when the pick releases and can relax only after the string establishes a measured energy peak. The raw hand rate is multiplied by 4.5 at the high reference and divided by twenty-two at the fundamental, an effective 99:1 ratio between the two fitted points. Mute Tightness continuously controls that loss for the Mute style; Mute Pressure retains it on every style, the newest actual picked contact updates the shared hand on already-ringing strings without rewriting their attack style, and an old-to-new filter-phase translation keeps those live contact changes pitch-continuous. Non-plectrum legato retains an existing Palm | Progressive additive damping with an independently voiced pick attack; not a distributed hand/string force solve, measured heel footprint, commissioned per-harmonic fit, or capture fit to a named eight-string |
 | Fretting hand | Ordinary left-hand kinematics; [Itoh and Hayashida's constrained fingering optimisation](https://www.jstage.jst.go.jp/article/ieejeiss/124/7/124_7_1396/_article/-char/en) and [Yazawa et al.'s playable-configuration enumeration](https://cir.nii.ac.jp/crid/1573387452726377216); the position/reach controls exposed by sampled guitars | Exact-sample chord attacks are matched across all eight strings as one bounded problem: held-note and legato continuity, occupied strings, a four-fret hand shape, fret effort and uncrossed pitch order resolve before any voice starts. The chosen shape then enters the ordinary physical attack path in canonical pitch order, so host event order cannot alter the fingering or player-variation stream. Single notes retain the floating hand, out-of-reach shift and phrase return | A deterministic chord-local configuration solver with a fixed four-fret reach; not finger-by-finger anatomy, chord naming, or phrase-wide look-ahead |
 | Strum travel | Ordinary plectrum kinematics | Note-ons on different strings no more than 35 ms from the chord's first event are one stroke; its direction and extreme string set an accelerating travel order, every crossed string shares that direction, and Alternate advances once for the chord. Reusing a string starts a new stroke; a fully cancelled pre-contact chord consumes none | Deterministic, jittered accelerating pick travel across the string plane; not a model of pick angle, chord recognition, or the player's wrist trajectory |
 | Tremolo picking | Official Shreddage Hydra, RealEight, Electric Storm Deluxe, Evolution Dracus and Heavier7Strings repetition workflows; Armondes' five-player direct/progressive tremolo experiment; Electry's planned exact-eight capture protocol at 8/12/16 strokes/s | Hold visible B0 to run one deterministic wrist through the existing physical repick path. One shared fractional phase preserves Alternate/chord direction, velocity remains force, rate is 4..20 strokes/s with a 12/s default, an in-flight Strum traversal cannot be overwritten, a same-string legato move retargets rather than cancels its travelling pick, and each contact on a live, ringing held note leaves its vibrato finger intact | A playable sample-accurate repeat scheduler whose 12/s default overlaps the published conventional-guitar direct-speed cluster and whose 8/12/16 anchors are ready for commissioned exact-eight capture; not host-synced pattern generation, a human timing distribution, or an exact eight-string rate/force fit |
@@ -1002,8 +1009,13 @@ actually run - holds its fundamental target at String Age 1.0 and at half and
 full bridge-hand pressure, to the same value on 44.1, 48 and 96 kHz hosts;
 monotonic palm-mute decay contraction, an exact no-op at zero pressure, an
 in-tune heavily muted string, the solved loop coefficient actually moving, and
-CC 2 pressure including hostile input; strum travel offsets in physical string
-order, an undelayed leading string, a sample-identical single note at zero or
+CC 2 pressure including hostile input; live-damping phase continuity on both
+loop polarisations at 44.1, 48, 96, 192 and 384 kHz for shared Palm/Open
+contacts, first-sample full CC2 jumps on E1 and B2, every adjacent step of a
+full up/down CC2 sweep at those five rates, and simultaneous CC2 plus the
+minimum-time wheel glide at 44.1 kHz;
+strum travel offsets in physical string order, an undelayed leading string, a
+sample-identical single note at zero or
 nonzero spread, reversed upstroke travel, exact render-block partitioning,
 later-timestamp stroke separation, a lower stacked chord peak and cancellation
 of an un-crossed string without a phantom attack;
@@ -1068,7 +1080,7 @@ The engine suite separately pins bounded/repeatable second-player pick timing,
 one offset per chord, strum composition and pre-contact cancellation.
 
 The amplifier chain has its own suite: the shipping rapid-Mute body's current
-30-80 ms medians are 7.7403% upper-band share and 0.888944 harmonicity, above
+30-80 ms medians are 7.6947% upper-band share and 0.889306 harmonicity, above
 the 6% body floor while remaining nonperiodic; halfband unity DC gain, the -6 dB
 halfband symmetry point, passband ripple and stopband rejection; the diode
 node's independent DC points, symmetry and capacitor memory; the measured
@@ -1111,7 +1123,7 @@ envelope A/B confirmed that the extra 100 ms contact stacked a second transient
 loss on top of the already selective steady hand. Removing that layer and moving
 Palm's existing modal-excitation factor from 0.74 to 0.85 restores the periodic
 low body without adding gain compensation, a parameter or another resonator.
-Open and Dead evaluator WAVs remain byte-identical.
+At that Palm-only correction, Open and Dead evaluator WAVs were byte-identical.
 
 The unnormalised dry evaluator measures:
 
@@ -1122,36 +1134,36 @@ The unnormalised dry evaluator measures:
 | E1 raw peak | -28.03 dBFS | -25.80 dBFS | +2.23 dB |
 | E2 raw peak | -26.70 dBFS | -24.26 dBFS | +2.44 dB |
 
-The noise-free engine guard independently reads -4.067/-3.182 dB of E1/E2
+The noise-free engine guard independently reads -4.065/-3.176 dB of E1/E2
 body. It also keeps the intended selective loss: over 150-500 ms the Palm-minus-
-Open low/high changes are -10.225/-19.622 dB on E1 and -8.172/-22.941 dB on
-E2. The early Palm high/low balance remains 4.558/0.397 dB darker than Open.
+Open low/high changes are -10.212/-19.709 dB on E1 and -8.187/-22.975 dB on
+E2. The early Palm high/low balance remains 4.558/0.394 dB darker than Open.
 Light, default and hard body remain strictly ordered, so Mute Tightness is still
 one understandable loose-to-tight performance axis rather than three samples.
 
 There is one explicit tradeoff. The tracked Guitar-TECHS F2 development proxy
-moves from the retired contact's -4.009 dB contraction to -0.681 dB at 44.1 kHz
-(-0.681..-0.697 dB across 44.1-192 kHz), farther from the two public player cells
+moves from the retired contact's -4.009 dB contraction to -0.680 dB at 44.1 kHz
+(-0.680..-0.692 dB across 44.1-192 kHz), farther from the two public player cells
 at -6.099/-15.290 dB. Those two conventional-guitar cells establish the
 direction of selective loss, not a defensible coefficient. The old local fit was
 therefore demoted from a hard target after it conflicted with low-body evidence
 and the rendered result; the commissioned E1/E2 TRAIN/HOLDOUT comparison remains
 the actual fit gate.
 
-The common high-gain rapid-Mute fixture now has 7.7403% of its 30-80 ms power
-above 500 Hz and 0.888944 harmonicity, passing its intentionally loose body and
+The common high-gain rapid-Mute fixture now has 7.6947% of its 30-80 ms power
+above 500 Hz and 0.889306 harmonicity, passing its intentionally loose body and
 nonperiodicity rails. The shared-hand transition remains smooth: Palm -> Open
-moves the old E1 by +9.9197 dB above 500 Hz and +0.276384 percentage points;
-Open -> Palm moves it by -7.3341 dB and -0.151510 points. Adjacent CC2 attack
+moves the old E1 by +9.9020 dB above 500 Hz and +0.271476 percentage points;
+Open -> Palm moves it by -7.2759 dB and -0.150555 points. Adjacent CC2 attack
 moves are 0.0362/0.0463 dB on E1/E2. The stateful Dead medians shift only to
--8.114/-14.919/-23.040 dB with a 4.79655 dB contextual RMSE because the earlier
-Palm ring is different; the isolated Dead WAV is unchanged.
+-8.126/-14.966/-23.092 dB with a 4.83093 dB contextual RMSE because the earlier
+Palm ring and its live damping phase are different; no Dead coefficient changed.
 
-All Palm-bearing demonstrations were regenerated from the same code. In
-particular, the current SHA-256 hashes are
-`3887e5dcbd65e1cef0e467da6bdb81afbc2e978f3ef0ee13ab343c68045204a4`
+All demonstrations affected by the correction were regenerated from the same
+code. The current SHA-256 hashes are
+`9d2a5ac0060834b35d117d0b11036b54f11c34cc834753a5e9c194aaf46a8e6a`
 for demo 04 and
-`022103d423f5f49df29b746516d7e9f3ee55635052a4a4024c4145eacdf2c0d4`
+`a5c34efa6bc3be3a81fe409b96d07ce18c89d83681542ee2249f1b73a7f09b63`
 for demo 16. These demos remain demonstrations, not validation recordings.
 
 ### Remaining realism gates
@@ -1199,6 +1211,30 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-27 live-damping pitch correction
+
+- Changing Mute Pressure or moving the shared bridge hand refitted damping
+  filters on already-ringing strings without translating the delay coordinate
+  for their new phase. A shared E1 Sustain/Palm contact could move the vertical
+  loop by 22.2 cents and the horizontal loop by 11.9 cents; a direct full CC2
+  state change could exceed a semitone. The resulting chirp was a physical and
+  playability defect, not a voicing choice.
+- The engine now preserves the prior complete-loop period when damping alone is
+  refitted: it evaluates the old-to-new damping-phase difference at that period
+  and applies the opposite raw-delay translation immediately. Genuine pitch
+  requests from bend, vibrato and refretting remain on their existing smoother,
+  and dispersion-phase translation remains a separate additive correction.
+- Regression coverage measures both polarisations on shared Palm/Open contacts,
+  first-sample full CC2 jumps on E1 and B2, all 254 boundaries of an adjacent
+  CC2 up/down sweep at 44.1, 48, 96, 192 and 384 kHz, and CC2 during the minimum
+  40 ms wheel glide at 44.1 kHz. Contact and sweep steps remain below 0.25 cent;
+  the combined bend comparison remains below 0.5 cent.
+- The canonical Linux renderer changed demos 02–05, 08–20 and 22 while demos
+  01, 06, 07 and 21 remained byte-identical. The correction is easiest to hear
+  dry at demo 04's Palm lift/replant and throughout demo 15; demos 18 and 20
+  expose it in high-gain musical contexts. No A–Z voicing selection was needed
+  because the complete-loop pitch invariant settled the correction.
 
 ### 2026-08-27 fixed-delay feedback correction
 

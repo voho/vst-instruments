@@ -2676,6 +2676,57 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         std::abs(semitones - voice.lastCompensatedSemitones) > 8.0e-4f;
     const float omega = twoPi * f0 * inverseSampleRate_;
     const float period = static_cast<float>(sampleRate_) / f0;
+    const auto dampingPhaseDelay = [&] (const PolarisationLoop& loop,
+                                         float phaseOmega)
+    {
+        float dipMagnitude = 1.0f;
+        float dipPhase = 0.0f;
+        handLossResponse(loop.handLossDepth, loop.handLossShape, phaseOmega,
+                         dipMagnitude, dipPhase);
+        const float dipDelay = phaseOmega > 1.0e-9f
+            ? -dipPhase / phaseOmega : 0.0f;
+        return onePolePhaseDelay(loop.loopDampingCoefficient, phaseOmega)
+             + dipDelay;
+    };
+
+    // A damping refit has already replaced the one-pole and/or bridge-hand
+    // dip by the time this pitch solve runs. Those filters and currentDelay
+    // are one sounding-period coordinate: moving the filter phase without an
+    // equal and opposite raw-delay move briefly detunes an already-ringing
+    // string until the delay smoother catches up.
+    //
+    // Recover the old damping phase from the preceding compensated period,
+    // then compare it with the new damping topology at that *same* frequency.
+    // A bend, vibrato tick or refret may have changed `period` concurrently;
+    // none of that requested pitch delta enters this translation, so it stays
+    // on the target/smoother path instead of becoming an instantaneous jump.
+    // The dispersion coefficients are still the old ones here and are removed
+    // explicitly; a grid-cell move is handled independently below.
+    const bool preserveDampingPeriod = voice.compensationDirty
+        && ! forceDelayJump && voice.lastCompensatedPeriod > 0.0f;
+    float verticalDampingDelayTranslation = 0.0f;
+    float horizontalDampingDelayTranslation = 0.0f;
+    if (preserveDampingPeriod)
+    {
+        const float previousPeriod = voice.lastCompensatedPeriod;
+        const float previousOmega = twoPi / previousPeriod;
+        const float previousDispersionPhaseDelay =
+            4.0f * allpassPhaseDelay(
+                voice.vertical.dispersionLowCoefficient, previousOmega)
+            + 4.0f * allpassPhaseDelay(
+                voice.vertical.dispersionHighCoefficient, previousOmega);
+        const float previousVerticalDampingPhase = previousPeriod
+            - voice.compensatedPeriodVertical
+            - previousDispersionPhaseDelay;
+        const float previousHorizontalDampingPhase = previousPeriod
+            - voice.compensatedPeriodHorizontal
+            - previousDispersionPhaseDelay;
+        verticalDampingDelayTranslation = previousVerticalDampingPhase
+            - dampingPhaseDelay(voice.vertical, previousOmega);
+        horizontalDampingDelayTranslation = previousHorizontalDampingPhase
+            - dampingPhaseDelay(voice.horizontal, previousOmega);
+    }
+
     const bool preserveDispersionPeriod = fitMoved && ! forceDelayJump;
     float previousDispersionPhaseDelay = 0.0f;
     if (preserveDispersionPeriod)
@@ -2860,18 +2911,14 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
             // sounding period; without this the mute drags the string flat by
             // up to 13 cents on the low E. ("Shelf" here until the band
             // replaced it - the figure was re-measured for the band.)
-            float dipMagnitude = 1.0f, dipPhase = 0.0f;
-            handLossResponse(loop.handLossDepth, loop.handLossShape, omega,
-                             dipMagnitude, dipPhase);
-            const float dipDelay = omega > 1.0e-9f ? -dipPhase / omega : 0.0f;
-            return onePolePhaseDelay(loop.loopDampingCoefficient, omega)
-                 + dipDelay
+            return dampingPhaseDelay(loop, omega)
                  + 4.0f * dispersionLowPhaseDelay
                  + 4.0f * dispersionHighPhaseDelay;
         };
 
         voice.compensatedPeriodVertical = period - loopPhaseDelay(voice.vertical);
         voice.compensatedPeriodHorizontal = period - loopPhaseDelay(voice.horizontal);
+        voice.lastCompensatedPeriod = period;
         voice.compensationDirty = false;
     }
 
@@ -2898,13 +2945,19 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         voice.vertical.currentDelay = voice.vertical.targetDelay;
         voice.horizontal.currentDelay = voice.horizontal.targetDelay;
     }
-    else if (dispersionDelayTranslation != 0.0f)
+    else if (verticalDampingDelayTranslation != 0.0f
+             || horizontalDampingDelayTranslation != 0.0f
+             || dispersionDelayTranslation != 0.0f)
     {
         voice.vertical.currentDelay = clampf(
-            voice.vertical.currentDelay + dispersionDelayTranslation, 4.0f,
+            voice.vertical.currentDelay + verticalDampingDelayTranslation
+                + dispersionDelayTranslation,
+            4.0f,
             static_cast<float>(delayLineSize - 8));
         voice.horizontal.currentDelay = clampf(
-            voice.horizontal.currentDelay + dispersionDelayTranslation, 4.0f,
+            voice.horizontal.currentDelay + horizontalDampingDelayTranslation
+                + dispersionDelayTranslation,
+            4.0f,
             static_cast<float>(delayLineSize - 8));
     }
 
@@ -4559,6 +4612,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.lastConfiguredSemitones = -999.0f;
     voice.lastConfiguredFrequency = -1.0f;
     voice.lastCompensatedSemitones = -999.0f;
+    voice.lastCompensatedPeriod = 0.0f;
     voice.compensationDirty = true;
     // The string is free again: the next bridge-coupled excitation reconfigures
     // and clears the loop for its open pitch.

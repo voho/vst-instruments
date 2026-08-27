@@ -12,6 +12,44 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep ringing pitch continuous through damping refits
+
+The bridge-hand controls changed the one-pole and hand-loss filters of an
+already-ringing loop, then recomputed its compensated delay target. They did
+not move the loop's current raw-delay coordinate by the corresponding filter-
+phase difference. The ordinary six-millisecond delay smoother therefore
+treated a damping change as a short pitch gesture. A shared E1 Sustain-to-Palm
+contact moved the vertical and horizontal effective periods by about -22.2 and
+-11.9 cents; lifting that contact moved them by about +21.7 and +11.6 cents.
+Direct hard CC2 state probes could exceed a semitone. The magnitude varied with
+the note and damping state, but the defect existed at every tested host rate
+from 44.1 through 384 kHz.
+
+Decision: cache the nominal period represented by the last analytic phase
+compensation. On a live damping-only refit, recover the previous damping phase
+from that period and the old compensated/dispersion terms, evaluate the new
+damping topology at the same frequency, and translate each polarisation's
+current raw delay by the old-minus-new difference. Dispersion-grid translation
+remains a separate additive term. A simultaneous bend, vibrato tick or refret
+changes only the new target, so genuine performed pitch motion retains its
+existing smoother instead of being snapped into the continuity correction.
+Fresh voices and forced delay jumps keep their existing initialization path.
+
+The regression establishes a ringing voice, then checks both effective loop
+periods immediately after shared Palm/Open contacts; hard CC2 0-to-127 jumps on
+E1 and B2; every boundary of an adjacent 0-to-127-to-0 CC2 sweep; and full CC2
+motion during the minimum supported 40 ms pitch-bend glide. The contact and
+individual sweep-step rails are below 0.25 cent, the cumulative/reference and
+combined-bend rails are below 0.5 cent. Contact, hard-jump and sweep coverage
+runs at 44.1, 48, 96, 192 and 384 kHz; the minimum-time combined glide runs at
+44.1 kHz.
+
+Canonical same-renderer comparison changed demos 02–05, 08–20 and 22; demos
+01, 06, 07 and 21 stayed byte-identical. Demo 04's dry Palm lift/replant and
+demo 15 expose the correction directly, while demos 18 and 20 exercise it in
+high-gain arrangements. This was a numerical complete-loop pitch invariant,
+not a defensible choice between voicings, so no A–Z preference test was used.
+
 ## 2026-08-27 — keep amplifier-feedback delay independent of DAW blocks
 
 The acoustic return used the previous host block as its air path. That made a

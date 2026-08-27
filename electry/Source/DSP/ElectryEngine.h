@@ -909,6 +909,11 @@ private:
         // The pitch the analytic phase compensation was last evaluated at;
         // this one tracks every sub-cent move so tuning stays exact.
         float lastCompensatedSemitones { -999.0f };
+        // The corresponding nominal period. Unlike the semitone offset it
+        // remains valid when a ringing string is assigned a new base note, so
+        // a damping-filter refit can translate only its phase-coordinate move
+        // without folding a real bend or refret into currentDelay.
+        float lastCompensatedPeriod { 0.0f };
         // Set whenever the loop filters move without the pitch moving, so the
         // analytic phase compensation is refreshed without paying for the
         // expensive dispersion grid search again.
