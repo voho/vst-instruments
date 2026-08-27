@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -211,14 +212,22 @@ private:
     std::vector<float> right_;
 };
 
+// A demo names the bank patch it is built from. A name that does not resolve
+// is a build error, not a substitution: falling back to INIT PATCH rendered a
+// *different instrument setting* under the demo's own title and still passed
+// every guard the renderer has, because INIT is a perfectly good saw. Demo 06
+// spent a release rendering a plain saw under the name "ring modulation".
 const Patch& bankPatch (const char* name)
 {
     for (const auto& entry : septum::factoryPatches())
-        if (std::strcmp (entry.name, name) == 0 || entry.patch.name == name
-            || std::string (entry.name).find (name) != std::string::npos)
+        if (entry.name == name || entry.patch.name == name
+            || entry.name.find (name) != std::string::npos)
             return entry.patch;
-    static const Patch fallback = septum::initPatch();
-    return fallback;
+    std::fprintf (stderr,
+                  "error: no bank patch matches \"%s\" — a demo names a patch "
+                  "the bank does not have\n",
+                  name);
+    std::exit (2);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +355,7 @@ Take renderSyncSweeper()
 // Ring modulation: equal-sine product bell arpeggio.
 Take renderRingBell()
 {
-    Take take (bankPatch ("Ring Bell"));
+    Take take (bankPatch ("Glass Bell"));
     take.rest (0.05);
     const std::array<int, 8> arp { 60, 67, 72, 76, 79, 76, 72, 67 };
     for (int pass = 0; pass < 2; ++pass)

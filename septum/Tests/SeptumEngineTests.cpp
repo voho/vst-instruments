@@ -10,9 +10,11 @@
 #include "DSP/SeptumSysEx.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -591,11 +593,20 @@ void testOverdriveSwitchesBackInFromLiveState()
         worst = std::max (worst,
                           std::abs ((double) cycled[i] - (double) always[i]));
     // Not zero: the two takes ran different signals for a third of a second,
-    // so the output stage's own coupling capacitor is holding a different
-    // offset in each, and it discharges over half a second. What the check
-    // catches is the chain answering with old audio, which was twice the
-    // peak.
-    expect (worst < 0.2 * peak,
+    // so the output stage is holding a different history in each and it
+    // discharges over the samples that follow. What the check catches is the
+    // chain answering with *old audio*, which measured twice the peak with
+    // the fix reverted — so the discriminating range is wide and the bound
+    // only has to sit inside it.
+    //
+    // The residual is a property of the output stage's memory, not of the
+    // overdrive. Realising the service notes' RC poles at their component
+    // values instead of clamping both of them to 0.49 x fs made that stage
+    // slower and more accurate, and the residual grew with it: 0.139 x peak
+    // before, 0.247 after, against 2.0 for the defect. The bound is restated
+    // at what the corrected stage delivers, with the same 5x margin to the
+    // failure it had before.
+    expect (worst < 0.35 * peak,
             "OVERDRIVE comes back on the signal that is playing (worst "
                 + std::to_string (worst) + " against a peak of "
                 + std::to_string (peak) + ")");
@@ -736,143 +747,6 @@ void testControllerDestinations()
                 && expressed (septum::ToneDestination::Both, lowerTone)
                        < 0.02 * lowerSpared,
             "EXPRESSION at zero with BOTH takes both tones down");
-}
-
-// The D Beam. Settled: three buttons choose what it does (OM p. 20-21), the
-// ASSIGN list and the polarity are Patch Common bytes, "you can also choose
-// the direction in which the knob will be moved", and "moving your hand
-// outside this range will produce no effect".
-void testDBeam()
-{
-    const double sampleRate = 44100.0;
-
-    const auto beamPatch = []
-    {
-        septum::Patch patch = plainSawPatch();
-        patch.upper.filterType = septum::FilterType::Lpf;
-        patch.upper.filterSlope = septum::FilterSlope::Db12;
-        patch.upper.cutoff = 40;
-        patch.upper.resonance = 0;
-        patch.upper.ampEnvSustain = 127;
-        patch.upper.ampEnvAttack = 0;
-        patch.upper.level = 127;
-        patch.upper.bendRange = 12;
-        patch.delayOn = false;
-        patch.reverbOn = false;
-        return patch;
-    };
-
-    // The fifth harmonic of note 48 (130.81 Hz) is 654 Hz, well above a
-    // cutoff of 40 and well inside one the beam has opened.
-    const auto brightness = [&] (const septum::Patch& patch,
-                                 const septum::DBeam& beam)
-    {
-        septum::Engine engine;
-        engine.prepare (sampleRate, 256);
-        engine.setPatch (patch);
-        engine.setDBeam (beam);
-        engine.reset();
-        auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, 0.5,
-                                 sampleRate);
-        return goertzel (take.left, 8820, 22050, 654.06, sampleRate);
-    };
-
-    septum::DBeam rest {};
-    septum::DBeam open {};
-    open.mode = septum::DBeamMode::Assign;
-    open.value = 127;
-
-    const double atRest = brightness (beamPatch(), rest);
-    const double withBeam = brightness (beamPatch(), open);
-    expect (withBeam > 4.0 * atRest,
-            "the beam opens the filter it is assigned to (rest "
-                + std::to_string (atRest) + ", beam "
-                + std::to_string (withBeam) + ")");
-
-    // The hand out of the range does nothing, whatever the mode says.
-    septum::DBeam armedButOut = open;
-    armedButOut.value = 0;
-    expect (std::abs (brightness (beamPatch(), armedButOut) - atRest)
-                < 0.05 * std::max (1.0e-9, atRest),
-            "a beam at rest changes nothing");
-
-    // "'+' and '-' will invert the direction of change" — with the cutoff
-    // knob already low, minus has almost nowhere left to go.
-    septum::Patch minus = beamPatch();
-    minus.dBeamPolarity = septum::DBeamPolarity::Minus;
-    expect (brightness (minus, open) < atRest,
-            "POLARITY inverts the direction the beam moves the knob");
-
-    // D BEAM DESTINATION names the tone it reaches.
-    septum::Patch lowerOnly = beamPatch();
-    lowerOnly.dBeamDestination = septum::ToneDestination::Lower;
-    expect (std::abs (brightness (lowerOnly, open) - atRest)
-                < 0.05 * std::max (1.0e-9, atRest),
-            "the beam leaves the tone its destination does not name alone");
-
-    // PITCH mode moves the pitch, over the bend range.
-    {
-        septum::Patch patch = beamPatch();
-        patch.upper.osc1.wave = septum::Waveform::Sine;
-        patch.upper.filterType = septum::FilterType::Bypass;
-        septum::DBeam pitch {};
-        pitch.mode = septum::DBeamMode::Pitch;
-        pitch.value = 127;
-
-        septum::Engine engine;
-        engine.prepare (sampleRate, 256);
-        engine.setPatch (patch);
-        engine.setDBeam (pitch);
-        engine.reset();
-        auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, 0.5,
-                                 sampleRate);
-        const double hz = estimateFundamental (take.left, 8820, 22050,
-                                               sampleRate, 100.0, 400.0);
-        // Note 48 is 130.81 Hz; a full beam over a 12-semitone range doubles
-        // it.
-        expectNear (hz, 261.63, 3.0,
-                    "PITCH mode carries the note over the bend range");
-    }
-
-    // EXPRESS mode is the volume, and ACTIVE EXPRESSION brings LOWER in as it
-    // rises.
-    {
-        const auto level = [&] (bool activeExpression, int value, double hz)
-        {
-            septum::Patch patch = beamPatch();
-            patch.keyboardMode = septum::KeyboardMode::Dual;
-            patch.lower = patch.upper;
-            patch.lower.octaveShift = -1;
-            patch.upper.osc1.wave = septum::Waveform::Sine;
-            patch.lower.osc1.wave = septum::Waveform::Sine;
-            patch.upper.filterType = septum::FilterType::Bypass;
-            patch.lower.filterType = septum::FilterType::Bypass;
-            patch.activeExpression = activeExpression;
-
-            septum::DBeam beam {};
-            beam.mode = septum::DBeamMode::Express;
-            beam.value = value;
-
-            septum::Engine engine;
-            engine.prepare (sampleRate, 256);
-            engine.setPatch (patch);
-            engine.setDBeam (beam);
-            engine.reset();
-            auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.5,
-                                     sampleRate);
-            return goertzel (take.left, 13230, 22050, hz, sampleRate);
-        };
-        const double upper = 261.63, lower = 130.81;
-        // A beam of 16 is an eighth of the travel, so the full beam is very
-        // nearly eight times it.
-        expect (level (false, 127, upper) > 6.0 * level (false, 16, upper),
-                "EXPRESS mode carries the volume");
-        // Only UPPER when the volume is low; LOWER added as it increases.
-        expect (level (true, 40, lower) < 0.05 * level (true, 40, upper),
-                "ACTIVE EXPRESSION holds LOWER back while the beam is low");
-        expect (level (true, 127, lower) > 0.3 * level (true, 127, upper),
-                "ACTIVE EXPRESSION brings LOWER in as the beam rises");
-    }
 }
 
 void testSoloAndHold()
@@ -2507,6 +2381,93 @@ void testTriangleIsBandLimited()
             "a high triangle folds far less than an uncorrected one");
 }
 
+// RESONANCE is a knob: turning it up must make the filter more resonant, not
+// louder-then-suddenly-quiet. The state limiter was gated on the stage's own
+// stability boundary (`damping <= 0`), which sounds like the right place —
+// but `resonanceDamping` crosses zero at RESONANCE 122.07, so 0-122 ran with
+// no bound at all. Measured on a two-saw LPF -24 dB patch at CUTOFF 60, the
+// level ran away from about 118, pinned on the output limiter at 121-122
+// (27.7 % of samples past its knee) and fell 17.8 dB at 123.
+void testResonanceIsMonotoneAndNeverClips()
+{
+    const double sampleRate = 44100.0;
+    const int resonances[] = { 0, 64, 100, 110, 115, 118, 120, 121, 122, 123, 127 };
+
+    for (const auto type : { septum::FilterType::Lpf, septum::FilterType::Hpf,
+                             septum::FilterType::Bpf })
+        for (const auto slope : { septum::FilterSlope::Db12,
+                                  septum::FilterSlope::Db24 })
+        {
+            double previous = -1.0;
+            double worstPeak = 0.0;
+            bool monotone = true;
+            int brokeAt = -1;
+            double brokeFrom = 0.0, brokeTo = 0.0;
+
+            for (const int resonance : resonances)
+            {
+                septum::Patch patch = plainSawPatch();
+                patch.upper.osc1.wave = septum::Waveform::Saw;
+                patch.upper.osc2.wave = septum::Waveform::Saw;
+                patch.upper.balance = 0;
+                // The gain conditions Step 49 measured the cliff under, pinned
+                // rather than inherited: INIT PATCH carries PATCH LEVEL 127,
+                // TONE LEVEL 127 and LEVEL VELO SENS +8, and two saws at unity
+                // through that reach the output limiter on their own — which
+                // would make the peak clause below a reading of the patch's
+                // headroom instead of the filter's behaviour.
+                patch.patchLevel = 100;
+                patch.upper.level = 100;
+                patch.upper.levelVelocitySens = 0;
+                patch.upper.filterType = type;
+                patch.upper.filterSlope = slope;
+                patch.upper.cutoff = 60;
+                patch.upper.resonance = resonance;
+                patch.delayOn = false;
+                patch.reverbOn = false;
+
+                septum::Engine engine;
+                engine.prepare (sampleRate, 256);
+                engine.setPatch (patch);
+                engine.reset();
+                const auto take =
+                    renderScore (engine, { { 0.0, true, 48, 100 } }, 2.0, sampleRate);
+                // Steady state: the first half second is the envelope arriving.
+                const auto from = (std::size_t) (sampleRate * 0.5);
+                const double level = take.rms (from, take.left.size());
+                worstPeak = std::max (worstPeak, take.peak());
+
+                // A knob step may not *lower* the level. The tolerance is
+                // generous — this is looking for the cliff, not measuring the
+                // resonance curve.
+                if (previous > 0.0 && level < previous * 0.9)
+                {
+                    monotone = false;
+                    brokeAt = resonance;
+                    brokeFrom = previous;
+                    brokeTo = level;
+                }
+                previous = level;
+            }
+
+            const std::string what =
+                std::string (type == septum::FilterType::Lpf   ? "LPF"
+                             : type == septum::FilterType::Hpf ? "HPF"
+                                                               : "BPF")
+                + (slope == septum::FilterSlope::Db24 ? " -24 dB" : " -12 dB");
+            expect (monotone,
+                    what + ": RESONANCE never drops the level (fell at "
+                        + std::to_string (brokeAt) + ", "
+                        + std::to_string (brokeFrom) + " -> "
+                        + std::to_string (brokeTo) + ")");
+            // The output stage's soft knee is 0.9. Reaching it across a plain
+            // two-oscillator patch means the filter is running away into it.
+            expect (worstPeak < 0.9,
+                    what + ": the sweep never reaches the output limiter (peak "
+                        + std::to_string (worstPeak) + ")");
+        }
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -2922,11 +2883,22 @@ double envelopeRiseMs (const Render& take, double sampleRate, double fraction)
             count = 0;
         }
     }
-    double peak = 0.0;
-    for (double value : trace)
-        peak = std::max (peak, value);
+    if (trace.empty())
+        return 1.0e9;
+    // Against the *settled* level, not the trace's own maximum. NOISE has no
+    // period to confound the envelope, but its 0.25 ms RMS is itself random, so
+    // the largest window in a take is an outlier: a 2 % change in overall level
+    // reshuffled which window that was and moved the answer from 1.75 ms to
+    // 8.25 ms without the envelope moving at all. The median of the last third
+    // is where the envelope has arrived, which is what a rise time is measured
+    // against.
+    std::vector<double> settled (trace.begin()
+                                     + (std::ptrdiff_t) (2 * trace.size() / 3),
+                                 trace.end());
+    std::sort (settled.begin(), settled.end());
+    const double target = fraction * settled[settled.size() / 2];
     for (std::size_t i = 0; i < trace.size(); ++i)
-        if (trace[i] >= fraction * peak)
+        if (trace[i] >= target)
             return (double) i * 0.25;
     return 1.0e9;
 }
@@ -3110,6 +3082,97 @@ void testOverdriveKeepsCleanVoicesAligned()
                 + std::to_string (engine.latencySamples()) + ")");
 }
 
+// [settled] "When All Notes Off is received, all notes on the corresponding
+// channel will be turned off. However, if Hold 1 or Sostenuto is ON, the sound
+// will be continued until these are turned off." (MIDI Implementation v1.00
+// p. 1.) That makes it every key coming up, not a panic — All Sounds Off is
+// the panic, and it has its own controller number.
+void testAllNotesOffLeavesThePedalsHolding()
+{
+    const double sampleRate = 44100.0;
+    const auto levelOf = [] (const std::vector<float>& x)
+    {
+        double peak = 0.0;
+        for (const auto sample : x)
+            peak = std::max (peak, (double) std::abs (sample));
+        return peak;
+    };
+
+    // Each pedal in turn: press a key, put the pedal down, lift the key, then
+    // send All Notes Off. The note must still be sounding, and must stop when
+    // the pedal comes up.
+    for (int pedal = 0; pedal < 2; ++pedal)
+    {
+        const bool sostenuto = pedal == 1;
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvRelease = 0;      // so the release is unmistakable
+        engine.setPatch (patch);
+        engine.reset();
+
+        std::vector<float> left (2205), right (2205);
+        const auto render = [&]
+        {
+            engine.process (left.data(), right.data(), 2205);
+            return levelOf (left);
+        };
+
+        engine.noteOn (60, 100);
+        render();
+        if (sostenuto)
+            engine.setSostenuto (true);     // latches the key that is down
+        else
+            engine.setHold (true);
+        engine.noteOff (60);
+        const double heldByPedal = render();
+        expect (heldByPedal > 1.0e-3,
+                std::string (sostenuto ? "sostenuto" : "the hold pedal")
+                    + " keeps the note after its key comes up (peak "
+                    + std::to_string (heldByPedal) + ")");
+
+        engine.allNotesOff();
+        render();                           // let any release run to the floor
+        const double afterAllNotesOff = render();
+        expect (afterAllNotesOff > 0.5 * heldByPedal,
+                "All Notes Off leaves a note "
+                    + std::string (sostenuto ? "the sostenuto latch" : "the hold pedal")
+                    + " is holding (peak " + std::to_string (afterAllNotesOff)
+                    + " against " + std::to_string (heldByPedal) + ")");
+
+        if (sostenuto)
+            engine.setSostenuto (false);
+        else
+            engine.setHold (false);
+        render();
+        const double afterPedalUp = render();
+        expect (afterPedalUp < 1.0e-3,
+                "the note stops when the pedal comes up after All Notes Off"
+                " (peak " + std::to_string (afterPedalUp) + ")");
+    }
+
+    // With no pedal down it does what its name says.
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvRelease = 0;
+        engine.setPatch (patch);
+        engine.reset();
+        std::vector<float> left (2205), right (2205);
+        engine.noteOn (60, 100);
+        engine.process (left.data(), right.data(), 2205);
+        engine.allNotesOff();
+        engine.process (left.data(), right.data(), 2205);
+        engine.process (left.data(), right.data(), 2205);
+        expect (levelOf (left) < 1.0e-3,
+                "All Notes Off with no pedal down stops the note (peak "
+                    + std::to_string (levelOf (left)) + ")");
+    }
+}
+
 void testAllNotesOffAndReset()
 {
     septum::Engine engine;
@@ -3152,6 +3215,44 @@ void testSysExChecksumAndProtocol()
     const auto rq1 = septum::sysex::makeRq1Message (0x00000100, 0x00000040);
     expect (rq1.size() == 17, "RQ1 message length is 17 bytes");
     expect (rq1[6] == 0x11, "RQ1 command byte is 11H");
+
+    // The MIDI Implementation prints two finished messages of its own
+    // (Supplementary Material, p. 6). They are the only bytes in this project
+    // that a real SH-201 is known to have accepted, so the builders are
+    // checked against them literally.
+    const auto matches = [] (const std::vector<std::uint8_t>& actual,
+                             const std::vector<std::uint8_t>& expected)
+    {
+        return actual == expected;
+    };
+
+    // <Example1> Setting REVERB SIZE of PATCH (DT1), device ID 10H:
+    //     F0 41 10 00 00 16 12 10 00 04 02 00 6A F7
+    const std::uint8_t reverbSizeData[] = { 0x00 };
+    const auto docDt1 = septum::sysex::makeDt1Message (0x10000402, reverbSizeData, 1, 0x10);
+    expect (matches (docDt1, { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x12,
+                               0x10, 0x00, 0x04, 0x02, 0x00, 0x6A, 0xF7 }),
+            "the document's own DT1 example is reproduced byte for byte");
+
+    // <Example3> Getting Temporary Patch data (RQ1), device ID 10H:
+    //     F0 41 10 00 00 16 11 10 00 00 00 00 00 15 42 19 F7
+    // The size is the whole patch: through Arpeggio Pattern (Note 16) at
+    // 00 15 00 plus its 42H bytes.
+    const auto docRq1 = septum::sysex::makeRq1Message (0x10000000, 0x00001542, 0x10);
+    expect (matches (docRq1, { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x11,
+                               0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x15, 0x42,
+                               0x19, 0xF7 }),
+            "the document's own RQ1 example is reproduced byte for byte");
+
+    // That size is not a magic number: it is where this codec's own last
+    // block ends.
+    const std::uint32_t endOfPatch = septum::sysex::offsetArpeggioPattern
+                                     + (septum::arpeggioMaxRows - 1)
+                                           * septum::sysex::arpeggioPatternStride
+                                     + (std::uint32_t) septum::sysex::sizeArpeggioPattern;
+    expect (endOfPatch == 0x1542u,
+            "the codec's blocks end exactly where the document's request does (got 0x"
+                + std::to_string (endOfPatch) + ")");
 }
 
 void testSysExPatchSerializationRoundtrip()
@@ -3159,7 +3260,8 @@ void testSysExPatchSerializationRoundtrip()
     for (const auto& entry : septum::factoryPatches())
     {
         const auto packets = septum::sysex::encodePatchToSysExPackets (entry.patch);
-        expect (packets.size() == 6, "Every patch produces 6 DT1 blocks");
+        expect (packets.size() == septum::sysex::patchBlockCount,
+                "Every patch produces the address map's 22 DT1 blocks");
 
         septum::Patch restored = septum::initPatch();
         for (const auto& pkt : packets)
@@ -3178,75 +3280,274 @@ void testSysExPatchSerializationRoundtrip()
         expect (restored.reverbOn == entry.patch.reverbOn, "Reverb switch matches");
     }
 
+    // Every Patch Common byte survives the trip, not just the seven named
+    // above. Four of the 0x21 bytes are the ones the D Beam owns — the
+    // destination (0x16), ACTIVE EXPRESSION (0x19), the assign (0x1F) and the
+    // polarity (0x20) — and the replica stores them without implementing the
+    // controller that reads them, so nothing that sounds would notice if the
+    // codec dropped one. A byte-for-byte identity fences all 33 at once
+    // instead of naming them one at a time.
+    {
+        septum::Patch source = septum::initPatch();
+        source.name = "COMMONBYTES";
+        source.patchLevel = 77;
+        source.toneBalance = -21;
+        source.tempo = 143;
+        source.keyboardMode = septum::KeyboardMode::Split;
+        source.keyboardPart = septum::KeyboardPart::Lower;
+        source.splitPoint = 55;
+        source.delayOn = true;
+        source.reverbOn = true;
+        source.modulationAssign = septum::ModulationAssign::AudioFilter;
+        source.modulationDestination = septum::ToneDestination::Lower;
+        source.pitchBendDestination = septum::ToneDestination::Upper;
+        source.expressionDestination = septum::ToneDestination::Lower;
+        source.dBeamDestination = septum::ToneDestination::Lower;
+        source.activeExpression = true;
+        source.dBeamAssign = septum::DBeamAssign::Bender;
+        source.dBeamPolarity = septum::DBeamPolarity::Minus;
+
+        std::array<std::uint8_t, septum::sysex::sizePatchCommon> first {}, second {};
+        septum::sysex::encodePatchCommon (source, first.data());
+        septum::Patch roundTripped = septum::initPatch();
+        septum::sysex::decodePatchCommon (first.data(), first.size(), roundTripped);
+        septum::sysex::encodePatchCommon (roundTripped, second.data());
+        expect (first == second,
+                "every Patch Common byte survives encode -> decode -> encode");
+        expect (roundTripped.dBeamDestination == source.dBeamDestination
+                    && roundTripped.activeExpression == source.activeExpression
+                    && roundTripped.dBeamAssign == source.dBeamAssign
+                    && roundTripped.dBeamPolarity == source.dBeamPolarity,
+                "the four stored-and-inert D Beam bytes round-trip");
+    }
+
+    // The instrument has 32 user slots (20 00 00 00 .. 20 1F 00 00) and no
+    // address at all for its 32 PRESET positions, so a bank dump carries 32
+    // patches however long the vector handed to it is.
     const auto syxBuffer = septum::sysex::generateSyxBankFile (septum::factoryPatches());
     expect (syxBuffer.size() > 1000, "Bank .syx buffer is populated");
     std::vector<septum::NamedPatch> parsedBank;
     const bool parsedOk = septum::sysex::parseSyxBankFile (syxBuffer.data(), syxBuffer.size(), parsedBank);
     expect (parsedOk, "parseSyxBankFile parses whole bank successfully");
-    expect (parsedBank.size() == septum::factoryPatches().size(), "All patches recovered from .syx bank");
+    expect (parsedBank.size() == (std::size_t) septum::sysex::userPatchCount,
+            "one patch recovered per user slot from the .syx bank (got "
+                + std::to_string (parsedBank.size()) + ")");
+    bool bankPatchesMatch = true;
+    for (std::size_t i = 0; i < parsedBank.size(); ++i)
+        if (parsedBank[i].patch.name != septum::factoryPatches()[i].patch.name
+            || parsedBank[i].patch.upper.cutoff != septum::factoryPatches()[i].patch.upper.cutoff)
+            bankPatchesMatch = false;
+    expect (bankPatchesMatch, "each slot in the bank round-trips to its own patch");
 }
 
-void testRolandGaloisLfsrNoise()
+// A bank file is a stream of System Exclusive messages, and nothing says every
+// message in it belongs to this instrument. The patch boundary is the two high
+// address bytes changing — so it may only be read off a message that has
+// already proved it is a DT1 for this model with a good checksum. Deciding it
+// from raw bytes first meant one foreign message split a patch in two and
+// handed back the half read so far.
+void testAForeignSysExMessageDoesNotSplitAPatch()
 {
-    septum::Engine engine;
-    engine.prepare (44100.0, 256);
-    septum::Patch patch = septum::initPatch();
-    patch.upper.osc1.wave = septum::Waveform::Noise;
-    patch.upper.cutoff = 127;
-    patch.upper.filterType = septum::FilterType::Bypass;
-    patch.upper.ampEnvAttack = 0;
-    patch.upper.ampEnvDecay = 0;
-    patch.upper.ampEnvSustain = 127;
-    patch.upper.level = 127;
-    engine.setPatch (patch);
-    engine.noteOn (60, 127);
+    const auto& bank = septum::factoryPatches();
+    septum::Patch source = bank[3].patch;
+    source.name = "INTRUDER";
+    source.upper.cutoff = 77;
+    source.upper.resonance = 99;
+    source.lower.cutoff = 33;
 
-    const int total = 88200; // 2 seconds
-    std::vector<float> left (total, 0.0f), right (total, 0.0f);
-    engine.process (left.data(), right.data(), total);
+    const auto packets = septum::sysex::encodePatchToSysExPackets (
+        source, septum::sysex::addrUserPatchBase);
+    expect (packets.size() == septum::sysex::patchBlockCount,
+            "the source patch is the address map's 22 blocks");
 
-    double minVal = 1.0, maxVal = -1.0;
-    double sum = 0.0, sumSq = 0.0;
-    for (int i = 0; i < total; ++i)
+    // Every intruder is a complete, well-framed System Exclusive message whose
+    // bytes 7-8 differ from the patch's own, which is what used to move the
+    // boundary. None of them is a DT1 this codec owns.
+    struct Intruder { const char* what; std::vector<std::uint8_t> bytes; };
+    const std::vector<Intruder> intruders {
+        // Universal realtime device control (Master Volume).
+        { "a universal realtime message",
+          { 0xF0, 0x7F, 0x7F, 0x04, 0x01, 0x00, 0x64, 0xF7 } },
+        // Universal non-realtime identity request.
+        { "an identity request",
+          { 0xF0, 0x7E, 0x10, 0x06, 0x01, 0xF7 } },
+        // Another manufacturer, long enough to have bytes 7 and 8.
+        { "another manufacturer's dump",
+          { 0xF0, 0x43, 0x00, 0x7A, 0x4C, 0x4D, 0x20, 0x20, 0x38, 0x39,
+            0x37, 0x33, 0x50, 0x45, 0x00, 0xF7 } },
+        // A Roland SH-201 RQ1 rather than a DT1: right model, wrong command.
+        { "an RQ1 for a different patch",
+          { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x11, 0x20, 0x1F, 0x00,
+            0x00, 0x00, 0x00, 0x15, 0x42, 0x1A, 0xF7 } },
+        // A DT1 for this model at a different patch base, with a checksum
+        // that does not verify: the address alone must not be trusted.
+        { "a DT1 with a broken checksum",
+          { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x12, 0x20, 0x1F, 0x00,
+            0x0C, 0x40, 0x00, 0xF7 } },
+    };
+
+    // A System Common DT1 is a well-framed SH-201 message with a good
+    // checksum whose block number (00) is a block this codec knows — so a
+    // gate that checks only the block admits it, moves the boundary, and
+    // splits the patch before the decode refuses it for its base.
+    const std::vector<Intruder> baseIntruders {
+        { "a DT1 addressed past the end of its block",
+          [] {
+              // A checksum-valid packet for another user slot, at a known
+              // block, whose low address byte lands beyond Patch Common. The
+              // gate has to refuse it for the same reason the decode does.
+              const std::uint8_t data[] { 0x01 };
+              return septum::sysex::makeDt1Message (0x2001007F, data, 1, 0x10);
+          }() },
+        { "a System Common DT1",
+          [] {
+              const std::uint8_t data[] { 0x00, 0x00, 0x00, 0x05 };
+              return septum::sysex::makeDt1Message (0x01000000, data, 4, 0x10);
+          }() },
+    };
+    auto allIntruders = intruders;
+    allIntruders.insert (allIntruders.end(), baseIntruders.begin(), baseIntruders.end());
+
+    for (const auto& intruder : allIntruders)
     {
-        minVal = std::min (minVal, (double) left[i]);
-        maxVal = std::max (maxVal, (double) left[i]);
-        sum += left[i];
-        sumSq += left[i] * left[i];
-    }
-    const double mean = sum / total;
-    const double rms = std::sqrt (sumSq / total);
+        std::vector<std::uint8_t> file;
+        for (std::size_t i = 0; i < packets.size(); ++i)
+        {
+            // Drop it in the middle, after some of the patch has accumulated.
+            if (i == 3)
+                file.insert (file.end(), intruder.bytes.begin(), intruder.bytes.end());
+            file.insert (file.end(), packets[i].begin(), packets[i].end());
+        }
 
-    expect (minVal >= -1.1 && maxVal <= 1.1, "LFSR noise is bounded within [-1, 1]");
-    expect (std::abs (mean) < 0.05, "LFSR noise is zero-mean DC-free");
-    expect (rms > 0.05 && rms < 0.75, "LFSR noise has appropriate RMS power");
+        std::vector<septum::NamedPatch> parsed;
+        const bool ok = septum::sysex::parseSyxBankFile (file.data(), file.size(), parsed);
+        expect (ok && parsed.size() == 1,
+                std::string (intruder.what) + " does not split the patch (got "
+                    + std::to_string (parsed.size()) + " patches)");
+        if (parsed.size() != 1)
+            continue;
+        expect (parsed[0].patch.upper.cutoff == 77
+                    && parsed[0].patch.upper.resonance == 99
+                    && parsed[0].patch.lower.cutoff == 33
+                    && parsed[0].patch.name == source.name,
+                std::string ("the whole patch survives ") + intruder.what);
+    }
+
+    // Two real patches in one file still come back as two.
+    {
+        septum::Patch second = bank[9].patch;
+        second.name = "SECOND";
+        second.upper.cutoff = 12;
+        std::vector<std::uint8_t> file;
+        for (const auto& pkt : packets)
+            file.insert (file.end(), pkt.begin(), pkt.end());
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (
+                 second, septum::sysex::addrUserPatchBase + septum::sysex::userPatchStride))
+            file.insert (file.end(), pkt.begin(), pkt.end());
+
+        std::vector<septum::NamedPatch> parsed;
+        septum::sysex::parseSyxBankFile (file.data(), file.size(), parsed);
+        expect (parsed.size() == 2 && parsed[0].patch.upper.cutoff == 77
+                    && parsed[1].patch.upper.cutoff == 12,
+                "two patches in one file are still two (got "
+                    + std::to_string (parsed.size()) + ")");
+    }
 }
 
-void testAsymmetricOverdriveHarmonics()
+// [settled] A DT1 addresses a byte, not a block. The MIDI Implementation's own
+// worked example is a one-byte write to 10 00 04 02 — REVERB SIZE, two bytes
+// into Patch Reverb — and every panel knob a real unit transmits has that
+// shape. Reading the payload as though it always began at offset zero applied
+// that example to REVERB TIME instead, and left the field it named alone.
+void testADt1WritesAtTheAddressItNames()
 {
-    septum::Engine engine;
-    engine.prepare (44100.0, 256);
-    septum::Patch patch = septum::initPatch();
-    patch.upper.osc1.wave = septum::Waveform::Sine;
-    patch.upper.cutoff = 127;
-    patch.upper.filterType = septum::FilterType::Bypass;
-    patch.upper.overdrive = true;
-    patch.upper.drive = 90;
-    patch.upper.ampEnvAttack = 0;
-    patch.upper.ampEnvDecay = 0;
-    patch.upper.ampEnvSustain = 127;
-    patch.upper.level = 127;
-    engine.setPatch (patch);
-    engine.noteOn (69, 127); // A4 (440 Hz)
+    const auto write = [] (std::uint32_t address, std::vector<std::uint8_t> data,
+                           septum::Patch& target)
+    {
+        const auto msg = septum::sysex::makeDt1Message (address, data.data(),
+                                                        data.size(), 0x10);
+        return septum::sysex::decodeSysExMessage (msg.data(), msg.size(), target);
+    };
 
-    const int total = 44100;
-    std::vector<float> left (total, 0.0f), right (total, 0.0f);
-    engine.process (left.data(), right.data(), total);
+    // <Example1> from the document, verbatim: setting REVERB SIZE of PATCH.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.reverb.time = 111;
+        patch.reverb.size = 5;
+        patch.reverb.preDelay = 40;
+        expect (write (0x10000402, { 0x01 }, patch), "the document's own write is accepted");
+        expect (patch.reverb.size == 1,
+                "REVERB SIZE takes the byte addressed to it (got "
+                    + std::to_string (patch.reverb.size) + ")");
+        expect (patch.reverb.time == 111 && patch.reverb.preDelay == 40,
+                "and its neighbours are untouched (time "
+                    + std::to_string (patch.reverb.time) + ", pre-delay "
+                    + std::to_string (patch.reverb.preDelay) + ")");
+    }
 
-    double peak = 0.0;
-    for (float s : left)
-        peak = std::max (peak, std::abs ((double) s));
-    expect (peak > 0.05 && peak <= 1.10, "Overdriven sine wave has expected saturation ceiling: " + std::to_string (peak));
+    // A one-byte write into Patch Common, at an offset the block layout moved.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.delayOn = false;
+        patch.reverbOn = true;
+        patch.arpeggio.on = false;
+        expect (write (0x1000001C, { 0x01 }, patch), "a Patch Common byte write is accepted");
+        expect (patch.delayOn, "DELAY SWITCH is at 00 1C");
+        expect (patch.reverbOn && ! patch.arpeggio.on,
+                "and neither REVERB SWITCH nor ARPEGGIO SWITCH moved");
+    }
+
+    // A write inside one arpeggio pattern block: step 2 of row 0 is at
+    // offset 04 (Original Note is 00/01, Step1 is 02/03), two nibbles.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.arpeggio.style.originalNote[0] = 60;
+        patch.arpeggio.style.cells[0][0] = 90;
+        patch.arpeggio.style.cells[1][0] = 20;
+        expect (write (0x10000604, { 0x04, 0x0B }, patch),
+                "a write inside a pattern block is accepted");
+        expect (patch.arpeggio.style.cell (1, 0) == 75,
+                "step 2 takes the nibbled value 4B (got "
+                    + std::to_string ((int) patch.arpeggio.style.cell (1, 0)) + ")");
+        expect (patch.arpeggio.style.originalNote[0] == 60
+                    && patch.arpeggio.style.cell (0, 0) == 90,
+                "and the Original Note and step 1 are untouched (note "
+                    + std::to_string (patch.arpeggio.style.originalNote[0]) + ", step1 "
+                    + std::to_string ((int) patch.arpeggio.style.cell (0, 0)) + ")");
+    }
+
+    // A whole-block write still behaves exactly as it did.
+    {
+        septum::Patch source = septum::factoryPatches()[7].patch;
+        septum::Patch target = septum::initPatch();
+        std::array<std::uint8_t, septum::sysex::sizeTonePatch> block {};
+        septum::sysex::encodeTonePatch (source.upper, block.data());
+        expect (write (0x10000100,
+                       std::vector<std::uint8_t> (block.begin(), block.end()), target),
+                "a whole-block write is accepted");
+        expect (target.upper.cutoff == source.upper.cutoff
+                    && target.upper.resonance == source.upper.resonance
+                    && target.upper.osc1.wave == source.upper.osc1.wave,
+                "and lands every field, as before");
+    }
+
+    // Addressed past the end of its own block: refused, nothing touched.
+    {
+        septum::Patch patch = septum::initPatch();
+        const int before = patch.reverb.time;
+        expect (! write (0x100004FF, { 0x01 }, patch),
+                "a write past the end of its block is refused");
+        expect (patch.reverb.time == before, "and changes nothing");
+    }
+
+    // The System block shares Patch Common's size and must not be read as one.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.name = "KEEPME";
+        expect (! write (0x01000000, { 0x41, 0x42, 0x43 }, patch),
+                "a System Common write is not decoded as a patch");
+        expect (patch.name == "KEEPME", "and the patch name is untouched");
+    }
 }
 
 void testCoupledDb24FilterResonanceStability()
@@ -3280,6 +3581,1815 @@ void testCoupledDb24FilterResonanceStability()
         expect (peak <= 1.05, "Coupled -24 dB self-oscillation is bounded within safety ceiling at " + std::to_string (sr) + " Hz");
     }
 }
+// ---------------------------------------------------------------------------
+// The 2026-08-23 pass: one check per fix, each watched to fail by reverting
+// its fix.
+// ---------------------------------------------------------------------------
+
+// Band-averaged power over a log-spaced grid, for spectra that have no line
+// structure to point Goertzel at.
+double bandPower (const std::vector<float>& x, double sampleRate, double low,
+                  double high, std::size_t from, int points = 24)
+{
+    double total = 0.0;
+    for (int k = 0; k < points; ++k)
+    {
+        const double hz = low * std::pow (high / low, (k + 0.5) / points);
+        const double magnitude = goertzel (x, from, x.size(), hz, sampleRate);
+        total += magnitude * magnitude;
+    }
+    return total / points;
+}
+
+// The largest sample-to-sample jump in a window, and the same take's own
+// steady travel — the measure Step 11 established for a thrown switch.
+double worstJump (const std::vector<float>& x, std::size_t from, std::size_t to)
+{
+    to = std::min (to, x.size());
+    double worst = 0.0;
+    for (std::size_t i = std::max<std::size_t> (from, 1); i < to; ++i)
+        worst = std::max (worst, std::abs ((double) x[i] - (double) x[i - 1]));
+    return worst;
+}
+
+// [voiced, OQ-03] NOISE is white until a spectral capture says otherwise, and
+// the same wave at every host rate: a generator whose colour or whose level
+// depends on the rate is reproducing the port rather than the instrument.
+//
+// The colour half. Read at 24 log-spaced bins the estimator carried about a
+// decibel of its own variance against a two-decibel threshold, which made this
+// a coin flip on every build — it read the same 44.1 kHz take as -1.35 dB at 24
+// bins, -0.83 at 96 and -1.93 at 512. It is read at 256 now, and the claim it
+// tests is the one the contract makes: that the shape does not follow the host
+// rate. The shape itself is not flat to the sample — the voice path rolls off
+// about 1.9 dB from 100 Hz to 16 kHz at every rate — so the absolute bound is
+// stated at what is measured rather than at what would be tidy.
+void testNoiseIsWhiteAtEveryHostRate()
+{
+    const auto tiltAt = [] (double sampleRate)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Noise;
+        patch.upper.balance = -63;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.2);
+        const double low = bandPower (take.left, sampleRate, 100.0, 500.0, skip, 256);
+        const double mid = bandPower (take.left, sampleRate, 1000.0, 4000.0, skip, 256);
+        const double high = bandPower (take.left, sampleRate, 8000.0, 16000.0, skip, 256);
+        return std::pair<double, double> { 10.0 * std::log10 (high / low),
+                                           10.0 * std::log10 (mid / low) };
+    };
+
+    const auto reference = tiltAt (44100.0);
+    for (double sampleRate : { 44100.0, 96000.0, 192000.0 })
+    {
+        const auto measured = sampleRate == 44100.0 ? reference : tiltAt (sampleRate);
+        expect (std::abs (measured.first) < 3.0 && std::abs (measured.second) < 2.0,
+                "NOISE is flat within 3 dB from 100 Hz to 16 kHz at "
+                    + std::to_string ((int) sampleRate) + " Hz (tilt "
+                    + std::to_string (measured.first) + ", bow "
+                    + std::to_string (measured.second) + ")");
+        expect (std::abs (measured.first - reference.first) < 1.5
+                    && std::abs (measured.second - reference.second) < 1.5,
+                "NOISE has the same shape at " + std::to_string ((int) sampleRate)
+                    + " Hz as at 44.1 kHz (tilt " + std::to_string (measured.first)
+                    + " against " + std::to_string (reference.first) + ", bow "
+                    + std::to_string (measured.second) + " against "
+                    + std::to_string (reference.second) + ")");
+    }
+}
+
+// The level half. A white sequence drawn one value per *host* sample spreads
+// its power over the host's whole band, so its audible level falls as the rate
+// rises — 5.92 dB from 44.1 to 192 kHz, against a SAW in the same patch that
+// does not move at all, so the balance inside one patch changed with the user's
+// interface setting. NOISE is drawn at the instrument's rate and interpolated
+// up now, which is what makes the two legs track.
+// The top of the band, which the flatness check above stops short of. The
+// factor-four ladder runs two half-band stages and they are not
+// interchangeable: `outer` is the long one, designed against the rate whose
+// band is full, and `inner` the short one for the stage where "the images sit
+// an octave further out". A drawn value occupies everything up to the internal
+// Nyquist, so the first interpolation is the one whose image lands hard against
+// the signal and the sharp filter belongs there — which is also the order the
+// OVERDRIVE climbs in.
+//
+// Reversed, the short filter ran first: its passband edge sits at 15.9 kHz
+// against 19.0, so the top of the band came out darker at exactly the host
+// rates the ladder exists to make sound like the others. Measured at 192 kHz,
+// 20-22 kHz fell 1.8 dB and 18-20 kHz 0.6 dB; below 18 kHz the two orders are
+// within the estimator's own scatter, which is why the flatness check above
+// could not see it.
+void testNoiseKeepsTheTopOfItsBandAtEveryHostRate()
+{
+    const auto topAt = [] (double sampleRate)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Noise;
+        patch.upper.balance = -63;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.2);
+        const double mid = bandPower (take.left, sampleRate, 1000.0, 4000.0, skip, 256);
+        const double top = bandPower (take.left, sampleRate, 20000.0, 22000.0, skip, 256);
+        return 10.0 * std::log10 (top / mid);
+    };
+
+    // 44.1 kHz draws one value per host sample and interpolates nothing, so it
+    // is the shape the ladder is trying to reproduce. The interpolated rates
+    // cannot match it exactly — `outer`'s own transition starts at 19.0 kHz —
+    // so the bound is what the right order delivers (1.1 dB at 96 kHz, 1.3 at
+    // 192) rather than zero, and the wrong one does not fit inside it (3.1).
+    const double reference = topAt (44100.0);
+    for (double sampleRate : { 96000.0, 192000.0 })
+    {
+        const double measured = topAt (sampleRate);
+        expect (reference - measured < 2.2,
+                "NOISE keeps the top of its band at "
+                    + std::to_string ((int) sampleRate) + " Hz (20-22 kHz sits "
+                    + std::to_string (measured) + " dB under the 1-4 kHz band,"
+                      " against " + std::to_string (reference)
+                    + " dB at 44.1 kHz)");
+    }
+}
+
+void testNoiseLevelDoesNotFollowTheHostRate()
+{
+    const auto inBand = [] (double sampleRate, septum::Waveform wave)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = wave;
+        patch.upper.balance = -63;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 1.4,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.3);
+        return 10.0
+               * std::log10 (bandPower (take.left, sampleRate, 100.0, 16000.0, skip,
+                                        256));
+    };
+
+    const double reference = inBand (44100.0, septum::Waveform::Noise)
+                             - inBand (44100.0, septum::Waveform::Saw);
+    for (double sampleRate : { 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 })
+    {
+        const double against = inBand (sampleRate, septum::Waveform::Noise)
+                               - inBand (sampleRate, septum::Waveform::Saw);
+        // The residual is the one thing a reference rate cannot remove: a 48 kHz
+        // instrument spreads the same variance over a wider band than a 44.1 kHz
+        // one, which is 0.37 dB and is OQ-01's own undecidedness showing.
+        expect (std::abs (against - reference) < 1.5,
+                "NOISE sits where it sat against a SAW in the same patch at "
+                    + std::to_string ((int) sampleRate) + " Hz (noise - saw "
+                    + std::to_string (against) + " dB against "
+                    + std::to_string (reference) + " dB at 44.1 kHz)");
+    }
+}
+
+// The filter's state limiter bounds self-oscillation; it is not a shaper. An
+// ordinary two-oscillator patch at RESONANCE 0 must come through clean.
+void testFilterDoesNotDistortAtZeroResonance()
+{
+    const double sampleRate = 96000.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.osc2.wave = septum::Waveform::Sine;
+    patch.upper.balance = 0;              // both legs at unity
+    patch.upper.filterType = septum::FilterType::Lpf;
+    patch.upper.cutoff = 127;
+    patch.upper.resonance = 0;
+    patch.upper.level = 127;
+    engine.setPatch (patch);
+    const auto take = renderScore (engine, { { 0.0, true, 57, 127 } }, 1.5, sampleRate);
+    const auto skip = (std::size_t) (sampleRate * 0.4);
+    const double f0 = 220.0;
+    const double fundamental =
+        goertzel (take.left, skip, take.left.size(), f0, sampleRate);
+    double harmonics = 0.0;
+    for (int h = 2; h <= 12; ++h)
+    {
+        const double m = goertzel (take.left, skip, take.left.size(), f0 * h, sampleRate);
+        harmonics += m * m;
+    }
+    const double thd =
+        20.0 * std::log10 (std::sqrt (harmonics) / std::max (1.0e-12, fundamental));
+    expect (thd < -50.0,
+            "the filter adds no distortion at RESONANCE 0 (THD "
+                + std::to_string (thd) + " dB)");
+}
+
+// The -24 dB path's second stage is the fixed, non-resonant one the contract
+// describes. Pinned so a re-pin cannot be silent again.
+void testTwentyFourDbPeakIsPinned()
+{
+    const double sampleRate = 96000.0;
+    const auto peakOverPassband = [&] (septum::FilterSlope slope, int resonance)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Noise;
+        patch.upper.balance = -63;
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = slope;
+        patch.upper.cutoff = 64;
+        patch.upper.resonance = resonance;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.3);
+        const double band = bandPower (take.left, sampleRate, 560.0, 760.0, skip, 32);
+        const double pass = bandPower (take.left, sampleRate, 40.0, 160.0, skip, 32);
+        return 10.0 * std::log10 (band / pass);
+    };
+    // The -12 dB stage is the resonant one, so at every setting it must peak
+    // at least as hard as the -24 dB path, whose second stage is fixed.
+    for (int resonance : { 64, 100, 120 })
+    {
+        const double twelve = peakOverPassband (septum::FilterSlope::Db12, resonance);
+        const double twentyFour =
+            peakOverPassband (septum::FilterSlope::Db24, resonance);
+        expect (twelve > twentyFour,
+                "the -24 dB path's second stage is not resonant at RESONANCE "
+                    + std::to_string (resonance) + " (-12 dB " + std::to_string (twelve)
+                    + " dB, -24 dB " + std::to_string (twentyFour) + " dB)");
+    }
+}
+
+// A voice freed on the amp envelope must not carry the previous note's
+// filter-envelope level into the next one.
+void testFilterEnvelopeReArmsOnAFreshVoice()
+{
+    const double sampleRate = 44100.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.filterType = septum::FilterType::Lpf;
+    patch.upper.cutoff = 0;
+    patch.upper.filterEnvDepth = 63;
+    patch.upper.filterEnvAttack = 100;    // about 0.9 s
+    patch.upper.filterEnvSustain = 127;
+    patch.upper.filterEnvRelease = 127;   // outlasts the amp release by far
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvSustain = 127;
+    patch.upper.ampEnvRelease = 0;
+    engine.setPatch (patch);
+
+    const auto take = renderScore (engine,
+                                   { { 0.0, true, 48, 100 },
+                                     { 2.0, false, 48, 0 },
+                                     { 2.2, true, 48, 100 } },
+                                   2.3, sampleRate);
+    const auto onset = [&] (double at)
+    {
+        const auto from = (std::size_t) (at * sampleRate);
+        return take.rms (from, from + (std::size_t) (sampleRate * 0.02));
+    };
+    const double first = onset (0.0);
+    const double second = onset (2.2);
+    expect (second < 3.0 * first,
+            "the second note opens no faster than the first (first "
+                + std::to_string (first) + ", second " + std::to_string (second) + ")");
+}
+
+// SUSTAIN is automatable and a program change reconfigures every sounding
+// voice, so the decay segment has to walk up to a raised sustain, not snap.
+void testRaisingSustainDoesNotStep()
+{
+    const double sampleRate = 44100.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 8);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvDecay = 100;
+    patch.upper.ampEnvSustain = 0;
+    engine.setPatch (patch);
+    engine.noteOn (24, 100);
+
+    std::vector<float> left (2048), right (2048);
+    const auto run = [&] (std::size_t samples)
+    {
+        std::vector<float> out;
+        for (std::size_t done = 0; done < samples; done += 8)
+        {
+            engine.process (left.data(), right.data(), 8);
+            for (int i = 0; i < 8; ++i)
+                out.push_back (left[(std::size_t) i]);
+        }
+        return out;
+    };
+    const auto before = run ((std::size_t) (sampleRate * 0.05));
+    const double steady = worstJump (before, before.size() / 2, before.size());
+    septum::Patch raised = patch;
+    raised.upper.ampEnvSustain = 127;
+    engine.setPatch (raised);
+    const auto after = run ((std::size_t) (sampleRate * 0.02));
+    const double thrown = worstJump (after, 0, after.size());
+    expect (thrown < 4.0 * steady + 1.0e-4,
+            "raising SUSTAIN under a held note walks rather than steps (jump "
+                + std::to_string (thrown) + " against a steady "
+                + std::to_string (steady) + ")");
+}
+
+// The case above holds SUSTAIN for 50 ms with DECAY 100 — a 1.9 s decay, so the
+// envelope is still in Decay when the value moves and only that branch is
+// exercised. A note that has REACHED Sustain is the other half: the stage
+// assigned the new sustain outright, so an ordinary automation move stepped the
+// whole difference in one sample.
+void testSustainMovedUnderASettledNoteWalks()
+{
+    const double sampleRate = 44100.0;
+    const auto seam = [&] (int decay, int from, int to, double holdSeconds)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.ampEnvAttack = 0;
+        patch.upper.ampEnvDecay = decay;
+        patch.upper.ampEnvSustain = from;
+        engine.setPatch (patch);
+        engine.noteOn (24, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (std::size_t samples)
+        {
+            std::vector<float> out;
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        const auto before = run ((std::size_t) (sampleRate * holdSeconds));
+        septum::Patch moved = patch;
+        moved.upper.ampEnvSustain = to;
+        engine.setPatch (moved);
+        const auto after = run ((std::size_t) (sampleRate * 0.05));
+
+        // The seam itself is the block boundary, so it is not inside either take.
+        const double thrown =
+            std::max ({ std::abs ((double) after.front() - (double) before.back()),
+                        worstJump (after, 0, 64) });
+        const double steady =
+            std::max (worstJump (before, before.size() - 200, before.size()),
+                      worstJump (after, after.size() - 200, after.size()));
+        expect (thrown < 4.0 * steady + 1.0e-4,
+                "SUSTAIN " + std::to_string (from) + " -> " + std::to_string (to)
+                    + " at DECAY " + std::to_string (decay)
+                    + " under a settled note walks rather than steps (jump "
+                    + std::to_string (thrown) + " against a steady "
+                    + std::to_string (steady) + ")");
+    };
+
+    // Both directions, at decays whose segment has certainly converged by the
+    // time the value moves. Against the assigning Sustain stage these read
+    // 0.0364 and 0.0337 — 650 and 220 times their own steady travel.
+    seam (40, 20, 110, 0.8);
+    seam (60, 100, 20, 0.5);
+    // A one-unit move is the ordinary case a knob makes, and stepped too.
+    seam (40, 20, 21, 0.8);
+}
+
+// LOW FREQ crosses the shelf's contribution rather than switching it. The cross
+// has to take the registered fade time whichever two of the three positions it
+// runs between: crossing the *depth* made the duration depend on how far apart
+// the endpoints happened to be, so one switch had three transition times
+// (1.5 ms, 3.8 ms, 5.3 ms) and none of them was the registered one.
+void testLowFreqCrossesOverTheRegisteredTimeFromEveryPosition()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t settle = 4096, watch = 2048;
+    const auto take = [&] (septum::LowFreqMode start, septum::LowFreqMode end)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.lowFreq = start;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (std::size_t samples)
+        {
+            std::vector<float> out;
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        run (settle);
+        septum::Patch moved = patch;
+        moved.upper.lowFreq = end;
+        engine.setPatch (moved);
+        return run (watch);
+    };
+
+    // The three positions differ by a multiple of one shared signal — the
+    // shelf's own output — so a window's least-squares projection of the moving
+    // take onto the two held references is the cross weight, and the shelf's
+    // zero crossings never divide.
+    const auto crossSamples = [&] (septum::LowFreqMode a, septum::LowFreqMode b)
+    {
+        const auto held = take (a, a);
+        const auto dest = take (b, b);
+        const auto moving = take (a, b);
+        constexpr std::size_t window = 16;
+        std::size_t arrived = 0;
+        for (std::size_t w0 = 0; w0 + window <= moving.size(); w0 += window)
+        {
+            double num = 0.0, den = 0.0;
+            for (std::size_t i = w0; i < w0 + window; ++i)
+            {
+                const double d = (double) dest[i] - (double) held[i];
+                num += ((double) moving[i] - (double) held[i]) * d;
+                den += d * d;
+            }
+            if (den < 1.0e-12)
+                continue;
+            if (num / den < 0.995)
+                arrived = w0 + window;
+            else if (arrived > 0)
+                break;
+        }
+        return arrived;
+    };
+
+    const double registered =
+        septum::mapping::externalSwitchFadeSeconds * sampleRate;
+    const std::array<std::pair<septum::LowFreqMode, septum::LowFreqMode>, 6> moves {
+        { { septum::LowFreqMode::Flat, septum::LowFreqMode::Cut },
+          { septum::LowFreqMode::Flat, septum::LowFreqMode::Boost },
+          { septum::LowFreqMode::Boost, septum::LowFreqMode::Cut },
+          { septum::LowFreqMode::Cut, septum::LowFreqMode::Boost },
+          { septum::LowFreqMode::Cut, septum::LowFreqMode::Flat },
+          { septum::LowFreqMode::Boost, septum::LowFreqMode::Flat } }
+    };
+    double shortest = 1.0e9, longest = 0.0;
+    for (const auto& move : moves)
+    {
+        const auto measured = (double) crossSamples (move.first, move.second);
+        shortest = std::min (shortest, measured);
+        longest = std::max (longest, measured);
+        // One measurement window of slack either side: the projection is read
+        // sixteen samples at a time and the registered fade is 220.5 of them.
+        expect (measured >= registered - 16.0 && measured <= registered + 32.0,
+                "LOW FREQ position " + std::to_string ((int) move.first) + " -> "
+                    + std::to_string ((int) move.second)
+                    + " crosses over the registered fade time (measured "
+                    + std::to_string (measured) + " samples against "
+                    + std::to_string (registered) + ")");
+    }
+    // The point of the weight-per-position cross: the duration is a property of
+    // the switch, not of which two positions it happens to run between. Against
+    // the crossed depth these spread from 80 to 240 samples.
+    expect (longest - shortest <= 16.0,
+            "every LOW FREQ transition takes the same time (shortest "
+                + std::to_string (shortest) + ", longest "
+                + std::to_string (longest) + " samples)");
+}
+
+// Two S&H modulators must not be the same number.
+void testTheTwoLfosDrawDifferentRandomValues()
+{
+    const double sampleRate = 44100.0;
+    const auto take = [&] (bool onLfo2)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        auto& lfo = onLfo2 ? patch.upper.lfo2 : patch.upper.lfo1;
+        auto& other = onLfo2 ? patch.upper.lfo1 : patch.upper.lfo2;
+        lfo.shape = septum::LfoShape::SampleHold;
+        lfo.rate = 70;
+        lfo.destination2 = septum::LfoDest2::Amp;
+        lfo.depth2 = 63;
+        other.depth1 = 0;
+        other.depth2 = 0;
+        engine.setPatch (patch);
+        return renderScore (engine, { { 0.0, true, 48, 100 } }, 1.0, sampleRate);
+    };
+    const auto one = take (false);
+    const auto two = take (true);
+    double difference = 0.0;
+    for (std::size_t i = 0; i < one.left.size(); ++i)
+        difference = std::max (difference,
+                               std::abs ((double) one.left[i] - (double) two.left[i]));
+    expect (difference > 1.0e-4,
+            "LFO 1 and LFO 2 draw different random sequences (largest difference "
+                + std::to_string (difference) + ")");
+}
+
+// The rate half of the same switch. Continuity says the output does not step;
+// it does not say the cross still takes the time the switch registers. Stepping
+// every weight independently and renormalising afterwards broke that, and only
+// when more than one weight was on its way out: with two of them the weights
+// summed to `1 - step` rather than 1, so dividing by that handed the selected
+// weight a second step. A fade retargeted half way through finished in 3.47 ms
+// against the 5.01 ms the same switch takes when it is moved once.
+//
+// LOW FREQ is the switch to measure it on: its three positions differ by a
+// multiple of one shared signal, the shelf's own output, so a least-squares
+// projection of the moving take onto two held references is exactly the cross
+// weight even while three positions carry weight at once.
+void testASwitchRetargetedMidCrossStillTakesTheRegisteredTime()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t settle = 4096, watch = 2048;
+    const double registered =
+        septum::mapping::externalSwitchFadeSeconds * sampleRate;
+    const std::size_t retargetAt = (std::size_t) (registered / 2.0) & ~std::size_t (7);
+
+    // Every take runs the same number of samples before the watch begins, so
+    // the oscillator is at the same phase in all three and the projection reads
+    // like against like.
+    const auto take = [&] (septum::LowFreqMode start, septum::LowFreqMode middle,
+                           septum::LowFreqMode end)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.lowFreq = start;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (std::size_t samples)
+        {
+            std::vector<float> out;
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        run (settle);
+        septum::Patch moved = patch;
+        moved.upper.lowFreq = middle;
+        engine.setPatch (moved);
+        run (retargetAt);
+        septum::Patch again = patch;
+        again.upper.lowFreq = end;
+        engine.setPatch (again);
+        return run (watch);
+    };
+
+    const auto arrival = [&] (septum::LowFreqMode start, septum::LowFreqMode middle,
+                              septum::LowFreqMode end)
+    {
+        const auto held = take (start, start, start);
+        const auto dest = take (end, end, end);
+        const auto moving = take (start, middle, end);
+        constexpr std::size_t window = 16;
+        std::size_t arrived = 0;
+        for (std::size_t w0 = 0; w0 + window <= moving.size(); w0 += window)
+        {
+            double num = 0.0, den = 0.0;
+            for (std::size_t i = w0; i < w0 + window; ++i)
+            {
+                const double d = (double) dest[i] - (double) held[i];
+                num += ((double) moving[i] - (double) held[i]) * d;
+                den += d * d;
+            }
+            if (den < 1.0e-12)
+                continue;
+            if (num / den < 0.995)
+                arrived = w0 + window;
+            else if (arrived > 0)
+                break;
+        }
+        return (double) arrived;
+    };
+
+    const std::array<std::array<septum::LowFreqMode, 3>, 2> moves { {
+        { septum::LowFreqMode::Flat, septum::LowFreqMode::Cut,
+          septum::LowFreqMode::Boost },
+        { septum::LowFreqMode::Boost, septum::LowFreqMode::Flat,
+          septum::LowFreqMode::Cut } } };
+    for (const auto& move : moves)
+    {
+        const double measured = arrival (move[0], move[1], move[2]);
+        expect (measured >= registered - 16.0 && measured <= registered + 32.0,
+                "a LOW FREQ cross retargeted half way through still takes the"
+                " registered fade time (position "
+                    + std::to_string ((int) move[0]) + " -> "
+                    + std::to_string ((int) move[1]) + " -> "
+                    + std::to_string ((int) move[2]) + " measured "
+                    + std::to_string (measured) + " samples against "
+                    + std::to_string (registered) + ")");
+    }
+}
+
+// A switch that moves again before its own crossfade has finished. FILTER TYPE
+// and the audio filter's TYPE both have four positions, and a cross that
+// remembers only the position it came from cannot hold a mixture of two: a
+// second change re-aims the destination under a non-zero fade, and a change
+// back to where it started collapses the whole expression onto the source in
+// one sample. Both step the output by however much had been mixed in. Same
+// bound as the single change above.
+void testASwitchChangedAgainMidCrossStaysContinuous()
+{
+    const double sampleRate = 44100.0;
+    // The cross takes 5 ms; each step here lands well inside it.
+    const double stepSeconds = 0.0015;
+
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = septum::FilterSlope::Db12;
+        patch.upper.cutoff = 30;
+        patch.upper.resonance = 110;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (double seconds)
+        {
+            std::vector<float> out;
+            const auto samples = (std::size_t) (seconds * sampleRate);
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        const auto setType = [&] (septum::FilterType type)
+        {
+            septum::Patch changed = patch;
+            changed.upper.filterType = type;
+            engine.setPatch (changed);
+        };
+
+        run (0.5);
+        const auto settled = run (0.2);
+        const double steady = worstJump (settled, 0, settled.size());
+
+        std::vector<float> crossed;
+        setType (septum::FilterType::Hpf);
+        for (const auto& s : run (stepSeconds)) crossed.push_back (s);
+        setType (septum::FilterType::Bpf);
+        for (const auto& s : run (stepSeconds)) crossed.push_back (s);
+        // Back to the position it started from, which is the case a
+        // from-plus-fade cross collapses on.
+        setType (septum::FilterType::Lpf);
+        for (const auto& s : run (0.05)) crossed.push_back (s);
+
+        const double thrown = worstJump (crossed, 0, crossed.size());
+        expect (thrown < 4.0 * steady,
+                "FILTER TYPE changed three times inside one cross stays "
+                "continuous (jump " + std::to_string (thrown)
+                    + " against a steady " + std::to_string (steady) + ")");
+    }
+
+    // The same switch on the external-input path, driven by live audio rather
+    // than by a note.
+    {
+        const std::size_t block = 32;
+        const auto stepBlocks = (std::size_t) (stepSeconds * sampleRate / block);
+        septum::Engine engine;
+        engine.prepare (sampleRate, (int) block);
+        engine.setPatch (plainSawPatch());
+        septum::ExternalInput settings {};
+        settings.inputVolume = 100;
+        settings.filterOn = true;
+        settings.type = septum::AudioFilterType::Lpf;
+        settings.cutoff = 40;
+        settings.resonance = 110;
+        engine.setExternalInput (settings);
+        engine.reset();
+
+        std::vector<float> out, inL (block), inR (block), l (block), r (block);
+        std::size_t sample = 0;
+        const auto run = [&] (std::size_t blocks)
+        {
+            for (std::size_t b = 0; b < blocks; ++b)
+            {
+                for (std::size_t i = 0; i < block; ++i, ++sample)
+                {
+                    const double t = (double) sample / sampleRate;
+                    inL[i] = inR[i] = (float) (0.4 * std::sin (twoPi * 300.0 * t));
+                }
+                engine.process (l.data(), r.data(), (int) block, inL.data(), inR.data());
+                for (std::size_t i = 0; i < block; ++i)
+                    out.push_back (l[i]);
+            }
+        };
+        const auto setType = [&] (septum::AudioFilterType type)
+        {
+            settings.type = type;
+            engine.setExternalInput (settings);
+        };
+
+        run ((std::size_t) (0.2 * sampleRate / block));
+        const std::size_t settledFrom = out.size();
+        run ((std::size_t) (0.1 * sampleRate / block));
+        const double steady = worstJump (out, settledFrom, out.size());
+
+        const std::size_t crossFrom = out.size();
+        setType (septum::AudioFilterType::Hpf);
+        run (stepBlocks);
+        setType (septum::AudioFilterType::Notch);
+        run (stepBlocks);
+        setType (septum::AudioFilterType::Lpf);
+        run ((std::size_t) (0.05 * sampleRate / block));
+
+        const double thrown = worstJump (out, crossFrom, out.size());
+        expect (thrown < 4.0 * steady,
+                "AUDIO FILTER TYPE changed three times inside one cross stays "
+                "continuous (jump " + std::to_string (thrown)
+                    + " against a steady " + std::to_string (steady) + ")");
+    }
+}
+
+// Every switch and modulator that lands on the amp gain or the filter's
+// response is crossed or walked, not thrown. The bound is Step 11's: under
+// four times the same take's own steady sample-to-sample travel.
+void testControlChangesDoNotStepTheOutput()
+{
+    const double sampleRate = 44100.0;
+    struct Case
+    {
+        const char* name;
+        void (*change) (septum::Patch&);
+    };
+    const Case cases[] = {
+        { "FILTER TYPE LPF -> HPF",
+          [] (septum::Patch& p) { p.upper.filterType = septum::FilterType::Hpf; } },
+        { "FILTER TYPE LPF -> BPF",
+          [] (septum::Patch& p) { p.upper.filterType = septum::FilterType::Bpf; } },
+        { "FILTER TYPE LPF -> BYPASS",
+          [] (septum::Patch& p) { p.upper.filterType = septum::FilterType::Bypass; } },
+        { "FILTER SLOPE -12 -> -24",
+          [] (septum::Patch& p) { p.upper.filterSlope = septum::FilterSlope::Db24; } },
+        { "LOW FREQ FLAT -> BOOST",
+          [] (septum::Patch& p) { p.upper.lowFreq = septum::LowFreqMode::Boost; } },
+    };
+
+    for (const auto& entry : cases)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = septum::FilterSlope::Db12;
+        patch.upper.cutoff = 30;
+        patch.upper.resonance = 110;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (double seconds)
+        {
+            std::vector<float> out;
+            const auto samples = (std::size_t) (seconds * sampleRate);
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        run (0.5);
+        const auto settled = run (0.2);
+        const double steady = worstJump (settled, 0, settled.size());
+        septum::Patch changed = patch;
+        entry.change (changed);
+        engine.setPatch (changed);
+        const auto crossed = run (0.05);
+        const double thrown = worstJump (crossed, 0, crossed.size());
+        expect (thrown < 4.0 * steady,
+                std::string (entry.name) + " is crossed, not thrown (jump "
+                    + std::to_string (thrown) + " against a steady "
+                    + std::to_string (steady) + ")");
+    }
+
+    // An S&H LFO on the AMP destination steps its own value; the gain it
+    // lands on is walked, so the edge stays audible without being a click.
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.lfo1.shape = septum::LfoShape::SampleHold;
+        patch.upper.lfo1.rate = 70;
+        patch.upper.lfo1.destination2 = septum::LfoDest2::Amp;
+        patch.upper.lfo1.depth2 = 63;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+        std::vector<float> left (8), right (8), out;
+        for (std::size_t done = 0; done < (std::size_t) (sampleRate * 3.0); done += 8)
+        {
+            engine.process (left.data(), right.data(), 8);
+            for (int i = 0; i < 8; ++i)
+                out.push_back (left[(std::size_t) i]);
+        }
+        std::vector<double> jumps;
+        for (std::size_t i = 1; i < out.size(); ++i)
+            jumps.push_back (std::abs ((double) out[i] - (double) out[i - 1]));
+        std::sort (jumps.begin(), jumps.end());
+        const double median = jumps[jumps.size() / 2];
+        const double worst = jumps.back();
+        expect (worst < 4.0 * median,
+                "an S&H LFO on the AMP destination does not click (worst "
+                    + std::to_string (worst) + " against a median "
+                    + std::to_string (median) + ")");
+    }
+}
+
+// The settled damping tables are published frequencies, so the filters built
+// from them must actually turn over there.
+void testSettledDampingTablesLandOnTheirFrequencies()
+{
+    for (double sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        for (double corner : { 2000.0, 4000.0, 8000.0, 10000.0, 12500.0 })
+        {
+            const double a = septum::mapping::onePoleAtCorner (corner, sampleRate);
+            // |H(w)| = a / |1 - (1-a) e^-jw|
+            const double w = twoPi * corner / sampleRate;
+            const double real = 1.0 - (1.0 - a) * std::cos (w);
+            const double imag = (1.0 - a) * std::sin (w);
+            const double magnitude = a / std::sqrt (real * real + imag * imag);
+            const double dB = 20.0 * std::log10 (magnitude);
+            expectNear (dB, -3.0103, 0.05,
+                        "a damping table entry of " + std::to_string ((int) corner)
+                            + " Hz turns over there at "
+                            + std::to_string ((int) sampleRate) + " Hz");
+        }
+        // BYPASS passes through.
+        expectNear (septum::mapping::onePoleAtCorner (0.0, sampleRate), 1.0, 1.0e-12,
+                    "BYPASS passes through");
+    }
+}
+
+// The analog output stage realises the service notes' component values, and
+// the response it delivers does not depend on the host rate.
+void testOutputStageMatchesItsComponentValues()
+{
+    const auto analog = [] (double hz, double corner)
+    { return 1.0 / std::sqrt (1.0 + (hz / corner) * (hz / corner)); };
+
+    for (double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const double a1 = septum::mapping::onePoleAtCorner (23700.0, sampleRate);
+        const double a2 = septum::mapping::onePoleAtCorner (125400.0, sampleRate);
+        const auto response = [&] (double a, double hz)
+        {
+            const double w = twoPi * hz / sampleRate;
+            const double real = 1.0 - (1.0 - a) * std::cos (w);
+            const double imag = (1.0 - a) * std::sin (w);
+            return a / std::sqrt (real * real + imag * imag);
+        };
+        double worst = 0.0;
+        for (double hz = 20.0; hz < std::min (20000.0, 0.45 * sampleRate); hz *= 1.1)
+        {
+            const double model = response (a1, hz) * response (a2, hz);
+            const double wanted = analog (hz, 23700.0) * analog (hz, 125400.0);
+            worst = std::max (worst,
+                              std::abs (20.0 * std::log10 (model / wanted)));
+        }
+        expect (worst < 1.0,
+                "the output stage is within 1 dB of its component values in band at "
+                    + std::to_string ((int) sampleRate) + " Hz (worst "
+                    + std::to_string (worst) + " dB)");
+    }
+}
+
+// The reverb's two channels are disjoint halves of the network, so the tail
+// survives a mono fold-down instead of cancelling in it.
+void testReverbTailSurvivesMono()
+{
+    const double sampleRate = 48000.0;
+    for (int templateIndex : { 2, 3, 4, 5 })
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvSustain = 0;
+        patch.upper.ampEnvDecay = 20;
+        patch.upper.reverbDepth = 127;
+        patch.reverbOn = true;
+        septum::applyReverbTemplate (patch, templateIndex);
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 120 } }, 3.0,
+                                       sampleRate);
+        const auto from = (std::size_t) (sampleRate * 0.8);
+        double mono = 0.0, side = 0.0;
+        for (std::size_t i = from; i < take.left.size(); ++i)
+        {
+            const double sum = 0.5 * ((double) take.left[i] + (double) take.right[i]);
+            const double difference =
+                0.5 * ((double) take.left[i] - (double) take.right[i]);
+            mono += sum * sum;
+            side += difference * difference;
+        }
+        expect (mono > side,
+                "reverb template " + std::to_string (templateIndex)
+                    + " keeps its tail in mono (sum " + std::to_string (mono)
+                    + ", difference " + std::to_string (side) + ")");
+    }
+}
+
+// PAN is L64..63R, so its printed centre is 0 and 0 must be the centre of the
+// image — the convention the received CC#10 pan already uses.
+void testPanCentreIsTheDocumentedCentre()
+{
+    const double sampleRate = 44100.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.pan = 0;
+    engine.setPatch (patch);
+    const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.5, sampleRate);
+    double left = 0.0, right = 0.0;
+    const auto skip = (std::size_t) (sampleRate * 0.1);
+    for (std::size_t i = skip; i < take.left.size(); ++i)
+    {
+        left += take.left[i] * (double) take.left[i];
+        right += take.right[i] * (double) take.right[i];
+    }
+    const double balance = 10.0 * std::log10 (left / std::max (1.0e-30, right));
+    expect (std::abs (balance) < 0.02,
+            "PAN 0 is the centre of the image (" + std::to_string (balance) + " dB)");
+}
+
+// FB OSC's loop damping is a time, not a per-sample coefficient, so the same
+// patch is the same sound at every host rate.
+void testFbOscIsTheSameSoundAtEveryHostRate()
+{
+    const auto centroid = [] (double sampleRate)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::FbOsc;
+        patch.upper.osc1.pulseWidth = 127;
+        patch.upper.balance = -63;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 1.5,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.5);
+        double numerator = 0.0, denominator = 0.0;
+        for (int k = 0; k < 40; ++k)
+        {
+            const double hz = 40.0 * std::pow (8000.0 / 40.0, (k + 0.5) / 40);
+            const double m = goertzel (take.left, skip, take.left.size(), hz, sampleRate);
+            numerator += hz * m * m;
+            denominator += m * m;
+        }
+        return denominator > 0.0 ? numerator / denominator : 0.0;
+    };
+    const double reference = centroid (44100.0);
+    for (double sampleRate : { 96000.0, 192000.0 })
+    {
+        const double other = centroid (sampleRate);
+        expect (std::abs (other - reference) < 0.06 * reference,
+                "FB OSC keeps its partial structure at "
+                    + std::to_string ((int) sampleRate) + " Hz (centroid "
+                    + std::to_string (other) + " against " + std::to_string (reference)
+                    + ")");
+    }
+
+    // The mechanism itself, which is what a bare per-sample coefficient
+    // breaks: the loop's one-pole must have the same time constant at every
+    // rate, so its pole raised to the number of samples in a second is
+    // invariant. A per-sample constant makes this vary by orders of magnitude.
+    const auto timeConstantSeconds = [] (double sampleRate)
+    {
+        const double pole = 1.0 - septum::mapping::fbOscLoopDampingCoeff (sampleRate);
+        return -1.0 / (sampleRate * std::log (std::max (1.0e-300, pole)));
+    };
+    const double referenceSeconds = timeConstantSeconds (44100.0);
+    for (double sampleRate : { 22050.0, 48000.0, 96000.0, 192000.0 })
+        expectNear (timeConstantSeconds (sampleRate), referenceSeconds,
+                    1.0e-9 * referenceSeconds,
+                    "FB OSC's loop damping is a time, not a per-sample coefficient, at "
+                        + std::to_string ((int) sampleRate) + " Hz");
+    expectNear (septum::mapping::fbOscLoopDampingCoeff (44100.0),
+                septum::mapping::fbOscLoopDamping, 1.0e-12,
+                "the registered constant is unchanged at the reference rate");
+}
+
+// The AMP overdrive is the documented tanh clipper: symmetric, so the even
+// harmonics stay far below the odd ones it is supposed to make.
+void testOverdriveIsTheDocumentedSymmetricClipper()
+{
+    const double sampleRate = 96000.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.balance = -63;
+    patch.upper.overdrive = true;
+    patch.upper.drive = 90;
+    patch.upper.level = 127;
+    engine.setPatch (patch);
+    const auto take = renderScore (engine, { { 0.0, true, 69, 127 } }, 1.5, sampleRate);
+    const auto skip = (std::size_t) (sampleRate * 0.5);
+    const auto at = [&] (int harmonic)
+    {
+        return goertzel (take.left, skip, take.left.size(), 440.0 * harmonic,
+                         sampleRate);
+    };
+    const double third = at (3);
+    const double second = at (2);
+    // A symmetric shaper makes no even harmonics at all, so what is left is
+    // the measurement's own leakage: -57.2 dB below the third. The quadratic
+    // "tube" pre-conditioning that shipped briefly ahead of the clipper put
+    // it at -40.8 dB. The bound sits between them.
+    expect (second < 0.004 * third,
+            "the overdrive is symmetric: the 2nd harmonic stays far below the 3rd ("
+                + std::to_string (20.0 * std::log10 (second / third)) + " dB)");
+}
+
+
+// A routing change and a note-off in the same block, with no audio between
+// them: the transition has to be noticed where it happens.
+void testArpeggioRoutingChangeAndNoteOffInOneBlock()
+{
+    const double sampleRate = 44100.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.arpeggio.on = false;
+    engine.setPatch (patch);
+    engine.noteOn (60, 100);
+
+    // Render a little so the plain voice is really sounding.
+    std::vector<float> left (256), right (256);
+    for (int i = 0; i < 20; ++i)
+        engine.process (left.data(), right.data(), 256);
+
+    // Now: arpeggiator on and the key released, with nothing rendered between.
+    septum::Patch arpeggiated = patch;
+    arpeggiated.arpeggio.on = true;
+    septum::applyArpeggioStyle (arpeggiated, 0);
+    engine.setPatch (arpeggiated);
+    engine.noteOff (60);
+
+    const auto tail = renderScore (engine, {}, 4.0, sampleRate);
+    const double late = tail.rms ((std::size_t) (sampleRate * 3.0), tail.left.size());
+    expect (late < 1.0e-3,
+            "a routing change plus a note-off in one block does not strand the key"
+            " (late RMS " + std::to_string (late) + ")");
+}
+
+// Stealing takes the voice whose tail is quietest, which is the one released
+// longest ago — not the one triggered longest ago.
+void testStealingTakesTheLongestReleasedVoice()
+{
+    const double sampleRate = 44100.0;
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.ampEnvRelease = 120;      // a very long tail, so both survive
+    patch.upper.ampEnvSustain = 127;
+    engine.setPatch (patch);
+
+    // The pool is ten voices. Note A is struck first of all and released
+    // *last*; note B is struck later and released *first*. Ordered by trigger
+    // age the candidate is A; ordered by release age it is B, whose tail has
+    // been decaying far longer and is therefore the quieter one to take.
+    const int noteA = 40, noteB = 52;
+    std::vector<Event> score { { 0.00, true, noteA, 110 },
+                               { 0.02, true, noteB, 110 } };
+    for (int i = 0; i < 8; ++i)                    // fill the pool
+        score.push_back ({ 0.04 + 0.005 * i, true, 60 + i, 110 });
+    score.push_back ({ 0.30, false, noteB, 0 });   // B released first
+    score.push_back ({ 1.60, false, noteA, 0 });   // A released last
+    score.push_back ({ 1.80, true, 84, 110 });     // the note that must steal
+
+    const auto take = renderScore (engine, score, 2.6, sampleRate);
+    expect (take.finite(), "the stealing take is finite");
+
+    const auto from = (std::size_t) (sampleRate * 1.9);
+    const auto hz = [] (int note)
+    { return 440.0 * std::pow (2.0, (note - 69) / 12.0); };
+    const double a =
+        goertzel (take.left, from, take.left.size(), hz (noteA), sampleRate);
+    const double b =
+        goertzel (take.left, from, take.left.size(), hz (noteB), sampleRate);
+    expect (a > 4.0 * b,
+            "the steal takes the longest-released voice, not the oldest-struck"
+            " (A " + std::to_string (a) + ", B " + std::to_string (b) + ")");
+}
+
+// All Notes Off releases every sounding voice at once, and it must not
+// re-stamp the ones that were already decaying: their stamps are what orders
+// the tails, and rewriting them replaces that order with the order the voices
+// happen to sit in the array.
+void testAllNotesOffKeepsTheOrderOfTailsAlreadyDecaying()
+{
+    const double sampleRate = 44100.0;
+    const auto hz = [] (int note)
+    { return 440.0 * std::pow (2.0, (note - 69) / 12.0); };
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.ampEnvRelease = 120;      // long tails, so both survive
+    patch.upper.ampEnvSustain = 127;
+    engine.setPatch (patch);
+
+    std::vector<float> left (256), right (256), outL, outR;
+    const auto run = [&] (double seconds)
+    {
+        const auto samples = (std::size_t) (seconds * sampleRate);
+        for (std::size_t done = 0; done < samples; done += 256)
+        {
+            engine.process (left.data(), right.data(), 256);
+            for (int i = 0; i < 256; ++i)
+            {
+                outL.push_back (left[(std::size_t) i]);
+                outR.push_back (right[(std::size_t) i]);
+            }
+        }
+    };
+
+    // A takes the first slot in the pool and B the second, so under a stamp
+    // rewritten in array order the steal would land on A. B is the one whose
+    // tail has actually been decaying longest.
+    const int noteA = 40, noteB = 52;
+    engine.noteOn (noteA, 110);
+    run (0.02);
+    engine.noteOn (noteB, 110);
+    run (0.02);
+    for (int i = 0; i < 8; ++i)          // fill the ten-voice pool
+    {
+        engine.noteOn (60 + i, 110);
+        run (0.005);
+    }
+    engine.noteOff (noteB);              // B starts decaying here
+    run (0.70);
+    engine.allNotesOff();                // A and the eight fillers follow
+    run (0.20);
+    engine.noteOn (84, 110);             // has to steal one of the ten
+    run (0.80);
+
+    double worst = 0.0;
+    for (const auto sample : outL)
+        worst = std::max (worst, (double) std::abs (sample));
+    expect (std::isfinite (worst), "the all-notes-off stealing take is finite");
+
+    const auto from = outL.size() - (std::size_t) (sampleRate * 0.6);
+    const double a = goertzel (outL, from, outL.size(), hz (noteA), sampleRate);
+    const double b = goertzel (outL, from, outL.size(), hz (noteB), sampleRate);
+    expect (a > 4.0 * b,
+            "an All Notes Off does not restamp tails already in release, so the"
+            " steal still takes the stalest one (A " + std::to_string (a)
+                + ", B " + std::to_string (b) + ")");
+}
+
+// The SysEx codec is lossless over the parts that carry real data: the whole
+// arpeggio grid, END STEP, and the documented tempo range.
+void testSysExCarriesTheArpeggioGridAndTempo()
+{
+    const auto roundTripStyle = [] (const septum::ArpeggioParams& source,
+                                    septum::ArpeggioParams& restored)
+    {
+        std::vector<std::uint8_t> common (septum::sysex::sizeArpeggioCommon, 0u);
+        septum::sysex::encodeArpeggioCommon (source, common.data());
+        septum::sysex::decodeArpeggioCommon (common.data(), common.size(), restored);
+        for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+        {
+            std::vector<std::uint8_t> pattern (septum::sysex::sizeArpeggioPattern, 0u);
+            septum::sysex::encodeArpeggioPattern (source.style, row, pattern.data());
+            septum::sysex::decodeArpeggioPattern (pattern.data(), pattern.size(), row,
+                                                  restored.style);
+        }
+    };
+
+    // Step data is a two-byte nibble with a documented range of 0 - 128, so
+    // it holds a rest, all 127 velocities and a tie without any of them
+    // colliding. The codec used to squeeze all three into one 7-bit byte,
+    // which cost the loudest velocity a style could carry.
+    {
+        septum::ArpeggioParams loud {};
+        loud.style.endStep = 4;
+        loud.style.cells[0][0] = 127;
+        loud.style.cells[1][0] = septum::arpeggioTie;
+        loud.style.cells[2][0] = 1;
+        loud.style.originalNote[0] = 128;
+        loud.style.originalNote[3] = 60;
+        septum::ArpeggioParams back {};
+        roundTripStyle (loud, back);
+        expect (back.style.cell (0, 0) == 127
+                    && back.style.cell (1, 0) == septum::arpeggioTie
+                    && back.style.cell (2, 0) == 1,
+                "the loudest cell, a tie and a quiet cell all survive (got "
+                    + std::to_string ((int) back.style.cell (0, 0)) + ", "
+                    + std::to_string ((int) back.style.cell (1, 0)) + ", "
+                    + std::to_string ((int) back.style.cell (2, 0)) + ")");
+        expect (back.style.originalNote[0] == 128 && back.style.originalNote[3] == 60,
+                "each row's Original Note round-trips over its own pattern block");
+    }
+
+    for (int styleIndex = 0; styleIndex < (int) septum::arpeggioStyles().size();
+         ++styleIndex)
+    {
+        septum::Patch source = septum::initPatch();
+        septum::applyArpeggioStyle (source, styleIndex);
+        septum::ArpeggioParams restored {};
+        roundTripStyle (source.arpeggio, restored);
+
+        bool cellsMatch = true;
+        for (int step = 0; step < septum::arpeggioMaxSteps && cellsMatch; ++step)
+            for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                if (restored.style.cell (step, row) != source.arpeggio.style.cell (step, row))
+                {
+                    cellsMatch = false;
+                    break;
+                }
+        expect (cellsMatch,
+                "arpeggio style " + std::to_string (styleIndex)
+                    + " round-trips every one of its 512 cells");
+        expect (restored.style.endStep == source.arpeggio.style.endStep,
+                "the style's own step count round-trips (style "
+                    + std::to_string (styleIndex) + ")");
+    }
+
+    // PATCH TEMPO is three nibbles at 0x0E/0x0F/0x10, which is what makes the
+    // top of the documented range reachable: a two-nibble field stops at 255.
+    for (int tempo : { 5, 120, 200, 255, 256, 299, 300 })
+    {
+        septum::Patch source = septum::initPatch();
+        source.tempo = tempo;
+        std::vector<std::uint8_t> block (septum::sysex::sizePatchCommon, 0u);
+        septum::sysex::encodePatchCommon (source, block.data());
+        septum::Patch restored = septum::initPatch();
+        restored.tempo = 7;   // so an untouched field is visible
+        septum::sysex::decodePatchCommon (block.data(), block.size(), restored);
+        expect (restored.tempo == tempo,
+                "PATCH TEMPO " + std::to_string (tempo) + " round-trips (got "
+                    + std::to_string (restored.tempo) + ")");
+    }
+}
+
+// Every byte this codec writes into Patch Common has to be the byte the
+// address map names, or a dump written by the hardware reads as a different
+// patch. Four of them were somewhere else before the map was consulted.
+void testPatchCommonMatchesTheAddressMap()
+{
+    septum::Patch patch = septum::initPatch();
+    patch.tempo = 300;                                        // 0x0E/0x0F/0x10
+    patch.splitPoint = 60;                                    // 0x13
+    patch.arpeggio.splitArpeggio = septum::SplitArpeggio::Lower;   // 0x14
+    patch.arpeggio.on = true;                                 // 0x1A
+    patch.arpeggio.hold = true;                               // 0x1B
+    patch.delayOn = true;                                     // 0x1C
+    patch.reverbOn = false;                                   // 0x1D
+
+    std::array<std::uint8_t, septum::sysex::sizePatchCommon> bytes {};
+    septum::sysex::encodePatchCommon (patch, bytes.data());
+
+    // 300 = 12CH, so the nibbles are 01 02 0C.
+    expect (bytes[0x0E] == 0x01 && bytes[0x0F] == 0x02 && bytes[0x10] == 0x0C,
+            "PATCH TEMPO 300 is nibbled across 0x0E/0x0F/0x10 (got "
+                + std::to_string ((int) bytes[0x0E]) + " "
+                + std::to_string ((int) bytes[0x0F]) + " "
+                + std::to_string ((int) bytes[0x10]) + ")");
+    expect (bytes[0x13] == 60, "SPLIT POINT is at 0x13");
+    expect (bytes[0x14] == 1, "SPLIT ARPEGGIO is at 0x14");
+    expect (bytes[0x1A] == 1, "ARPEGGIO SWITCH is at 0x1A");
+    expect (bytes[0x1B] == 1, "ARPEGGIO HOLD is at 0x1B");
+    expect (bytes[0x1C] == 1 && bytes[0x1D] == 0,
+            "DELAY and REVERB are separate switches at 0x1C and 0x1D");
+
+    // Every byte in the block is one parameter with its own documented range,
+    // so none of them may carry a second one as a bit.
+    for (std::size_t i = 0; i < bytes.size(); ++i)
+        expect (bytes[i] <= 127,
+                "Patch Common byte 0x" + std::to_string (i) + " stays 7-bit");
+
+    septum::Patch back = septum::initPatch();
+    septum::sysex::decodePatchCommon (bytes.data(), bytes.size(), back);
+    expect (back.tempo == 300 && back.splitPoint == 60
+                && back.arpeggio.splitArpeggio == septum::SplitArpeggio::Lower
+                && back.arpeggio.on && back.arpeggio.hold
+                && back.delayOn && ! back.reverbOn,
+            "the six relocated Patch Common fields decode from their own bytes");
+}
+
+// The map's block addresses are absolute, not offsets from zero: the
+// Temporary Patch lives at 10 00 00 00 and User Patch 001-032 at
+// 20 00 00 00 .. 20 1F 00 00.
+// [OQ-18, answered] The address map prints LFO Tempo Sync Switch as
+// "(0 - 1) / ON, OFF" where all 26 other switches read OFF, ON, and this codec
+// followed it. Two Roland sources say the reversal is the misprint. Roland's
+// own SH-201 Editor (Script/BufferModel.xml) binds `lfoTempoSyncSwitch` to a
+// plain latch button with no entry in its `inverse0-1Table`, where every other
+// latch button — ARPEGGIO, DELAY, REVERB — lights on 1. And two of Roland's
+// published SH-201 demos, PAD 4 "Reso Sweep" and PAD 8 "Moving Str.", play
+// published patches whose LFO2 carries this byte as 1 with SYNC NOTE 2 and
+// PATCH TEMPO 120: 8 whole notes at 120 BPM is 16.0 s, which is what the
+// recordings sweep in (15.91 s and 16.06 s by centroid autocorrelation), where
+// "1 is OFF" would leave the LFO free-running at RATE 124, tens of hertz.
+// [settled] INIT PATCH is Roland's, byte for byte. Every `<default>` in
+// `Script/BufferModel.xml` in the SH-201 Editor v1.10 — the state a real unit
+// is in after an initialise — read against what the codec encodes. Both tones
+// are checked against the same Patch Tone defaults, because Roland declares one
+// PatchTone structure and both instances take it.
+//
+// Excluded: the patch name and PATCH TEMPO, which are nibbled fields rather
+// than single bytes, and ARPEGGIO END STEP, the one place the replica knowingly
+// differs — Roland's range is 1-32 with a default of 1, and the replica adds a
+// zero below that range meaning "play the template to its own end", which is
+// what a patch carrying no imported grid needs.
+// A DT1 writes bytes at an address. The decode reconstitutes the block —
+// encode what the patch holds, lay the received bytes over it, decode it back —
+// which is exact only where encode and decode are each other's inverse. Writing
+// back the byte a block already holds is the sharpest probe there is: nothing
+// may move.
+//
+// One field failed it. END STEP has two homes: the wire value goes to
+// `style.endStep` and to `arp.endStep`, whose zero — "however long the selected
+// template is" — is the replica's own addition and has no wire spelling. So a
+// one-byte write to ARPEGGIO ACCENT re-encoded the style's length into bytes
+// 06/07 and decoded it back as an explicit override, truncating the pattern.
+// All Notes Off is every key coming up — that is what the document's proviso
+// about Hold 1 and Sostenuto makes it, and what the engine's own loop builds. A
+// chord ARPEGGIO HOLD has latched therefore has to carry on exactly as it does
+// when the player lifts their hands. It did not: the sweep that releases the
+// voices no pedal holds took the arpeggiator's currently-open step with them,
+// because an arpeggio note is not a key and `keyStillDown` could not see it.
+void testAllNotesOffDoesNotInterruptALatchedArpeggio()
+{
+    const double sampleRate = 44100.0;
+    const auto take = [&] (bool useAllNotesOff)
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.upper.osc1.wave = septum::Waveform::Saw;
+        patch.upper.balance = -63;
+        patch.upper.filterType = septum::FilterType::Bypass;
+        patch.upper.ampEnvAttack = 0;
+        patch.upper.ampEnvDecay = 0;
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvRelease = 0;   // a release is audible immediately
+        patch.tempo = 120;
+        patch.arpeggio.on = true;
+        patch.arpeggio.hold = true;
+        patch.arpeggio.styleIndex = 1;
+        patch.arpeggio.grid = septum::ArpeggioGrid::Sixteenth;
+        patch.arpeggio.duration = septum::ArpeggioDuration::P60;
+        patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+        septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 64);
+        engine.setPatch (patch);
+        engine.reset();
+
+        std::vector<float> left, right (64), block (64);
+        const auto render = [&] (double seconds)
+        {
+            const auto total = (std::size_t) (sampleRate * seconds);
+            for (std::size_t done = 0; done < total; done += 64)
+            {
+                engine.process (block.data(), right.data(), 64);
+                for (int i = 0; i < 64; ++i)
+                    left.push_back (block[(std::size_t) i]);
+            }
+        };
+
+        for (int note : { 60, 64, 67 })
+            engine.noteOn (note, 100);
+        render (1.0);
+        if (useAllNotesOff)
+            engine.allNotesOff();
+        else
+            for (int note : { 60, 64, 67 })
+                engine.noteOff (note);
+        render (1.0);
+        return left;
+    };
+
+    // The longest run of silence after the flip, in 5 ms buckets. With a 60 %
+    // duration at 120 BPM the arpeggiator's own gap between sixteenths is about
+    // 45 ms; anything much longer is a step that was taken away.
+    const auto longestSilenceMs = [&] (const std::vector<float>& x)
+    {
+        const std::size_t window = (std::size_t) (sampleRate * 0.005);
+        const std::size_t from = (std::size_t) (sampleRate * 1.0) / window;
+        std::size_t run = 0, worst = 0, bucket = 0;
+        for (std::size_t i = 0; i + window <= x.size(); i += window, ++bucket)
+        {
+            double peak = 0.0;
+            for (std::size_t j = 0; j < window; ++j)
+                peak = std::max (peak, std::abs ((double) x[i + j]));
+            if (bucket < from)
+                continue;
+            if (peak < 1.0e-4)
+                worst = std::max (worst, ++run);
+            else
+                run = 0;
+        }
+        return worst * 5.0;
+    };
+
+    const double byKeys = longestSilenceMs (take (false));
+    const double byMessage = longestSilenceMs (take (true));
+    expect (byKeys > 0.0 && byKeys < 80.0,
+            "lifting the keys leaves the arpeggiator's own gap between steps ("
+                + std::to_string (byKeys) + " ms)");
+    expect (byMessage <= byKeys + 10.0,
+            "and All Notes Off leaves the same gap rather than taking the step "
+            "that was sounding (All Notes Off " + std::to_string (byMessage)
+                + " ms against " + std::to_string (byKeys) + " ms for the keys)");
+}
+
+void testANoOpDt1LeavesThePatchAlone()
+{
+    const auto blockOf = [] (const septum::Patch& patch, unsigned block,
+                             std::vector<std::uint8_t>& image)
+    {
+        switch (block)
+        {
+            case 0x00: image.assign (septum::sysex::sizePatchCommon, 0);
+                       septum::sysex::encodePatchCommon (patch, image.data()); break;
+            case 0x01: image.assign (septum::sysex::sizeTonePatch, 0);
+                       septum::sysex::encodeTonePatch (patch.upper, image.data()); break;
+            case 0x02: image.assign (septum::sysex::sizeTonePatch, 0);
+                       septum::sysex::encodeTonePatch (patch.lower, image.data()); break;
+            case 0x03: image.assign (septum::sysex::sizeDelay, 0);
+                       septum::sysex::encodeDelayParams (patch.delay, image.data()); break;
+            case 0x04: image.assign (septum::sysex::sizeReverb, 0);
+                       septum::sysex::encodeReverbParams (patch.reverb, image.data()); break;
+            default:   image.assign (septum::sysex::sizeArpeggioCommon, 0);
+                       septum::sysex::encodeArpeggioCommon (patch.arpeggio, image.data()); break;
+        }
+    };
+    // The whole patch as it goes on the wire, so nothing with a wire home can
+    // move without this noticing.
+    const auto wireImage = [] (const septum::Patch& patch)
+    {
+        std::vector<std::uint8_t> all;
+        for (const auto& packet : septum::sysex::encodePatchToSysExPackets (patch))
+            all.insert (all.end(), packet.begin(), packet.end());
+        return all;
+    };
+
+    const std::pair<const char*, septum::Patch> starts[] {
+        { "INIT PATCH", septum::initPatch() },
+        { "a factory program", septum::factoryPatches()[0].patch },
+    };
+
+    for (const auto& start : starts)
+        for (unsigned block = 0x00; block <= 0x05; ++block)
+        {
+            std::vector<std::uint8_t> image;
+            blockOf (start.second, block, image);
+            for (std::size_t offset = 0; offset < image.size(); ++offset)
+            {
+                septum::Patch patch = start.second;
+                const std::uint8_t already = image[offset];
+                const auto message = septum::sysex::makeDt1Message (
+                    0x10000000u | (block << 8) | (std::uint32_t) offset, &already, 1, 0x10);
+                const bool accepted = septum::sysex::decodeSysExMessage (
+                    message.data(), message.size(), patch);
+                expect (accepted,
+                        std::string ("a one-byte DT1 inside block ")
+                            + std::to_string (block) + " is accepted");
+
+                expect (wireImage (patch) == wireImage (start.second),
+                        std::string ("writing back the byte already at block ")
+                            + std::to_string (block) + " offset "
+                            + std::to_string (offset) + " of " + start.first
+                            + " leaves the patch's wire image alone");
+
+                // END STEP is the field with no wire spelling for its zero, so
+                // it needs its own check: only a write that carries bytes 06/07
+                // of the arpeggio block may move it.
+                const bool carriesEndStep =
+                    block == 0x05 && (offset == 0x06 || offset == 0x07);
+                if (! carriesEndStep)
+                    expect (patch.arpeggio.endStep == start.second.arpeggio.endStep,
+                            std::string ("and leaves ARPEGGIO END STEP alone (block ")
+                                + std::to_string (block) + " offset "
+                                + std::to_string (offset) + ": "
+                                + std::to_string (start.second.arpeggio.endStep) + " -> "
+                                + std::to_string (patch.arpeggio.endStep) + ")");
+            }
+        }
+}
+
+// A payload this codec cannot apply in full is refused in full. The overlay used
+// to clip a payload that ran off the end of its block and still report success,
+// so a bulk write spanning two blocks updated the first and lost the rest — and
+// the bank reader, which gates on the same predicate, counted it as applied.
+void testADt1PastTheEndOfItsBlockIsRefused()
+{
+    septum::Patch patch = septum::initPatch();
+    const septum::Patch before = patch;
+
+    // Patch Delay is five bytes. A six-byte write at offset 0 runs one past it;
+    // a two-byte write at offset 4 runs one past it.
+    const std::uint8_t six[6] { 1, 2, 3, 4, 5, 6 };
+    const auto overrun =
+        septum::sysex::makeDt1Message (0x10000300u, six, 6, 0x10);
+    expect (! septum::sysex::decodeSysExMessage (overrun.data(), overrun.size(), patch),
+            "a DT1 whose payload runs past the end of its block is refused");
+    expect (patch.delay.time == before.delay.time
+                && patch.delay.feedback == before.delay.feedback,
+            "and nothing of it is applied");
+
+    const std::uint8_t two[2] { 7, 8 };
+    const auto straddle =
+        septum::sysex::makeDt1Message (0x10000304u, two, 2, 0x10);
+    expect (! septum::sysex::decodeSysExMessage (straddle.data(), straddle.size(), patch),
+            "a DT1 straddling the end of its block is refused");
+
+    // Exactly filling the block is still accepted, and so is one byte at the
+    // last offset — the refusal must not be a fencepost.
+    std::vector<std::uint8_t> whole (septum::sysex::sizeDelay, 0);
+    septum::sysex::encodeDelayParams (before.delay, whole.data());
+    const auto exact = septum::sysex::makeDt1Message (0x10000300u, whole.data(),
+                                                      whole.size(), 0x10);
+    expect (septum::sysex::decodeSysExMessage (exact.data(), exact.size(), patch),
+            "a DT1 that exactly fills its block is accepted");
+    const std::uint8_t last[1] { 3 };
+    const auto lastByte = septum::sysex::makeDt1Message (0x10000304u, last, 1, 0x10);
+    expect (septum::sysex::decodeSysExMessage (lastByte.data(), lastByte.size(), patch),
+            "and so is one byte at the block's last offset");
+    expect (patch.delay.modulationDepth == 3,
+            "which lands on the field that offset names (MOD DEPTH "
+                + std::to_string (patch.delay.modulationDepth) + ")");
+}
+
+void testInitPatchIsRolandsInitPatch()
+{
+    const auto packets = septum::sysex::encodePatchToSysExPackets (septum::initPatch());
+    struct Default { int block; int offset; int value; };
+    static constexpr Default rolandDefaults[] {
+        { 0, 0x0C, 127 },   // patchLevel
+        { 0, 0x0D,  64 },   // toneBalance
+        { 0, 0x11,   0 },   // keyboardMode
+        { 0, 0x12,   0 },   // keyboardPart
+        { 0, 0x13,  53 },   // splitPoint
+        { 0, 0x14,   2 },   // splitArpeggio
+        { 0, 0x15,   2 },   // modulationDestination
+        { 0, 0x16,   2 },   // dBeamDestination
+        { 0, 0x17,   2 },   // pitchBendDestination
+        { 0, 0x18,   2 },   // expressionDestination
+        { 0, 0x19,   0 },   // activeExpressionSwitch
+        { 0, 0x1A,   0 },   // arpeggioSwitch
+        { 0, 0x1B,   0 },   // arpeggioHold
+        { 0, 0x1C,   0 },   // delaySwitch
+        { 0, 0x1D,   0 },   // reverbSwitch
+        { 0, 0x1E,   0 },   // modulationAssign
+        { 0, 0x1F,   7 },   // dBeamAssign
+        { 0, 0x20,   1 },   // dBeamPolarity
+        { 1, 0x00,   0 },   // oscType[0]
+        { 1, 0x01,   0 },   // oscPitchWideSwitch[0]
+        { 1, 0x02,  64 },   // oscCoarseTune[0]
+        { 1, 0x03,  64 },   // oscFineTune[0]
+        { 1, 0x04,  64 },   // oscPulseWidth[0]
+        { 1, 0x05,  64 },   // oscPitchEnvDepth[0]
+        { 1, 0x06,   1 },   // oscType[1]
+        { 1, 0x07,   0 },   // oscPitchWideSwitch[1]
+        { 1, 0x08,  64 },   // oscCoarseTune[1]
+        { 1, 0x09,  64 },   // oscFineTune[1]
+        { 1, 0x0A,  64 },   // oscPulseWidth[1]
+        { 1, 0x0B,  64 },   // oscPitchEnvDepth[1]
+        { 1, 0x0C,   0 },   // pitchEnvAttackTime
+        { 1, 0x0D,   0 },   // pitchEnvDecay
+        { 1, 0x0E,   0 },   // mixMODType
+        { 1, 0x0F,   1 },   // mixMODBalance
+        { 1, 0x10,   0 },   // mixMODLowFreq
+        { 1, 0x11,   1 },   // filterType
+        { 1, 0x12,   0 },   // filterSlope
+        { 1, 0x13, 127 },   // filterCutoffFrequency
+        { 1, 0x14,  64 },   // filterCutoffKeyfollow
+        { 1, 0x15,  64 },   // filterCutoffVelocitySens
+        { 1, 0x16,   0 },   // filterResonance
+        { 1, 0x17,   0 },   // filterEnvAttackTime
+        { 1, 0x18,   0 },   // filterDecayTime
+        { 1, 0x19, 127 },   // filterSustainLevel
+        { 1, 0x1A,   0 },   // filterReleaseTime
+        { 1, 0x1B,  64 },   // filterEnvDepth
+        { 1, 0x1C,   0 },   // ampOverdriveSwitch
+        { 1, 0x1D, 100 },   // ampOverdriveDepth
+        { 1, 0x1E, 127 },   // ampLevel
+        { 1, 0x1F,  72 },   // ampLevelVelocitySens
+        { 1, 0x20,  64 },   // ampPan
+        { 1, 0x21,   0 },   // ampEnvAttackTime
+        { 1, 0x22,   0 },   // ampEnvDecayTime
+        { 1, 0x23, 127 },   // ampEnvSustainLevel
+        { 1, 0x24,   0 },   // ampEnvReleaseTime
+        { 1, 0x25,  20 },   // delayDepth
+        { 1, 0x26,  20 },   // reverbDepth
+        { 1, 0x27,   0 },   // lfoType[0]
+        { 1, 0x28,  92 },   // lfoRate[0]
+        { 1, 0x29,   0 },   // lfoTempoSyncSwitch[0]
+        { 1, 0x2A,  17 },   // lfoTempoSyncNote[0]
+        { 1, 0x2B,   0 },   // lfoFadeTime[0]
+        { 1, 0x2C,   0 },   // lfoKeyTrigger[0]
+        { 1, 0x2D,   2 },   // lfoDestination1[0]
+        { 1, 0x2E,  64 },   // lfoDepth1[0]
+        { 1, 0x2F,   2 },   // lfoDestination2[0]
+        { 1, 0x30,  64 },   // lfoDepth2[0]
+        { 1, 0x31,   0 },   // lfoType[1]
+        { 1, 0x32,  92 },   // lfoRate[1]
+        { 1, 0x33,   0 },   // lfoTempoSyncSwitch[1]
+        { 1, 0x34,  17 },   // lfoTempoSyncNote[1]
+        { 1, 0x35,   0 },   // lfoFadeTime[1]
+        { 1, 0x36,   0 },   // lfoKeyTrigger[1]
+        { 1, 0x37,   2 },   // lfoDestination1[1]
+        { 1, 0x38,  64 },   // lfoDepth1[1]
+        { 1, 0x39,   2 },   // lfoDestination2[1]
+        { 1, 0x3A,  64 },   // lfoDepth2[1]
+        { 1, 0x3B,   2 },   // pitchBendRange
+        { 1, 0x3C,  64 },   // octaveShift
+        { 1, 0x3D,   0 },   // portamentoSwitch
+        { 1, 0x3E,  20 },   // portamentoTime
+        { 1, 0x3F,   0 },   // monoSoloSelect
+        { 3, 0x00,  64 },   // time
+        { 3, 0x01,  59 },   // feedback
+        { 3, 0x02,  17 },   // hfDamp
+        { 3, 0x03,   5 },   // modulationRate
+        { 3, 0x04,  10 },   // modulationDepth
+        { 4, 0x00,  64 },   // time
+        { 4, 0x01,  10 },   // preDelay
+        { 4, 0x02,   7 },   // size
+        { 4, 0x03,  19 },   // highCut
+        { 4, 0x04, 127 },   // density
+        { 4, 0x05, 127 },   // diffusion
+        { 4, 0x06,  19 },   // lfDampFrequency
+        { 4, 0x07,  36 },   // lfDampGain
+        { 4, 0x08,   0 },   // hfDampFrequency
+        { 4, 0x09,  36 },   // hfDampGain
+        { 5, 0x00,   5 },   // arpeggioGrid
+        { 5, 0x01,   5 },   // arpeggioDuration
+        { 5, 0x02,   2 },   // arpeggioMotif
+        { 5, 0x03,  64 },   // arpeggioOctaveRange
+        { 5, 0x04, 100 },   // arpeggioAccentRate
+        { 5, 0x05,   0 },   // arpeggioVelocity
+    };
+
+    for (const auto& entry : rolandDefaults)
+    {
+        // Tone defaults are declared once and apply to both Patch Tone blocks.
+        for (int block : entry.block == 1 ? std::vector<int> { 1, 2 }
+                                          : std::vector<int> { entry.block })
+        {
+            const int got = (int) packets[(std::size_t) block][11 + (std::size_t) entry.offset];
+            expect (got == entry.value,
+                    "INIT PATCH block " + std::to_string (block) + " offset "
+                        + std::to_string (entry.offset) + " is Roland's "
+                        + std::to_string (entry.value) + " (encoded "
+                        + std::to_string (got) + ")");
+        }
+    }
+}
+
+void testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch()
+{
+    septum::Patch patch = septum::initPatch();
+    patch.upper.lfo1.tempoSync = true;
+    patch.upper.lfo2.tempoSync = false;
+    patch.lower.lfo1.tempoSync = false;
+    patch.lower.lfo2.tempoSync = true;
+
+    const auto packets = septum::sysex::encodePatchToSysExPackets (patch);
+    // Patch Tone (1:Upper) is packet 1, (2:Lower) packet 2; the data begins at
+    // byte 11, after F0 41 dev 00 00 16 12 and the four address bytes.
+    const auto toneByte = [&packets] (std::size_t tone, std::size_t offset)
+    {
+        return (int) packets[tone][11 + offset];
+    };
+    expect (toneByte (1, 0x29) == 1, "UPPER LFO1 TEMPO SYNC on encodes 1 at 00 29");
+    expect (toneByte (1, 0x33) == 0, "UPPER LFO2 TEMPO SYNC off encodes 0 at 00 33");
+    expect (toneByte (2, 0x29) == 0, "LOWER LFO1 TEMPO SYNC off encodes 0 at 00 29");
+    expect (toneByte (2, 0x33) == 1, "LOWER LFO2 TEMPO SYNC on encodes 1 at 00 33");
+
+    septum::Patch decoded = septum::initPatch();
+    for (const auto& packet : packets)
+        septum::sysex::decodeSysExMessage (packet.data(), packet.size(), decoded);
+    expect (decoded.upper.lfo1.tempoSync && ! decoded.upper.lfo2.tempoSync
+                && ! decoded.lower.lfo1.tempoSync && decoded.lower.lfo2.tempoSync,
+            "a byte of 1 decodes as TEMPO SYNC on");
+
+    // The measurement that settled it, as arithmetic: SYNC NOTE 2 is 8 whole
+    // notes, a whole note is 4 beats, so at 120 BPM one cycle is 16.0 s.
+    expectNear (1.0 / septum::mapping::lfoSyncHz (120, 2), 16.0, 1.0e-9,
+                "SYNC NOTE 2 at PATCH TEMPO 120 is a 16.0 s cycle");
+}
+
+// [settled] Roland's own SH-201 Editor prints the reverb PRE DELAY table its
+// Resource.xml calls `delayTime0-100Table`: 126 entries in four regular runs
+// rather than the straight line 0-125 -> 0.0-100.0 ms implies. Read linearly
+// raw 50 is 40 ms; the unit puts it at 5.
+void testReverbPreDelayFollowsTheEditorTable()
+{
+    using septum::mapping::reverbPreDelayMs;
+    const std::array<std::pair<int, double>, 11> printed {
+        { { 0, 0.0 }, { 1, 0.1 }, { 25, 2.5 }, { 49, 4.9 }, { 50, 5.0 },
+          { 55, 7.5 }, { 59, 9.5 }, { 60, 10.0 }, { 99, 49.0 }, { 100, 50.0 },
+          { 125, 100.0 } }
+    };
+    for (const auto& entry : printed)
+        expectNear (reverbPreDelayMs (entry.first), entry.second, 1.0e-9,
+                    "PRE DELAY raw " + std::to_string (entry.first) + " is "
+                        + std::to_string (entry.second) + " ms");
+
+    // Monotone and inside the buffer the reverb allocates for it.
+    for (int raw = 1; raw <= 125; ++raw)
+        expect (reverbPreDelayMs (raw) > reverbPreDelayMs (raw - 1)
+                    && reverbPreDelayMs (raw) <= 100.0,
+                "PRE DELAY rises at raw " + std::to_string (raw));
+}
+
+void testSysExBlockAddressesMatchTheAddressMap()
+{
+    const auto packets = septum::sysex::encodePatchToSysExPackets (septum::initPatch());
+    expect (packets.size() == septum::sysex::patchBlockCount,
+            "a patch is 22 blocks");
+
+    const auto addressOf = [] (const std::vector<std::uint8_t>& packet)
+    {
+        return ((std::uint32_t) packet[7] << 24) | ((std::uint32_t) packet[8] << 16)
+               | ((std::uint32_t) packet[9] << 8) | (std::uint32_t) packet[10];
+    };
+
+    expect (addressOf (packets[0]) == 0x10000000u, "Patch Common at 10 00 00 00");
+    expect (addressOf (packets[1]) == 0x10000100u, "Patch Tone (1:Upper) at 10 00 01 00");
+    expect (addressOf (packets[2]) == 0x10000200u, "Patch Tone (2:Lower) at 10 00 02 00");
+    expect (addressOf (packets[3]) == 0x10000300u, "Patch Delay at 10 00 03 00");
+    expect (addressOf (packets[4]) == 0x10000400u, "Patch Reverb at 10 00 04 00");
+    expect (addressOf (packets[5]) == 0x10000500u, "Patch Arpeggio Common at 10 00 05 00");
+    expect (addressOf (packets[6]) == 0x10000600u,
+            "Patch Arpeggio Pattern (Note 1) at 10 00 06 00");
+    expect (addressOf (packets[21]) == 0x10001500u,
+            "Patch Arpeggio Pattern (Note 16) at 10 00 15 00");
+
+    // The document's own worked RQ1 example ends a Temporary Patch request at
+    // 10 00 15 42, i.e. the last pattern block plus its 42H bytes.
+    const std::size_t lastBlockData = packets[21].size() - 13;
+    expect (lastBlockData == septum::sysex::sizeArpeggioPattern,
+            "the last block carries its documented 42H bytes (got "
+                + std::to_string (lastBlockData) + ")");
+}
+
+// ARPEGGIO VELOCITY = REAL means the velocity of the key the note came from,
+// including a second, harder press of a chord tone already held.
+void testRepressingAChordToneUpdatesItsVelocity()
+{
+    const double sampleRate = 44100.0;
+    const auto levelWithSecondPress = [&] (int secondVelocity)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.arpeggio.on = true;
+        patch.arpeggio.velocity = 0;            // REAL
+        patch.arpeggio.accent = 100;
+        patch.upper.levelVelocitySens = 63;     // so velocity is audible
+        septum::applyArpeggioStyle (patch, 0);
+        engine.setPatch (patch);
+        const auto take = renderScore (engine,
+                                       { { 0.0, true, 60, 30 },
+                                         { 0.05, true, 60, secondVelocity } },
+                                       2.0, sampleRate);
+        return take.rms ((std::size_t) (sampleRate * 0.5), take.left.size());
+    };
+    const double soft = levelWithSecondPress (30);
+    const double hard = levelWithSecondPress (127);
+    expect (hard > 1.3 * soft,
+            "a harder second press of a held chord tone is heard (soft "
+                + std::to_string (soft) + ", hard " + std::to_string (hard) + ")");
+}
+
 } // namespace
 
 int main()
@@ -3296,7 +5406,6 @@ int main()
     testOverdriveSwitchesBackInFromLiveState();
     testSplitAndDualVoicing();
     testControllerDestinations();
-    testDBeam();
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();
@@ -3312,6 +5421,7 @@ int main()
     testArpeggioOctaveRange();
     testArpeggiatorEdgeCases();
     testTriangleIsBandLimited();
+    testResonanceIsMonotoneAndNeverClips();
     testSelfOscillationBounded();
     testBandPassGainsWithResonance();
     testEnvelopesShapeLoudness();
@@ -3328,10 +5438,43 @@ int main()
     testOverdriveDoesNotFoldAtTheHostRate();
     testOverdriveKeepsCleanVoicesAligned();
     testAllNotesOffAndReset();
+    testAllNotesOffLeavesThePedalsHolding();
     testSysExChecksumAndProtocol();
     testSysExPatchSerializationRoundtrip();
-    testRolandGaloisLfsrNoise();
-    testAsymmetricOverdriveHarmonics();
+    testAForeignSysExMessageDoesNotSplitAPatch();
+    testADt1WritesAtTheAddressItNames();
+    testNoiseIsWhiteAtEveryHostRate();
+    testNoiseKeepsTheTopOfItsBandAtEveryHostRate();
+    testNoiseLevelDoesNotFollowTheHostRate();
+    testFilterDoesNotDistortAtZeroResonance();
+    testTwentyFourDbPeakIsPinned();
+    testFilterEnvelopeReArmsOnAFreshVoice();
+    testRaisingSustainDoesNotStep();
+    testSustainMovedUnderASettledNoteWalks();
+    testLowFreqCrossesOverTheRegisteredTimeFromEveryPosition();
+    testTheTwoLfosDrawDifferentRandomValues();
+    testControlChangesDoNotStepTheOutput();
+    testASwitchChangedAgainMidCrossStaysContinuous();
+    testASwitchRetargetedMidCrossStillTakesTheRegisteredTime();
+    testSettledDampingTablesLandOnTheirFrequencies();
+    testOutputStageMatchesItsComponentValues();
+    testReverbTailSurvivesMono();
+    testPanCentreIsTheDocumentedCentre();
+    testFbOscIsTheSameSoundAtEveryHostRate();
+    testOverdriveIsTheDocumentedSymmetricClipper();
+    testArpeggioRoutingChangeAndNoteOffInOneBlock();
+    testStealingTakesTheLongestReleasedVoice();
+    testAllNotesOffKeepsTheOrderOfTailsAlreadyDecaying();
+    testSysExCarriesTheArpeggioGridAndTempo();
+    testPatchCommonMatchesTheAddressMap();
+    testSysExBlockAddressesMatchTheAddressMap();
+    testAllNotesOffDoesNotInterruptALatchedArpeggio();
+    testANoOpDt1LeavesThePatchAlone();
+    testADt1PastTheEndOfItsBlockIsRefused();
+    testInitPatchIsRolandsInitPatch();
+    testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch();
+    testReverbPreDelayFollowsTheEditorTable();
+    testRepressingAChordToneUpdatesItsVelocity();
     testCoupledDb24FilterResonanceStability();
 
     if (failures == 0)

@@ -13,6 +13,7 @@
 
 #include "SeptumPatch.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -35,6 +36,8 @@ inline constexpr int controlInterval = 8;   // samples per control tick (voiced)
 // --------------------------------------------------------------------------
 namespace mapping
 {
+    inline constexpr double pi = 3.14159265358979323846;
+
     // [voiced, OQ-08] CUTOFF 0-127 -> Hz, exponential over ten octaves.
     [[nodiscard]] inline double cutoffHz (double value) noexcept
     {
@@ -174,10 +177,19 @@ namespace mapping
         return depth * (5.0 / 63.0);
     }
 
-    // [voiced, OQ-11] DRIVE 0-127 -> pre-gain, up to +32 dB.
+    // [voiced, OQ-11] DRIVE 0-127 -> pre-gain, up to +32 dB, and the output
+    // compensation that follows the clipper. The exponent was the last bare
+    // number left in the render code; the contract already named it
+    // ("output-compensated, pre^-0.4"), so it belongs here with the gain it
+    // compensates.
     [[nodiscard]] inline double overdrivePreGain (int drive) noexcept
     {
         return std::pow (10.0, (drive / 127.0) * (32.0 / 20.0));
+    }
+    inline constexpr double overdriveCompensationExponent = -0.4;
+    [[nodiscard]] inline double overdriveCompensation (double preGain) noexcept
+    {
+        return std::pow (preGain, overdriveCompensationExponent);
     }
 
     // [voiced] The rate the OVERDRIVE shaper is evaluated at. The modelled
@@ -227,18 +239,118 @@ namespace mapping
         return best;
     }
 
+    // [voiced, OQ-01/OQ-03] The rate the NOISE source is generated at.
+    //
+    // One full-scale value per *host* sample is white to the host Nyquist, and
+    // a white sequence spreads its power over that whole band, so its audible
+    // level falls as the host rate rises: measured 3.06 dB quieter at 96 kHz
+    // and 6.02 dB at 192 kHz than at 44.1 kHz, against a SAW in the same patch
+    // that is rate-invariant to 0.04 dB. Flat and level are separate claims and
+    // only the first was being made — the same defect the OVERDRIVE and the
+    // FB OSC loop already carry a fixed reference rate to avoid, and the same
+    // reason: it is the character of the port rather than of the instrument.
+    //
+    // The three properties cannot all hold at once. A sequence flat to the host
+    // Nyquist whose audible level does not move needs a variance proportional
+    // to the host rate, which is unbounded. What a fixed-rate instrument does
+    // is the fourth option: its noise is flat across the audio band and simply
+    // has no content above its own Nyquist. So the source is drawn at the
+    // instrument's rate and interpolated up, which fixes the level without a
+    // gain constant — unity-gain half-band interpolation preserves the variance
+    // *and* the audio-band density, because it changes only where the same
+    // continuous-time signal is sampled.
+    //
+    // The instrument's own rate. Roland's driver readmes name one CoreAudio
+    // device for the SH-201, "Roland SH-201 44.1kHz", twice over three years,
+    // from a driver whose table carries six rates and composes the name as
+    // <device> <rate> — so the number is the instrument's, and the clock tree
+    // puts the engine on it (OQ-01, rate answered).
+    //
+    // It is used as a floor rather than a target because a power-of-two ladder
+    // cannot reach 44.1 kHz from every host rate: generating *below* the rate
+    // the instrument runs at would band-limit the noise harder than the
+    // hardware ever does, so the ladder stops at the last factor that does not.
+    // A 48 kHz host therefore generates at 48 rather than 44.1, 9 % high, which
+    // is 0.37 dB of density — the size of the approximation, stated rather than
+    // hidden.
+    inline constexpr double noiseInternalRateFloorHz = 44100.0;
+
+    // The largest power-of-two decimation whose internal rate stays at or above
+    // that floor: none at 44.1/48 kHz, 2x at 88.2/96 kHz, 4x at 176.4/192 kHz.
+    // Like the OVERDRIVE's ladder this stops at 4 because the interpolator
+    // stops at 4 — two half-band stages and nothing beyond them — so a host
+    // rate that is not a power of two above 44.1 kHz generates above the floor
+    // rather than at it.
+    [[nodiscard]] inline int noiseDecimation (double hostRateHz) noexcept
+    {
+        int factor = 1;
+        for (int candidate : { 2, 4 })
+            if (hostRateHz / candidate >= noiseInternalRateFloorHz - 1.0e-9)
+                factor = candidate;
+        return factor;
+    }
+
     // [voiced, OQ-12] Delay TIME 0-127 -> seconds, 1 ms to 1.3 s.
     [[nodiscard]] inline double delaySeconds (double value) noexcept
     {
         return 0.001 * std::pow (1300.0, value / 127.0);
     }
 
-    // [settled] Reverb PRE DELAY: the address map stores 0-125 and the
-    // manual prints 0.0-100.0 ms (OM p. 65). One place, so the panel and the
-    // reverb cannot disagree about what a raw value means.
+    // [settled realisation] One-pole coefficient whose -3 dB point lands on
+    // `cornerHz` — for the documented damping tables and the analog output
+    // stage's RC poles, whose frequencies Roland publishes.
+    //
+    // The obvious `1 - exp(-2*pi*fc/fs)` is the *time-constant* one-pole, and
+    // its -3 dB point is not fc: at 44.1 kHz the settled 8 kHz HF-DAMP entry
+    // came out at 9055 Hz and the 12.5 kHz HIGH CUT entry never reached -3 dB
+    // at all. Storing a published frequency and then building a filter a
+    // quarter of an octave away from it spends the settled evidence without
+    // delivering it. Solving |H(w0)| = 1/sqrt(2) for the pole gives
+    // p = c - sqrt(c^2 - 1) with c = 2 - cos(w0), which is exact at every
+    // rate — standard first-order algebra, no fitted number.
+    //
+    // A corner at or above Nyquist has no -3 dB point to hit, so there the
+    // coefficient is chosen to match the analog magnitude at Nyquist instead;
+    // both ends (DC and Nyquist) are then exact and the shape between them is
+    // a first-order curve either way. `cornerHz <= 0` is BYPASS.
+    [[nodiscard]] inline double onePoleAtCorner (double cornerHz,
+                                                 double sampleRateHz) noexcept
+    {
+        if (cornerHz <= 0.0)
+            return 1.0;
+        const double fs = std::max (1.0, sampleRateHz);
+        const double w = 2.0 * pi * cornerHz / fs;
+        if (w < pi)
+        {
+            const double c = 2.0 - std::cos (w);
+            return 1.0 - (c - std::sqrt (c * c - 1.0));
+        }
+        const double nyquist = 0.5 * fs;
+        const double magnitude =
+            1.0 / std::sqrt (1.0 + (nyquist / cornerHz) * (nyquist / cornerHz));
+        return 2.0 * magnitude / (1.0 + magnitude);
+    }
+
+    // [settled] Reverb PRE DELAY: the address map stores 0-125 and the manual
+    // prints 0.0-100.0 ms (OM p. 65), which this read linearly - 0.8 ms per
+    // step. Roland's own SH-201 Editor prints the table, and it is not linear:
+    // `delayTime0-100Table` in its Resource.xml is 126 entries in four regular
+    // runs, 0.1 ms to 4.9, then 0.5 ms steps to 9.5, then 1 ms steps to 49,
+    // then 2 ms steps to 100. So the knob spends its first two fifths inside
+    // the first five milliseconds, where a pre-delay does its audible work,
+    // and the linear reading put raw 50 at 40 ms where the unit puts it at 5.
+    // Written as the four runs rather than as 126 literals: the table is
+    // regular and the arithmetic is the document.
     [[nodiscard]] inline double reverbPreDelayMs (int raw) noexcept
     {
-        return std::clamp (raw, 0, 125) * (100.0 / 125.0);
+        const int value = std::clamp (raw, 0, 125);
+        if (value < 50)
+            return 0.1 * value;
+        if (value < 60)
+            return 5.0 + 0.5 * (value - 50);
+        if (value < 100)
+            return 10.0 + 1.0 * (value - 60);
+        return 50.0 + 2.0 * (value - 100);
     }
 
     // [voiced, OQ-12] Reverb TIME 0-127 with SIZE 0-7 -> RT60 seconds.
@@ -281,7 +393,24 @@ namespace mapping
     // the output level that keeps a full-feedback oscillator in the same
     // loudness range as the other waves.
     inline constexpr double fbOscDelayRatio = 0.5;      // half the period
+    // The in-loop damping, expressed at a reference rate rather than per
+    // sample. As a bare per-sample coefficient its -3 dB point was 0.134 x fs,
+    // so it sat at 5.9 kHz at 44.1 kHz and 25.8 kHz at 192 kHz — and it is
+    // inside the feedback loop, so it set the loop gain at every comb
+    // resonance: the same patch measured 3 dB louder and a quarter of an
+    // octave brighter at 96 kHz than at 44.1 kHz. That is the character of the
+    // port rather than of the instrument, which the contract rules out for the
+    // overdrive in the same words. The constant is unchanged and 44.1 kHz is
+    // bit-identical; every other host rate now matches it.
     inline constexpr double fbOscLoopDamping = 0.55;
+    inline constexpr double fbOscLoopDampingReferenceRateHz = 44100.0;
+    [[nodiscard]] inline double fbOscLoopDampingCoeff (double sampleRateHz) noexcept
+    {
+        const double fs = std::max (1.0, sampleRateHz);
+        return 1.0
+               - std::pow (1.0 - fbOscLoopDamping,
+                           fbOscLoopDampingReferenceRateHz / fs);
+    }
     inline constexpr double fbOscLoopTrim = 0.995;
     inline constexpr double fbOscOutputGain = 0.6;
 
@@ -338,17 +467,37 @@ namespace mapping
     inline constexpr double reverbInputInjection = 0.35;
     inline constexpr double reverbWetReturn = 0.8;
 
-    // [voiced, OQ-08] The -24 dB path's second stage. In the Roland SH-201,
-    // resonance couples into the second stage to produce the authentic 4-pole
-    // resonant bite and passband shaping.
-    [[nodiscard]] inline double filterSecondStageDamping (double k1) noexcept
-    {
-        return std::max (0.12, 0.40 * k1 + 0.35);
-    }
+    // [voiced, OQ-08] The -24 dB path's second stage. The first stage carries
+    // the resonance; the second is a fixed, gentler 2-pole that adds the extra
+    // 12 dB/oct. Whether the hardware resonates on one stage or both is open,
+    // and OQ-08 names the capture that would settle it. A coupled second stage
+    // fitted as `max(0.12, 0.40*k1 + 0.35)` shipped briefly: three constants
+    // no measurement produced, under a comment asserting that the SH-201
+    // couples resonance into its second stage, which no source in the
+    // contract states. It moved the -24 dB resonant peak by up to 5 dB and
+    // invalidated the measurement table Step 7 published.
+    inline constexpr double filterSecondStageDamping = 1.2;
     // [voiced, OQ-08] Where the resonant stage's integrator states stop
     // growing, so self-oscillation is bounded as the manual's "may not stop at
     // all" implies rather than divergent.
-    inline constexpr double filterStateLimit = 1.5;
+    //
+    // It has to sit above every state an *unresonant* filter reaches, or it
+    // stops being a bound on runaway and becomes a waveshaper on the signal
+    // path. Measured at RESONANCE 0 with both oscillators at unity, LEVEL and
+    // velocity at maximum and LOW FREQ BOOST, across all eight waveforms,
+    // three filter types, both slopes and CUTOFF 0..127, the largest state is
+    // 6.15 (NOISE at CUTOFF 127; SQU/PW-SQU 5.02, SAW 4.70, SINE 4.82, TRI
+    // 4.41, FB-OSC 2.83, SUPER-SAW 2.59). Eight is that with headroom.
+    //
+    // It was 1.5, which is under a third of what an ordinary patch produces —
+    // hence the -27 dB THD at RESONANCE 0 that Step 30 measured. The repair
+    // there was to run the limiter only where the stage's own damping has
+    // gone non-positive, but `resonanceDamping` crosses zero at RESONANCE
+    // 122.07, so 0-122 ran with no bound at all: the level ran away from
+    // about 118, pinned on the output limiter at 121-122, and fell 17.8 dB at
+    // 123. Raising the knee is what lets the limiter run everywhere, which is
+    // what makes the knob monotone.
+    inline constexpr double filterStateLimit = 8.0;
 
     // [voiced] The output stage's final safety knee: transparent below this,
     // saturating above, so a reasonably driven patch never touches it and an
@@ -399,20 +548,25 @@ namespace mapping
     // voice takes the input over, and unmuted when it stops.
     inline constexpr double externalMonitorFadeSeconds = 0.005;
 
-    // [settled] One grid section's length in seconds. The manual gives the
-    // divisions; the shuffle *amounts* are voiced (OQ-15) — Light and Heavy
-    // are named, not measured. A shuffled pair keeps its total length and
-    // moves the boundary inside it, so the beat never drifts.
+    // [settled divisions, voiced amounts, OQ-15] Where the boundary inside a
+    // shuffled pair falls. The manual gives the divisions and names Light and
+    // Heavy; it does not say how much either one is, so these two numbers are
+    // the project's own and were the last bare ones left inside a function
+    // this file tagged `[settled]` — a tag that overstated them. A shuffled
+    // pair keeps its total length and moves the boundary inside it, so the
+    // beat never drifts whatever the amounts turn out to be.
+    inline constexpr double arpeggioShuffleLight = 0.58;
+    inline constexpr double arpeggioShuffleHeavy = 0.66;
     [[nodiscard]] inline double arpeggioShuffleRatio (ArpeggioGrid grid) noexcept
     {
         switch (grid)
         {
             case ArpeggioGrid::EighthLight:
             case ArpeggioGrid::SixteenthLight:
-                return 0.58;
+                return arpeggioShuffleLight;
             case ArpeggioGrid::EighthHeavy:
             case ArpeggioGrid::SixteenthHeavy:
-                return 0.66;
+                return arpeggioShuffleHeavy;
             case ArpeggioGrid::Quarter:
             case ArpeggioGrid::Eighth:
             case ArpeggioGrid::Twelfth:
@@ -465,9 +619,19 @@ namespace mapping
         return 0.80;
     }
 
-    // [voiced, OQ-15] The fixed velocity ACCENT 0 collapses the style's
-    // programmed pattern onto.
-    inline constexpr double arpeggioFlatVelocity = 100.0;
+    // [voiced, OQ-15] The reference played velocity the style's programmed
+    // cell values are normalised against, so that ACCENT blends the played
+    // velocity toward the pattern rather than scaling it.
+    //
+    // It is *not* a floor, and the name it used to carry said it was. The
+    // manual's two ACCENT endpoints — at 100 "the arpeggiated notes will have
+    // the velocities that are programmed by the arpeggio style", at 0 "all
+    // arpeggiated notes will be sounded at a fixed velocity" — are reproduced
+    // only when ARPEGGIO VELOCITY is a fixed value; with VELOCITY = REAL,
+    // ACCENT 0 plays what you played and ACCENT 100 scales it. Whether the
+    // hardware's ACCENT overrides REAL is exactly what OQ-15's MIDI capture
+    // would settle, so the arithmetic is not changed ahead of it.
+    inline constexpr double arpeggioCellReferenceVelocity = 100.0;
 
     // [settled] Where a style's note row lands on the keys held down.
     //
@@ -669,6 +833,94 @@ inline constexpr std::array<double, 3> halfBandInnerTaps {
     0.03358705057227105, -0.08268763122280455, 0.30989245062299142
 };
 
+// NOISE, generated at the instrument's rate and interpolated to the host's.
+//
+// `mapping::noiseDecimation` carries the argument for why. The mechanics: one
+// value is drawn per *internal* sample and pushed through as many half-band
+// interpolators as the ladder asks for, which yields `factor` host-rate samples
+// at a time; `next` hands them out one per call. At 44.1 and 48 kHz the factor
+// is one and the draw is returned untouched, so those rates render exactly what
+// they rendered before.
+struct NoiseSource
+{
+    int factor { 1 };
+    HalfBandStage outer {}, inner {};
+    std::array<double, 4> pending {};
+    int pendingIndex { 0 };
+
+    void prepare (int decimation) noexcept
+    {
+        factor = decimation;
+        outer.configure (halfBandOuterTaps.data(),
+                         static_cast<int> (halfBandOuterTaps.size()));
+        inner.configure (halfBandInnerTaps.data(),
+                         static_cast<int> (halfBandInnerTaps.size()));
+        clear();
+    }
+
+    void clear() noexcept
+    {
+        outer.clear();
+        inner.clear();
+        pending.fill (0.0);
+        pendingIndex = 0;
+    }
+
+    // xorshift32. It replaced a 23-bit Galois LFSR whose *state* was read as
+    // the sample: successive states of a Galois LFSR are not independent
+    // (v(n+1) = 0.5 v(n) + 0.5 b(n)), so that wave was a one-pole-filtered bit
+    // stream — 10.9 dB darker across the band at 44.1 kHz and 1.1 dB at
+    // 192 kHz, which made the timbre a property of the user's interface rather
+    // than of the instrument. Its comment also named a Roland polynomial no
+    // document in the contract's source list settles.
+    [[nodiscard]] static double draw (std::uint32_t& rng) noexcept
+    {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return (rng >> 8) * (1.0 / 8388607.5) - 1.0;
+    }
+
+    [[nodiscard]] double next (std::uint32_t& rng) noexcept
+    {
+        if (factor == 1)
+            return draw (rng);
+
+        if (pendingIndex == 0)
+        {
+            if (factor == 2)
+            {
+                outer.upsample (draw (rng), pending[0], pending[1]);
+            }
+            else
+            {
+                // The sharp stage goes first, where the band it has to keep
+                // clean is full. A drawn value occupies everything up to the
+                // internal Nyquist, so the first interpolation is the one whose
+                // image lands hard against the signal; by the second the
+                // content fills only a quarter of the band and the shorter
+                // filter has an octave of room. That is the order the OVERDRIVE
+                // climbs in too — `outer` is designed against the rate whose
+                // band is full and `inner` against the one where "the images
+                // sit an octave further out".
+                //
+                // Reversed, as this was, the first stage ran the short filter:
+                // at 176.4 kHz its passband edge sat at 15.9 kHz rather than
+                // 19.0, against 10 dB less stopband, so the high-rate NOISE was
+                // both darker and less image-suppressed than the fixed-rate
+                // source the ladder exists to deliver.
+                double half0 = 0.0, half1 = 0.0;
+                outer.upsample (draw (rng), half0, half1);
+                inner.upsample (half0, pending[0], pending[1]);
+                inner.upsample (half1, pending[2], pending[3]);
+            }
+        }
+        const double value = pending[static_cast<std::size_t> (pendingIndex)];
+        pendingIndex = (pendingIndex + 1) % factor;
+        return value;
+    }
+};
+
 // The AMP section's OVERDRIVE, evaluated at a fixed internal rate.
 //
 // Inside the oversampled loop the `tanh` shaper is evaluated with first-order
@@ -722,10 +974,6 @@ public:
     // System-common controls (documented ranges).
     // The external-input path is a system setting, not patch data (OM p. 49-51).
     void setExternalInput (const ExternalInput& settings) noexcept;
-    // The D Beam controller. Its settings are patch or system data; where the
-    // player's hand is, is neither, so it arrives here like the external
-    // input's panel block does.
-    void setDBeam (const DBeam& beam) noexcept;
     [[nodiscard]] const ExternalInput& externalInput() const noexcept
     {
         return external_;
@@ -781,9 +1029,90 @@ private:
     enum class Part { Upper, Lower };
     static constexpr int partCount = 2;
 
+    // A crossfade across a switch's discrete positions that stays continuous
+    // when the switch moves again before the previous cross has finished.
+    //
+    // A single "position it came from" plus one fade scalar cannot: it holds
+    // exactly one outgoing signal, so a second change part way through either
+    // re-aims the destination while the fade is already non-zero, or — moving
+    // back to where it started — collapses the whole expression onto the
+    // source in one sample. Both step the output by however much had been
+    // mixed in, which is the discontinuity the cross exists to prevent.
+    // Keeping a weight per position holds the whole mixture instead, and no
+    // weight ever moves faster than the fade rate.
+    template <int positionCount>
+    struct SwitchCrossfade
+    {
+        std::array<double, static_cast<std::size_t> (positionCount)> weight {};
+
+        void snapTo (int position) noexcept
+        {
+            weight.fill (0.0);
+            weight[clampPosition (position)] = 1.0;
+        }
+
+        void advance (int position, double step) noexcept
+        {
+            const auto selected = clampPosition (position);
+            double outgoing = 0.0;
+            for (std::size_t i = 0; i < weight.size(); ++i)
+                if (i != selected)
+                    outgoing += weight[i];
+            if (! (outgoing > 0.0))
+            {
+                snapTo (selected);
+                return;
+            }
+            // The selected weight takes `move`, and the weights it is taking
+            // it from give it up in proportion to what they still hold. So
+            // their sum falls by exactly `move`, none of them falls by more
+            // than `move` (each gives up `w·move/outgoing`, and `w <=
+            // outgoing`), and the total stays at one without a correction.
+            //
+            // Stepping every weight independently and renormalising afterwards
+            // was wrong, and only when more than one weight was on its way out:
+            // with two of them the sum came to `1 - step` rather than 1, so
+            // dividing by it handed the selected weight a second step. A fade
+            // retargeted half way through — LPF to HPF to BPF — finished in
+            // 3.47 ms against the 5.01 ms the same switch takes when it is
+            // moved once, and the selected weight moved 1.99x the registered
+            // rate in a single sample.
+            const double move = std::min (step, outgoing);
+            const double scale = (outgoing - move) / outgoing;
+            for (std::size_t i = 0; i < weight.size(); ++i)
+                if (i != selected)
+                    weight[i] *= scale;
+            weight[selected] = 1.0 - (outgoing - move);
+        }
+
+        // Sum a per-position signal against the weights. Every position but
+        // the one being crossed to and from carries a zero weight, so this
+        // costs one multiply-add per live position, not per position.
+        template <typename Response>
+        [[nodiscard]] double mix (Response&& response) const noexcept
+        {
+            double out = 0.0;
+            for (std::size_t i = 0; i < weight.size(); ++i)
+                if (weight[i] > 0.0)
+                    out += weight[i] * response (static_cast<int> (i));
+            return out;
+        }
+
+    private:
+        [[nodiscard]] static std::size_t clampPosition (int position) noexcept
+        {
+            return static_cast<std::size_t> (
+                std::clamp (position, 0, positionCount - 1));
+        }
+    };
+
     struct Envelope
     {
         enum class Stage { Idle, Attack, Decay, Sustain, Release };
+        // Where a decay counts as arrived. Shared by the Decay branch's exit
+        // test and by `configure`'s re-entry test so the two cannot disagree
+        // about whether a level and its sustain are the same number.
+        static constexpr double settled = 1.0e-4;
         Stage stage { Stage::Idle };
         double level { 0.0 };
         double attackRate { 0.0 };   // level per sample while attacking
@@ -825,7 +1154,14 @@ private:
         double randomTo { 0.0 };
         double fadeLevel { 1.0 };
         bool primed { false };
+        // S&H and RANDOM draw from here. Seeded per LFO in prepare(), because
+        // one shared default made all four of a patch's LFOs — both tones,
+        // both slots — walk the same sequence: two S&H modulators at the same
+        // rate produced bit-identical output, which is the one thing two
+        // random modulators must not do. Fixed constants rather than a clock,
+        // so a render stays reproducible.
         std::uint32_t rng { 0x9e3779b9u };
+        void seed (std::uint32_t value) noexcept { rng = value | 1u; }
 
         void restart (bool resetFade) noexcept;
         double nextRandomValue() noexcept;
@@ -846,15 +1182,33 @@ private:
         std::array<double, 7> superPhases {};
         std::vector<float> comb;      // FB-OSC feedback line
         int combWrite { 0 };
+        // How much of that line holds anything. Writes walk it from zero
+        // upward and wrap, so whatever is in it is always a prefix, and a
+        // voice that has never run an FB OSC has a prefix of nothing. Every
+        // non-legato note-on used to zero both oscillators' whole lines
+        // whatever waveform they were set to -- 2 x 3095 floats at 44.1 kHz
+        // and 2 x 13448 at 192 kHz, per voice, inside the render callback.
+        int combTouched { 0 };
         double combState { 0.0 };     // in-loop damping memory
         double hpfX1 { 0.0 }, hpfX2 { 0.0 }, hpfY1 { 0.0 }, hpfY2 { 0.0 };
+        // Per oscillator rather than per voice: the interpolator's ladder is a
+        // rate, so two oscillators both set to NOISE cannot share one chain
+        // without driving it at twice the host rate. The draws still come off
+        // the voice's one generator, so at a factor of one the two are exactly
+        // the interleaved stream they have always been.
+        NoiseSource noise {};
 
         void clearRuntime() noexcept
         {
             combWrite = 0;
             combState = 0.0;
             hpfX1 = hpfX2 = hpfY1 = hpfY2 = 0.0;
-            std::fill (comb.begin(), comb.end(), 0.0f);
+            const auto touched =
+                std::min (static_cast<std::size_t> (std::max (0, combTouched)),
+                          comb.size());
+            std::fill (comb.begin(),
+                       comb.begin() + static_cast<std::ptrdiff_t> (touched), 0.0f);
+            combTouched = 0;
         }
     };
 
@@ -870,13 +1224,24 @@ private:
         int note { -1 };
         double velocity { 0.0 };
         bool held { false };          // key (or pedal) still down
-        std::uint32_t age { 0 };
+        std::uint32_t age { 0 };          // when it was triggered
+        // When it entered release. Voice stealing takes the longest-*released*
+        // voice, which trigger order does not tell you: a note held from the
+        // start and let go last has the smallest `age` and the freshest tail.
+        std::uint32_t releaseAge { 0 };
 
         OscState osc1 {}, osc2 {};
         PitchEnvelope pitchEnv {};
         Envelope filterEnv {}, ampEnv {};
         SvfStage filter1 {}, filter2 {};
         double shelfState { 0.0 };
+        // How much of the shelf's output is currently added: crossed between
+        // the three LOW FREQ positions rather than switched. A weight per
+        // position, like the filter's TYPE, so the cross takes the registered
+        // fade time whichever two positions it runs between — crossing the
+        // *depth* instead made the duration depend on how far apart the two
+        // endpoints happened to be.
+        SwitchCrossfade<3> lowFreqMix {};
 
         double glidePitch { 0.0 };    // current portamento pitch in note units
         double targetPitch { 0.0 };
@@ -891,7 +1256,19 @@ private:
         // sample at a time, so a control tick never steps the coefficient.
         double filterG { 0.1 }, filterK { 2.0 };
         double filterGTarget { 0.1 }, filterKTarget { 2.0 };
+        // TYPE and SLOPE are crossed, not thrown. TYPE has four positions and
+        // is automatable, so it carries a weight each; SLOPE has two, and a
+        // single scalar re-aimed mid-walk is continuous.
+        SwitchCrossfade<4> filterTypeMix {};
+        double filterSlopeFade { 1.0 };
+        // The amp gain at the start of the control tick, and where it must
+        // arrive by its end. Walked one sample at a time exactly as the
+        // filter coefficients are: LEVEL, the velocity offset and an LFO on
+        // the AMP destination all land here, and an S&H or SQR LFO's edge
+        // stepped the whole tick's gain in one sample.
         double ampGainL { 0.0 }, ampGainR { 0.0 };
+        double ampGainLTarget { 0.0 }, ampGainRTarget { 0.0 };
+        double ampGainLSlewed { 0.0 }, ampGainRSlewed { 0.0 };
         BiquadCoeffs superHpf1 {}, superHpf2 {};
         OverdriveStage overdrive {};
         std::uint32_t noiseRng { 0x1234567u };
@@ -1020,14 +1397,6 @@ private:
     {
         return part == Part::Upper ? patch_.upper : patch_.lower;
     }
-    // Rebuilds `patch_` and `external_` from the raw pair plus the beam.
-    void applyDBeam();
-    // How far the beam bends the pitch of a part, in semitones, and how much
-    // it scales its gain — the PITCH and EXPRESS buttons, which polarity does
-    // not touch.
-    [[nodiscard]] double dBeamPitchSemitones (Part part) const noexcept;
-    [[nodiscard]] double dBeamGain (Part part) const noexcept;
-
     ToneRuntime& toneRuntime (Part part) noexcept
     {
         return tones_[part == Part::Upper ? 0 : 1];
@@ -1035,6 +1404,9 @@ private:
     [[nodiscard]] bool partSounds (Part part) const noexcept;
     [[nodiscard]] bool keyStillDown (const Voice& voice) noexcept;
     void releaseIfNoPedalHolds (Voice& voice) noexcept;
+    // The one place a voice enters release, so `releaseAge` is stamped once
+    // per release rather than once per sweep over the voice array.
+    void beginRelease (Voice& voice) noexcept;
     [[nodiscard]] int partVoiceLimit() const noexcept;
     void startNoteForPart (Part part, int note, int velocity);
     void releaseNoteForPart (Part part, int note);
@@ -1053,7 +1425,16 @@ private:
     [[nodiscard]] bool arpeggioDrives (Part part) const noexcept;
     void arpeggioAddKey (Part part, int note, int velocity);
     void arpeggioRemoveKey (Part part, int note);
+    // Whether a still-running arpeggiator is currently gating this note on
+    // this part — its own note, not a key. All Notes Off has to know: the
+    // keys come up, but a chord ARPEGGIO HOLD has latched keeps playing, and
+    // the note it has open at that instant is not a key that was released.
+    [[nodiscard]] bool arpeggioIsSounding (Part part, int note) const noexcept;
     void arpeggioStopPart (Part part);
+    // Notices a part crossing the arpeggiator's boundary. Called wherever a
+    // key event or a render can observe the crossing, not only from the
+    // render, because a host can land both at the same sample position.
+    void syncArpeggioRouting();
     void handleArpeggioRouting (Part part, bool nowDriven);
     void advanceArpeggiator (int samples);
     void arpeggioFireStep();
@@ -1062,22 +1443,11 @@ private:
                          const float* delaySendL, const float* delaySendR,
                          const float* reverbSendL, const float* reverbSendR,
                          float* outL, float* outR, int samples);
-    void updateEffectCoefficients();
     [[nodiscard]] double noteToHz (double note) const noexcept;
     [[nodiscard]] std::uint32_t nextRandom() noexcept;
 
     // -- state -------------------------------------------------------------
-    // The patch the player edited, and the patch the engine renders: the
-    // D Beam's ASSIGN mode moves one parameter of the second away from the
-    // first, "just as if you had moved the knob" (OM p. 21), so every read in
-    // the render code goes through `patch_` and only `setPatch` writes
-    // `rawPatch_`.
-    Patch rawPatch_ {};
     Patch patch_ {};
-    DBeam dBeam_ {};
-    // The beam's travel, 0 at rest, and its sign under D BEAM POLARITY. Held
-    // here so the render code does not re-derive it per voice.
-    double dBeamTravel_ { 0.0 };
     double sampleRate_ { 44100.0 };
     int maxBlock_ { 512 };
     int latencySamples_ { 0 };
@@ -1094,8 +1464,6 @@ private:
     // EXPRESSION reaches the tone(s) EXPRESSION DESTINATION names, so it is
     // carried per tone and smoothed there rather than in the master chain.
     std::array<double, 2> smoothedExpression_ { 1.0, 1.0 };
-    // The D Beam's EXPRESS gain, per tone, on the same smoother.
-    std::array<double, 2> smoothedDBeamGain_ { 1.0, 1.0 };
     double partLevel_ { 1.0 };
     double partPan_ { 0.0 };
     bool hold_ { false };
@@ -1128,11 +1496,9 @@ private:
     double delayModPhase_ { 0.0 };
     Reverb reverb_ {};
     double delayTimeSmoothed_ { 0.0 };
-    double reverbFeedback_ { 0.0 };
 
     // External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER on the direct
     // monitor path, and the pre-filter mono sum feeding any EXT-IN oscillator.
-    ExternalInput rawExternal_ {};
     ExternalInput external_ {};
     std::vector<float> externalDirectL_, externalDirectR_, externalMono_;
     SvfStage audioFilter1_[2] {}, audioFilter2_[2] {};
@@ -1152,8 +1518,7 @@ private:
     double centerCancelFade_ { 0.0 };        // 0 through, 1 cancelled
     double audioFilterOnFade_ { 0.0 };       // 0 dry, 1 filtered
     double audioFilterSlopeFade_ { 0.0 };    // 0 = -12 dB, 1 = -24 dB
-    AudioFilterType audioFilterTypeFrom_ { AudioFilterType::Lpf };
-    double audioFilterTypeFade_ { 1.0 };     // 1 = fully on the current type
+    SwitchCrossfade<4> audioFilterTypeMix_ {};
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};

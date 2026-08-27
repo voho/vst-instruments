@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace septum
@@ -103,10 +104,14 @@ enum class ArpeggioMotif
 enum class SplitArpeggio { Upper, Lower, Both };
 
 // D BEAM ASSIGN (Patch Common offset 1F, 0-36), in the address map's own
-// order. "If you hold down the FILTER/ASSIGN button and move one of the top
-// panel knobs, the D Beam controller will have the same function as that
-// knob" (OM p. 21) — so every entry names a panel control, and the beam moves
-// it toward the end the knob was turned toward.
+// order.
+//
+// [settled range, no effect] The replica does not implement the D Beam: an
+// infrared distance sensor is a control surface, and a plug-in has no hand
+// above it to read. The four bytes the beam owns in the patch are still
+// patch data, so they are stored and round-tripped and change nothing that
+// sounds, exactly as PITCH WIDE does. This enumeration survives because it
+// is what bounds offset 1F.
 enum class DBeamAssign
 {
     Osc1Pitch, Osc1Detune, Osc1Pw,
@@ -125,35 +130,9 @@ enum class DBeamAssign
 inline constexpr int dBeamAssignCount = 37;
 
 // D BEAM POLARITY (Patch Common offset 20). "'+' and '-' will invert the
-// direction of change. * This will not change the direction of the change
-// that occurs when the PITCH button or EXPRESS button is lit" (OM p. 65), so
-// it applies to the ASSIGN mode alone.
+// direction of change" (OM p. 65). [settled range, no effect] — stored for
+// the same reason DBeamAssign is.
 enum class DBeamPolarity { Plus, Minus };
-
-// Which of the three buttons under the beam is lit. There is no byte for this
-// in the address map — it is panel state, not patch data — and each button
-// toggles: "Press the PITCH button once again so its light goes off". One
-// beam produces one value, so the replica makes the three exclusive and adds
-// the OFF the hardware reaches by unlighting whichever is lit (voiced,
-// OQ-16).
-enum class DBeamMode { Off, Pitch, Express, Assign };
-
-// The D Beam controller itself. Its *settings* are patch data (assign,
-// polarity, destination) or system data (sensitivity); what the player's hand
-// is doing is neither, so it lives out here with the external-input block.
-struct DBeam
-{
-    DBeamMode mode { DBeamMode::Off };
-    // The hand's height inside the usable range, with 0 the hand out of it:
-    // "Moving your hand outside this range will produce no effect" (OM p. 20).
-    int value { 0 };            // 0-127
-    // [settled range, no effect] D BEAM SENS 1-8 compensates the infrared
-    // sensor for "strong direct sunlight or strong artificial illumination"
-    // (OM p. 21). There is no sensor here and no sunlight to compensate for,
-    // so the replica stores it — a SysEx round trip has to be lossless — and
-    // it changes nothing that sounds, exactly as PITCH WIDE does.
-    int sens { 8 };             // 1-8
-};
 
 // CONTROLLER DESTINATION (Patch Common offsets 15, 16, 17, 18): which tone(s)
 // each of the four physical controllers reaches. "Selects the tone(s) to be
@@ -175,6 +154,15 @@ inline constexpr int arpeggioMaxRows = 16;
 // carrying the style's programmed velocity.
 inline constexpr signed char arpeggioRest = 0;
 inline constexpr signed char arpeggioTie = -1;
+// How a cell travels through SysEx. [settled] Patch Arpeggio Pattern gives
+// each step "Step<n> Data (0 - 128)" as a two-byte nibble (MIDI
+// Implementation v1.00 p. 5), so the wire field holds 129 values -- exactly
+// the number of states a cell has: a rest, 127 velocities and a tie.
+// [voiced] Which end of that range is the tie is not written down; 128 is
+// this project's choice, and because the counts match exactly nothing is
+// clipped either way.
+inline constexpr int arpeggioRestValue = 0;
+inline constexpr int arpeggioTieValue = 128;
 
 // "A series of data for basic arpeggio patterns and chord styles recorded in
 // the form of a grid consisting of a maximum of 32 steps x 16 pitches"
@@ -185,6 +173,14 @@ struct ArpeggioStyle
 {
     int endStep { 4 };   // 1-32
     std::array<std::array<signed char, arpeggioMaxRows>, arpeggioMaxSteps> cells {};
+    // [settled] Each of the sixteen rows carries an "Original Note (0 - 128)"
+    // of its own -- Patch Arpeggio Pattern (Note 1..16) offset 00, MIDI
+    // Implementation v1.00 p. 5. The document records the field but not what
+    // reads it, so this engine only stores it: a patch dumped from hardware
+    // survives a load and a re-save intact, and the PHRASE motif keeps the
+    // voiced reading recorded under OQ-15. Nothing in the shipped styles sets
+    // it.
+    std::array<int, arpeggioMaxRows> originalNote {};
 
     [[nodiscard]] signed char cell (int step, int row) const noexcept
     {
@@ -368,20 +364,20 @@ struct Patch
     bool delayOn { false };
     bool reverbOn { false };
     ModulationAssign modulationAssign { ModulationAssign::Osc1AndOsc2 };
-    // Settled: which tone(s) each controller reaches (OM p. 65). The D Beam's
-    // destination arrives with the D Beam itself.
+    // Settled: which tone(s) each controller reaches (OM p. 65).
     ToneDestination modulationDestination { ToneDestination::Both };
     ToneDestination pitchBendDestination { ToneDestination::Both };
     ToneDestination expressionDestination { ToneDestination::Both };
+    // The four Patch Common bytes the D Beam owns: destination (offset 16),
+    // ACTIVE EXPRESSION (19), assign (1F) and polarity (20). The replica does
+    // not implement the beam — see DBeamAssign above — so all four are
+    // [settled range, no effect]: stored, saved and round-tripped through
+    // SysEx so a dump from a real unit survives the trip, and read by nothing
+    // that sounds. ACTIVE EXPRESSION is a modifier of the beam's EXPRESS
+    // button alone (OM p. 65) and no other controller on the instrument can
+    // drive it, so it is inert with the rest rather than re-pointed at one.
     ToneDestination dBeamDestination { ToneDestination::Both };
-    // Settled: what the D Beam's EXPRESS button does — "OFF: The D Beam
-    // controller will change the volume. ON: The D Beam controller will
-    // control Active Expression, which combines two tones" (OM p. 65).
     bool activeExpression { false };
-    // Settled: the beam's assigned target and the direction it moves it.
-    // FILTER-CUTOFF is where the manual's own description of the
-    // FILTER/ASSIGN button starts: "the brightness of the sound (cutoff
-    // frequency of the filter) will change".
     DBeamAssign dBeamAssign { DBeamAssign::FilterCutoff };
     DBeamPolarity dBeamPolarity { DBeamPolarity::Plus };
     ArpeggioParams arpeggio {};
@@ -393,7 +389,13 @@ struct Patch
 };
 
 // --------------------------------------------------------------------------
-// Settled value tables, quoted from the MIDI Implementation.
+// Settled value tables, quoted from the MIDI Implementation — and, since the
+// SH-201 Editor's `Resource.xml` was read, corroborated entry for entry by
+// Roland's own display tables: `lfoTempoSyncNoteTable`, `freq200-BypassTable`,
+// `hiCutTable`, `lfDampFreqTable`, `hfDampFreqTable` and `dampGainTable`. The
+// enumeration orders agree too — `oscWaveFormTable` (SAW, SQR, PW-SQR, TRI,
+// SIN, NOISE, FB-OSC, SUPER-SAW, EXT-IN), `lfoWaveFormTable` (TRI, SIN, SAW,
+// SQR, TRP, S&H, RANDOM), `arpeggioGridTable` and `arpeggioDurationTable`.
 // --------------------------------------------------------------------------
 
 // LFO TEMPO SYNC NOTE (0-19), in whole notes.
@@ -500,12 +502,6 @@ inline void clampToDocumentedRanges (TonePatch& tone) noexcept
     tone.portamentoTime = clampRaw (tone.portamentoTime, 0, 127);
 }
 
-inline void clampToDocumentedRanges (DBeam& beam) noexcept
-{
-    beam.value = clampRaw (beam.value, 0, 127);
-    beam.sens = clampRaw (beam.sens, 1, 8);
-}
-
 inline void clampToDocumentedRanges (ExternalInput& input) noexcept
 {
     input.inputVolume = clampRaw (input.inputVolume, 0, 127);
@@ -547,6 +543,8 @@ inline void clampToDocumentedRanges (Patch& patch) noexcept
     patch.arpeggio.style.endStep =
         clampRaw (patch.arpeggio.style.endStep, 1, arpeggioMaxSteps);
     patch.arpeggio.styleIndex = std::max (0, patch.arpeggio.styleIndex);
+    for (auto& note : patch.arpeggio.style.originalNote)
+        note = clampRaw (note, 0, 128);
     patch.arpeggio.endStep = clampRaw (patch.arpeggio.endStep, 0, arpeggioMaxSteps);
 }
 
