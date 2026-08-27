@@ -1197,18 +1197,22 @@ Take renderExtendedTechniqueSolo()
     take.style(PlayStyle::Pinch);
     take.pluck(57, 1.0f, 0.95, 0.08);
 
-    // A descending slide resolves onto a final sustained note with a slower,
+    // A descending slide redirects just before its abandoned lower target and
+    // resolves continuously onto the final sustained note with a slower,
     // narrower vibrato, then the delay and room are allowed to decay.
     take.style(PlayStyle::Sustain);
     take.noteOn(76, 0.92f);
     take.wait(0.22);
     take.style(PlayStyle::Slide);
+    take.noteOn(68, 0.82f);
+    take.wait(0.051);
     take.noteOn(69, 0.82f);
-    take.wait(0.70);
+    take.wait(0.649);
     take.vibrato(0.58f);
     take.wait(1.45);
     take.vibrato(0.0f);
     take.noteOff(69);
+    take.noteOff(68);
     take.noteOff(76);
     take.wait(2.8);
     take.fadeOut(1.2);
@@ -1692,7 +1696,7 @@ const std::array<Demo, 22>& demos()
           renderMuteAndDeadMetal },
         { "17-extended-technique-solo.wav",
           "a long lead with alternate-picked shredding, finger vibrato, "
-          "slides and all seven play styles",
+          "a chained slide and all seven play styles",
           renderExtendedTechniqueSolo },
         { "18-syncopated-djent-study.wav",
           "an original syncopated Drop-E progressive-metal study with tight "

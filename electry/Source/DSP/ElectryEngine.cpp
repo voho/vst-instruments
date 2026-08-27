@@ -2684,6 +2684,17 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         std::abs(semitones - voice.lastCompensatedSemitones) > 8.0e-4f;
     const float omega = twoPi * f0 * inverseSampleRate_;
     const float period = static_cast<float>(sampleRate_) / f0;
+    const bool preserveDispersionPeriod = fitMoved && ! forceDelayJump;
+    float previousDispersionPhaseDelay = 0.0f;
+    if (preserveDispersionPeriod)
+    {
+        previousDispersionPhaseDelay =
+            4.0f * allpassPhaseDelay(
+                voice.vertical.dispersionLowCoefficient, omega)
+            + 4.0f * allpassPhaseDelay(
+                voice.vertical.dispersionHighCoefficient, omega);
+    }
+    float dispersionDelayTranslation = 0.0f;
 
     // Damping-only changes (palm-mute pressure, string age, body
     // loss) reuse this fit and only redo the analytic phase compensation,
@@ -2837,6 +2848,17 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
             allpassPhaseDelay(voice.vertical.dispersionLowCoefficient, omega);
         const float dispersionHighPhaseDelay =
             allpassPhaseDelay(voice.vertical.dispersionHighCoefficient, omega);
+        if (preserveDispersionPeriod)
+        {
+            // The delay line and loop filters form one sounding period. A
+            // dispersion grid-cell change moves the filters' phase instantly;
+            // translate the raw delay by the opposite amount so physical
+            // period is continuous while its existing smoother keeps following
+            // the requested pitch.
+            dispersionDelayTranslation = previousDispersionPhaseDelay
+                - (4.0f * dispersionLowPhaseDelay
+                   + 4.0f * dispersionHighPhaseDelay);
+        }
 
         // Compensate every loop filter's phase delay at the fundamental so
         // the sounding pitch matches the target frequency.
@@ -2883,6 +2905,15 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     {
         voice.vertical.currentDelay = voice.vertical.targetDelay;
         voice.horizontal.currentDelay = voice.horizontal.targetDelay;
+    }
+    else if (dispersionDelayTranslation != 0.0f)
+    {
+        voice.vertical.currentDelay = clampf(
+            voice.vertical.currentDelay + dispersionDelayTranslation, 4.0f,
+            static_cast<float>(delayLineSize - 8));
+        voice.horizontal.currentDelay = clampf(
+            voice.horizontal.currentDelay + dispersionDelayTranslation, 4.0f,
+            static_cast<float>(delayLineSize - 8));
     }
 
     // The two polarisations are coupled where they meet: at the bridge and the
@@ -4191,7 +4222,31 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
                                    PlayStyle playStyle) noexcept
 {
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-    const int fromFret = voice.fret;
+    // currentDelay lives in the raw delay-line coordinate, whose origin moves
+    // when a new fret/style re-solves the damping and dispersion phase. Keep
+    // its distance from the old compensated target so the same sounding
+    // period can be expressed against the new filters below.
+    const float verticalDelayResidual = voice.vertical.currentDelay
+                                      - voice.vertical.targetDelay;
+    const float horizontalDelayResidual = voice.horizontal.currentDelay
+                                        - voice.horizontal.targetDelay;
+    // A new gesture can arrive before the preceding glide reaches its target.
+    // Continue from the pitch and fractional fret under the finger now, not
+    // from that unfinished destination. This is the same log-frequency
+    // smoothstep configureVoicePitch() uses, evaluated before target state is
+    // overwritten, so the handoff is position-continuous without new state.
+    float fromFrequency = voice.baseFrequency;
+    float fromFret = static_cast<float>(voice.fret);
+    if (voice.legatoBlend < 1.0f && voice.legatoFromFrequency > 0.0f)
+    {
+        const float remainingSemitones = 12.0f * std::log2(
+            voice.legatoFromFrequency / voice.baseFrequency)
+            * (1.0f - smoothStep(voice.legatoBlend));
+        fromFrequency = voice.baseFrequency
+            * std::exp2(remainingSemitones / 12.0f);
+        fromFret = clampf(fromFret + remainingSemitones, 0.0f,
+                          static_cast<float>(fretCount));
+    }
     const bool travellingContact = voice.startDelaySamples > 0;
     const bool freshFingerPending = travellingContact
                                  && voice.pendingRepick.active
@@ -4209,7 +4264,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     }
     if (travellingContact)
         voice.pendingRepick.preservesVibratoFinger = true;
-    voice.legatoFromFrequency = voice.baseFrequency;
+    voice.legatoFromFrequency = fromFrequency;
     voice.midiNote = midiNote;
     voice.fret = std::clamp(midiNote - spec.openMidiNote, 0, fretCount);
     voice.playStyle = playStyle;
@@ -4249,11 +4304,11 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     // The hand speed follows the Bend Time control - the same travel-time
     // control the wheel uses - at 8% of it per fret, so the 280 ms default is
     // 22 ms per fret.
-    const int frets = std::abs(voice.fret - fromFret);
+    const float frets = std::abs(static_cast<float>(voice.fret) - fromFret);
     float glideSeconds = 0.010f;
     if (playStyle == PlayStyle::Slide)
         glideSeconds = clampf(0.08f * smoothedParameters_.bendTimeSeconds
-                                  * static_cast<float>(std::max(frets, 1)),
+                                  * std::max(frets, 1.0f),
                               0.030f, 1.200f);
     voice.legatoBlend = 0.0f;
     voice.legatoIncrement = static_cast<float>(controlPeriod)
@@ -4269,11 +4324,11 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.slideNoiseLevel = 0.0f;
     voice.slideShaperHigh.reset();
     voice.slideShaperLow.reset();
-    if (playStyle == PlayStyle::Slide && frets > 0)
+    if (playStyle == PlayStyle::Slide && frets > 0.0f)
     {
         const float openLength = scaleLengthMetres();
         const float fromPosition = openLength
-            * (1.0f - std::exp2(-static_cast<float>(fromFret) / 12.0f));
+            * (1.0f - std::exp2(-fromFret / 12.0f));
         const float toPosition = openLength
             * (1.0f - std::exp2(-static_cast<float>(voice.fret) / 12.0f));
         const float speed = std::abs(toPosition - fromPosition) / glideSeconds;
@@ -4305,13 +4360,24 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     configureVoicePitch(voice, false);
     configureVoicePickups(voice);
     startExcitation(voice, velocity, true);
+    // startExcitation() may restore a bridge hand that was already planted on
+    // the string, which performs one final damping/phase solve. Express the
+    // preserved sounding period in that final coordinate, not the temporary
+    // fretting-style topology above.
+    voice.vertical.currentDelay = clampf(
+        voice.vertical.targetDelay + verticalDelayResidual, 4.0f,
+        static_cast<float>(delayLineSize - 8));
+    voice.horizontal.currentDelay = clampf(
+        voice.horizontal.targetDelay + horizontalDelayResidual, 4.0f,
+        static_cast<float>(delayLineSize - 8));
     // startExcitation() consumes the current finger contact's preservation
     // flag. The plectrum reservation still needs one so a Note Off before
     // arrival cancels the pick without silencing the now-ringing note.
     if (travellingContact)
         voice.pendingContactPreservesRing = true;
 
-    if (playStyle == PlayStyle::Hammer && voice.fret < fromFret)
+    if (playStyle == PlayStyle::Hammer
+        && static_cast<float>(voice.fret) < fromFret)
     {
         // A pull-off releases the short segment between the old and new frets
         // sideways instead of landing another finger. Its bridge-side
@@ -4321,7 +4387,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
         // ringing string is not. The polarisation swap is a conservative
         // lateral-release voicing estimate, not capture-fitted mechanics.
         const float releasedFraction = std::exp2(
-            static_cast<float>(voice.fret - fromFret) / 12.0f);
+            (static_cast<float>(voice.fret) - fromFret) / 12.0f);
         voice.excitationCombDelay = releasedFraction * voice.vertical.targetDelay;
         voice.excitationCombWidth = 0.0f;
         std::swap(voice.verticalWeight, voice.horizontalWeight);

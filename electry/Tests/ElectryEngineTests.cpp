@@ -607,6 +607,82 @@ struct ElectryEngineTestAccess
         return engine.voices_[static_cast<std::size_t>(stringIndex)].legatoBlend;
     }
 
+    static float legatoFromFrequency(const ElectryEngine& engine,
+                                     int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .legatoFromFrequency;
+    }
+
+    static float programmedLegatoFrequency(const ElectryEngine& engine,
+                                            int stringIndex) noexcept
+    {
+        const auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        if (voice.legatoBlend >= 1.0f || voice.legatoFromFrequency <= 0.0f)
+            return voice.baseFrequency;
+        const float fromSemitones = 12.0f * std::log2(
+            voice.legatoFromFrequency / voice.baseFrequency);
+        return voice.baseFrequency * std::exp2(
+            fromSemitones * (1.0f - smoothStep(voice.legatoBlend)) / 12.0f);
+    }
+
+    // Fundamental implied by the delay and every phase-compensated loop filter.
+    // This solves currentDelay + filterPhase(f) = sampleRate / f, so a raw
+    // delay move that merely compensates a filter refit is not mistaken for a
+    // pitch jump and a stationary raw delay under a new filter is not accepted
+    // as continuous.
+    static float effectiveLoopFrequency(const ElectryEngine& engine,
+                                        int stringIndex,
+                                        bool horizontal = false) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return std::numeric_limits<float>::quiet_NaN();
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& loop = horizontal ? voice.horizontal : voice.vertical;
+        const float sampleRate = static_cast<float>(engine.sampleRate_);
+        const auto errorAt = [&] (float frequency)
+        {
+            const float omega = 2.0f * 3.14159265358979323846f
+                              * frequency / sampleRate;
+            float dipMagnitude = 1.0f, dipPhase = 0.0f;
+            ElectryEngine::handLossResponse(
+                loop.handLossDepth, loop.handLossShape, omega,
+                dipMagnitude, dipPhase);
+            const float dipDelay = omega > 1.0e-9f
+                ? -dipPhase / omega : 0.0f;
+            const float phaseDelay = ElectryEngine::onePolePhaseDelay(
+                    loop.loopDampingCoefficient, omega)
+                + dipDelay
+                + 4.0f * ElectryEngine::allpassPhaseDelay(
+                    loop.dispersionLowCoefficient, omega)
+                + 4.0f * ElectryEngine::allpassPhaseDelay(
+                    loop.dispersionHighCoefficient, omega);
+            return loop.currentDelay + phaseDelay - sampleRate / frequency;
+        };
+
+        float low = 20.0f;
+        float high = 0.24f * sampleRate;
+        if (! (errorAt(low) <= 0.0f && errorAt(high) >= 0.0f))
+            return std::numeric_limits<float>::quiet_NaN();
+        for (int iteration = 0; iteration < 32; ++iteration)
+        {
+            const float mid = 0.5f * (low + high);
+            if (errorAt(mid) < 0.0f)
+                low = mid;
+            else
+                high = mid;
+        }
+        return 0.5f * (low + high);
+    }
+
+    static int hostFramesPerControlPeriod(
+        const ElectryEngine& engine) noexcept
+    {
+        return std::max(1, ElectryEngine::controlPeriod
+                             / engine.oversamplingFactor_);
+    }
+
     // The slide's friction level, so the check that a silent Finger Noise
     // control means an exactly absent scrape reads the engine rather than the
     // audio.
@@ -3383,6 +3459,53 @@ void testPitchWheelGlideFollowsBendTime()
     expect(std::abs(slowSettled - 200.0) < 15.0,
            "a slow bend did not settle on the wheel target ("
                + std::to_string(slowSettled) + " cents)");
+
+    // The dispersion fit is quantised for realtime cost. Crossing one of its
+    // cells may change filter phase, but the delay-line coordinate must absorb
+    // that phase change instead of making a rising wheel briefly fall.
+    {
+        constexpr double traceSampleRate = 44100.0;
+        ElectryEngine engine;
+        engine.prepare(traceSampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.bendTimeSeconds = 0.28f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.85f);
+        StereoBuffer establish(static_cast<int>(0.30 * traceSampleRate));
+        renderInto(engine, establish);
+
+        constexpr int stringIndex = 3;
+        const float start = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex);
+        float highWater = start;
+        double worstDrawdownCents = 0.0;
+        engine.setPitchBend(1.0f);
+        const int traceFrames = TestAccess::hostFramesPerControlPeriod(engine);
+        StereoBuffer frame(traceFrames);
+        const int totalFrames = static_cast<int>(0.45 * traceSampleRate);
+        for (int rendered = 0; rendered < totalFrames;
+             rendered += traceFrames)
+        {
+            renderInto(engine, frame, traceFrames);
+            const float current = TestAccess::effectiveLoopFrequency(
+                engine, stringIndex);
+            highWater = std::max(highWater, current);
+            worstDrawdownCents = std::max(
+                worstDrawdownCents, centsBetween(highWater, current));
+        }
+        const float final = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex);
+        expect(worstDrawdownCents < 0.05,
+               "a rising pitch-wheel glide fell "
+                   + std::to_string(worstDrawdownCents)
+                   + " cents at a dispersion refit");
+        expect(centsBetween(final, start) > 190.0,
+               "the monotone wheel fixture did not reach its target");
+    }
 }
 
 void testPitchWheelBendsSympatheticStrings()
@@ -6944,6 +7067,198 @@ void testSlideArticulation()
     expect(std::abs(centsBetween(settled, toHz)) < 12.0,
            "the slide did not arrive on its target pitch");
 
+    // A second legato gesture can arrive while the first slide is still in
+    // flight. Its source is the pitch under the finger at that sample, not the
+    // unfinished slide's old destination; otherwise the delay target jumps to
+    // that destination before beginning the next move. Slide and Hammer share
+    // this state handoff even though their new travel times differ.
+    for (const auto retargetStyle : { PlayStyle::Slide, PlayStyle::Hammer })
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.bendTimeSeconds = 0.28f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.85f);
+        StereoBuffer establish(static_cast<int>(0.30 * sampleRate));
+        renderInto(engine, establish);
+        constexpr int stringIndex = 3;
+        const float settledEffective = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex);
+        const float settledHorizontal = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex, true);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(57, 0.84f);
+        const float firstRetargetEffective =
+            TestAccess::effectiveLoopFrequency(engine, stringIndex);
+        const float firstRetargetHorizontal =
+            TestAccess::effectiveLoopFrequency(engine, stringIndex, true);
+        expect(std::abs(centsBetween(firstRetargetEffective, settledEffective))
+                   < 2.0,
+               "a settled string changed effective pitch when a slide began: "
+                   + std::to_string(centsBetween(firstRetargetEffective,
+                                                 settledEffective))
+                   + " cents");
+        expect(std::abs(centsBetween(firstRetargetHorizontal,
+                                     settledHorizontal)) < 2.0,
+               "a settled string changed horizontal effective pitch when a "
+               "slide began");
+        StereoBuffer firstLeg(static_cast<int>(0.10 * sampleRate));
+        renderInto(engine, firstLeg);
+
+        const float before = TestAccess::programmedLegatoFrequency(
+            engine, stringIndex);
+        const float beforeEffective = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex);
+        const float beforeHorizontal = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex, true);
+        const float blendBefore = TestAccess::legatoBlend(engine, stringIndex);
+        const double beforeMidi = 69.0
+            + 12.0 * std::log2(static_cast<double>(before) / 440.0);
+        expect(TestAccess::stringForNote(engine, 57) == stringIndex
+                   && blendBefore > 0.0f && blendBefore < 1.0f
+                   && beforeMidi > 48.0 && beforeMidi < 55.0,
+               "invalid unfinished chained-legato fixture");
+
+        engine.noteOn(styleKeyswitch(retargetStyle), 1.0f);
+        engine.noteOn(52, 0.82f);
+        const float after = TestAccess::programmedLegatoFrequency(
+            engine, stringIndex);
+        expect(std::abs(centsBetween(after, before)) < 0.1,
+               std::string(retargetStyle == PlayStyle::Slide
+                               ? "a chained slide" : "a mid-slide hammer")
+                   + " jumped " + std::to_string(centsBetween(after, before))
+                   + " cents at its retarget");
+        expect(std::abs(centsBetween(
+                   TestAccess::legatoFromFrequency(engine, stringIndex), before))
+                   < 0.1,
+               "a chained legato did not capture the live pitch as its source");
+        const auto retargeted = TestAccess::snapshot(engine, stringIndex);
+        const float afterEffective = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex);
+        const float afterHorizontal = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex, true);
+        expect(std::abs(centsBetween(afterEffective, beforeEffective)) < 2.0,
+               std::string(retargetStyle == PlayStyle::Slide
+                               ? "a chained slide" : "a mid-slide hammer")
+                   + " changed effective pitch by "
+                   + std::to_string(centsBetween(afterEffective,
+                                                 beforeEffective))
+                   + " cents at its retarget");
+        expect(std::abs(centsBetween(afterHorizontal, beforeHorizontal)) < 2.0,
+               "a chained legato changed horizontal effective pitch at its "
+               "retarget");
+        if (retargetStyle == PlayStyle::Hammer)
+        {
+            expect(retargeted.verticalWeight > retargeted.horizontalWeight,
+                   "an ascending mid-slide Hammer was misclassified as a "
+                   "pull-off from the unfinished destination");
+        }
+
+        constexpr int settleChunkFrames = 64;
+        int settleFrames = 0;
+        StereoBuffer settleChunk(settleChunkFrames);
+        while (TestAccess::legatoBlend(engine, stringIndex) < 1.0f
+               && settleFrames < static_cast<int>(0.45 * sampleRate))
+        {
+            renderInto(engine, settleChunk);
+            settleFrames += settleChunkFrames;
+        }
+        if (retargetStyle == PlayStyle::Slide)
+        {
+            expect(settleFrames > static_cast<int>(0.06 * sampleRate)
+                       && settleFrames < static_cast<int>(0.09 * sampleRate),
+                   "a chained slide timed its new leg from the unfinished "
+                   "destination instead of the live finger position");
+        }
+        const auto final = TestAccess::snapshot(engine, stringIndex);
+        expect(TestAccess::legatoBlend(engine, stringIndex) == 1.0f
+                   && final.midiNote == 52
+                   && std::abs(centsBetween(final.baseFrequency, midiHz(52)))
+                          < 0.1,
+               "a chained legato did not settle on its new destination");
+    }
+
+    // Demo 17 redirects a descending top-string slide after 51 ms. The raw
+    // delay target is phase-compensated whenever the dispersion fit crosses a
+    // grid cell; its physical period must keep moving toward the new fret at
+    // those refits instead of briefly reversing direction.
+    {
+        constexpr double demoSampleRate = 44100.0;
+        ElectryEngine engine;
+        engine.prepare(demoSampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupSelector = PickupSelector::Bridge;
+        parameters.pickupType = 0.42f;
+        parameters.toneKnob = 0.92f;
+        parameters.bodyResonance = 0.42f;
+        parameters.stringAge = 0.06f;
+        parameters.pickPosition = 0.27f;
+        parameters.pickHardness = 0.78f;
+        parameters.fingerNoise = 0.52f;
+        parameters.artifactAmount = 0.12f;
+        parameters.bendTimeSeconds = 0.16f;
+        parameters.sympatheticAmount = 0.28f;
+        parameters.outputGain = 1.55f;
+        engine.setParameters(parameters);
+        engine.reset();
+        StereoBuffer parameterLeadIn(static_cast<int>(0.25 * demoSampleRate));
+        renderInto(engine, parameterLeadIn);
+        engine.noteOn(76, 0.92f);
+        StereoBuffer establish(static_cast<int>(0.22 * demoSampleRate));
+        renderInto(engine, establish);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(68, 0.82f);
+        StereoBuffer firstLeg(static_cast<int>(0.051 * demoSampleRate));
+        renderInto(engine, firstLeg);
+
+        constexpr int stringIndex = 7;
+        const float liveBefore = TestAccess::programmedLegatoFrequency(
+            engine, stringIndex);
+        const double liveBeforeMidi = 69.0
+            + 12.0 * std::log2(static_cast<double>(liveBefore) / 440.0);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(69, 0.82f);
+        expect(TestAccess::stringForNote(engine, 69) == stringIndex
+                   && liveBeforeMidi > 71.5 && liveBeforeMidi < 72.5,
+               "invalid descending demo-17 chained-slide fixture");
+
+        float previous = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex);
+        float lowWater = previous;
+        double worstWrongWayCents = 0.0;
+        const int traceFrames = TestAccess::hostFramesPerControlPeriod(engine);
+        StereoBuffer frame(traceFrames);
+        int rendered = 0;
+        while (TestAccess::legatoBlend(engine, stringIndex) < 1.0f
+               && rendered < static_cast<int>(0.08 * demoSampleRate))
+        {
+            renderInto(engine, frame, traceFrames);
+            const float current = TestAccess::effectiveLoopFrequency(
+                engine, stringIndex);
+            worstWrongWayCents = std::max(
+                worstWrongWayCents, centsBetween(current, lowWater));
+            lowWater = std::min(lowWater, current);
+            previous = current;
+            rendered += traceFrames;
+        }
+        expect(TestAccess::legatoBlend(engine, stringIndex) == 1.0f
+                   && rendered > static_cast<int>(0.03 * demoSampleRate)
+                   && rendered < static_cast<int>(0.05 * demoSampleRate),
+               "the demo-17 chained slide did not reproduce its 38.7 ms "
+               "remainder");
+        expect(worstWrongWayCents < 0.05,
+               "a descending chained slide reversed by "
+                   + std::to_string(worstWrongWayCents)
+                   + " cents at a loop-filter refit");
+        expect(std::abs(centsBetween(previous, midiHz(69))) < 2.0,
+               "the monotone demo-17 slide missed its final pitch");
+    }
+
     // The travel time is a distance over a hand speed, so a two-fret slide is
     // far shorter than a twelve-fret one. A fixed legato time would make them
     // equal.
@@ -8138,6 +8453,8 @@ void testSharedHandRetunesActiveStringDamping()
         const int movedString = TestAccess::stringForNote(
             *legato, gesture.fromNote);
         const int siblingString = TestAccess::stringForNote(*legato, 40);
+        const float movedPitchBefore = TestAccess::effectiveLoopFrequency(
+            *legato, movedString);
         const auto siblingBefore = TestAccess::snapshot(*legato, siblingString);
         const float siblingDepthBefore = TestAccess::handLossDepth(
             *legato, siblingString);
@@ -8155,6 +8472,8 @@ void testSharedHandRetunesActiveStringDamping()
         legato->noteOn(gesture.toNote, 0.82f);
         const auto moved = TestAccess::snapshot(*legato, movedString);
         const auto sibling = TestAccess::snapshot(*legato, siblingString);
+        const float movedPitchAfter = TestAccess::effectiveLoopFrequency(
+            *legato, movedString);
         expect(moved.midiNote == gesture.toNote
                    && moved.playStyle == gesture.style
                    && moved.dampingStyle == PlayStyle::PalmMute
@@ -8163,6 +8482,9 @@ void testSharedHandRetunesActiveStringDamping()
                           > 0.0f,
                std::string("a ") + gesture.label
                    + " lifted Palm damping from its target string");
+        expect(std::abs(centsBetween(movedPitchAfter, movedPitchBefore)) < 2.0,
+               std::string("a Palm-held ") + gesture.label
+                   + " changed effective pitch at its retarget");
         expect(sibling.playStyle == siblingBefore.playStyle
                    && sibling.dampingStyle == siblingBefore.dampingStyle
                    && sibling.loopGain == siblingBefore.loopGain

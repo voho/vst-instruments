@@ -12,6 +12,53 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — continue chained legato from the live fret and loop period
+
+`legatoRetarget()` began every new Slide or Hammer at the preceding gesture's
+destination, even when the finger was still travelling toward it. At 48 kHz,
+an A2-to-A3 Slide retargeted after 100 ms had reached programmed MIDI 48.7467,
+but a second gesture first jumped to the abandoned MIDI 57 target: an
+825.33-cent teleport. A reachable Hammer to MIDI 52 was consequently
+misclassified as a pull-off, and a second Slide timed and voiced its scrape over
+five stale frets instead of the 3.253 frets actually left under the hand.
+
+The logical correction exposed a second discontinuity in the physical loop.
+Changing fret/style re-solves damping and dispersion, whose phase is part of
+the sounding period; keeping the raw delay-line coordinate fixed therefore
+moved a settled slide onset by -48.93 cents and a chained retarget by +45.55
+cents. A later dispersion-grid refit in demo 17 also stepped 5.890 cents against
+the direction of travel even though its programmed smoothstep was monotone.
+The same mechanism was not legato-specific: at a 44.1 kHz host, a rising
+two-semitone wheel glide stepped backward by as much as 4.62 cents and drew down
+11.92 cents cumulatively as it crossed quantised dispersion fits.
+
+Decision: before replacing a legato target, evaluate the existing smoothstep at
+its live log-frequency position. That frequency and corresponding fractional
+fret become the new source; distance, physical travel, friction speed and
+Hammer/pull direction all use it. Preserve the raw delay's residual from its
+phase-compensated target across the event, and translate the raw coordinate by
+the opposite phase change whenever a non-forced dispersion refit occurs. Thus
+total delay plus filter phase remains continuous through legato and wheel
+motion. A settled gesture retains the old integer/base path exactly; pitch bend
+and vibrato remain separate control offsets. No voice state was added. This
+guarantees continuous finger position and effective pitch, not a speculative
+velocity-matched spline or an unchanged raw read coordinate.
+
+The regression covers settled-to-Slide, Slide-to-Slide, Slide-to-Hammer and
+Palm-held Hammer/pull/Slide handoffs after their retained damping is restored.
+Both polarisations keep event pitch within a 2-cent effective-period guard
+(programmed pitch within 0.1 cent); the ascending Hammer keeps its impact
+orientation; the second Slide uses the live 3.253-fret remainder and both
+gestures arrive at MIDI 52. The exact demo-17 setup redirects its final descent
+after 51 ms, at live MIDI 72.0264. The old score-matched engine first programmed
+the abandoned MIDI 68 target (-402.64 cents); the corrected event is 0.000 cents
+and reaches MIDI 69 in 38.7 ms. All 214 control ticks descend, including the
+former bad refit, which is now -1.522 rather than +5.890 cents. The wheel
+regression likewise requires a rising effective frequency with less than 0.05
+cent cumulative drawdown. All seventeen demos whose reused strings or
+continuous pitch motion cross a dispersion refit were regenerated: 02-06, 09,
+11-15 and 17-22; only demo 17's score changed.
+
 ## 2026-08-27 — keep the bridge hand planted through legato
 
 `startExcitation()` treated every Hammer, pull-off and legato Slide as a new

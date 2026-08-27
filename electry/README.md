@@ -99,9 +99,10 @@ plug-in wrapper and is not used by these JUCE-free single-engine renders.
 
 `17-extended-technique-solo.wav` is the longer lead showcase: two shred runs,
 two distinct vibrato holds, ascending hammer-ons and descending pull-offs,
-slides in both directions, and all seven play styles in one performance. The
-next four files translate the requested reference points into broad, original
-genre vocabularies rather than copying a composition, riff or production:
+slides in both directions, a final descending slide redirected continuously
+before its first target, and all seven play styles in one performance. The next
+four files translate the requested reference points into broad, original genre
+vocabularies rather than copying a composition, riff or production:
 
 - `18-syncopated-djent-study.wav`: Periphery-adjacent extended-range traits —
   displaced Drop-E accents, tight chugs, dead punctuation and a tapped answer.
@@ -200,6 +201,12 @@ Hammer-ons, pull-offs and legato Slides have no plectrum contact. If the bridge
 hand is already palm muting, those fretting gestures retain it on the moving
 string and every ringing sibling; only a later real picked contact can move the
 shared hand. A Hammer after Dead still replaces that fretting-hand choke.
+If another Slide or Hammer arrives before a glide settles, it continues from
+the pitch and fractional fret under the finger at that sample. The abandoned
+destination never sounds, and direction, remaining travel and scrape speed all
+follow the live hand position. Phase changes from the destination's damping and
+dispersion fit are absorbed into the raw delay coordinate, so the complete loop
+period—not merely its MIDI control value—stays continuous.
 
 | MIDI note | Key | Momentary gesture |
 | --- | --- | --- |
@@ -391,7 +398,11 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   slow one low; the level follows the derivative of the glide, so the squeak
   swells and dies with the movement and is exactly zero when the finger is
   still. A plain string has no winding and barely squeaks. The Finger Noise
-  control sets the level and silences it exactly at zero.
+  control sets the level and silences it exactly at zero. A gesture received
+  mid-glide takes its source pitch, fractional fret, remaining distance and
+  direction from the live smoothstep position rather than the old destination;
+  phase-compensated delay translation keeps the effective pitch continuous at
+  the handoff and through in-flight dispersion refits.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). The Artifacts path can open a
@@ -901,8 +912,8 @@ output-mode changes crossfade over roughly 4 ms.
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
-| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide | A time-varying delay length plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not an energy-compensated time-varying waveguide, and not a measured contact-noise spectrum |
-| Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. Neither gesture moves a planted Palm hand or rewrites sibling damping | Continuous-state, direction-aware legato with conservatively voiced finger attacks; not a distributed or capture-fitted finger-force model |
+| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
+| Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. A mid-glide Hammer takes its source and direction from the live fractional fret while phase-compensated delay translation preserves effective pitch. Neither gesture moves a planted Palm hand or rewrites sibling damping | Pitch-continuous, direction-aware legato with conservatively voiced finger attacks; not a velocity-continuous spline or a distributed or capture-fitted finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
 | Guitar Build | Solid-body material/geometry contrasts, set/bolt/neck-through joint practice, and modern extended-range scale and gauge practice | One host parameter smoothly follows six generic anchors through internal wood damping, body mass, modal shape, joint/bridge, 25.5-to-28-inch scale and Drop-E gauge coordinates; pickup construction, Tone and Body Resonance amount remain independent | A broad continuous construction trajectory; not a licensed or capture-verified reproduction of a named instrument, nor evidence that one material alone determines electric-guitar identity |
@@ -1006,14 +1017,17 @@ window; release noise that appears only after note-off; a Dead note that lands
 decays through its own loop rather than being gated; eight-string
 polyphony with open-position chord mapping, repick reuse, and stealing; a
 slide whose pitch travels through the intermediate semitones rather than
-jumping, whose travel time scales with the interval, whose friction band
-follows the speed of the hand, which is far louder on a wound string than on a
-plain one and exactly absent at a silent Finger Noise control, which injects no
-second modal attack and cannot cancel or re-anchor a pending picked strum; a
-fretting hand that keeps a lead phrase in one position instead of falling back
-to open strings, leaves the open-position shapes untouched, retains a planted
-Palm hand through hammers, pull-offs and legato slides without changing sibling
-damping, and relaxes to the nut when the phrase ends;
+jumping, whose travel time scales with the interval, whose chained Slide and
+Hammer retargets preserve the programmed and effective loop pitch, direction
+and remaining distance, whose in-flight dispersion refits cannot reverse the
+physical pitch trajectory, whose friction band follows the speed of the hand,
+which is far louder on a wound string than on a plain one and exactly absent at
+a silent Finger Noise control, which injects no second modal attack and cannot
+cancel or re-anchor a pending picked strum; a fretting hand that keeps a lead
+phrase in one position instead of falling back to open strings, leaves the
+open-position shapes untouched, retains a planted Palm hand through hammers,
+pull-offs and legato slides without changing sibling damping, and relaxes to the
+nut when the phrase ends;
 pitch-wheel travel, sustain-pedal hold, the balanced A#0 fretting-vibrato
 gesture with finger continuity through live held-note repicks, and B0 tremolo
 picking with exact free-running cadence, shared chord direction, Strum
@@ -1228,6 +1242,14 @@ regression-measured model—not capture parity or market leadership.
   pull-offs and ringing-string Slides retain existing Palm damping on their
   target and leave sibling loops untouched; a later real pick still moves the
   shared hand. Demo 15 exposes the retained heel in a dry octave hammer/pull.
+- Continued chained legato from the fret the finger has actually reached. A
+  mid-glide Slide or Hammer now preserves its instantaneous pitch, derives
+  direction and remaining travel from the fractional live fret, translates raw
+  delay after the final retained-Palm damping solve and across dispersion phase
+  changes, and never visits the abandoned destination. The same phase-coordinate
+  correction keeps wheel motion monotone across quantised dispersion refits.
+  Demos 02-06, 09, 11-15 and 17-22 were regenerated; demo 17 exposes the
+  redirected descent.
 - Gave Double's seeded second engine one deterministic 0-6 ms contact offset
   per picked wrist stroke. The primary engine stays sample-exact, chords share
   one offset plus strum travel, and no additional control was added.
