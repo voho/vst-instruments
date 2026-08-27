@@ -6949,6 +6949,236 @@ void testVibratoIsAHandNotAnLfo()
     }
 }
 
+void testVibratoRequiresHeldFinger()
+{
+    static constexpr std::array<double, 5> sampleRates {
+        44100.0, 48000.0, 96000.0, 192000.0, 384000.0
+    };
+
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    // A pre-held A#0 is performance intent, not a phantom finger. Its shared
+    // onset must wait at rest through silence, then begin when a stopped key
+    // actually gives the hand a string to rock.
+    for (const double sampleRate : sampleRates)
+    {
+        ElectryEngine preHeld;
+        preHeld.prepare(sampleRate, 512);
+        preHeld.setParameters(parameters);
+        preHeld.reset();
+        preHeld.setVibrato(1.0f);
+        const int controlFrames =
+            TestAccess::hostFramesPerControlPeriod(preHeld);
+        const int silentFrames = controlFrames * static_cast<int>(
+            std::ceil(0.35 * sampleRate
+                      / static_cast<double>(controlFrames)));
+        StereoBuffer silence(silentFrames);
+        renderInto(preHeld, silence);
+        expect(TestAccess::vibratoDepthEnvelope(preHeld) == 0.0f,
+               "a pre-held vibrato aged through silence at "
+                   + std::to_string(sampleRate) + " Hz");
+
+        preHeld.noteOn(45, 0.85f); // the open A has no fretting finger
+        StereoBuffer openOnly(silentFrames);
+        renderInto(preHeld, openOnly);
+        expect(TestAccess::vibratoDepthEnvelope(preHeld) == 0.0f,
+               "an open string aged a pre-held vibrato at "
+                   + std::to_string(sampleRate) + " Hz");
+        preHeld.noteOff(45);
+        preHeld.noteOn(47, 0.85f);
+        StereoBuffer preHeldTick(controlFrames);
+        renderInto(preHeld, preHeldTick, controlFrames);
+
+        ElectryEngine simultaneous;
+        simultaneous.prepare(sampleRate, 512);
+        simultaneous.setParameters(parameters);
+        simultaneous.reset();
+        simultaneous.noteOn(47, 0.85f);
+        simultaneous.setVibrato(1.0f);
+        StereoBuffer simultaneousTick(controlFrames);
+        renderInto(simultaneous, simultaneousTick, controlFrames);
+
+        const float preHeldAmount =
+            TestAccess::vibratoDepthEnvelope(preHeld);
+        const float simultaneousAmount =
+            TestAccess::vibratoDepthEnvelope(simultaneous);
+        expect(preHeldAmount > 0.0f
+                   && preHeldAmount == simultaneousAmount,
+               "a pre-held vibrato did not start with its new finger at "
+                   + std::to_string(sampleRate) + " Hz");
+    }
+
+    // Sustain keeps a voice observable after key-up, but it is not a fretting
+    // finger. Releasing one key stops only that string while a held sibling
+    // keeps the shared hand moving; releasing the last stopped key returns the
+    // hidden onset to rest even though A#0 itself remains held.
+    {
+        constexpr double sampleRate = 48000.0;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        engine.noteOn(52, 0.85f);
+        const int lower = TestAccess::stringForNote(engine, 47);
+        const int upper = TestAccess::stringForNote(engine, 52);
+        expect(lower >= 0 && upper >= 0 && lower != upper
+                   && TestAccess::snapshot(engine, lower).fret > 0
+                   && TestAccess::snapshot(engine, upper).fret > 0,
+               "the vibrato release fixture did not allocate two stopped "
+               "strings");
+        engine.setVibrato(1.0f);
+        const int controlFrames =
+            TestAccess::hostFramesPerControlPeriod(engine);
+        const int settleFrames = controlFrames * static_cast<int>(
+            std::ceil(0.35 * sampleRate
+                      / static_cast<double>(controlFrames)));
+        StereoBuffer settle(settleFrames);
+        renderInto(engine, settle);
+        expect(TestAccess::vibratoDepthEnvelope(engine) > 0.99f,
+               "the held-sibling fixture never reached full vibrato");
+
+        engine.setSustainPedal(true);
+        engine.noteOff(47);
+        StereoBuffer oneReleaseTick(controlFrames);
+        renderInto(engine, oneReleaseTick, controlFrames);
+        const auto released = TestAccess::snapshot(engine, lower);
+        const auto held = TestAccess::snapshot(engine, upper);
+        expect(released.active && ! released.keyDown
+                   && released.vibratoSemitones == 0.0f,
+               "a sustain-held released string kept a vibrato finger");
+        expect(held.active && held.keyDown
+                   && TestAccess::vibratoDepthEnvelope(engine) > 0.99f,
+               "releasing one string stopped its held vibrato sibling");
+
+        engine.noteOff(52);
+        StereoBuffer finalReleaseTick(controlFrames);
+        renderInto(engine, finalReleaseTick, controlFrames);
+        expect(TestAccess::vibratoDepthEnvelope(engine) == 0.0f
+                   && TestAccess::snapshot(engine, lower).vibratoSemitones
+                          == 0.0f
+                   && TestAccess::snapshot(engine, upper).vibratoSemitones
+                          == 0.0f,
+               "releasing the last stopped key left hidden vibrato motion");
+        expect(TestAccess::vibratoTarget(engine) == 1.0f,
+               "releasing a fretted key cleared the held A#0 owner");
+    }
+
+    // MIDI can release and refret a string between two control ticks. The
+    // ownership edge itself must retire the old finger; waiting for the next
+    // tick would let the newly seeded finger inherit a full shared envelope
+    // and the old finger's last pitch offset.
+    {
+        constexpr double sampleRate = 48000.0;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        engine.setVibrato(1.0f);
+        const int controlFrames =
+            TestAccess::hostFramesPerControlPeriod(engine);
+        const int settleFrames = controlFrames * static_cast<int>(
+            std::ceil(0.35 * sampleRate
+                      / static_cast<double>(controlFrames)));
+        StereoBuffer settle(settleFrames);
+        renderInto(engine, settle);
+        StereoBuffer offGrid(1);
+        renderInto(engine, offGrid, 1);
+
+        const int stringIndex = TestAccess::stringForNote(engine, 47);
+        engine.noteOff(47);
+        expect(TestAccess::vibratoDepthEnvelope(engine) == 0.0f
+                   && TestAccess::snapshot(engine, stringIndex)
+                          .vibratoSemitones == 0.0f,
+               "an off-grid final Note Off retained the old vibrato finger");
+        engine.noteOn(47, 0.85f);
+        expect(TestAccess::vibratoDepthEnvelope(engine) == 0.0f
+                   && TestAccess::snapshot(engine, stringIndex)
+                          .vibratoSemitones == 0.0f,
+               "a same-boundary refret inherited the old vibrato onset");
+        StereoBuffer firstTick(controlFrames);
+        renderInto(engine, firstTick, controlFrames);
+        expect(TestAccess::vibratoDepthEnvelope(engine) > 0.0f
+                   && TestAccess::vibratoDepthEnvelope(engine) < 0.001f,
+               "a same-boundary refret skipped its fresh onset");
+    }
+
+    // Pulling off to an open string removes the last fretting finger too. A
+    // same-boundary hammer back must not make that lifecycle depend on whether
+    // a control tick happened to land between the two MIDI events.
+    {
+        constexpr double sampleRate = 48000.0;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        engine.setVibrato(1.0f);
+        StereoBuffer settle(static_cast<int>(0.35 * sampleRate));
+        renderInto(engine, settle);
+        StereoBuffer offGrid(1);
+        renderInto(engine, offGrid, 1);
+
+        engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        engine.noteOn(45, 0.78f);
+        const int stringIndex = TestAccess::stringForNote(engine, 45);
+        expect(stringIndex >= 0
+                   && TestAccess::snapshot(engine, stringIndex).fret == 0
+                   && TestAccess::snapshot(engine, stringIndex)
+                          .vibratoSemitones == 0.0f
+                   && TestAccess::vibratoDepthEnvelope(engine) == 0.0f,
+               "an off-grid pull-off left a phantom vibrato finger");
+
+        engine.noteOn(47, 0.78f);
+        expect(TestAccess::snapshot(engine, stringIndex).fret > 0
+                   && TestAccess::snapshot(engine, stringIndex)
+                          .vibratoSemitones == 0.0f
+                   && TestAccess::vibratoDepthEnvelope(engine) == 0.0f,
+               "a same-boundary hammer inherited an open string's vibrato");
+    }
+
+    // A second owner of the same delayed refret is not another finger. Keep
+    // the onset that has already begun while preserving the pending contact's
+    // earlier decision to reseed against the released finger it replaced.
+    {
+        constexpr double sampleRate = 48000.0;
+        ElectryEngine engine;
+        EngineParameters delayedParameters = parameters;
+        delayedParameters.strumSpreadSeconds = 0.020f;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(delayedParameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        engine.setVibrato(1.0f);
+        StereoBuffer settle(static_cast<int>(0.35 * sampleRate));
+        renderInto(engine, settle);
+        engine.noteOff(47);
+        engine.noteOn(47, 0.85f);
+        StereoBuffer beforeOverlap(800);
+        renderInto(engine, beforeOverlap, 800);
+        const int stringIndex = TestAccess::stringForNote(engine, 47);
+        const float begun = TestAccess::vibratoDepthEnvelope(engine);
+        expect(TestAccess::snapshot(engine, stringIndex).pendingRepickActive
+                   && begun > 0.0f,
+               "the delayed-overlap fixture had no fresh onset in flight");
+
+        engine.noteOn(47, 0.80f);
+        expect(TestAccess::snapshot(engine, stringIndex).pendingRepickActive
+                   && TestAccess::vibratoDepthEnvelope(engine) == begun,
+               "an overlapping owner restarted a delayed finger's onset");
+        engine.noteOff(47);
+        expect(TestAccess::snapshot(engine, stringIndex).keyDown
+                   && TestAccess::vibratoDepthEnvelope(engine) == begun,
+               "one overlapping Note Off released the shared finger");
+    }
+}
+
 // A slide is a finger that stays down and travels: the sounding length moves
 // continuously, the travel time is a distance divided by a hand speed rather
 // than a fixed number, and the winding drags under the finger the whole way.
@@ -14164,6 +14394,7 @@ int main()
     testSlideArticulation();
     testFrettingHandVibrato();
     testVibratoIsAHandNotAnLfo();
+    testVibratoRequiresHeldFinger();
     testDeadNote();
     testSustainPedal();
     testVibratoOnlyMovesFingeredStrings();

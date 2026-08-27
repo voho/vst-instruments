@@ -2000,11 +2000,14 @@ void ElectryEngine::noteOff(int midiNote)
 
         voice.keyDownCount = 0;
         voice.keyDown = false;
+        voice.vibratoSemitones = 0.0f;
         if (sustainPedalDown_)
             voice.sustained = true;
         else
             beginVoiceRelease(voice);
     }
+    if (! hasHeldFrettedFinger())
+        resetVibratoOnset();
 }
 
 void ElectryEngine::allNotesOff()
@@ -2020,6 +2023,7 @@ void ElectryEngine::allNotesOff()
         voice.sustained = false;
         beginVoiceRelease(voice);
     }
+    resetVibratoOnset();
 }
 
 int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcept
@@ -3362,6 +3366,24 @@ int ElectryEngine::strumTravelSamples(int crossings) const noexcept
     return chordTravelSamples_[static_cast<std::size_t>(index)];
 }
 
+bool ElectryEngine::hasHeldFrettedFinger(const Voice* excluded) const noexcept
+{
+    return std::any_of(voices_.begin(), voices_.end(),
+                       [excluded] (const Voice& voice)
+                       {
+                           return &voice != excluded && voice.active
+                               && voice.keyDown && voice.fret > 0;
+                       });
+}
+
+void ElectryEngine::resetVibratoOnset() noexcept
+{
+    vibratoRamp_ = 0.0f;
+    vibratoAmount_ = 0.0f;
+    for (auto& voice : voices_)
+        voice.vibratoSemitones = 0.0f;
+}
+
 void ElectryEngine::seedVibratoFinger(Voice& voice) noexcept
 {
     // The finger that will rock this note starts its own cycle wherever it
@@ -3378,6 +3400,7 @@ void ElectryEngine::seedVibratoFinger(Voice& voice) noexcept
     std::uint32_t phaseState = voice.vibratoSeed;
     voice.vibratoPhase = 0.5f * (bipolarNoise(phaseState) + 1.0f);
     voice.vibratoCycle = 0u;
+    voice.vibratoSemitones = 0.0f;
     drawVibratoCycle(voice);
 }
 
@@ -4087,10 +4110,13 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     // A pending contact already captured whether this was the same finger.
     // Keep a fresh delayed refret fresh even if another overlapping Note On
     // arrives after scheduling has marked its key down.
-    const bool sameHeldFinger = wasRinging && voice.keyDown
-        && voice.midiNote == midiNote
+    const bool sameOwnedNote = wasRinging && voice.keyDown
+                            && voice.midiNote == midiNote;
+    const bool sameHeldFinger = sameOwnedNote
         && (! voice.pendingRepick.active
             || voice.pendingRepick.preservesVibratoFinger);
+    if (! sameOwnedNote && ! hasHeldFrettedFinger(&voice))
+        resetVibratoOnset();
     const int repeatedKeyDownCount = wasRinging && voice.midiNote == midiNote
         ? voice.keyDownCount : 0;
     const bool delayedSameNoteRepick = reservedStartOrder == 0
@@ -4312,6 +4338,12 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.legatoFromFrequency = fromFrequency;
     voice.midiNote = midiNote;
     voice.fret = std::clamp(midiNote - spec.openMidiNote, 0, fretCount);
+    if (voice.fret <= 0)
+    {
+        voice.vibratoSemitones = 0.0f;
+        if (! hasHeldFrettedFinger())
+            resetVibratoOnset();
+    }
     voice.playStyle = playStyle;
     voice.strokeIsUp = false;
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
@@ -4588,6 +4620,8 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.slideShaperHigh.reset();
     voice.slideShaperLow.reset();
     voice.vibratoSemitones = 0.0f;
+    if (! hasHeldFrettedFinger())
+        resetVibratoOnset();
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
@@ -5684,15 +5718,29 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 / (0.33f * std::max(s.bendTimeSeconds, 0.01f)
                    * static_cast<float>(sampleRate_)));
         }
-        // The fretting hand's vibrato. The pressure ramps at a bounded rate
-        // and is then shaped by smoothStep, so the hand leaves rest with zero
-        // slope instead of at its steepest, and comes back to rest the same
-        // way. At zero pressure the ramp sits at exactly zero, the shaping
-        // returns exactly zero, and every voice's pitch solve is bit-for-bit
-        // what it was.
-        vibratoRamp_ += clampf(vibratoTarget_ - vibratoRamp_,
-                               -vibratoOnsetIncrement_, vibratoOnsetIncrement_);
-        vibratoAmount_ = smoothStep(vibratoRamp_);
+        // The fretting hand's vibrato. A held A#0 is intent, but without a
+        // physically held stopped string there is no finger whose onset can
+        // age. Keeping the hidden ramp at rest makes a pre-held gesture begin
+        // when the fresh finger lands instead of starting that note at a
+        // random, fully developed excursion. An audibly retired held string
+        // also gets a fresh finger if it is later repicked, matching the voice
+        // ownership path that reseeds it.
+        if (hasHeldFrettedFinger())
+        {
+            // Pressure ramps at a bounded rate and is then shaped by
+            // smoothStep, so the hand leaves rest with zero slope instead of
+            // at its steepest, and comes back to rest the same way.
+            vibratoRamp_ += clampf(
+                vibratoTarget_ - vibratoRamp_,
+                -vibratoOnsetIncrement_, vibratoOnsetIncrement_);
+            vibratoAmount_ = smoothStep(vibratoRamp_);
+        }
+        else
+        {
+            // The zero-amount path below clears every voice once.
+            vibratoRamp_ = 0.0f;
+            vibratoAmount_ = 0.0f;
+        }
         if (vibratoAmount_ > 0.0f)
         {
             // The pitch follows the *square* of the finger's displacement.
@@ -5720,8 +5768,14 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             // holding them down and are left alone, exactly as before.
             for (auto& voice : voices_)
             {
-                if (! voice.active || voice.fret <= 0)
+                if (! voice.active || ! voice.keyDown || voice.fret <= 0)
+                {
+                    // A released/sustain-held tail has no finger even while
+                    // another stopped key keeps the shared hand moving. Do
+                    // not leave its preceding excursion latched.
+                    voice.vibratoSemitones = 0.0f;
                     continue;
+                }
                 voice.vibratoPhase += rate * voice.vibratoRateScale
                                     * vibratoPhaseIncrement_;
                 if (voice.vibratoPhase >= 1.0f)

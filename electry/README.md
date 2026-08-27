@@ -118,17 +118,19 @@ vocabularies rather than copying a composition, riff or production:
 `22-tremolo-picking-study.wav` is the playable black/progressive-metal repeat
 proof: the visible B0 **TRM** wrist runs the ordinary physical attack path at
 8, 12 and 16 strokes/s, enters a moving line after being held in silence,
-then follows a continuously fingered vibrato lead and a held Drop-E chord whose
-low string slides while a scheduled repeat is still travelling toward it. The
-played entrance becomes the wrist's first contact, so its next pick is one
-complete interval later; every repick leaves the rocking fretting finger in
-place, and the slide retargets the reserved low-string contact to the moving
-fret without stealing the stroke from the other strings. Those three anchors
-equal sixteenth notes at 120, 180 and 240 BPM.
+then pre-holds A#0 through a 240 ms rest so the next stopped finger demonstrates
+a fresh vibrato bloom before its continuously fingered lead. A held Drop-E
+chord follows, with its low string sliding while a scheduled repeat is still
+travelling toward it. The played entrance becomes the wrist's first contact, so
+its next pick is one complete interval later; every repick leaves the rocking
+fretting finger in place, and the slide retargets the reserved low-string
+contact to the moving fret without stealing the stroke from the other strings.
+Those three anchors equal sixteenth notes at 120, 180 and 240 BPM.
 
 They are original Electry studies, not endorsements or artist sound-alikes.
-The finger-vibrato moments in files 17, 21 and 22 use the same model available
-from the visible A#0 **VIB** key. Hold it while a fretted note rings; velocity
+The finger-vibrato moments in files 06, 17, 21 and 22 use the same model available
+from the visible A#0 **VIB** key. Hold it before or while a physically held
+stopped note rings; pre-held intent waits for the finger to land, and velocity
 chooses width. Channel and polyphonic pressure remain unassigned, so normal
 aftertouch cannot bend a chord by surprise.
 
@@ -215,7 +217,7 @@ that was already ringing.
 
 | MIDI note | Key | Momentary gesture |
 | --- | --- | --- |
-| 22 | A#0 | Vibrato — hold while fretted notes ring; Note On velocity sets the hand's width and Note Off eases it back to rest. Overlapping owners balance, All Sound Off and Reset All Controllers preserve a physically held key, while All Notes Off and Panic release it |
+| 22 | A#0 | Vibrato — hold while physically held stopped notes ring; Note On velocity sets the hand's width and Note Off eases it back to rest. Pre-held intent waits at zero for a stopped finger, while open strings and key-released tails stay fixed. Overlapping owners balance, All Sound Off and Reset All Controllers preserve a physically held key, while All Notes Off and Panic release it |
 | 23 | B0 | Tremolo picking — hold to repick every physically held string through the current Pick Stroke and Play Style; velocity is pick force and TRM Rate is speed. A newly played note is its own first contact. Overlapping owners balance; CC120/121 preserve the held wrist, while CC123, Panic, prepare and release stop it |
 
 Notes 24..27 are ignored, and notes 28..86 are playable on a 22-fret,
@@ -249,6 +251,15 @@ The reverse separation matters too: while a held string is still ringing, a B0
 or E6..B6 plectrum contact restarts it without restarting the A#0 finger rocking
 the fret. A new fretting assignment, or a contact after the damped voice has
 retired, draws a new finger phase, rate and excursion.
+Pre-held A#0 intent remains at zero until a physically held stopped finger
+exists. A released or sustain-held tail has no fretting finger and keeps no
+vibrato offset. Releasing one stopped key clears only that voice while a
+still-held stopped sibling keeps the shared onset; releasing the final one
+immediately zeros the onset and voice offsets without clearing A#0's target or
+ownership.
+A fresh refret—including an off-grid same-boundary refret or stopped-to-open-to-
+stopped legato—therefore blooms from rest. Overlapping ownership of the same
+held or delayed note preserves the onset already in flight.
 Multiple held strings share one
 stroke direction and Strum traversal. If a wide traversal is still in flight,
 the next grid contact is skipped rather than replacing a pick that has not yet
@@ -430,7 +441,10 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   ±2 semitone ratio over the Bend Time glide. Hold the visible A#0 **VIB** key
   for upward-only fretting-hand vibrato; its velocity sets width, each stopped
   string has an independent finger phase, repicks of a live held note preserve
-  that finger, and open strings do not move.
+  that finger, and a pre-held gesture waits at zero for a physically held
+  stopped finger. Open strings and released or sustain-held tails do not move;
+  a held stopped sibling keeps the shared onset, while the final stopped-key
+  release resets it so a fresh refret blooms from rest.
   Channel pressure and polyphonic aftertouch remain unassigned.
 - **Low-register voicing:** the wound strings' decay law and the plectrum's
   release spectrum are calibrated against a dry electric low-E reference
@@ -939,7 +953,7 @@ output-mode changes crossfade over roughly 4 ms.
 | Fretting hand | Ordinary left-hand kinematics; [Itoh and Hayashida's constrained fingering optimisation](https://www.jstage.jst.go.jp/article/ieejeiss/124/7/124_7_1396/_article/-char/en) and [Yazawa et al.'s playable-configuration enumeration](https://cir.nii.ac.jp/crid/1573387452726377216); the position/reach controls exposed by sampled guitars | Exact-sample chord attacks are matched across all eight strings as one bounded problem: held-note and legato continuity, occupied strings, a four-fret hand shape, fret effort and uncrossed pitch order resolve before any voice starts. The chosen shape then enters the ordinary physical attack path in canonical pitch order, so host event order cannot alter the fingering or player-variation stream. Single notes retain the floating hand, out-of-reach shift and phrase return | A deterministic chord-local configuration solver with a fixed four-fret reach; not finger-by-finger anatomy, chord naming, or phrase-wide look-ahead |
 | Strum travel | Ordinary plectrum kinematics | Note-ons on different strings no more than 35 ms from the chord's first event are one stroke; its direction and extreme string set an accelerating travel order, every crossed string shares that direction, and Alternate advances once for the chord. Reusing a string starts a new stroke; a fully cancelled pre-contact chord consumes none | Deterministic, jittered accelerating pick travel across the string plane; not a model of pick angle, chord recognition, or the player's wrist trajectory |
 | Tremolo picking | Official Shreddage Hydra, RealEight, Electric Storm Deluxe, Evolution Dracus and Heavier7Strings repetition workflows; Armondes' five-player direct/progressive tremolo experiment; Electry's planned exact-eight capture protocol at 8/12/16 strokes/s | Hold visible B0 to run one deterministic wrist through the existing physical repick path. One shared fractional phase preserves Alternate/chord direction, velocity remains force, rate is 4..20 strokes/s with a 12/s default, an in-flight Strum traversal cannot be overwritten, a same-string legato move retargets rather than cancels its travelling pick, and each contact on a live, ringing held note leaves its vibrato finger intact | A playable sample-accurate repeat scheduler whose 12/s default overlaps the published conventional-guitar direct-speed cluster and whose 8/12/16 anchors are ready for commissioned exact-eight capture; not host-synced pattern generation, a human timing distribution, or an exact eight-string rate/force fit |
-| Fretting vibrato | Guitar-TECHS CC-BY raw DIs; Magalhães et al.'s eight-player electric-guitar vibrato study | Hold the visible A#0 gesture; velocity controls a smooth-onset, upward-only width, with independent rate, depth and phase draws per stopped string. Picking-hand repicks preserve the live finger; a released/refretted note assigns another. Velocity 64 is nominally about 5.6 Hz / 20 cents and 127 about 6.4 Hz / 40 cents; open strings remain fixed | A playable finger-rock model whose existing range overlaps published six-string players; not an exact eight-string calibration or a finger/string force solve |
+| Fretting vibrato | Guitar-TECHS CC-BY raw DIs; Magalhães et al.'s eight-player electric-guitar vibrato study | Hold the visible A#0 gesture; velocity controls a smooth-onset, upward-only width, with independent rate, depth and phase draws per physically held stopped string. Pre-held intent waits for a stopped finger; open and key-released strings remain fixed. Picking-hand repicks and overlapping ownership of the same held or delayed note preserve its onset and finger, while a released/refretted note assigns another. Velocity 64 is nominally about 5.6 Hz / 20 cents and 127 about 6.4 Hz / 40 cents | A playable finger-rock model whose existing range overlaps published six-string players; not an exact eight-string calibration or a finger/string force solve |
 | Pitch control | Channel-wide MIDI pitch bend | The wheel applies the same ±2 semitone offset to every played and sympathetically ringing string over the Bend Time glide. Channel pressure and polyphonic aftertouch are deliberately unassigned | Uniform, chord-safe MIDI pitch bend; not a physical vibrato-bar simulation, and no pressure message silently changes tuning |
 | Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, while high-gain players control unused strings | A sample-rate-derived FIFO holds a voiced nominal 5.805 ms acoustic delay (256 samples at 44.1 kHz), while the plug-in renders, amplifies and returns causal chunks no longer than that delay so DAW block size cannot select the howl. A soft-clipped, gain-scaled copy drives played strings fully and idle sympathetic strings at a voiced one-quarter direct share while leaving their bridge drive unchanged. CC1 resonance, Resonance Depth and rig acoustic loudness scale the path, so a distorted tone at full wheel regenerates while a dry DI never can; every element is bounded | A fixed-delay, level-gated, saturating regeneration path with a performance-voiced unused-string share; not a measured player-to-speaker distance, finger-by-finger muting, room acoustics, speaker directivity, or a standing-wave model |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
@@ -1054,7 +1068,10 @@ open-position shapes untouched, retains a planted Palm hand through hammers,
 pull-offs and legato slides without changing sibling damping, and relaxes to the
 nut when the phrase ends;
 pitch-wheel travel, sustain-pedal hold, the balanced A#0 fretting-vibrato
-gesture with finger continuity through live held-note repicks, and B0 tremolo
+gesture with five-rate coverage for pre-held-silence/open-string onset,
+immediate final-key release, sustain-tail exclusion, held-sibling continuity,
+off-grid refret, stopped-open-stopped legato, overlapping delayed-note ownership
+and finger continuity through live held-note repicks; B0 tremolo
 picking with exact free-running cadence, shared chord direction, Strum
 deferral, legato retargeting of in-flight contacts, physical-hold filtering and
 balanced lifecycle;
@@ -1211,6 +1228,29 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-27 finger-owned vibrato lifecycle
+
+- A#0's shared onset previously aged without a fretting finger. After 500 ms of
+  pre-hold, the first stopped note began about 10.04 cents high and reached
+  38.04 cents at 60 ms; a coincident gesture and note began at 0 and reached
+  only 4.75 cents at 60 ms.
+- Key release left the last rocking offset on a tail: an ordinary release
+  reached 38.60 cents within 60 ms, a sustain-held tail reached 50.97 cents
+  within 500 ms and still held 35.24 cents, and a same-event A#0 plus fretting-
+  key release reached 37.19 cents within 60 ms. An off-grid final Note Off could
+  retain its preceding pitch offset for up to seven host frames at 48 kHz.
+- The shared onset now advances only while a physically held stopped finger
+  exists. Open strings and released or sustain-held tails remain fixed; a held
+  stopped sibling keeps the hand moving, while final-key release immediately
+  clears the onset and voice offsets but preserves A#0 intent. Fresh/off-grid
+  refrets and stopped-open-stopped legato start from rest; overlapping ownership
+  of the same held or delayed note preserves the onset already under way.
+- Regression coverage spans 44.1, 48, 96, 192 and 384 kHz for pre-held silence,
+  an open string and the first stopped-finger tick, then pins sustain-held and
+  sibling release, immediate off-grid refret, stopped-open-stopped legato and a
+  delayed same-note overlap. Demo 22 now pre-holds A#0 through a 240 ms rest so
+  the next stopped note exposes the fresh bloom.
 
 ### 2026-08-27 live-damping pitch correction
 

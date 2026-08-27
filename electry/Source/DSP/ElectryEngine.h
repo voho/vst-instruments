@@ -1236,6 +1236,9 @@ private:
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     [[nodiscard]] static bool plectrumContacts(PlayStyle style, bool legato) noexcept;
     void drawStrokeVariation(Voice& voice, std::uint32_t state) noexcept;
+    [[nodiscard]] bool hasHeldFrettedFinger(
+        const Voice* excluded = nullptr) const noexcept;
+    void resetVibratoOnset() noexcept;
     void seedVibratoFinger(Voice& voice) noexcept;
     void beginChordStroke(int stringIndex, bool strokeIsUp,
                           float spreadSeconds, bool completeChord) noexcept;

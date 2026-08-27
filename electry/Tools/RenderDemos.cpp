@@ -1583,19 +1583,21 @@ Take renderTremoloPickingStudy()
     }
     take.endTremoloPicking();
     take.noteOff(currentNote);
+    // Pre-hold the gesture through the rest. Its hidden onset must wait for
+    // the next stopped finger instead of ageing in silence and dropping that
+    // note into a fully developed, random-phase excursion.
+    take.vibrato(0.42f);
     take.wait(0.24);
 
-    // A high sustained tremolo becomes a lead gesture when the fretting hand
-    // adds width and a slow wheel bend; velocity still controls pick force.
+    // The new finger blooms into a high sustained tremolo and slow wheel bend;
+    // velocity still controls pick force.
     parameters.tremoloRateHz = 12.0f;
     parameters.palmMute = 0.0f;
     take.setEngineParameters(parameters);
     take.noteOn(76, 0.86f);
     take.wait(0.20);
     take.beginTremoloPicking(0.78f);
-    take.wait(0.75);
-    take.vibrato(0.42f);
-    take.wait(0.90);
+    take.wait(1.65);
     take.pitchBend(0.5f);
     take.wait(0.55);
     take.pitchBend(0.0f);

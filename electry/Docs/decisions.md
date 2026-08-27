@@ -12,6 +12,39 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — let vibrato begin and end with a fretting finger
+
+A#0 owned one shared target and onset envelope even when no stopped key owned a
+fretting finger. After 500 ms of pre-hold, the first stopped note began about
+10.04 cents high and reached 38.04 cents at 60 ms; starting A#0 with that note
+began at 0 and reached only 4.75 cents at 60 ms. Open strings aged the same
+hidden envelope. At the other boundary, an ordinary released note reached
+38.60 cents within 60 ms, a sustain-held tail reached 50.97 cents within 500 ms
+and still held 35.24 cents, and releasing A#0 with the fretting key in the same
+event still produced 37.19 cents within 60 ms. A final Note Off between control
+ticks could retain its old pitch offset for up to seven host frames at 48 kHz.
+
+Decision: A#0 remains shared performance intent, but its onset advances only
+while an active, key-down, stopped voice supplies a physical finger. A released
+or sustain-held tail and an open string carry no vibrato offset. Releasing one
+stopped key clears that voice while a still-held stopped sibling keeps the
+shared onset; releasing the final one immediately zeros the onset and every
+voice offset without clearing A#0's target or balanced ownership. A fresh or
+off-grid same-boundary refret and stopped-to-open-to-stopped legato therefore
+start from rest. A repick or overlapping owner of the same held or delayed note
+keeps the onset already under way. This uses the existing active/key/fret
+lifecycle and changes no rate, width, phase draw or persistent state.
+
+The regression holds A#0 through silence and an open string, then compares its
+first stopped-finger control tick with a coincident note/gesture at 44.1, 48,
+96, 192 and 384 kHz. At 48 kHz it separately pins a sustain-held released tail,
+a still-held sibling, final-key release with the A#0 target intact, an immediate
+off-grid refret, stopped-open-stopped Hammer/pull legato and overlapping
+ownership of a delayed same-note refret. Demo 22 now pre-holds A#0 through a
+240 ms rest before the next stopped note demonstrates the fresh bloom. This is
+a physical ownership invariant rather than a voicing choice, so no A–Z
+preference test was used.
+
 ## 2026-08-27 — keep ringing pitch continuous through damping refits
 
 The bridge-hand controls changed the one-pole and hand-loss filters of an
