@@ -12,7 +12,51 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — solve measured output-tube families, not opposed preamp curves
+
+The first American/British checkpoint openly used opposed evaluations of the
+measured 12AX7 preamp transfer to approximate a balanced output pair. That
+closed the three-path product surface but left the output stage's actual tube
+family, class-AB overlap, knee, load line and supply current absent. Decision:
+replace only those two approximations with the measured-curve-fitted uTracer
+[TubeLib](https://www.dos4ever.com/uTracer3/TubeLib.inc) BTetrodeDE 6L6GC and
+BTetrodeD EL34 formulae. Use the source-documented 450 V plate / 400 V screen /
+−37 V / 5.6 kOhm 6L6GC AB1 pair and Mullard 400 V / −36 V / 3.5 kOhm EL34
+fixed-bias pair. An ideal balanced phase splitter and Raa/4 centre-tapped load
+are explicit remaining approximations.
+
+Generate a bounded 4,097-drive × 17-rail table for each family during
+preparation, normalise only their shared small-signal slope, and interpolate
+output plus incremental plate-and-screen demand in the oversampled path. Drive
+stops at the zero-grid AB1 boundary (normalised ±1), so neither control grid
+becomes positive without a model of its driver and coupling capacitor. The
+supply follower now changes plate and screen rails inside the load-line solve
+and follows current demand rather than rectified audio. Preserve the existing
+negative-feedback loop, sag time constants, transformer, cabinet, selector and
+level trims; preserve the complete Modern branch operation-for-operation.
+TubeLib's fitted SPICE macro subtracts its secondary-emission term from plate
+current without adding it to screen current, unlike the companion derivation;
+reproduce the fitted macro exactly and regression-pin that choice rather than
+silently making an unfitted charge-conserving variant.
+
+The off-grid table sweep stays within 0.000086 normalized output and 0.000093
+demand error. Equal-slope half drive produces 0.48185 for 6L6GC and 0.643711
+for EL34. Full-path alias floors are −62.17/−68.17/−61.28 dB,
+loud-versus-quiet compression is −13.87/−15.43/−18.33 dB and the 90% Drop-E
+fixture is +2.88/+6.57/+5.87 dB across American/British/Modern. Demos 01–22
+remain sample-identical through the untouched Modern path; demo 23 is
+regenerated with the new A/B stages and the same single global normalisation.
+No A–Z choice was needed: measured model identity and published load-line
+operating points settle this topology correction. Future grid-current/coupling
+cap memory, nonlinear phase splitting, the Mullard screen resistor and a
+speaker-reflected reactive load remain circuit questions, not constants this
+decision invents.
+
 ## 2026-08-27 — select complete amplifier families, not post-EQ presets
+
+*Historical checkpoint: its opposed-12AX7 American/British output approximation
+is superseded by the measured 6L6GC/EL34 decision above; its selector, tone
+stacks, feedback, transformer, cabinet and Modern-path decisions remain.*
 
 One high-gain path could not provide a convincing clean American response, a
 British crunch transition and Electry's established tight metal voice by

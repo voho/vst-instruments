@@ -345,6 +345,21 @@ private:
     [[nodiscard]] static float triodeStage(double gridVoltage,
                                            double& plateVoltage) noexcept;
     [[nodiscard]] static float triodeStageLookup(double gridVoltage) noexcept;
+    struct PowerTubeResult
+    {
+        double output { 0.0 };
+        double supplyDemand { 0.0 };
+    };
+    [[nodiscard]] static double powerTubePlateCurrent(
+        AmpModel model, double plateVoltage, double gridVoltage,
+        double screenVoltage) noexcept;
+    [[nodiscard]] static double powerTubeScreenCurrent(
+        AmpModel model, double plateVoltage, double gridVoltage,
+        double screenVoltage) noexcept;
+    [[nodiscard]] static PowerTubeResult powerTubePairDirect(
+        AmpModel model, double drive, double railScale) noexcept;
+    [[nodiscard]] static PowerTubeResult powerTubePairLookup(
+        AmpModel model, float drive, float railScale) noexcept;
     [[nodiscard]] float renderGainStage(GainChannel& channel,
                                         float input) noexcept;
     [[nodiscard]] float renderGainFrame(GainChannel& channel,

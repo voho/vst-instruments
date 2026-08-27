@@ -45,14 +45,23 @@ preparation by solving
 against a 250 V / 100 kOhm plate load with a residual-checked solver. American
 and British also evaluate [Yeh and Smith's exact third-order passive tone-stack
 transfer](https://dafx.de/paper-archive/2006/papers/p_001.pdf) for two component
-families, then use opposed evaluations of the same 12AX7 transfer as an
-explicitly approximate output pair. Model-specific negative feedback, sag,
+families. Their output stages directly translate Reefman's measured-curve-fitted
+[uTracer TubeLib](https://www.dos4ever.com/uTracer3/TubeLib.inc) 6L6GC
+beam-tetrode and EL34 true-pentode equations, solve an ideal balanced pair
+against one quarter of the source-documented plate-to-plate load, and table
+output plus plate/screen demand over drive and rail voltage. That drive is
+strictly bounded at the normalized ±1 zero-grid AB1 boundary; no ideal source
+is allowed to force a positive control grid without the missing driver and
+coupling circuit. Current demand drives model-specific sag; negative feedback,
 transformer state and six-biquad speaker/cabinet voices stay inside the
-oversampled path; Modern preserves the previous Electry arithmetic. Exact
-claims stop at the diode node, passive RC transfer and measured-triode
-load-line table. This is not a complete named pedal or amp schematic, a solved
-phase splitter or 6L6/EL34/pentode stage, a SPICE validation, a cabinet impulse
-response, loudspeaker mechanics, microphone, room, or capture-verified replica.
+oversampled path. Modern preserves the previous Electry arithmetic. Exact
+claims stop at the diode node, passive RC transfer, translated measured-current
+formulae and numerically residual-bounded load-line/table solves. These are
+tube-family fits, not universal specimens, and still omit a nonlinear phase
+splitter, grid-current/coupling-cap memory, screen-resistor dynamics and a
+reactive transformer-reflected loudspeaker.
+They are not complete named pedal/amp schematics, cabinet impulses, loudspeaker
+mechanics, microphones, rooms or capture-verified replicas.
 
 ### Double-performance timing audit
 

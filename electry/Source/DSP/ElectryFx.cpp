@@ -87,6 +87,77 @@ constexpr double triodePlateGain = 56.87748350866928;
 // the hard plate rails while the drive control can still reach them.
 constexpr float ampGridVolts = 0.875f;
 
+// Derk Reefman's uTracer measurements, fitted by ExtractModel and distributed
+// in the 2016 TubeLib SPICE library:
+// https://www.dos4ever.com/uTracer3/TubeLib.inc
+// The equations and fit rationale are here:
+// https://www.dos4ever.com/uTracer3/Theory.pdf
+// These are the BTetrodeDE 6L6GC and BTetrodeD EL34 parameter sets, not the
+// older generic Koren examples. The American load line is the RCA 450 V
+// plate, 400 V screen, -37 V, 5.6 kOhm plate-to-plate AB1 pair:
+// https://frank.pocnet.net/sheets/049/6/6L6GC.pdf
+// The British one is Mullard's 400 V, -36 V, 3.5 kOhm fixed-bias pair:
+// https://frank.pocnet.net/sheets/129/e/EL34.pdf
+// We retain an ideal fixed screen rail in this first output-stage solve; the
+// Mullard circuit's common screen resistor, coupling-cap/grid-current memory,
+// phase splitter and reactive speaker load remain explicit boundaries rather
+// than invented component fits.
+struct PowerTubeParameters
+{
+    double mu;
+    double exponent;
+    double kneeSoftness;
+    double kneeVoltage;
+    double screenScale;
+    double secondaryScale;
+    double secondarySlope;
+    double secondaryOffset;
+    double secondaryGridWeight;
+    double secondaryScreenRatio;
+    double plateConstant;
+    double plateSlope;
+    double lowPlateConstant;
+    double lowPlateSlope;
+    double lowPlateScreenScale;
+    double plateSupply;
+    double screenSupply;
+    double gridBias;
+    double plateToPlateLoad;
+    bool beamTetrode;
+};
+
+constexpr PowerTubeParameters sixL6GcParameters {
+    9.41, 1.306, 45.2, 3205.1, 6672.5,
+    0.031, 0.017, -5.0, 3.08, 14.66,
+    0.00209, 1.1e-6, 0.00209, 0.069, 8.10,
+    450.0, 400.0, -37.0, 5600.0, true
+};
+
+constexpr PowerTubeParameters el34Parameters {
+    12.50, 1.363, 50.5, 1282.7, 1950.2,
+    0.022, 0.033, 64.0, 2.91, 4.23,
+    0.00408, 1.6e-6, 0.00408, 0.105, 6.09,
+    400.0, 400.0, -36.0, 3500.0, false
+};
+
+constexpr std::size_t powerTubeDrivePoints = 4097;
+constexpr std::size_t powerTubeRailPoints = 17;
+// This checkpoint is strictly class AB1: neither control grid crosses zero.
+// TubeLib includes a grid-current diode, but without the phase inverter's
+// source impedance and coupling capacitor an ideal positive grid-voltage
+// source would be an unphysical class-AB2 driver. Stop at the zero-grid AB1
+// boundary; the dynamic grid circuit remains the next stage.
+constexpr double minimumPowerTubeDrive = -1.0;
+constexpr double maximumPowerTubeDrive = 1.0;
+constexpr double minimumPowerTubeRail = 0.75;
+constexpr double maximumPowerTubeRail = 1.0;
+
+const PowerTubeParameters& powerTubeParameters(AmpModel model) noexcept
+{
+    return model == AmpModel::BritishCrunch
+        ? el34Parameters : sixL6GcParameters;
+}
+
 double softplus(double value) noexcept
 {
     return std::max(value, 0.0) + std::log1p(std::exp(-std::abs(value)));
@@ -98,6 +169,191 @@ double sigmoid(double value) noexcept
         return 1.0 / (1.0 + std::exp(-value));
     const double exponential = std::exp(value);
     return exponential / (1.0 + exponential);
+}
+
+struct PowerTubeCurrents
+{
+    double plate { 0.0 };
+    double screen { 0.0 };
+};
+
+PowerTubeCurrents measuredPowerTubeCurrents(
+    AmpModel model, double plateVoltage, double gridVoltage,
+    double screenVoltage) noexcept
+{
+    const auto& tube = powerTubeParameters(model);
+    const double plate = std::max(plateVoltage, 0.0);
+    const double screen = std::max(screenVoltage, 1.0e-12);
+    const double drive = tube.kneeSoftness
+        * (1.0 / tube.mu
+           + gridVoltage / std::sqrt(tube.kneeVoltage + screen * screen));
+    const double e1 = screen / tube.kneeSoftness * softplus(drive);
+    const double korenCurrent = std::pow(std::max(e1, 0.0), tube.exponent);
+    const double lowPlate = tube.beamTetrode
+        ? std::exp(-tube.lowPlateSlope * plate
+                   * std::sqrt(tube.lowPlateSlope * plate))
+        : 1.0 / (1.0 + tube.lowPlateSlope * plate);
+    const double secondaryEmission = tube.secondaryScale / tube.screenScale
+        * plate
+        * (1.0 + std::tanh(-tube.secondarySlope
+            * (plate - screen / tube.secondaryScreenRatio
+               + tube.secondaryOffset
+               + tube.secondaryGridWeight * gridVoltage)));
+
+    // TubeLib's fitted BTetrodeD/DE macros subtract E3 from plate current but
+    // do not add it to G2. Reefman's accompanying theory does add that term to
+    // screen current; reproducing the distributed fit here is deliberate, and
+    // changing to the charge-conserving variant requires a new fit/validation.
+    const double plateCurrent = korenCurrent
+        * (tube.plateConstant + tube.plateSlope * plate
+           - tube.lowPlateConstant * lowPlate - secondaryEmission);
+    const double screenCurrent = korenCurrent / tube.screenScale
+        * (1.0 + tube.lowPlateScreenScale * lowPlate);
+    return { std::max(plateCurrent, 0.0),
+             std::max(screenCurrent, 0.0) };
+}
+
+struct RawPowerTubePair
+{
+    double plateSwing { 0.0 };
+    double supplyCurrent { 0.0 };
+};
+
+RawPowerTubePair solvePowerTubePairRaw(
+    AmpModel model, double drive, double railScale) noexcept
+{
+    const auto& tube = powerTubeParameters(model);
+    const double rail = std::clamp(
+        railScale, minimumPowerTubeRail, maximumPowerTubeRail);
+    const double plateSupply = tube.plateSupply * rail;
+    const double screenSupply = tube.screenSupply * rail;
+    const double gridSwing = drive * -tube.gridBias;
+
+    // An ideal centre-tapped transformer reflects Raa/4 to either half of a
+    // push-pull pair. The opposed grids are an ideal phase splitter. Solving
+    // v = Raa/4 * (Ia+ - Ia-) against the measured tube curves supplies real
+    // AB overlap, crossover and knee behaviour without a nonlinear solve on
+    // the audio thread.
+    const auto residual = [&] (double swing)
+    {
+        const double positive = measuredPowerTubeCurrents(
+            model, plateSupply - swing, tube.gridBias + gridSwing,
+            screenSupply).plate;
+        const double negative = measuredPowerTubeCurrents(
+            model, plateSupply + swing, tube.gridBias - gridSwing,
+            screenSupply).plate;
+        return swing - 0.25 * tube.plateToPlateLoad
+            * (positive - negative);
+    };
+
+    double lower = -plateSupply;
+    double upper = plateSupply;
+    for (int iteration = 0; iteration < 48; ++iteration)
+    {
+        const double middle = 0.5 * (lower + upper);
+        if (residual(middle) > 0.0)
+            upper = middle;
+        else
+            lower = middle;
+    }
+    const double swing = 0.5 * (lower + upper);
+    const auto positive = measuredPowerTubeCurrents(
+        model, plateSupply - swing, tube.gridBias + gridSwing,
+        screenSupply);
+    const auto negative = measuredPowerTubeCurrents(
+        model, plateSupply + swing, tube.gridBias - gridSwing,
+        screenSupply);
+    return { swing, positive.plate + positive.screen
+                   + negative.plate + negative.screen };
+}
+
+struct PowerTubeCalibration
+{
+    double plateSwingPerDrive { 1.0 };
+    double nominalIdleCurrent { 0.0 };
+    double demandSpan { 1.0 };
+};
+
+const PowerTubeCalibration& powerTubeCalibration(AmpModel model) noexcept
+{
+    const auto make = [] (AmpModel tubeModel)
+    {
+        constexpr double derivativeStep = 1.0e-5;
+        const double slope =
+            (solvePowerTubePairRaw(tubeModel, derivativeStep, 1.0).plateSwing
+             - solvePowerTubePairRaw(tubeModel, -derivativeStep, 1.0).plateSwing)
+            / (2.0 * derivativeStep);
+        const double idle = solvePowerTubePairRaw(
+            tubeModel, 0.0, 1.0).supplyCurrent;
+        const double driven = solvePowerTubePairRaw(
+            tubeModel, 1.0, 1.0).supplyCurrent;
+        return PowerTubeCalibration {
+            std::max(slope, 1.0e-12),
+            idle,
+            std::max(driven - idle, 1.0e-12)
+        };
+    };
+    static const PowerTubeCalibration sixL6 = make(
+        AmpModel::AmericanClean);
+    static const PowerTubeCalibration el34 = make(
+        AmpModel::BritishCrunch);
+    return model == AmpModel::BritishCrunch ? el34 : sixL6;
+}
+
+struct PowerTubeLookupPoint
+{
+    float output { 0.0f };
+    float supplyDemand { 0.0f };
+};
+
+using PowerTubeTable = std::array<
+    PowerTubeLookupPoint, powerTubeDrivePoints * powerTubeRailPoints>;
+
+PowerTubeTable makePowerTubeTable(AmpModel model)
+{
+    PowerTubeTable table {};
+    const auto& calibration = powerTubeCalibration(model);
+    for (std::size_t railIndex = 0;
+         railIndex < powerTubeRailPoints; ++railIndex)
+    {
+        const double railFraction = static_cast<double>(railIndex)
+            / static_cast<double>(powerTubeRailPoints - 1);
+        const double rail = minimumPowerTubeRail + railFraction
+            * (maximumPowerTubeRail - minimumPowerTubeRail);
+        constexpr std::size_t zeroDriveIndex = powerTubeDrivePoints / 2;
+        for (std::size_t driveIndex = zeroDriveIndex;
+             driveIndex < powerTubeDrivePoints; ++driveIndex)
+        {
+            const double driveFraction = static_cast<double>(driveIndex)
+                / static_cast<double>(powerTubeDrivePoints - 1);
+            const double drive = minimumPowerTubeDrive + driveFraction
+                * (maximumPowerTubeDrive - minimumPowerTubeDrive);
+            const auto solved = solvePowerTubePairRaw(model, drive, rail);
+            auto& point = table[railIndex * powerTubeDrivePoints + driveIndex];
+            point.output = static_cast<float>(
+                solved.plateSwing / calibration.plateSwingPerDrive);
+            // Retain the signed nominal-idle delta in the table and clamp
+            // only after interpolation. Clamping every knot separately moves
+            // the zero-current crossing with rail interpolation.
+            point.supplyDemand = static_cast<float>(
+                (solved.supplyCurrent - calibration.nominalIdleCurrent)
+                    / calibration.demandSpan);
+            if (driveIndex == zeroDriveIndex)
+            {
+                point.output = 0.0f;
+                continue;
+            }
+            // An ideal matched pair has odd output and even current demand.
+            // Mirror the solved positive half exactly, halving cold prepare
+            // time without approximating another part of the circuit.
+            auto& mirrored = table[
+                railIndex * powerTubeDrivePoints
+                + (powerTubeDrivePoints - 1 - driveIndex)];
+            mirrored.output = -point.output;
+            mirrored.supplyDemand = point.supplyDemand;
+        }
+    }
+    return table;
 }
 
 double cathodeCurrent(double plateVoltage,
@@ -411,6 +667,10 @@ void ElectryFx::prepare(double sampleRate)
     // solve below. Prime it during prepare rather than allowing first use to
     // perform thread-safe static initialisation on the audio thread.
     static_cast<void>(triodeStageLookup(0.0));
+    static_cast<void>(powerTubePairLookup(
+        AmpModel::AmericanClean, 0.0f, 1.0f));
+    static_cast<void>(powerTubePairLookup(
+        AmpModel::BritishCrunch, 0.0f, 1.0f));
 
     // A 15 ms exponential time constant on the five panel controls, their
     // module relays and Amp Voice weights, and 12 ms on the whole gain block's
@@ -928,6 +1188,106 @@ float ElectryFx::triodeStageLookup(double gridVoltage) noexcept
     return lerp(transfer[lower], transfer[lower + 1], fraction);
 }
 
+double ElectryFx::powerTubePlateCurrent(
+    AmpModel model, double plateVoltage, double gridVoltage,
+    double screenVoltage) noexcept
+{
+    return measuredPowerTubeCurrents(
+        model, plateVoltage, gridVoltage, screenVoltage).plate;
+}
+
+double ElectryFx::powerTubeScreenCurrent(
+    AmpModel model, double plateVoltage, double gridVoltage,
+    double screenVoltage) noexcept
+{
+    return measuredPowerTubeCurrents(
+        model, plateVoltage, gridVoltage, screenVoltage).screen;
+}
+
+ElectryFx::PowerTubeResult ElectryFx::powerTubePairDirect(
+    AmpModel model, double drive, double railScale) noexcept
+{
+    if (model == AmpModel::ModernHighGain)
+        return {};
+    if (! std::isfinite(drive))
+        drive = 0.0;
+    if (! std::isfinite(railScale))
+        railScale = 1.0;
+    const double rail = std::clamp(
+        railScale, minimumPowerTubeRail, maximumPowerTubeRail);
+    const double clampedDrive = std::clamp(
+        drive, minimumPowerTubeDrive, maximumPowerTubeDrive);
+    const auto solved = solvePowerTubePairRaw(model, clampedDrive, rail);
+    const auto& calibration = powerTubeCalibration(model);
+    return {
+        solved.plateSwing / calibration.plateSwingPerDrive,
+        std::max((solved.supplyCurrent - calibration.nominalIdleCurrent)
+                     / calibration.demandSpan,
+                 0.0)
+    };
+}
+
+ElectryFx::PowerTubeResult ElectryFx::powerTubePairLookup(
+    AmpModel model, float drive, float railScale) noexcept
+{
+    // The measured curves and transformer load line are memoryless for a
+    // fixed rail. Two preparation-time tables retain that solve over drive and
+    // supply voltage; bilinear interpolation is the only audio-thread work.
+    static const PowerTubeTable sixL6 = makePowerTubeTable(
+        AmpModel::AmericanClean);
+    static const PowerTubeTable el34 = makePowerTubeTable(
+        AmpModel::BritishCrunch);
+    if (model == AmpModel::ModernHighGain)
+        return {};
+    if (! std::isfinite(drive))
+        drive = 0.0f;
+    if (! std::isfinite(railScale))
+        railScale = 1.0f;
+    const double clampedDrive = std::clamp(
+        static_cast<double>(drive),
+        minimumPowerTubeDrive, maximumPowerTubeDrive);
+    const double clampedRail = std::clamp(
+        static_cast<double>(railScale),
+        minimumPowerTubeRail, maximumPowerTubeRail);
+    const double drivePosition =
+        (clampedDrive - minimumPowerTubeDrive)
+        / (maximumPowerTubeDrive - minimumPowerTubeDrive)
+        * static_cast<double>(powerTubeDrivePoints - 1);
+    const double railPosition =
+        (clampedRail - minimumPowerTubeRail)
+        / (maximumPowerTubeRail - minimumPowerTubeRail)
+        * static_cast<double>(powerTubeRailPoints - 1);
+    const auto driveLower = std::min(
+        static_cast<std::size_t>(std::floor(drivePosition)),
+        powerTubeDrivePoints - 2);
+    const auto railLower = std::min(
+        static_cast<std::size_t>(std::floor(railPosition)),
+        powerTubeRailPoints - 2);
+    const float driveFraction = static_cast<float>(
+        drivePosition - static_cast<double>(driveLower));
+    const float railFraction = static_cast<float>(
+        railPosition - static_cast<double>(railLower));
+    const auto& table = model == AmpModel::BritishCrunch ? el34 : sixL6;
+    const auto& lowerLeft = table[
+        railLower * powerTubeDrivePoints + driveLower];
+    const auto& lowerRight = table[
+        railLower * powerTubeDrivePoints + driveLower + 1];
+    const auto& upperLeft = table[
+        (railLower + 1) * powerTubeDrivePoints + driveLower];
+    const auto& upperRight = table[
+        (railLower + 1) * powerTubeDrivePoints + driveLower + 1];
+    const float output = lerp(
+        lerp(lowerLeft.output, lowerRight.output, driveFraction),
+        lerp(upperLeft.output, upperRight.output, driveFraction),
+        railFraction);
+    const float demand = lerp(
+        lerp(lowerLeft.supplyDemand, lowerRight.supplyDemand, driveFraction),
+        lerp(upperLeft.supplyDemand, upperRight.supplyDemand, driveFraction),
+        railFraction);
+    return { static_cast<double>(output),
+             static_cast<double>(std::max(demand, 0.0f)) };
+}
+
 void ElectryFx::updateDriveConstants() noexcept
 {
     // A pedal's gain range, and two amplifier stages whose drives rise
@@ -1050,37 +1410,31 @@ float ElectryFx::ampStage(AmpChannel& channel, AmpModel model,
     stage = channel.toneStack.process(stage)
         * (american ? 4.35f : 1.95f);
 
-    // A paired-tube approximation evaluates the same measured nonlinear load
-    // line on opposed drives. This cancels the single-ended stage's dominant
-    // even term like a push-pull output section without claiming that a 12AX7
-    // table is a solved 6L6 or EL34. The small British imbalance leaves some
-    // even-order crunch; the American pair is exactly balanced.
-    //
-    // Output-derived negative feedback is returned around that nonlinear
-    // transfer. Its one-pole bandwidth represents the transformer/loop phase
-    // limit: the American circuit returns more low/mid output for cleaner,
-    // tighter behaviour, while the British circuit opens up earlier.
+    // Output-derived negative feedback is returned around the tube pair. Its
+    // one-pole bandwidth represents the transformer/loop phase limit: the
+    // American circuit returns more low/mid output for cleaner, tighter
+    // behaviour, while the British circuit opens up earlier.
     const float feedbackAmount = american ? 0.42f : 0.12f;
-    const float powerInput = stage * ampDriveSecond_[index] * ampGridVolts
+    const float powerInput = stage * ampDriveSecond_[index]
         - feedbackAmount * channel.negativeFeedback.state;
 
-    // Supply sag lowers headroom while retaining the local small-signal slope.
-    // The American reservoir has a 20% ceiling and a slow 550 ms recovery;
-    // the British path permits 24% and recovers in 300 ms. These are separate
-    // per-model followers, so a crossfade never transfers stored rail energy.
+    // Supply sag changes the plate and screen rails used by the solved load
+    // line, rather than merely scaling a waveshaper. The lookup returns the
+    // pair's incremental plate-plus-screen demand, so the reservoir follows
+    // tube current instead of rectified audio. American uses the measured
+    // 6L6GC beam-tetrode family; British uses the measured EL34 pentode family.
+    // Their grid inputs are independently calibrated: one normalised unit is
+    // the fixed-bias voltage needed to bring the driven grid to zero volts.
     const float sagLimit = american ? 0.20f : 0.24f;
-    const float droop = 1.0f
+    const float railScale = 1.0f
         - sagLimit * channel.sag / (0.30f + channel.sag);
-    const float driven = powerInput / droop;
-    const float positive = triodeStageLookup(driven + bias) - biasTriode;
-    const float negative = triodeStageLookup(-driven + bias) - biasTriode;
-    const float balance = american ? 0.50f : 0.53f;
-    stage = droop * (balance * positive - (1.0f - balance) * negative);
-
-    const float rectified = stage < 0.0f ? -stage : stage;
-    channel.sag += (rectified > channel.sag
+    const auto powerTube = powerTubePairLookup(
+        model, powerInput, railScale);
+    stage = static_cast<float>(powerTube.output);
+    const float supplyDemand = static_cast<float>(powerTube.supplyDemand);
+    channel.sag += (supplyDemand > channel.sag
                         ? sagAttack_[index] : sagRelease_[index])
-                 * (rectified - channel.sag);
+                 * (supplyDemand - channel.sag);
 
     // Different primary-inductance corners and drive levels make the two
     // output transformers react differently to the same low note. Scaling
