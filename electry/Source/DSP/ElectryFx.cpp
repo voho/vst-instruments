@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace electry
 {
@@ -341,11 +342,12 @@ const PhaseInverterCalibration& phaseInverterCalibration(
 // https://frank.pocnet.net/sheets/049/6/6L6GC.pdf
 // The British one is Mullard's 400 V, -36 V, 3.5 kOhm fixed-bias pair:
 // https://frank.pocnet.net/sheets/129/e/EL34.pdf
-// This isolated pair solve retains an ideal fixed screen rail and resistive
-// transformer load. The nonlinear LTP above now supplies its differential
-// and common drive through two explicit output-coupling/grid-current branches;
-// the Mullard common screen resistor and reactive speaker load remain explicit
-// boundaries.
+// The American screens retain the Twin Reverb AB763 family's individual
+// 470 Ohm branches. The British pair retains the common 800 Ohm resistor from
+// the same Mullard 400 V / -36 V / 3.5 kOhm operating condition used below;
+// substituting the four-valve Marshall's individual 1 kOhm branches would mix
+// two incompatible output stages. The transformer load remains resistive here;
+// a reactive speaker-reflected load is still an explicit boundary.
 struct PowerTubeParameters
 {
     double mu;
@@ -367,6 +369,8 @@ struct PowerTubeParameters
     double screenSupply;
     double gridBias;
     double plateToPlateLoad;
+    double screenGridResistance;
+    bool commonScreenResistance;
     bool beamTetrode;
 };
 
@@ -374,14 +378,14 @@ constexpr PowerTubeParameters sixL6GcParameters {
     9.41, 1.306, 45.2, 3205.1, 6672.5,
     0.031, 0.017, -5.0, 3.08, 14.66,
     0.00209, 1.1e-6, 0.00209, 0.069, 8.10,
-    450.0, 400.0, -37.0, 5600.0, true
+    450.0, 400.0, -37.0, 5600.0, 470.0, false, true
 };
 
 constexpr PowerTubeParameters el34Parameters {
     12.50, 1.363, 50.5, 1282.7, 1950.2,
     0.022, 0.033, 64.0, 2.91, 4.23,
     0.00408, 1.6e-6, 0.00408, 0.105, 6.09,
-    400.0, 400.0, -36.0, 3500.0, false
+    400.0, 400.0, -36.0, 3500.0, 800.0, true, false
 };
 
 constexpr std::size_t powerTubeGridPoints = 257;
@@ -427,6 +431,9 @@ struct PowerTubeCurrents
     double plate { 0.0 };
     double screen { 0.0 };
     double plateSlope { 0.0 };
+    double plateScreenSlope { 0.0 };
+    double screenPlateSlope { 0.0 };
+    double screenSlope { 0.0 };
 };
 
 PowerTubeCurrents measuredPowerTubeCurrents(
@@ -441,11 +448,22 @@ PowerTubeCurrents measuredPowerTubeCurrents(
     // but it must not silently turn this measured AB1 plate-current fit into
     // an ideal, unvalidated AB2 voltage source.
     const double grid = std::min(gridVoltage, 0.0);
+    const double kneeRoot = std::sqrt(
+        tube.kneeVoltage + screen * screen);
     const double drive = tube.kneeSoftness
-        * (1.0 / tube.mu
-           + grid / std::sqrt(tube.kneeVoltage + screen * screen));
-    const double e1 = screen / tube.kneeSoftness * softplus(drive);
+        * (1.0 / tube.mu + grid / kneeRoot);
+    const double driveScreenSlope = -tube.kneeSoftness * grid * screen
+        / (kneeRoot * kneeRoot * kneeRoot);
+    const double softenedDrive = softplus(drive);
+    const double e1 = screen / tube.kneeSoftness * softenedDrive;
+    const double e1ScreenSlope = (softenedDrive
+        + screen * sigmoid(drive) * driveScreenSlope)
+        / tube.kneeSoftness;
     const double korenCurrent = std::pow(std::max(e1, 0.0), tube.exponent);
+    const double korenScreenSlope = e1 > 0.0
+        ? tube.exponent * std::pow(e1, tube.exponent - 1.0)
+            * e1ScreenSlope
+        : 0.0;
     const double lowPlate = tube.beamTetrode
         ? std::exp(-tube.lowPlateSlope * plate
                    * std::sqrt(tube.lowPlateSlope * plate))
@@ -465,6 +483,9 @@ PowerTubeCurrents measuredPowerTubeCurrents(
         * (1.0 + secondaryTanh
            - tube.secondarySlope * plate
                 * (1.0 - secondaryTanh * secondaryTanh));
+    const double secondaryScreenSlope = tube.secondaryScale / tube.screenScale
+        * plate * (1.0 - secondaryTanh * secondaryTanh)
+        * tube.secondarySlope / tube.secondaryScreenRatio;
 
     // TubeLib's fitted BTetrodeD/DE macros subtract E3 from plate current but
     // do not add it to G2. Reefman's accompanying theory does add that term to
@@ -473,27 +494,223 @@ PowerTubeCurrents measuredPowerTubeCurrents(
     const double plateFactor = tube.plateConstant + tube.plateSlope * plate
         - tube.lowPlateConstant * lowPlate - secondaryEmission;
     const double plateCurrent = korenCurrent * plateFactor;
-    const double screenCurrent = korenCurrent / tube.screenScale
-        * (1.0 + tube.lowPlateScreenScale * lowPlate);
+    const double screenFactor =
+        (1.0 + tube.lowPlateScreenScale * lowPlate) / tube.screenScale;
+    const double screenCurrent = korenCurrent * screenFactor;
     return { std::max(plateCurrent, 0.0),
              std::max(screenCurrent, 0.0),
-             plateCurrent > 0.0
+             plateCurrent > 0.0 && plateVoltage > 0.0
                  ? korenCurrent
                     * (tube.plateSlope
                        - tube.lowPlateConstant * lowPlateSlope
                        - secondarySlope)
-                 : 0.0 };
+                 : 0.0,
+             plateCurrent > 0.0
+                 ? korenScreenSlope * plateFactor
+                    - korenCurrent * secondaryScreenSlope
+                 : 0.0,
+             plateVoltage > 0.0
+                 ? korenCurrent / tube.screenScale
+                    * tube.lowPlateScreenScale * lowPlateSlope
+                 : 0.0,
+             korenScreenSlope * screenFactor };
+}
+
+struct ScreenLoadedPowerTube
+{
+    PowerTubeCurrents currents {};
+    double screenVoltage { 0.0 };
+    double residual { 0.0 };
+};
+
+ScreenLoadedPowerTube solveScreenLoadedPowerTube(
+    AmpModel model, double plateVoltage, double gridVoltage,
+    double screenSupply, double initialScreenVoltage) noexcept
+{
+    const auto& tube = powerTubeParameters(model);
+    const double supply = std::max(screenSupply, 0.0);
+    double lower = 0.0;
+    double upper = supply;
+    double voltage = initialScreenVoltage;
+    PowerTubeCurrents currents {};
+    if (! std::isfinite(voltage))
+    {
+        currents = measuredPowerTubeCurrents(
+            model, plateVoltage, gridVoltage, supply);
+        voltage = supply - tube.screenGridResistance * currents.screen;
+    }
+    voltage = std::clamp(voltage, lower, upper);
+    double residual = 0.0;
+    bool converged = false;
+    for (int iteration = 0; iteration < 8; ++iteration)
+    {
+        currents = measuredPowerTubeCurrents(
+            model, plateVoltage, gridVoltage, voltage);
+        residual = voltage
+            + tube.screenGridResistance * currents.screen - supply;
+        if (residual > 0.0)
+            upper = voltage;
+        else
+            lower = voltage;
+        if (std::abs(residual) < 1.0e-10)
+        {
+            converged = true;
+            break;
+        }
+        const double derivative = 1.0
+            + tube.screenGridResistance * currents.screenSlope;
+        const double newton = voltage - residual
+            / std::max(derivative, 1.0e-12);
+        voltage = newton > lower && newton < upper
+            ? newton : 0.5 * (lower + upper);
+    }
+    if (! converged)
+    {
+        currents = measuredPowerTubeCurrents(
+            model, plateVoltage, gridVoltage, voltage);
+        residual = voltage
+            + tube.screenGridResistance * currents.screen - supply;
+    }
+    const double screenPlateSlope =
+        -tube.screenGridResistance * currents.screenPlateSlope
+        / std::max(1.0
+            + tube.screenGridResistance * currents.screenSlope,
+            1.0e-12);
+    currents.plateSlope += currents.plateScreenSlope * screenPlateSlope;
+    return { currents, voltage, residual };
+}
+
+struct ScreenLoadedPowerPair
+{
+    PowerTubeCurrents one {};
+    PowerTubeCurrents two {};
+    double screenVoltageOne { 0.0 };
+    double screenVoltageTwo { 0.0 };
+    double plateSlopeSum { 0.0 };
+    double screenResidual { 0.0 };
+};
+
+ScreenLoadedPowerPair solveScreenLoadedPowerPair(
+    AmpModel model, double plateVoltageOne, double gridVoltageOne,
+    double plateVoltageTwo, double gridVoltageTwo,
+    double screenSupply,
+    std::array<double, 2>* screenVoltageWarmStart) noexcept
+{
+    const auto& tube = powerTubeParameters(model);
+    const double noWarmStart = std::numeric_limits<double>::quiet_NaN();
+    const double initialOne = screenVoltageWarmStart != nullptr
+        ? (*screenVoltageWarmStart)[0] : noWarmStart;
+    const double initialTwo = screenVoltageWarmStart != nullptr
+        ? (*screenVoltageWarmStart)[1] : noWarmStart;
+    if (! tube.commonScreenResistance)
+    {
+        const auto one = solveScreenLoadedPowerTube(
+            model, plateVoltageOne, gridVoltageOne, screenSupply,
+            initialOne);
+        const auto two = solveScreenLoadedPowerTube(
+            model, plateVoltageTwo, gridVoltageTwo, screenSupply,
+            initialTwo);
+        const ScreenLoadedPowerPair result {
+            one.currents, two.currents,
+            one.screenVoltage, two.screenVoltage,
+            one.currents.plateSlope + two.currents.plateSlope,
+            std::max(std::abs(one.residual),
+                     std::abs(two.residual)) };
+        if (screenVoltageWarmStart != nullptr)
+            *screenVoltageWarmStart = {
+                result.screenVoltageOne, result.screenVoltageTwo };
+        return result;
+    }
+
+    const double supply = std::max(screenSupply, 0.0);
+    double lower = 0.0;
+    double upper = supply;
+    double voltage = initialOne;
+    PowerTubeCurrents one {};
+    PowerTubeCurrents two {};
+    if (! std::isfinite(voltage))
+    {
+        one = measuredPowerTubeCurrents(
+            model, plateVoltageOne, gridVoltageOne, supply);
+        two = measuredPowerTubeCurrents(
+            model, plateVoltageTwo, gridVoltageTwo, supply);
+        voltage = supply - tube.screenGridResistance
+            * (one.screen + two.screen);
+    }
+    voltage = std::clamp(voltage, lower, upper);
+    double residual = 0.0;
+    bool converged = false;
+    for (int iteration = 0; iteration < 8; ++iteration)
+    {
+        one = measuredPowerTubeCurrents(
+            model, plateVoltageOne, gridVoltageOne, voltage);
+        two = measuredPowerTubeCurrents(
+            model, plateVoltageTwo, gridVoltageTwo, voltage);
+        residual = voltage + tube.screenGridResistance
+            * (one.screen + two.screen) - supply;
+        if (residual > 0.0)
+            upper = voltage;
+        else
+            lower = voltage;
+        if (std::abs(residual) < 1.0e-10)
+        {
+            converged = true;
+            break;
+        }
+        const double derivative = 1.0 + tube.screenGridResistance
+            * (one.screenSlope + two.screenSlope);
+        const double newton = voltage - residual
+            / std::max(derivative, 1.0e-12);
+        voltage = newton > lower && newton < upper
+            ? newton : 0.5 * (lower + upper);
+    }
+    if (! converged)
+    {
+        one = measuredPowerTubeCurrents(
+            model, plateVoltageOne, gridVoltageOne, voltage);
+        two = measuredPowerTubeCurrents(
+            model, plateVoltageTwo, gridVoltageTwo, voltage);
+        residual = voltage + tube.screenGridResistance
+            * (one.screen + two.screen) - supply;
+    }
+    // The outer load-line variable lowers plate one while raising plate two.
+    // Different screen-current slopes therefore move their common screen node;
+    // include that cross-coupling in the analytic load-line derivative.
+    const double screenSwingSlope = tube.screenGridResistance
+        * (one.screenPlateSlope - two.screenPlateSlope)
+        / std::max(1.0 + tube.screenGridResistance
+            * (one.screenSlope + two.screenSlope),
+            1.0e-12);
+    const double plateSlopeSum = one.plateSlope + two.plateSlope
+        - (one.plateScreenSlope - two.plateScreenSlope)
+            * screenSwingSlope;
+    const ScreenLoadedPowerPair result {
+        one, two, voltage, voltage,
+        plateSlopeSum, std::abs(residual) };
+    if (screenVoltageWarmStart != nullptr)
+        *screenVoltageWarmStart = { voltage, voltage };
+    return result;
 }
 
 struct RawPowerTubePair
 {
     double plateSwing { 0.0 };
     double supplyCurrent { 0.0 };
+    double screenVoltageOne { 0.0 };
+    double screenVoltageTwo { 0.0 };
+    double screenResidual { 0.0 };
+};
+
+struct PowerTubeSolveWarmStart
+{
+    double plateSwing { 0.0 };
+    std::array<double, 2> screenVoltages {};
+    bool valid { false };
 };
 
 RawPowerTubePair solvePowerTubePairRaw(
     AmpModel model, double commonDrive, double differentialDrive,
-    double railScale) noexcept
+    double railScale, PowerTubeSolveWarmStart* warmStart = nullptr) noexcept
 {
     const auto& tube = powerTubeParameters(model);
     const double rail = std::clamp(
@@ -505,6 +722,12 @@ RawPowerTubePair solvePowerTubePairRaw(
     const double differentialGrid = std::abs(differentialDrive) * gridScale;
     const double gridOne = tube.gridBias + commonGrid + differentialGrid;
     const double gridTwo = tube.gridBias + commonGrid - differentialGrid;
+    std::array<double, 2> screenVoltageWarmStart =
+        warmStart != nullptr && warmStart->valid
+            ? warmStart->screenVoltages
+            : std::array<double, 2> {
+                std::numeric_limits<double>::quiet_NaN(),
+                std::numeric_limits<double>::quiet_NaN() };
 
     // An ideal centre-tapped transformer reflects Raa/4 to either half of a
     // push-pull pair. The opposed grids are an ideal phase splitter. Solving
@@ -513,23 +736,22 @@ RawPowerTubePair solvePowerTubePairRaw(
     // the audio thread.
     const auto evaluate = [&] (double swing)
     {
-        const auto positive = measuredPowerTubeCurrents(
+        const auto pair = solveScreenLoadedPowerPair(
             model, plateSupply - swing, gridOne,
-            screenSupply);
-        const auto negative = measuredPowerTubeCurrents(
-            model, plateSupply + swing, gridTwo,
-            screenSupply);
+            plateSupply + swing, gridTwo, screenSupply,
+            &screenVoltageWarmStart);
         const double reflectedLoad = 0.25 * tube.plateToPlateLoad;
         return std::array<double, 2> {
-            swing - reflectedLoad * (positive.plate - negative.plate),
-            1.0 + reflectedLoad
-                * (positive.plateSlope + negative.plateSlope)
+            swing - reflectedLoad
+                * (pair.one.plate - pair.two.plate),
+            1.0 + reflectedLoad * pair.plateSlopeSum
         };
     };
 
     double lower = -plateSupply;
     double upper = plateSupply;
-    double swing = 0.0;
+    double swing = warmStart != nullptr && warmStart->valid
+        ? std::clamp(warmStart->plateSwing, lower, upper) : 0.0;
     for (int iteration = 0; iteration < 12; ++iteration)
     {
         const auto point = evaluate(swing);
@@ -548,15 +770,21 @@ RawPowerTubePair solvePowerTubePairRaw(
     // current demand independent of a numerical warm start. Reapply the tube
     // swap only to the transformer's odd output.
     const double signedSwing = differentialDrive < 0.0 ? -swing : swing;
-    const auto positive = measuredPowerTubeCurrents(
+    const auto pair = solveScreenLoadedPowerPair(
         model, plateSupply - swing, gridOne,
-        screenSupply);
-    const auto negative = measuredPowerTubeCurrents(
-        model, plateSupply + swing, gridTwo,
-        screenSupply);
+        plateSupply + swing, gridTwo, screenSupply,
+        &screenVoltageWarmStart);
+    if (warmStart != nullptr)
+    {
+        warmStart->plateSwing = swing;
+        warmStart->screenVoltages = screenVoltageWarmStart;
+        warmStart->valid = true;
+    }
     return { differentialDrive == 0.0 ? 0.0 : signedSwing,
-             positive.plate + positive.screen
-                 + negative.plate + negative.screen };
+             pair.one.plate + pair.one.screen
+                 + pair.two.plate + pair.two.screen,
+             pair.screenVoltageOne, pair.screenVoltageTwo,
+             pair.screenResidual };
 }
 
 struct PowerTubeCalibration
@@ -638,9 +866,15 @@ PowerTubeTable makePowerTubeTable(AmpModel model)
                 / static_cast<double>(powerTubeGridPoints - 1);
             const double highGrid = minimumNormalisedPowerGrid
                 * (1.0 - highFraction) * (1.0 - highFraction);
-            for (std::size_t lowGridIndex = 0;
-                 lowGridIndex <= highGridIndex; ++lowGridIndex)
+            PowerTubeSolveWarmStart warmStart;
+            // Begin on the balanced-grid diagonal, then walk smoothly toward
+            // maximum differential drive so neighbouring knots reuse the
+            // previous converged plate and screen voltages.
+            for (std::size_t reverseIndex = 0;
+                 reverseIndex <= highGridIndex; ++reverseIndex)
             {
+                const std::size_t lowGridIndex =
+                    highGridIndex - reverseIndex;
                 const double lowFraction =
                     static_cast<double>(lowGridIndex)
                     / static_cast<double>(powerTubeGridPoints - 1);
@@ -651,7 +885,7 @@ PowerTubeTable makePowerTubeTable(AmpModel model)
                 const double differential = 0.5
                     * (highGrid - lowGrid);
                 const auto solved = solvePowerTubePairRaw(
-                    model, common, differential, rail);
+                    model, common, differential, rail, &warmStart);
                 auto& point = table.points[powerTubeTableIndex(
                     highGridIndex, lowGridIndex, railIndex)];
                 point.output = highGridIndex == lowGridIndex ? 0.0f
@@ -1941,7 +2175,7 @@ double ElectryFx::powerTubeScreenCurrent(
         model, plateVoltage, gridVoltage, screenVoltage).screen;
 }
 
-ElectryFx::PowerTubeResult ElectryFx::powerTubePairDirect(
+ElectryFx::PowerTubeDirectResult ElectryFx::powerTubePairDirect(
     AmpModel model, double commonDrive, double differentialDrive,
     double railScale) noexcept
 {
@@ -1968,7 +2202,10 @@ ElectryFx::PowerTubeResult ElectryFx::powerTubePairDirect(
         solved.plateSwing / calibration.plateSwingPerDrive,
         std::max((solved.supplyCurrent - calibration.nominalIdleCurrent)
                      / calibration.demandSpan,
-                 0.0)
+                 0.0),
+        solved.screenVoltageOne,
+        solved.screenVoltageTwo,
+        solved.screenResidual
     };
 }
 

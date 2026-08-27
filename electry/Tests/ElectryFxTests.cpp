@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -181,13 +182,15 @@ struct ElectryFxTestAccess
             model, plateVoltage, gridVoltage, screenVoltage);
     }
 
-    static std::array<double, 2> powerTubePairDirect(
+    static std::array<double, 5> powerTubePairDirect(
         AmpModel model, double commonDrive, double differentialDrive,
         double railScale) noexcept
     {
         const auto result = ElectryFx::powerTubePairDirect(
             model, commonDrive, differentialDrive, railScale);
-        return { result.output, result.supplyDemand };
+        return { result.output, result.supplyDemand,
+                 result.screenVoltageOne, result.screenVoltageTwo,
+                 result.screenResidual };
     }
 
     static std::array<double, 2> powerTubePairLookup(
@@ -1532,6 +1535,7 @@ void testMeasuredPowerTubes()
         AmpModel::AmericanClean, AmpModel::BritishCrunch };
     double maximumOutputError = 0.0;
     double maximumDemandError = 0.0;
+    double maximumScreenResidual = 0.0;
     for (const auto model : models)
     {
         const auto idle = FxAccess::powerTubePairDirect(
@@ -1540,6 +1544,17 @@ void testMeasuredPowerTubes()
             model, 0.0f, 0.0f, 1.0f);
         expect(std::abs(idle[0]) < 1.0e-12 && idle[1] == 0.0,
                "a quiescent power-tube pair is not zero-centred");
+        expect(idle[2] > 0.0 && idle[2] < 400.0
+                   && idle[3] > 0.0 && idle[3] < 400.0
+                   && idle[4] < 1.0e-9,
+               "an idle output screen escaped its sourced resistor KCL");
+        const double idleScreenKcl = model == AmpModel::AmericanClean
+            ? 470.0 * FxAccess::powerTubeScreenCurrent(
+                model, 450.0, -37.0, idle[2])
+            : 800.0 * 2.0 * FxAccess::powerTubeScreenCurrent(
+                model, 400.0, -36.0, idle[2]);
+        expect(std::abs((400.0 - idle[2]) - idleScreenKcl) < 1.0e-9,
+               "the sourced output-screen resistance changed");
         expect(lookupIdle[0] == 0.0 && lookupIdle[1] < 1.0e-12,
                "power-table interpolation created demand at digital silence");
         const auto smallPositive = FxAccess::powerTubePairDirect(
@@ -1562,6 +1577,16 @@ void testMeasuredPowerTubes()
                "the ideal push-pull pair is not symmetric");
         expect(moderate[1] > 0.0 && driven[1] > moderate[1],
                "plate-plus-screen supply demand does not rise with drive");
+        expect(moderate[2] < idle[2] && driven[2] < moderate[2]
+                   && moderate[4] < 1.0e-9 && driven[4] < 1.0e-9,
+               "screen loading does not rise smoothly with output drive");
+        if (model == AmpModel::AmericanClean)
+            expect(moderate[3] > moderate[2],
+                   "the American screen branches no longer move independently");
+        else
+            expect(moderate[2] == moderate[3]
+                       && driven[2] == driven[3],
+                   "the Mullard common screen node split into two branches");
         const auto blocked = FxAccess::powerTubePairDirect(
             model, -0.5, 0.5, 1.0);
         const auto forwardBiased = FxAccess::powerTubePairDirect(
@@ -1622,30 +1647,77 @@ void testMeasuredPowerTubes()
                 maximumOutputError, std::abs(direct[0] - lookup[0]));
             maximumDemandError = std::max(
                 maximumDemandError, std::abs(direct[1] - lookup[1]));
+            maximumScreenResidual = std::max(
+                maximumScreenResidual, direct[4]);
         }
+
+        for (const double common : { -2.0, 0.5 })
+            for (const double differential : { 0.0, 4.0 })
+                for (const double rail : { 0.75, 1.0 })
+                {
+                    const auto boundary = FxAccess::powerTubePairDirect(
+                        model, common, differential, rail);
+                    const double screenSupply = 400.0 * rail;
+                    expect(boundary[2] >= 0.0
+                               && boundary[2] <= screenSupply
+                               && boundary[3] >= 0.0
+                               && boundary[3] <= screenSupply
+                               && boundary[4] < 1.0e-9,
+                           "a screen solve failed at its table-domain boundary");
+                }
     }
 
     const auto american = FxAccess::powerTubePairDirect(
         AmpModel::AmericanClean, 0.0, 0.5, 1.0);
     const auto british = FxAccess::powerTubePairDirect(
         AmpModel::BritishCrunch, 0.0, 0.5, 1.0);
-    std::cout << "Power-tube table max output/demand error: "
+    const auto americanIdle = FxAccess::powerTubePairDirect(
+        AmpModel::AmericanClean, 0.0, 0.0, 1.0);
+    const auto americanDriven = FxAccess::powerTubePairDirect(
+        AmpModel::AmericanClean, 0.0, 1.0, 1.0);
+    const auto britishIdle = FxAccess::powerTubePairDirect(
+        AmpModel::BritishCrunch, 0.0, 0.0, 1.0);
+    const auto britishDriven = FxAccess::powerTubePairDirect(
+        AmpModel::BritishCrunch, 0.0, 1.0, 1.0);
+    std::cout << std::setprecision(15)
+              << "Power-tube table max output/demand error: "
               << maximumOutputError << "/" << maximumDemandError
               << ", 6L6GC/EL34 half-drive " << american[0] << "/"
               << british[0] << '\n';
-    expect(std::abs(american[0] - 0.481850366659143) < 1.0e-9
-               && std::abs(american[1] - 0.359077381354362) < 1.0e-9,
+    expect(std::abs(american[0] - 0.481573134952497) < 1.0e-9
+               && std::abs(american[1] - 0.355604944502174) < 1.0e-9,
            "the 6L6GC pair load-line anchor changed");
-    expect(std::abs(british[0] - 0.643711428074403) < 1.0e-9
-               && std::abs(british[1] - 0.328447904107082) < 1.0e-9,
+    expect(std::abs(british[0] - 0.607340859201101) < 1.0e-9
+               && std::abs(british[1] - 0.336708725602724) < 1.0e-9,
            "the EL34 pair load-line anchor changed");
     const auto droopedAmerican = FxAccess::powerTubePairDirect(
         AmpModel::AmericanClean, 0.0, 1.0, 0.75);
     const auto droopedBritish = FxAccess::powerTubePairDirect(
         AmpModel::BritishCrunch, 0.0, 1.0, 0.75);
-    expect(std::abs(droopedAmerican[1] - 0.526148187793907) < 1.0e-9,
+    std::cout << std::setprecision(15)
+              << "Screen-grid anchors A idle/half/full: "
+              << americanIdle[2] << "/" << american[2] << "/"
+              << americanDriven[2]
+              << ", B idle/half/full: "
+              << britishIdle[2] << "/" << british[2] << "/"
+              << britishDriven[2]
+              << ", half demands " << american[1] << "/" << british[1]
+              << ", drooped demands " << droopedAmerican[1] << "/"
+              << droopedBritish[1] << ", max residual "
+              << maximumScreenResidual << '\n';
+    expect(std::abs(americanIdle[2] - 398.678435789881) < 1.0e-9
+               && std::abs(american[2] - 395.462170219656) < 1.0e-9
+               && std::abs(americanDriven[2] - 390.829021651181) < 1.0e-9,
+           "the AB763-derived 470 Ohm screen branches changed");
+    expect(std::abs(britishIdle[2] - 394.697030874616) < 1.0e-9
+               && std::abs(british[2] - 381.858290392086) < 1.0e-9
+               && std::abs(britishDriven[2] - 341.452662312743) < 1.0e-9,
+           "the Mullard common 800 Ohm screen branch changed");
+    expect(maximumScreenResidual < 1.0e-9,
+           "an off-grid output-screen solve lost KCL convergence");
+    expect(std::abs(droopedAmerican[1] - 0.523929013622257) < 1.0e-9,
            "the drooped 6L6GC demand lost nominal-idle self-limiting");
-    expect(std::abs(droopedBritish[1] - 0.651693561785707) < 1.0e-9,
+    expect(std::abs(droopedBritish[1] - 0.636417890213624) < 1.0e-9,
            "the drooped EL34 demand lost nominal-idle self-limiting");
     expect(maximumOutputError < 3.0e-4
                && maximumDemandError < 4.0e-4,

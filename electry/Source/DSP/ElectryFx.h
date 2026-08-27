@@ -394,13 +394,21 @@ private:
         double output { 0.0 };
         double supplyDemand { 0.0 };
     };
+    struct PowerTubeDirectResult
+    {
+        double output { 0.0 };
+        double supplyDemand { 0.0 };
+        double screenVoltageOne { 0.0 };
+        double screenVoltageTwo { 0.0 };
+        double screenResidual { 0.0 };
+    };
     [[nodiscard]] static double powerTubePlateCurrent(
         AmpModel model, double plateVoltage, double gridVoltage,
         double screenVoltage) noexcept;
     [[nodiscard]] static double powerTubeScreenCurrent(
         AmpModel model, double plateVoltage, double gridVoltage,
         double screenVoltage) noexcept;
-    [[nodiscard]] static PowerTubeResult powerTubePairDirect(
+    [[nodiscard]] static PowerTubeDirectResult powerTubePairDirect(
         AmpModel model, double commonDrive, double differentialDrive,
         double railScale) noexcept;
     [[nodiscard]] static PowerTubeResult powerTubePairLookup(

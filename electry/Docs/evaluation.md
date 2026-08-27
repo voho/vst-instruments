@@ -66,7 +66,13 @@ The output stages directly translate Reefman's measured-curve-fitted
 beam-tetrode and EL34 true-pentode equations, solve an ideal balanced pair
 against one quarter of the source-documented plate-to-plate load, and retain
 output plus plate/screen demand over both terminal-grid coordinates and rail
-voltage. The pair receives common as well as differential drive. A positive
+voltage. Around the retained RCA 450 V plate / 400 V screen / −37 V / 5.6 kOhm
+6L6GC pair, American solves the two individual 470 Ohm screen branches drawn by
+the AB763; this is a documented-source hybrid rather than a complete Twin
+Reverb DC output stage. British uses the common 800 Ohm resistor published with
+Mullard's 400 V / −36 V / 3.5 kOhm EL34 pair. Each screen KCL is solved jointly
+with the plate load line and baked into the preparation-time tables. The pair
+receives common as well as differential drive. A positive
 terminal can load its PI through the diode, but the measured-fitted power-current
 surface is clamped at `Vg=0`; Electry therefore claims an AB1-bounded power
 transfer with overload-grid conduction, not an unmeasured ideal AB2 source.
@@ -77,8 +83,9 @@ passive RC transfer, translated measured-current formulae and numerically
 residual-bounded coupled/load-line solves. These are tube-family fits, not
 universal specimens. TubeLib diode junction capacitance/transit time, PI grid
 conduction, bias-supply impedance, the complete presence network,
-screen-resistor dynamics and a reactive transformer-reflected loudspeaker
-remain explicit omissions.
+the American upstream 1 kOhm / 20 uF dynamic screen node, Marshall quartet and
+choke supply, a reactive transformer-reflected loudspeaker and full positive-
+grid plate-current data remain explicit omissions.
 They are not complete named pedal/amp schematics, cabinet impulses, loudspeaker
 mechanics, microphones, rooms or capture-verified replicas.
 
