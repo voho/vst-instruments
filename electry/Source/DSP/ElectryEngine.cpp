@@ -940,6 +940,9 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
         sampleRate = 48000.0;
     hostSampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
                                  maximumSupportedSampleRate);
+    feedbackDelaySamples_ = std::clamp(
+        static_cast<int>(std::lround(hostSampleRate_ * feedbackDelaySeconds)),
+        1, feedbackRingSize - 1);
     // The nonlinear pickup/string/body path benefits most at conventional
     // rates. At high-rate hosts the native clock already provides at least
     // the same bandwidth, so avoid needlessly exceeding the delay-line and
@@ -1065,9 +1068,9 @@ void ElectryEngine::reset()
     vibratoAmount_ = 0.0f;
     vibratoRamp_ = 0.0f;
     feedbackRing_.fill(0.0f);
-    feedbackWriteIndex_ = 0;
+    feedbackWriteIndex_ = feedbackDelaySamples_;
     feedbackReadIndex_ = 0;
-    feedbackAvailable_ = 0;
+    feedbackAvailable_ = feedbackDelaySamples_;
     feedbackCurrent_ = 0.0f;
     feedbackPrevious_ = 0.0f;
     feedbackGain_ = 0.0f;
@@ -1194,22 +1197,11 @@ void ElectryEngine::pushAcousticReturn(const float* left, const float* right,
     if (right == nullptr)
         right = left;
 
-    // The ring keeps roughly one host block of speaker signal in flight.
-    // Anything still unread from an earlier push is stale: with a steady
-    // block size the reader has always drained the previous batch by now, so
-    // a leftover only appears when the host's block size just shrank - and
-    // keeping it would ratchet the modeled speaker-to-string latency up to
-    // the largest block ever seen, permanently. Dropping it re-anchors the
-    // path to one block and self-heals after a size change.
-    if (feedbackAvailable_ > 0)
-    {
-        feedbackReadIndex_ = feedbackWriteIndex_;
-        feedbackAvailable_ = 0;
-    }
-
-    // If a hostile caller pushes more than the ring holds, the oldest samples
-    // are dropped: the read index is advanced so the path stays a delay
-    // rather than becoming an ever-growing queue.
+    // Append behind the fixed silent lead-in instead of replacing unread
+    // samples. When callers process then return chunks no longer than the
+    // configured delay, the FIFO occupancy stays constant across any block
+    // partition. If a hostile caller pushes more than the ring holds, its
+    // oldest samples are still dropped rather than overflowing.
     for (int sample = 0; sample < numSamples; ++sample)
     {
         float value = 0.5f * (left[sample] + right[sample]);
@@ -5994,8 +5986,9 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
-        // One acoustic-return sample per host sample. The path is silent
-        // until the host pushes something and while the ring has run dry.
+        // One acoustic-return sample per host sample. Correct callers keep the
+        // fixed-delay FIFO populated; a caller that stops returning output
+        // eventually drains it to silence rather than replaying stale audio.
         feedbackPrevious_ = feedbackCurrent_;
         if (feedbackAvailable_ > 0)
         {

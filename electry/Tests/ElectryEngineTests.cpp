@@ -223,17 +223,17 @@ struct ElectryEngineTestAccess
         return engine.palmMutePressure_;
     }
 
-    // The acoustic-return ring pushAcousticReturn() writes and the render
-    // loop drains, read straight off the engine so the guard - a null left
-    // pointer or a non-positive sample count leaves the ring untouched, a
-    // null right pointer duplicates left rather than being read through, a
-    // non-finite averaged sample folds to zero before it is stored, and a
-    // single push longer than the ring drops its oldest samples rather than
-    // overflowing - can be checked directly rather than only through
-    // whatever it happens to do to a later rendered voice.
+    // The acoustic-return FIFO pushAcousticReturn() appends to and the render
+    // loop drains, read straight off the engine so its guards and fixed
+    // silent lead-in can be checked independently of the later string drive.
     static int feedbackAvailable(const ElectryEngine& engine) noexcept
     {
         return engine.feedbackAvailable_;
+    }
+
+    static float feedbackCurrent(const ElectryEngine& engine) noexcept
+    {
+        return engine.feedbackCurrent_;
     }
 
     // The sample `offset` places after the ring's current read pointer, i.e.
@@ -8141,6 +8141,48 @@ void testParameterSanitisationFallsBackToDefaults()
            "a valid outputMode was altered by the guard");
 }
 
+// The nominal acoustic delay is sample-rate-derived at every supported host
+// rate, and the returned sample remains exactly that far behind arbitrary
+// one-sample process/push partitions. This pins the FIFO mechanism separately
+// from the processor-level 64/256/1024 scheduler regression.
+void testAcousticReturnUsesFixedNominalDelay()
+{
+    for (const double rate : { 44100.0, 48000.0, 96000.0, 384000.0 })
+    {
+        ElectryEngine engine;
+        engine.prepare(rate, 1024);
+        const int delay = engine.getAcousticReturnDelaySamples();
+        const int expected = static_cast<int>(std::lround(
+            rate * (256.0 / 44100.0)));
+        expect(delay == expected,
+               "the acoustic-return delay did not preserve its nominal "
+               "duration at "
+                   + std::to_string(rate) + " Hz");
+
+        std::array<float, 1> left {};
+        std::array<float, 1> right {};
+        engine.process(left.data(), right.data(), 1);
+        const std::array<float, 1> impulse { 1.0f };
+        engine.pushAcousticReturn(impulse.data(), impulse.data(), 1);
+        expect(TestAccess::feedbackAvailable(engine) == delay,
+               "the acoustic FIFO changed depth after its impulse push");
+
+        const std::array<float, 1> silence { 0.0f };
+        for (int offset = 1; offset < delay; ++offset)
+        {
+            engine.process(left.data(), right.data(), 1);
+            expect(TestAccess::feedbackCurrent(engine) == 0.0f,
+                   "the acoustic impulse returned before the fixed delay");
+            engine.pushAcousticReturn(silence.data(), silence.data(), 1);
+            expect(TestAccess::feedbackAvailable(engine) == delay,
+                   "the acoustic FIFO changed depth across a process/push pair");
+        }
+        engine.process(left.data(), right.data(), 1);
+        expect(TestAccess::feedbackCurrent(engine) == 1.0f,
+               "the acoustic impulse did not return at the fixed delay");
+    }
+}
+
 // pushAcousticReturn()'s own guard - a null left pointer or a non-positive
 // sample count is a no-op, a null right pointer duplicates left rather than
 // being read through, a non-finite averaged sample folds to zero before it
@@ -8156,6 +8198,15 @@ void testPushAcousticReturnSanitisation()
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
+    const int delay = engine.getAcousticReturnDelaySamples();
+    expect(delay == static_cast<int>(std::lround(
+                        sampleRate * (256.0 / 44100.0))),
+           "the acoustic-return delay was not derived from its nominal duration");
+    expect(TestAccess::feedbackAvailable(engine) == delay,
+           "reset did not prime the acoustic-return FIFO with its fixed delay");
+    for (int i = 0; i < delay; ++i)
+        expect(TestAccess::feedbackRingSample(engine, i) == 0.0f,
+               "the fixed acoustic-return lead-in was not silent");
 
     // A null right channel duplicates left rather than being read through:
     // the stored value is exactly the left sample, not half of a read
@@ -8168,10 +8219,10 @@ void testPushAcousticReturnSanitisation()
     engine.pushAcousticReturn(ordinary.data(), nullptr,
                               static_cast<int>(ordinary.size()));
     expect(TestAccess::feedbackAvailable(engine)
-               == static_cast<int>(ordinary.size()),
+               == delay + static_cast<int>(ordinary.size()),
            "a mono push did not fill the ring one sample per input sample");
     for (int i = 0; i < static_cast<int>(ordinary.size()); ++i)
-        expect(std::abs(TestAccess::feedbackRingSample(engine, i)
+        expect(std::abs(TestAccess::feedbackRingSample(engine, delay + i)
                         - ordinary[static_cast<std::size_t>(i)]) < 1.0e-6f,
                "a mono acoustic-return push was not stored as the left "
                "channel verbatim");
@@ -8230,13 +8281,14 @@ void testPushAcousticReturnSanitisation()
     std::array<float, 4> poisonRight {
         0.0f, 0.0f, std::numeric_limits<float>::infinity(), 0.0f
     };
+    engine.reset();
     engine.pushAcousticReturn(poisonLeft.data(), poisonRight.data(),
                               static_cast<int>(poisonLeft.size()));
     expect(TestAccess::feedbackAvailable(engine)
-               == static_cast<int>(poisonLeft.size()),
+               == delay + static_cast<int>(poisonLeft.size()),
            "a hostile acoustic-return push did not fill the ring");
     for (int i = 0; i < static_cast<int>(poisonLeft.size()); ++i)
-        expect(TestAccess::feedbackRingSample(engine, i) == 0.0f,
+        expect(TestAccess::feedbackRingSample(engine, delay + i) == 0.0f,
                "a non-finite averaged acoustic-return sample was stored "
                "rather than folded to zero");
 
@@ -8250,13 +8302,14 @@ void testPushAcousticReturnSanitisation()
         std::numeric_limits<float>::infinity(), 1.0f,
         -std::numeric_limits<float>::infinity()
     };
+    engine.reset();
     engine.pushAcousticReturn(poisonMono.data(), nullptr,
                               static_cast<int>(poisonMono.size()));
     expect(TestAccess::feedbackAvailable(engine)
-               == static_cast<int>(poisonMono.size()),
+               == delay + static_cast<int>(poisonMono.size()),
            "a hostile mono acoustic-return push did not fill the ring");
     for (int i = 0; i < static_cast<int>(poisonMono.size()); ++i)
-        expect(TestAccess::feedbackRingSample(engine, i)
+        expect(TestAccess::feedbackRingSample(engine, delay + i)
                    == (i == 2 ? 1.0f : 0.0f),
                "a non-finite mono acoustic-return sample was stored rather "
                "than folded to zero");
@@ -8265,13 +8318,15 @@ void testPushAcousticReturnSanitisation()
     // of them.
     std::array<float, 3> left { 1.0f, -1.0f, 0.5f };
     std::array<float, 3> right { -0.2f, 0.6f, -0.5f };
+    engine.reset();
     engine.pushAcousticReturn(left.data(), right.data(),
                               static_cast<int>(left.size()));
     for (int i = 0; i < static_cast<int>(left.size()); ++i)
     {
         const float expected = 0.5f * (left[static_cast<std::size_t>(i)]
                                        + right[static_cast<std::size_t>(i)]);
-        expect(std::abs(TestAccess::feedbackRingSample(engine, i) - expected)
+        expect(std::abs(TestAccess::feedbackRingSample(engine, delay + i)
+                        - expected)
                    < 1.0e-6f,
                "a stereo acoustic-return push was not the average of both "
                "channels");
@@ -8285,6 +8340,7 @@ void testPushAcousticReturnSanitisation()
     std::vector<float> ramp(static_cast<std::size_t>(capacity) + 50);
     for (std::size_t i = 0; i < ramp.size(); ++i)
         ramp[i] = static_cast<float>(i);
+    engine.reset();
     engine.pushAcousticReturn(ramp.data(), ramp.data(),
                               static_cast<int>(ramp.size()));
     expect(TestAccess::feedbackAvailable(engine) == capacity,
@@ -11483,7 +11539,7 @@ void testResonanceFeedbackSelfSustains()
     // wheel without the amplifier decays, and nothing ever leaves the bounded
     // range.
     constexpr double sampleRate = 48000.0;
-    constexpr int blockSize = 512;
+    constexpr int hostBlockSize = 512;
 
     struct LoopResult
     {
@@ -11497,7 +11553,7 @@ void testResonanceFeedbackSelfSustains()
                                     float amp, bool palmMuted = false)
     {
         ElectryEngine engine;
-        engine.prepare(sampleRate, blockSize);
+        engine.prepare(sampleRate, hostBlockSize);
         EngineParameters parameters;
         parameters.artifactAmount = 0.0f;
         parameters.pickNoise = 0.0f;
@@ -11528,33 +11584,39 @@ void testResonanceFeedbackSelfSustains()
         // feedback loop keeping the instrument alive, exactly like a guitar
         // left facing its amplifier.
         engine.noteOn(40, 0.95f); // open E2
-        constexpr double seconds = 5.0;
-        constexpr double releaseAt = 0.75;
-        const int totalBlocks = static_cast<int>(seconds * sampleRate)
-                              / blockSize;
-        std::vector<float> left(blockSize), right(blockSize);
+        const int totalSamples = static_cast<int>(5.0 * sampleRate);
+        const int releaseSample = static_cast<int>(0.75 * sampleRate);
+        const int earlyStart = static_cast<int>(0.25 * sampleRate);
+        const int earlyEnd = static_cast<int>(0.65 * sampleRate);
+        const int lateStart = static_cast<int>(4.0 * sampleRate);
+        const int feedbackChunkSize = engine.getAcousticReturnDelaySamples();
+        std::vector<float> left(static_cast<std::size_t>(feedbackChunkSize));
+        std::vector<float> right(static_cast<std::size_t>(feedbackChunkSize));
         LoopResult result;
         double earlySum = 0.0;
         double lateSum = 0.0;
         long earlyCount = 0;
         long lateCount = 0;
         bool released = false;
-        for (int block = 0; block < totalBlocks; ++block)
+        int rendered = 0;
+        while (rendered < totalSamples)
         {
-            const double blockStart = block * blockSize / sampleRate;
             // The palm-muted take keeps the note held: the muting hand is on
             // the strings only while the muted note is, and lifting it under
             // a raised wheel legitimately lets the howl return.
-            if (! palmMuted && ! released && blockStart >= releaseAt)
+            if (! palmMuted && ! released && rendered == releaseSample)
             {
                 engine.noteOff(40);
                 released = true;
             }
-            engine.process(left.data(), right.data(), blockSize);
-            fx.process(left.data(), right.data(), blockSize);
-            engine.pushAcousticReturn(left.data(), right.data(), blockSize);
+            int count = std::min(feedbackChunkSize, totalSamples - rendered);
+            if (! palmMuted && ! released && rendered < releaseSample)
+                count = std::min(count, releaseSample - rendered);
+            engine.process(left.data(), right.data(), count);
+            fx.process(left.data(), right.data(), count);
+            engine.pushAcousticReturn(left.data(), right.data(), count);
 
-            for (int i = 0; i < blockSize; ++i)
+            for (int i = 0; i < count; ++i)
             {
                 const float sample = left[static_cast<std::size_t>(i)];
                 if (! std::isfinite(sample))
@@ -11562,17 +11624,19 @@ void testResonanceFeedbackSelfSustains()
                 result.peak = std::max(result.peak, std::abs(sample));
                 const double energy = static_cast<double>(sample)
                                     * static_cast<double>(sample);
-                if (blockStart >= 0.25 && blockStart < 0.65)
+                const int absoluteSample = rendered + i;
+                if (absoluteSample >= earlyStart && absoluteSample < earlyEnd)
                 {
                     earlySum += energy;
                     ++earlyCount;
                 }
-                else if (blockStart >= 4.0)
+                else if (absoluteSample >= lateStart)
                 {
                     lateSum += energy;
                     ++lateCount;
                 }
             }
+            rendered += count;
         }
         result.earlyRms = std::sqrt(earlySum / std::max<long>(earlyCount, 1));
         result.lateRms = std::sqrt(lateSum / std::max<long>(lateCount, 1));
@@ -11590,9 +11654,10 @@ void testResonanceFeedbackSelfSustains()
                + " dB after four seconds)");
     // Pin the direct feedback routing. A three-note shape puts A4 on the G
     // string, then leaves it held after the upper two
-    // strings are released. Equal or half-strength direct drive lets the idle
-    // high E win this exact closed loop; the voiced quarter share leaves the
-    // performed string comfortably in charge without removing bridge bloom.
+    // strings are released. During coefficient selection, equal or
+    // half-strength direct drive let the idle high E win this closed loop; the
+    // voiced quarter share leaves the performed string comfortably in charge
+    // without removing bridge bloom.
     {
         constexpr double ownershipRate = 44100.0;
         constexpr int ownershipBlockSize = 256;
@@ -13904,6 +13969,7 @@ int main()
     testFingeredStringsShareTheBridge();
     testParameterSanitisation();
     testParameterSanitisationFallsBackToDefaults();
+    testAcousticReturnUsesFixedNominalDelay();
     testPushAcousticReturnSanitisation();
     testCpuGuardrail();
 

@@ -227,7 +227,9 @@ public:
         int remaining = static_cast<int>(seconds * demoSampleRate);
         while (remaining > 0)
         {
-            const int samples = std::min(renderBlockSize, remaining);
+            const int samples = std::min(
+                { renderBlockSize, engine_.getAcousticReturnDelaySamples(),
+                  remaining });
             const auto offset = left_.size();
             left_.resize(offset + static_cast<std::size_t>(samples));
             right_.resize(offset + static_cast<std::size_t>(samples));

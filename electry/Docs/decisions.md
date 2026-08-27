@@ -12,6 +12,36 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep amplifier-feedback delay independent of DAW blocks
+
+The acoustic return used the previous host block as its air path. That made a
+transport detail part of the physical resonator: on one macOS build, otherwise
+identical 64, 256 and 1024-sample renders selected 2.667, 5.465 and 2.217 kHz
+modes in demo 06, with raw peaks of -7.7, -9.2 and -7.0 dBFS. Demo 14's tail
+selected 0.989, 2.717 and 2.744 kHz, with raw peaks of -12.5, -13.6 and
+-14.2 dBFS. Every non-feedback demo remained byte-identical across the same
+three partitions. A guitarist changing the DAW safety buffer had therefore
+changed the simulated instrument and amplifier geometry.
+
+Decision: retain the voiced 256-sample path at 44.1 kHz as a
+sample-rate-derived 256/44100-second FIFO. Its 5.805 ms duration corresponds to
+roughly two metres of free-air travel, but it is explicitly a voiced nominal
+distance, not a measured player/room position. The plug-in processes the
+engine, effects and acoustic return in causal chunks no longer than that delay;
+short MIDI-event segments append to rather than discard the unread FIFO. Large
+host callbacks are subdivided, so the nominal delay remains fixed without a
+new control, room model or signal path.
+
+An 8,192-sample stereo plug-in regression places CC1 and Note On at absolute
+sample 137 and Note Off at sample 4099. Its output is bit-identical with 64,
+256 and 1024-sample host callbacks, including the non-aligned event splits.
+Forcing each callback back through one unsplit chunk fails that exact rail.
+One-sample process/return probes keep the FIFO exactly full and return an
+impulse at the derived delay on 44.1, 48, 96 and 384 kHz hosts. The corrected
+demo renderer is byte-identical across the three audited partitions; only
+demos 06 and 14 change against the same-platform previous build. This does not
+claim measured room acoustics, speaker directivity or standing-wave behavior.
+
 ## 2026-08-27 — keep amplifier feedback on the performed pitch class
 
 The acoustic return drove every idle sympathetic string as hard as the string
@@ -34,14 +64,17 @@ open-string takeover; the regression pins the held A4 case and the two affected
 demos pin their audible pitch families rather than claiming a universal
 all-note, all-rig guarantee.
 
-The 44.1 kHz closed engine/amplifier regression leaves A4 held on the G string
-after releasing the upper notes of a three-note shape. At one-half idle drive,
-the open high E still wins 0.452 to 0.115 in loop amplitude; at one quarter, A4
-wins 0.553 to 0.060 and clears a two-to-one ownership rail. Equal direct drive
-loses 0.764 to 0.117. Zero direct drive was rejected because an open string can
-plausibly answer the loudspeaker. Same-build demo comparisons keep demo 14 on
-its B-derived 2.72 kHz family and demo 06 on the fretted A4 harmonic family
-until the wheel closes; their scores and durations are unchanged.
+During coefficient selection under the then-current block scheduler, the
+44.1 kHz closed engine/amplifier fixture left A4 held on the G string after
+releasing the upper notes of a three-note shape. At one-half idle drive, the
+open high E still won 0.452 to 0.115 in loop amplitude; at one quarter, A4 won
+0.553 to 0.060 and cleared a two-to-one ownership rail. Equal direct drive lost
+0.764 to 0.117. Zero direct drive was rejected because an open string can
+plausibly answer the loudspeaker. Same-build demo comparisons at that decision
+kept demo 14 on its B-derived 2.72 kHz family and demo 06 on the fretted A4
+harmonic family until the wheel closed; their scores and durations were
+unchanged. The fixed-delay scheduler above retains the two-to-one rail; its
+current quarter-share margin is 19.1 dB.
 
 ## 2026-08-27 — continue chained legato from the live fret and loop period
 

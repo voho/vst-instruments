@@ -2046,10 +2046,9 @@ void testPitchWheelMidiDispatch()
 }
 
 // The CC1 resonance and the acoustic-return wiring live in the shell: the
-// processor pushes each processed block back into the engine and derives the
+// processor returns fixed-delay causal chunks to the engine and derives the
 // rig's loudness from its amplifier controls. This closes the actual plug-in
-// loop, so deleting the pushAcousticReturn call, the CC1 dispatch or the
-// return-level derivation makes it fail.
+// loop, so deleting the return, CC1 dispatch or loudness derivation fails.
 void testResonanceWheelFeedback()
 {
     ElectryAudioProcessor processor;
@@ -2090,6 +2089,106 @@ void testResonanceWheelFeedback()
                 + std::to_string (fed) + ")");
 
     processor.releaseResources();
+}
+
+// A DAW callback is only a transport partition; it cannot be the voiced
+// acoustic delay. The same feedback performance must therefore produce
+// the same samples at common 64, 256 and 1024-sample host block sizes. Before
+// the fixed acoustic FIFO and causal sub-block scheduler, these three renders
+// locked onto different howl modes even though every MIDI and parameter value
+// was identical.
+void testResonanceFeedbackIsBlockSizeInvariant()
+{
+    struct StereoTrace
+    {
+        std::vector<float> left;
+        std::vector<float> right;
+    };
+
+    constexpr int totalSamples = 8192;
+    constexpr int noteOnSample = 137;
+    constexpr int noteOffSample = 4099;
+    const auto render = [] (int hostBlockSize)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, hostBlockSize);
+        setParameterValue (processor, electry::parameters::amp, 0.9f);
+        setParameterValue (processor, electry::parameters::distortion, 0.7f);
+        setParameterValue (processor, electry::parameters::compressor, 0.35f);
+        setParameterValue (processor, electry::parameters::delay, 0.30f);
+        setParameterValue (processor, electry::parameters::room, 0.35f);
+        setParameterValue (processor, electry::parameters::resonanceDepth,
+                           100.0f);
+        setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+        setParameterValue (processor, electry::parameters::artifacts, 0.0f);
+        setParameterValue (processor, electry::parameters::pickNoise, 0.0f);
+        setParameterValue (processor, electry::parameters::fingerNoise, 0.0f);
+        setParameterValue (processor, electry::parameters::releaseNoise, 0.0f);
+
+        StereoTrace result;
+        result.left.reserve (totalSamples);
+        result.right.reserve (totalSamples);
+        juce::AudioBuffer<float> audio;
+        int rendered = 0;
+        while (rendered < totalSamples)
+        {
+            const int samples = std::min (hostBlockSize,
+                                          totalSamples - rendered);
+            juce::MidiBuffer midi;
+            const auto addAtAbsoluteSample = [&] (const juce::MidiMessage& event,
+                                                  int absoluteSample)
+            {
+                if (absoluteSample >= rendered
+                    && absoluteSample < rendered + samples)
+                {
+                    midi.addEvent (event, absoluteSample - rendered);
+                }
+            };
+            addAtAbsoluteSample (
+                juce::MidiMessage::controllerEvent (1, 1, 127), noteOnSample);
+            addAtAbsoluteSample (
+                juce::MidiMessage::noteOn (1, 40, (juce::uint8) 120),
+                noteOnSample);
+            addAtAbsoluteSample (juce::MidiMessage::noteOff (1, 40),
+                                 noteOffSample);
+            renderBlock (processor, audio, midi, samples);
+            const auto* left = audio.getReadPointer (0);
+            const auto* right = audio.getReadPointer (1);
+            result.left.insert (result.left.end(), left, left + samples);
+            result.right.insert (result.right.end(), right, right + samples);
+            rendered += samples;
+        }
+        processor.releaseResources();
+        return result;
+    };
+
+    const auto at64 = render (64);
+    const auto at256 = render (256);
+    const auto at1024 = render (1024);
+    const auto finite = [] (const StereoTrace& trace)
+    {
+        return std::all_of (trace.left.begin(), trace.left.end(),
+                            [] (float sample) { return std::isfinite (sample); })
+            && std::all_of (trace.right.begin(), trace.right.end(),
+                            [] (float sample) { return std::isfinite (sample); });
+    };
+    const auto peak = [] (const StereoTrace& trace)
+    {
+        float result = 0.0f;
+        for (const float sample : trace.left)
+            result = std::max (result, std::abs (sample));
+        for (const float sample : trace.right)
+            result = std::max (result, std::abs (sample));
+        return result;
+    };
+    expect (finite (at64) && finite (at256) && finite (at1024),
+            "a block-partition feedback trace contained non-finite audio");
+    expect (peak (at256) > 1.0e-5f,
+            "the block-partition feedback fixture rendered silence");
+    expect (at64.left == at256.left && at256.left == at1024.left
+                && at64.right == at256.right && at256.right == at1024.right,
+            "the resonance-feedback performance changed with the host block "
+            "size");
 }
 
 // MIDI pressure is deliberately unassigned. Inserting channel pressure or
@@ -3596,6 +3695,7 @@ int main()
     testPitchWheelByteReconstruction();
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
+    testResonanceFeedbackIsBlockSizeInvariant();
     testMidiPressureLeavesChordUnchanged();
     testResetAllControllersDispatch();
     testMutePressureDisplayFeedback();

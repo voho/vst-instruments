@@ -570,6 +570,36 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const auto numSamples = buffer.getNumSamples();
     int renderedTo = 0;
 
+    // The nominal acoustic delay is fixed in time by the engine, not by the
+    // host's callback size. Render, amplify and return audio in causal chunks
+    // no longer than that delay; event boundaries may make a chunk shorter,
+    // but the engine's FIFO keeps the acoustic latency unchanged.
+    const int feedbackChunkSize = engine.getAcousticReturnDelaySamples();
+    const auto renderFeedbackPath = [&] (int startSample, int sampleCount)
+    {
+        while (sampleCount > 0)
+        {
+            const int chunk = std::min(feedbackChunkSize, sampleCount);
+            auto* left = buffer.getWritePointer (0, startSample);
+            auto* right = buffer.getWritePointer (1, startSample);
+            renderEngines (left, right, chunk);
+            effects.process (left, right, chunk);
+
+            if (doubleModeActive)
+            {
+                engine.pushAcousticReturn (left, nullptr, chunk);
+                doubleEngine->pushAcousticReturn (right, nullptr, chunk);
+            }
+            else
+            {
+                engine.pushAcousticReturn (left, right, chunk);
+            }
+
+            startSample += chunk;
+            sampleCount -= chunk;
+        }
+    };
+
     for (auto event = midiMessages.begin(); event != midiMessages.end();)
     {
         const auto eventSample = juce::jlimit (0, numSamples,
@@ -577,9 +607,7 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
         if (eventSample > renderedTo)
         {
-            renderEngines (buffer.getWritePointer (0, renderedTo),
-                           buffer.getWritePointer (1, renderedTo),
-                           eventSample - renderedTo);
+            renderFeedbackPath (renderedTo, eventSample - renderedTo);
             renderedTo = eventSample;
         }
 
@@ -650,28 +678,7 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     if (renderedTo < numSamples)
-        renderEngines (buffer.getWritePointer (0, renderedTo),
-                       buffer.getWritePointer (1, renderedTo),
-                       numSamples - renderedTo);
-
-    effects.process (buffer.getWritePointer (0), buffer.getWritePointer (1),
-                     numSamples);
-
-    // The amplified output is what the loudspeaker plays back at the guitar;
-    // the engine consumes it next block, which gives the resonance feedback
-    // loop the acoustic latency a real speaker-to-string path has.
-    if (doubleModeActive)
-    {
-        engine.pushAcousticReturn (buffer.getReadPointer (0), nullptr,
-                                   numSamples);
-        doubleEngine->pushAcousticReturn (buffer.getReadPointer (1), nullptr,
-                                          numSamples);
-    }
-    else
-    {
-        engine.pushAcousticReturn (buffer.getReadPointer (0),
-                                   buffer.getReadPointer (1), numSamples);
-    }
+        renderFeedbackPath (renderedTo, numSamples - renderedTo);
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     sympatheticStringCount.store (engine.getSympatheticStringCount(),

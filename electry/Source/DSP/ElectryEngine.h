@@ -329,13 +329,19 @@ public:
     // flag from every voice so a subsequent key-up releases normally again.
     void setSustainPedal(bool down) noexcept;
     // The acoustic return path: what the loudspeaker is playing back at the
-    // guitar, typically the previous block of the amplified output. The
-    // engine keeps its own bounded copy, so the pointers only need to stay
-    // valid for this call. With the resonance control at zero the stored
+    // guitar. The engine keeps its own bounded copy behind a fixed, voiced
+    // acoustic delay, so the pointers only need to stay valid for this call.
+    // Callers process and return chunks no longer than
+    // getAcousticReturnDelaySamples() to keep that delay independent of their
+    // outer host block size. With the resonance control at zero the stored
     // signal is never injected and the engine is bit-exact to one that was
     // never fed.
     void pushAcousticReturn(const float* left, const float* right,
                             int numSamples) noexcept;
+    [[nodiscard]] int getAcousticReturnDelaySamples() const noexcept
+    {
+        return feedbackDelaySamples_;
+    }
     // How loud the returned signal actually is in the room, 0..1. The
     // amplifier chain manages its own listening level - a saturating stage is
     // only a few decibels louder than the dry DI - but in the room a cranked
@@ -1441,16 +1447,19 @@ private:
     float bridgeCouplingRowSum_ { 0.0f };
 
     // Acoustic feedback from the amplified output back into the strings. The
-    // host pushes its previous processed block through pushAcousticReturn();
-    // the ring holds a bounded mono copy that process() consumes one host
-    // sample at a time, which gives the loop the one-block latency a real
-    // speaker-to-string air path has. With the resonance control at zero the
-    // gain is exactly zero and nothing stored here is ever injected.
+    // voiced nominal 5.805 ms path corresponds to about two metres of free-air
+    // travel and retains the voiced 256-sample reference at 44.1 kHz. The FIFO
+    // starts with that many silent samples and consumes/appends one host-rate
+    // sample at a time, so the nominal delay does not move with a DAW's
+    // block size. With the resonance control at zero the gain is exactly zero
+    // and nothing stored here is ever injected.
+    static constexpr double feedbackDelaySeconds = 256.0 / 44100.0;
     static constexpr int feedbackRingSize = 8192;
     std::array<float, feedbackRingSize> feedbackRing_ {};
     int feedbackWriteIndex_ { 0 };
     int feedbackReadIndex_ { 0 };
     int feedbackAvailable_ { 0 };
+    int feedbackDelaySamples_ { 256 };
     float feedbackCurrent_ { 0.0f };
     float feedbackPrevious_ { 0.0f };
     float feedbackGain_ { 0.0f };
