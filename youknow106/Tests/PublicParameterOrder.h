@@ -27,7 +27,7 @@ struct PublicParameter
     const char* name;
 };
 
-inline constexpr std::array<PublicParameter, 45> publicParameterOrder {{
+inline constexpr std::array<PublicParameter, 46> publicParameterOrder {{
     PublicParameter { "volume", "Volume" },
     PublicParameter { "benderDco", "Bender DCO" },
     PublicParameter { "benderVcf", "Bender VCF" },
@@ -73,6 +73,7 @@ inline constexpr std::array<PublicParameter, 45> publicParameterOrder {{
     PublicParameter { "vcfTanhMode", "VCF Tanh" },
     PublicParameter { "vcfFastEarlyMode", "VCF Fast Early" },
     PublicParameter { "vcfSolverMode", "VCF Solver" },
+    PublicParameter { "aging", "Aging" },
 }};
 
 } // namespace youknow106::tests

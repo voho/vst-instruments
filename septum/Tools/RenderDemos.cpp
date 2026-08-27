@@ -26,7 +26,7 @@ using septum::Engine;
 using septum::Patch;
 
 // 44.1 kHz is both the universally playable rate and the modelled hardware's
-// presumed engine rate (OQ-01 in the research contract).
+// presumed engine rate (OQ-01 in the README's known gaps).
 constexpr double demoSampleRate = 44100.0;
 constexpr int renderBlockSize = 256;
 // -3 dBFS: loud enough to audition without a gain change between files, with
@@ -579,10 +579,29 @@ constexpr const char* peaksTableBegin =
     " edits between the markers are overwritten -->";
 constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 
+// The rendered-peak table lives in the instrument's own README, beside the
+// audio-demo list a reader is looking at, so each instrument keeps exactly one
+// document. Only the instrument's own Docs/audio directory has such a README:
+// an ad-hoc output directory carries none, and resolving one there is how the
+// renderer knows the difference.
+std::filesystem::path instrumentReadme (const std::filesystem::path& directory)
+{
+    auto normalised = directory.lexically_normal();
+    if (normalised.filename().empty())
+        normalised = normalised.parent_path();
+
+    if (normalised.filename() != "audio"
+        || normalised.parent_path().filename() != "Docs")
+        return {};
+
+    return normalised.parent_path().parent_path() / "README.md";
+}
+
+
 bool ownsDirectory (const std::filesystem::path& directory)
 {
-    const auto readmePath = directory / "README.md";
-    if (! std::filesystem::exists (readmePath))
+    const auto readmePath = instrumentReadme (directory);
+    if (readmePath.empty() || ! std::filesystem::exists (readmePath))
         return false;
 
     std::ifstream input (readmePath, std::ios::binary);
@@ -654,8 +673,8 @@ std::string formatSignedDb (double value)
 bool updatePeaksTable (const std::filesystem::path& directory,
                        const std::vector<RenderedLevel>& levels)
 {
-    const auto readmePath = directory / "README.md";
-    if (! std::filesystem::exists (readmePath))
+    const auto readmePath = instrumentReadme (directory);
+    if (readmePath.empty() || ! std::filesystem::exists (readmePath))
         return true; // An ad-hoc output directory carries no documentation.
 
     std::ifstream input (readmePath, std::ios::binary);

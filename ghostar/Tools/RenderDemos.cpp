@@ -913,15 +913,47 @@ constexpr const char* peaksTableBegin =
     " edits between the markers are overwritten -->";
 constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 
+// The stamp a run leaves in an output directory it started empty. The peaks
+// table now lives in the instrument README, so it can no longer double as the
+// proof that this renderer owns an arbitrary output directory; this file is
+// that proof and nothing else. Its whole purpose is that the documented render
+// command can be run twice against the same scratch directory.
+constexpr const char* claimStampName = ".ghostar-demo-corpus";
+
+// The rendered-peak table lives in the instrument's own README, beside the
+// audio-demo list a reader is looking at, so each instrument keeps exactly one
+// document. Only the instrument's own Docs/audio directory has such a README:
+// an ad-hoc output directory carries none, and resolving one there is how the
+// renderer knows the difference.
+std::filesystem::path instrumentReadme(const std::filesystem::path& directory)
+{
+    auto normalised = directory.lexically_normal();
+    if (normalised.filename().empty())
+        normalised = normalised.parent_path();
+
+    if (normalised.filename() != "audio"
+        || normalised.parent_path().filename() != "Docs")
+        return {};
+
+    return normalised.parent_path().parent_path() / "README.md";
+}
+
 // Whether this directory is one this tool owns and may therefore delete from.
-// The proof is the manifest the renderer itself maintains: a README carrying
-// the markers it rewrites the level table between. Without that, the directory
-// belongs to someone else and nothing in it may be removed — the output path
-// is an ordinary command-line argument, and pointing it at a folder of music
-// must not destroy the music.
+// There are two proofs, and either will do: the stamp a previous run left in a
+// directory it started empty, or the instrument README two levels up carrying
+// the markers this renderer rewrites its level table between. Without one of
+// them the directory belongs to someone else and nothing in it may be removed
+// — the output path is an ordinary command-line argument, and pointing it at a
+// folder of music must not destroy the music.
 bool ownsDirectory(const std::filesystem::path& directory)
 {
-    const auto readmePath = directory / "README.md";
+    // A directory this renderer stamped is its own, whatever it is called.
+    std::error_code stampError;
+    if (std::filesystem::symlink_status(directory / claimStampName, stampError)
+            .type() == std::filesystem::file_type::regular)
+        return true;
+
+    const auto readmePath = instrumentReadme(directory);
     // The ownership proof must be a local regular file: a symlink pointing
     // at a genuine manifest elsewhere would otherwise deputise an unrelated
     // directory for deletion and overwriting.
@@ -941,26 +973,24 @@ bool ownsDirectory(const std::filesystem::path& directory)
         && beginPos < endPos;
 }
 
-// A directory the renderer starts empty is the renderer's to keep: writing
-// the manifest README first makes the first render's output replaceable by
-// the second, while a directory that already held anything keeps its foreign
-// status and the collision guard's full protection.
+// A directory the renderer starts empty is the renderer's to keep: stamping it
+// before anything is written makes the first render's output replaceable by the
+// second, while a directory that already held anything keeps its foreign status
+// and the collision guard's full protection.
 bool claimFreshDirectory(const std::filesystem::path& directory)
 {
     if (!std::filesystem::is_empty(directory))
         return false;
 
-    const std::string manifest =
-        std::string("# Ghostar audio corpus\n\n")
-        + "Rendered by GhostarRenderDemos from the JUCE-free engine. The\n"
-          "level table between the markers below is regenerated on every\n"
-          "full render.\n\n"
-        + peaksTableBegin + "\n" + peaksTableEnd + "\n";
-    // Atomic like every other write, so a failure cannot leave a partial,
-    // marker-less README that would make the directory look foreign while no
-    // longer being empty.
-    return writeFileAtomically(directory / "README.md", manifest.data(),
-                               manifest.size());
+    const std::string stamp =
+        "This directory holds a Ghostar demo corpus rendered by "
+        "GhostarRenderDemos.\nIts presence is what lets a later run replace "
+        "these files. Delete it and the\nrenderer will treat the directory as "
+        "somebody else's and refuse to write here.\n";
+    // Atomic like every other write, so a failure cannot leave a partial stamp
+    // in a directory that is no longer empty.
+    return writeFileAtomically(directory / claimStampName, stamp.data(),
+                               stamp.size());
 }
 
 // A demo removed from or renamed in the tables above must also disappear from
@@ -1032,8 +1062,8 @@ std::string formatSignedDb(double value)
 bool updatePeaksTable(const std::filesystem::path& directory,
                       const std::vector<RenderedLevel>& levels)
 {
-    const auto readmePath = directory / "README.md";
-    if (!std::filesystem::exists(readmePath))
+    const auto readmePath = instrumentReadme(directory);
+    if (readmePath.empty() || !std::filesystem::exists(readmePath))
         return true; // An ad-hoc output directory carries no documentation.
 
     std::ifstream input(readmePath, std::ios::binary);
@@ -1118,9 +1148,9 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // A directory this run created (or found empty) becomes the renderer's
-    // own before anything is written into it, so the documented render
-    // command can be run twice; anything else must already prove ownership.
+    // A directory this run created (or found empty) becomes the renderer's own
+    // before anything is written into it, so the documented render command can
+    // be run twice; anything else must already prove ownership.
     claimFreshDirectory(directory);
 
     if (!removeStaleWavs(directory))
@@ -1131,17 +1161,18 @@ int main(int argc, char** argv)
     // not replace a colliding file any more than it may remove one.
     const bool owned = ownsDirectory(directory);
 
-    // A README without the manifest markers means somebody else's directory
-    // with somebody else's documentation. Failing here, before the first WAV
-    // is written, keeps a doomed run from polluting it — the table update at
-    // the end would reject that README anyway, but only after the demos had
-    // already landed. A directory with no README at all stays usable as an
-    // ad-hoc output target.
-    if (!owned && std::filesystem::exists(directory / "README.md"))
+    // An instrument README that resolves but carries no manifest markers means
+    // somebody else's tree with somebody else's documentation. Failing here,
+    // before the first WAV is written, keeps a doomed run from polluting it —
+    // the table update at the end would reject that README anyway, but only
+    // after the demos had already landed. A directory that resolves no
+    // instrument README at all stays usable as an ad-hoc output target.
+    const auto readme = instrumentReadme(directory);
+    if (!owned && !readme.empty() && std::filesystem::exists(readme))
     {
         std::fprintf(stderr,
-                     "%s has a README that is not this renderer's manifest; "
-                     "no demos will be written there.\n",
+                     "%s resolves a README that is not this renderer's "
+                     "manifest; no demos will be written there.\n",
                      directory.string().c_str());
         return 1;
     }

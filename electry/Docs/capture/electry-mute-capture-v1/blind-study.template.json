@@ -1,0 +1,149 @@
+{
+  "schema": "electry-blind-study/v1",
+  "status": "not_ready_missing_licensed_captures",
+  "study_id": "REPLACE-STUDY-ID",
+  "presentation_seed": "0000000000000000000000000000000000000000000000000000000000000000",
+  "participant_count": 30,
+  "comparison_manifest": {
+    "path": "REPLACE/private-frozen-comparison-manifest.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "required_schema": "electry-blind-comparison/v1",
+    "required_status": "frozen"
+  },
+  "practice": [
+    {
+      "id": "practice-1",
+      "physical": {
+        "path": "REPLACE/practice-1-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/practice-1-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "practice-2",
+      "physical": {
+        "path": "REPLACE/practice-2-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/practice-2-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ],
+  "cells": [
+    {
+      "id": 1,
+      "physical": {
+        "path": "REPLACE/cell-01-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-01-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 2,
+      "physical": {
+        "path": "REPLACE/cell-02-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-02-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 3,
+      "physical": {
+        "path": "REPLACE/cell-03-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-03-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 4,
+      "physical": {
+        "path": "REPLACE/cell-04-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-04-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 5,
+      "physical": {
+        "path": "REPLACE/cell-05-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-05-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 6,
+      "physical": {
+        "path": "REPLACE/cell-06-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-06-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 7,
+      "physical": {
+        "path": "REPLACE/cell-07-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-07-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 8,
+      "physical": {
+        "path": "REPLACE/cell-08-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-08-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 9,
+      "physical": {
+        "path": "REPLACE/cell-09-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-09-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": 10,
+      "physical": {
+        "path": "REPLACE/cell-10-physical.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "electry": {
+        "path": "REPLACE/cell-10-electry.wav",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}

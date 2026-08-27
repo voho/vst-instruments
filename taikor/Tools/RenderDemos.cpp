@@ -813,6 +813,25 @@ constexpr const char* peaksTableBegin =
     " edits between the markers are overwritten -->";
 constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 
+// The rendered-peak table lives in the instrument's own README, beside the
+// audio-demo list a reader is looking at, so each instrument keeps exactly one
+// document. Only the instrument's own Docs/audio directory has such a README:
+// an ad-hoc output directory carries none, and resolving one there is how the
+// renderer knows the difference.
+std::filesystem::path instrumentReadme (const std::filesystem::path& directory)
+{
+    auto normalised = directory.lexically_normal();
+    if (normalised.filename().empty())
+        normalised = normalised.parent_path();
+
+    if (normalised.filename() != "audio"
+        || normalised.parent_path().filename() != "Docs")
+        return {};
+
+    return normalised.parent_path().parent_path() / "README.md";
+}
+
+
 // Whether this directory is one this tool owns and may therefore delete from.
 // The proof is the manifest the renderer itself maintains: a README carrying
 // the markers it rewrites the level table between. Without that, the directory
@@ -821,8 +840,8 @@ constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 // not destroy the music.
 bool ownsDirectory (const std::filesystem::path& directory)
 {
-    const auto readmePath = directory / "README.md";
-    if (! std::filesystem::exists (readmePath))
+    const auto readmePath = instrumentReadme (directory);
+    if (readmePath.empty() || ! std::filesystem::exists (readmePath))
         return false;
 
     std::ifstream input (readmePath, std::ios::binary);
@@ -902,8 +921,8 @@ std::string formatSignedDb (double value)
 bool updatePeaksTable (const std::filesystem::path& directory,
                        const std::vector<RenderedLevel>& levels)
 {
-    const auto readmePath = directory / "README.md";
-    if (! std::filesystem::exists (readmePath))
+    const auto readmePath = instrumentReadme (directory);
+    if (readmePath.empty() || ! std::filesystem::exists (readmePath))
         return true; // An ad-hoc output directory carries no documentation.
 
     std::ifstream input (readmePath, std::ios::binary);

@@ -108,7 +108,7 @@ if(ELECTRY_BUILD_PLUGIN)
     juce_generate_juce_header(Electry)
 
     juce_add_binary_data(ElectryAssets
-        SOURCES Assets/electry-guitar-top.png)
+        SOURCES Assets/electry-mahogany-satin-v2.png)
 
     target_sources(Electry PRIVATE
         Source/PluginProcessor.cpp
@@ -138,17 +138,27 @@ endif()
 # from the same JUCE-free path the plug-in uses, so they cannot drift away from
 # what Electry actually produces. It is built by default, including on Linux CI,
 # so it cannot rot unnoticed.
-option(ELECTRY_BUILD_TOOLS "Build the demo WAV renderer" ON)
+option(ELECTRY_BUILD_TOOLS "Build the demo and evaluation WAV renderers" ON)
 
 if(ELECTRY_BUILD_TOOLS)
     add_executable(ElectryRenderDemos Tools/RenderDemos.cpp)
     target_link_libraries(ElectryRenderDemos PRIVATE ElectryDSP)
     target_compile_features(ElectryRenderDemos PRIVATE cxx_std_20)
 
+    add_executable(ElectryRenderEvaluation Tools/RenderEvaluation.cpp)
+    target_link_libraries(ElectryRenderEvaluation PRIVATE ElectryDSP)
+    target_compile_features(ElectryRenderEvaluation PRIVATE cxx_std_20)
+    target_compile_definitions(ElectryRenderEvaluation PRIVATE
+        ELECTRY_EVALUATION_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/evaluation"
+        ELECTRY_EVALUATION_PROJECT_VERSION="${PROJECT_VERSION}")
+
     if(MSVC)
         target_compile_options(ElectryRenderDemos PRIVATE /W4 /permissive-)
+        target_compile_options(ElectryRenderEvaluation PRIVATE /W4 /permissive-)
     else()
         target_compile_options(ElectryRenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(ElectryRenderEvaluation PRIVATE
             -Wall -Wextra -Wpedantic)
     endif()
 endif()
@@ -211,6 +221,16 @@ if(BUILD_TESTING)
                  COMMAND ElectryRenderDemos --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(Electry.RenderDemos PROPERTIES TIMEOUT 60)
+
+        # Render, parse the JSON manifest with CMake's own JSON reader, and
+        # inspect every WAV header and payload size. This catches a writer
+        # that exits successfully after emitting a malformed comparison set.
+        add_test(NAME Electry.RenderEvaluation
+                 COMMAND ${CMAKE_COMMAND}
+                         -DELECTRY_EVALUATION_RENDERER=$<TARGET_FILE:ElectryRenderEvaluation>
+                         -DELECTRY_EVALUATION_DIR=${CMAKE_CURRENT_BINARY_DIR}/evaluation-test
+                         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateEvaluation.cmake)
+        set_tests_properties(Electry.RenderEvaluation PROPERTIES TIMEOUT 60)
     endif()
 
     if(ELECTRY_BUILD_PLUGIN)

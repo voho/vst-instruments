@@ -9,8 +9,8 @@ attribution below does not identify bundled third-party source code.
 
 Electry's string, player-interaction, and pickup structures follow published
 research. No source code from these works is included; the engine is an
-independent implementation, and each model's precise claim boundary is
-documented in `Docs/physical-modeling-research.md`:
+independent implementation, and each model's precise claim boundary is set out
+under "References and claim boundaries" in `README.md`:
 
 - M. Karjalainen, V. Välimäki, and T. Tolonen, *Plucked-String Models: From
   the Karplus-Strong Algorithm to Digital Waveguides and Beyond*, Computer

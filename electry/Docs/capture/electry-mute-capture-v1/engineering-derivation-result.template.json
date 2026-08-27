@@ -1,0 +1,21 @@
+{
+  "schema": "electry-engineering-derivation-result/v1",
+  "status": "not_frozen_missing_train_analysis",
+  "study_id": "REPLACE-STUDY-ID",
+  "train_clusters": [],
+  "artifacts": {
+    "baseline_build_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "candidate_build_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "analyzer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "evaluator_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "event_generator_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "depth_mapping": {"palm_near": 0.2, "palm_middle": 0.5, "palm_far": 0.8, "dead": 0.5},
+  "repeatability_percentile": 0.9,
+  "percentile_method": "r7_linear_interpolation",
+  "candidate_contour_rmse_reduction_min": 0.25,
+  "engineering_contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "failure_rule": "missing_train_derivation_or_sample_fails",
+  "exclusions": [],
+  "endpoints": []
+}

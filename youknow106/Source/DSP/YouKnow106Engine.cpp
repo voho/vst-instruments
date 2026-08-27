@@ -2212,22 +2212,13 @@ const auto vcfTanhFineTable = makeVcfTanhHermiteTable<vcfTanhFineIntervals>(
     0.0, vcfTanhFineWidth);
 const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
     vcfTanhFineLimit, vcfTanhTailWidth);
-} // namespace
 
-double YouKnow106Engine::OtaCascade::zonedHermiteTanh(double value) noexcept
-{
-    if (std::isnan(value))
-        return value;
-    const double magnitude = std::abs(value);
-    // Direct callers retain the denormal bypass. The integrated Fast path
-    // starts from validated finite state; its table polynomial is bit-exact
-    // for subnormals, so it need not repeat this cold guard 90 times per card.
-    if (magnitude < std::numeric_limits<double>::min())
-        return value;
-    return zonedHermiteTanhUnchecked(value);
-}
-
-double YouKnow106Engine::OtaCascade::zonedHermiteTanhUnchecked(
+// The body of `zonedHermiteTanhUnchecked`, force-inlined into the solver's
+// right-hand side. As an outlined call it was the single largest consumer in
+// the whole-engine profile (~10M calls/s at the default rung); inlining keeps
+// the identical expression tree -- same table, same polynomial, same rounding
+// -- while letting the nine independent evaluations per RHS overlap.
+[[gnu::always_inline]] inline double zonedHermiteTanhImpl(
     double value) noexcept
 {
     const double magnitude = std::abs(value);
@@ -2256,6 +2247,70 @@ double YouKnow106Engine::OtaCascade::zonedHermiteTanhUnchecked(
                           + coefficient.linear) * fraction
                           + coefficient.constant;
     return std::copysign(result, value);
+}
+
+// The PolyZoned rung's inner zone: tanh(x)/x on |x| < 1 as a degree-five
+// polynomial in u = x^2 (Chebyshev fit of tanh(sqrt(u))/sqrt(u) on [0, 1];
+// max |x*Q(x^2) - tanh(x)| = 4.31e-7 over the zone, an order below the 5e-6
+// the measured inner-zone candidates already admitted). The kernel sits on
+// the solver's serial dependency chain -- k1 feeds k2 feeds k3 -- so it is
+// written in Estrin form: independent first-order pairs combined through
+// u^2, four fused steps deep where Horner needs six. Wider alternatives
+// were measured and rejected here: a Pade [9/8] core pays a divide on that
+// chain, and a two-piece degree-13 fit pays still more depth plus a select;
+// both lost to this shallower kernel end to end. |x| < 1 covers 95..99.8%
+// of the arguments the profiled scenarios produce; the rest fall through to
+// the established zoned Hermite tables.
+[[gnu::always_inline]] inline double vcfInnerTanhFactor(double u) noexcept
+{
+    const double uSquared = u * u;
+    const double top = -0.00305822903759879 * u + 0.016720855179576926;
+    const double high = -0.051585988404218436 * u + 0.1328072064598552;
+    const double low = -0.3332895137021704 * u + 0.9999993948006496;
+    return (top * uSquared + high) * uSquared + low;
+}
+
+// Full-range scalar form of the PolyZoned nonlinearity: the inner
+// polynomial where it is valid, the established zoned Hermite tables beyond.
+[[gnu::always_inline]] inline double polyZonedTanhImpl(double value) noexcept
+{
+    const double u = value * value;
+    if (u < 1.0)
+        return value * vcfInnerTanhFactor(u);
+    return zonedHermiteTanhImpl(value);
+}
+
+// Evaluates the zoned nonlinearity across four independent arguments -- the
+// four stage nonlinearities of one right-hand-side evaluation, whose
+// arguments depend only on the state vector and never on each other's
+// outputs, so the four scalar chains overlap in flight.
+[[gnu::always_inline]] inline std::array<double, 4> polyZonedTanhBatch(
+    const std::array<double, 4>& argument) noexcept
+{
+    return { polyZonedTanhImpl(argument[0]),
+             polyZonedTanhImpl(argument[1]),
+             polyZonedTanhImpl(argument[2]),
+             polyZonedTanhImpl(argument[3]) };
+}
+} // namespace
+
+double YouKnow106Engine::OtaCascade::zonedHermiteTanh(double value) noexcept
+{
+    if (std::isnan(value))
+        return value;
+    const double magnitude = std::abs(value);
+    // Direct callers retain the denormal bypass. The integrated Fast path
+    // starts from validated finite state; its table polynomial is bit-exact
+    // for subnormals, so it need not repeat this cold guard 90 times per card.
+    if (magnitude < std::numeric_limits<double>::min())
+        return value;
+    return zonedHermiteTanhUnchecked(value);
+}
+
+double YouKnow106Engine::OtaCascade::zonedHermiteTanhUnchecked(
+    double value) noexcept
+{
+    return zonedHermiteTanhImpl(value);
 }
 
 double YouKnow106Engine::OtaCascade::cubicEarlyTanh(double value) noexcept
@@ -2342,7 +2397,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     // Recover a hostile standalone state once here so Fast does not repeat the
     // helper's NaN check at every nonlinear evaluation.
     const bool useFastTanh = useCubicEarly
-                          || tanhMode == VcfTanhMode::ZonedHermite;
+                          || tanhMode != VcfTanhMode::Exact;
     if (useFastTanh
         && !std::all_of(state.begin(), state.end(), [](double value) {
                return std::abs(value) <= 64.0;
@@ -2437,6 +2492,17 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     std::array<double, pointCount> omegaAt {};
     std::array<double, pointCount> feedbackAt {};
     std::array<double, pointCount> headroomAt {};
+    // A settled interval -- both endpoints equal, no hold trajectory -- is
+    // most of what an instrument does, and there the node interpolation
+    // below is arithmetically the identity: a + p * (b - a) with b == a is
+    // exactly a for every finite a. Broadcasting the endpoint is therefore
+    // not an approximation, just the same values without the per-node
+    // arithmetic.
+    const bool settledControls = trajectory == nullptr
+        && previousOmegaStep == currentOmega
+        && previousFeedback == currentFeedback
+        && previousHeadroom == currentHeadroom;
+    const double settledHeadroom = std::max(currentHeadroom, 1.0e-5);
     for (std::size_t point = 0; point < pointCount; ++point)
     {
         if ((nodeMask >> point & 1u) == 0u)
@@ -2456,7 +2522,13 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                 + nodes[point].cubic[1] * inputHistory[0]
                 + nodes[point].cubic[2] * inputHistory[1]
                 + nodes[point].cubic[3] * inputHistory[2];
-        if (trajectory != nullptr)
+        if (settledControls)
+        {
+            omegaAt[point] = currentOmega;
+            feedbackAt[point] = currentFeedback;
+            headroomAt[point] = settledHeadroom;
+        }
+        else if (trajectory != nullptr)
         {
             omegaAt[point] = clampOmegaStep(
                 trajectory->omegaStep[point]);
@@ -2546,68 +2618,11 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
             stageOmegaAt[point][stage] = omegaAt[point] * stageScale[stage];
     }
 
-    // Fast amortizes normalization over the nodes this tableau actually reads
-    // -- seven on the default rung, five or three on the cheaper ones. In the
-    // Character-on path, those reciprocals replace 90 RHS divisions per card
-    // interval on the default rung. Exact keeps the established division
-    // expressions and their frozen rounding behavior.
-    const auto integrate = [&]<bool useReciprocal, Tableau tableau>(
-                               const auto& nonlinear) {
-        std::array<double, pointCount> inverseHeadroomAt {};
-        if constexpr (useReciprocal)
-            for (std::size_t point = 0; point < pointCount; ++point)
-                if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
-                    inverseHeadroomAt[point] = 1.0 / headroomAt[point];
-
-        // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
-        // a const reference forces every temporary through addressable memory.
-        const auto derivative = [&](std::array<double, 4> value,
-                                    double drive, std::size_t point) {
-            std::array<double, 4> result {};
-            const double runningHeadroom = headroomAt[point];
-            const auto normalise = [&](double input) {
-                if constexpr (useReciprocal)
-                    return input * inverseHeadroomAt[point];
-                return input / runningHeadroom;
-            };
-#if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
-            if (applyEarlyEffect)
-                YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
-                                             result.size());
-#endif
-            const double feedbackArgument = [&] {
-                if constexpr (useReciprocal)
-                    return value[3] * (1.0 / feedbackHeadroom);
-                return value[3] / feedbackHeadroom;
-            }();
-            double previous = drive - feedbackAt[point] * feedbackHeadroom
-                * nonlinear(feedbackArgument);
-            for (std::size_t stage = 0; stage < result.size(); ++stage)
-            {
-#if defined(YOUKNOW106_WORK_AUDIT)
-                YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
-#endif
-                const double early = [&] {
-                    if (!applyEarlyEffect)
-                        return 1.0;
-                    if constexpr (useCubicEarly)
-                        return 1.0 + earlyAmount
-                            * cubicEarlyTanh(normalise(value[stage]));
-                    return 1.0 + earlyAmount
-                        * nonlinear(normalise(value[stage]));
-                }();
-                result[stage] = stageOmegaAt[point][stage]
-                    * early * runningHeadroom
-                    * nonlinear(normalise(
-                        previous - value[stage]
-                        + stageOffset[stage]));
-                previous = value[stage];
-            }
-            return result;
-        };
-
+    // The tableau walks are shared by every right-hand side: they advance
+    // `state` through the closure with whichever derivative the dispatch
+    // below built, so the ladder exists once rather than once per kernel.
+    const auto integrateSteps = [&]<Tableau tableau>(
+                                    const auto& derivative) {
         if constexpr (tableau == Tableau::MersonHalf)
         {
             for (int step = 0; step < integrationSubsteps; ++step)
@@ -2672,6 +2687,141 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
         }
     };
 
+    // Fast amortizes normalization over the nodes this tableau actually reads
+    // -- seven on the default rung, five or three on the cheaper ones. In the
+    // Character-on path, those reciprocals replace 90 RHS divisions per card
+    // interval on the default rung. Exact keeps the established division
+    // expressions and their frozen rounding behavior.
+    const auto integrate = [&]<bool useReciprocal, Tableau tableau>(
+                               const auto& nonlinear) {
+        std::array<double, pointCount> inverseHeadroomAt {};
+        if constexpr (useReciprocal)
+            for (std::size_t point = 0; point < pointCount; ++point)
+                if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
+                    inverseHeadroomAt[point] = 1.0 / headroomAt[point];
+
+        // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
+        // a const reference forces every temporary through addressable memory.
+        const auto derivative = [&](std::array<double, 4> value,
+                                    double drive, std::size_t point) {
+            std::array<double, 4> result {};
+            const double runningHeadroom = headroomAt[point];
+            const auto normalise = [&](double input) {
+                if constexpr (useReciprocal)
+                    return input * inverseHeadroomAt[point];
+                return input / runningHeadroom;
+            };
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
+            if (applyEarlyEffect)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
+                                             result.size());
+#endif
+            const double feedbackArgument = [&] {
+                if constexpr (useReciprocal)
+                    return value[3] * (1.0 / feedbackHeadroom);
+                return value[3] / feedbackHeadroom;
+            }();
+            double previous = drive - feedbackAt[point] * feedbackHeadroom
+                * nonlinear(feedbackArgument);
+            for (std::size_t stage = 0; stage < result.size(); ++stage)
+            {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
+#endif
+                const double early = [&] {
+                    if (!applyEarlyEffect)
+                        return 1.0;
+                    if constexpr (useCubicEarly)
+                        return 1.0 + earlyAmount
+                            * cubicEarlyTanh(normalise(value[stage]));
+                    return 1.0 + earlyAmount
+                        * nonlinear(normalise(value[stage]));
+                }();
+                result[stage] = stageOmegaAt[point][stage]
+                    * early * runningHeadroom
+                    * nonlinear(normalise(
+                        previous - value[stage]
+                        + stageOffset[stage]));
+                previous = value[stage];
+            }
+            return result;
+        };
+
+        integrateSteps.template operator()<tableau>(derivative);
+    };
+
+    // The PolyZoned kernel: the same derivative expressions with the four
+    // stage nonlinearities batched. Their arguments depend only on the state
+    // vector, never on each other's outputs, so the inner polynomial can be
+    // evaluated unconditionally across the batch -- branch-free and
+    // load-free, which the scalar zoned kernel cannot be -- and the rare
+    // out-of-zone lane is patched afterwards through the established Hermite
+    // tables. The feedback return stays scalar: stage zero's argument needs
+    // its result.
+    const auto integratePoly = [&]<Tableau tableau> {
+        std::array<double, pointCount> inverseHeadroomAt {};
+        for (std::size_t point = 0; point < pointCount; ++point)
+            if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
+                inverseHeadroomAt[point] = 1.0 / headroomAt[point];
+
+        const auto derivative = [&](std::array<double, 4> value,
+                                    double drive, std::size_t point) {
+            const double inverseHeadroom = inverseHeadroomAt[point];
+            const double runningHeadroom = headroomAt[point];
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 4);
+            if (applyEarlyEffect)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations, 4);
+#endif
+            // With the resonance loop open the return term is exactly zero
+            // whatever the fourth capacitor holds, and its evaluation is the
+            // one nonlinearity stage zero's argument has to wait for -- so
+            // an open loop skips it rather than computing a value only to
+            // multiply it away. Identical arithmetic either way.
+            const double loopReturn = feedbackAt[point] == 0.0
+                ? drive
+                : drive - feedbackAt[point] * feedbackHeadroom
+                    * polyZonedTanhImpl(value[3] * (1.0 / feedbackHeadroom));
+
+            const std::array<double, 4> stageArg {
+                (loopReturn - value[0] + stageOffset[0]) * inverseHeadroom,
+                (value[0] - value[1] + stageOffset[1]) * inverseHeadroom,
+                (value[1] - value[2] + stageOffset[2]) * inverseHeadroom,
+                (value[2] - value[3] + stageOffset[3]) * inverseHeadroom
+            };
+            const std::array<double, 4> stageTanh =
+                polyZonedTanhBatch(stageArg);
+
+            std::array<double, 4> early {};
+            if (!applyEarlyEffect)
+                early.fill(1.0);
+            else if constexpr (useCubicEarly)
+                for (std::size_t stage = 0; stage < early.size(); ++stage)
+                    early[stage] = 1.0 + earlyAmount
+                        * cubicEarlyTanh(value[stage] * inverseHeadroom);
+            else
+            {
+                const std::array<double, 4> earlyTanh = polyZonedTanhBatch({
+                    value[0] * inverseHeadroom, value[1] * inverseHeadroom,
+                    value[2] * inverseHeadroom, value[3] * inverseHeadroom });
+                for (std::size_t stage = 0; stage < early.size(); ++stage)
+                    early[stage] = 1.0 + earlyAmount * earlyTanh[stage];
+            }
+
+            std::array<double, 4> result {};
+            for (std::size_t stage = 0; stage < result.size(); ++stage)
+                result[stage] = stageOmegaAt[point][stage]
+                    * early[stage] * runningHeadroom * stageTanh[stage];
+            return result;
+        };
+
+        integrateSteps.template operator()<tableau>(derivative);
+    };
+
     // One switch per interval over a value that is constant for the whole
     // parameter snapshot. Each arm instantiates only the integration shell;
     // the derivative it calls is shared, so the ladder does not clone the hot
@@ -2695,10 +2845,24 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
             nonlinear);
     };
 
-    if constexpr (useCubicEarly)
+    if (tanhMode == VcfTanhMode::PolyZoned)
+        switch (plannedTableau)
+        {
+            case Tableau::Rk4Half:
+                integratePoly.template operator()<Tableau::Rk4Half>();
+                break;
+            case Tableau::Rk4Full:
+                integratePoly.template operator()<Tableau::Rk4Full>();
+                break;
+            case Tableau::MersonHalf:
+            default:
+                integratePoly.template operator()<Tableau::MersonHalf>();
+                break;
+        }
+    else if constexpr (useCubicEarly)
         integrateWithTableau.template operator()<true>(
             [](double value) noexcept {
-                return OtaCascade::zonedHermiteTanhUnchecked(value);
+                return zonedHermiteTanhImpl(value);
             });
     else
         switch (tanhMode)
@@ -2706,7 +2870,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
             case VcfTanhMode::ZonedHermite:
                 integrateWithTableau.template operator()<true>(
                     [](double value) noexcept {
-                        return OtaCascade::zonedHermiteTanhUnchecked(value);
+                        return zonedHermiteTanhImpl(value);
                     });
                 break;
             case VcfTanhMode::Exact:
@@ -3522,7 +3686,8 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     result.keyTranspose = std::clamp(result.keyTranspose, -12, 12);
     result.polyphony = std::clamp(result.polyphony, 1, maxVoices);
     if (result.vcfTanhMode != VcfTanhMode::Exact
-        && result.vcfTanhMode != VcfTanhMode::ZonedHermite)
+        && result.vcfTanhMode != VcfTanhMode::ZonedHermite
+        && result.vcfTanhMode != VcfTanhMode::PolyZoned)
         result.vcfTanhMode = VcfTanhMode::Exact;
     if (result.vcfFastEarlyMode != VcfFastEarlyMode::Hermite
         && result.vcfFastEarlyMode != VcfFastEarlyMode::Cubic)
@@ -3593,7 +3758,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
     useCubicEarly_ =
-        activeParameters_.vcfTanhMode == VcfTanhMode::ZonedHermite
+        activeParameters_.vcfTanhMode != VcfTanhMode::Exact
         && activeParameters_.vcfFastEarlyMode == VcfFastEarlyMode::Cubic;
     // Unit Character scales the stage offsets, so they follow the panel; the
     // aged-unit precompute follows only panel edits and reset, not note-ons.
@@ -3907,6 +4072,16 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     // card trims already installed by reset()/setParameters() remain current.
     // In particular, a note-on must not recompute all 16 cards' four stages.
     voice.cardIndex = slot;
+    // Wake from the freewheel by resuming, not by flushing: every frozen
+    // support state -- correction rings, input history, coupling charge,
+    // filter capacitors -- was measured closer to the always-rendered
+    // reference than a from-silence rebuild (retrigger nulls improved about
+    // 6 dB across the wake when nothing is reset; zeroing the coupling
+    // capacitors alone cost 6 dB the other way). Everything here is bounded
+    // and finite, the comparator re-reconciles against its memoryless truth
+    // on the first rendered sample, and the VCA is still closed while the
+    // few stale-support samples flush through.
+    voice.freewheeling = false;
     voice.active = true;
     voice.keyDown = true;
     voice.sustained = false;
@@ -4968,6 +5143,55 @@ float YouKnow106Engine::dynamicOtaHeadroomVolts(
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
 }
 
+void YouKnow106Engine::freewheelVoiceCard(Voice& voice) noexcept
+{
+    voice.freewheeling = true;
+    auto& dco = voice.dco;
+
+    // The same lazy exact-key geometry memo the full render maintains, so
+    // dropping in and out of the freewheel never presents a stale increment.
+    const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
+    const auto inverseRateKey =
+        std::bit_cast<std::uint32_t>(inverseOversampledRate_);
+    auto& geometry = dco.geometry;
+    if (!geometry.valid || geometry.periodKey != periodKey
+        || geometry.inverseRateKey != inverseRateKey)
+    {
+        geometry.increment = dco.periodSamples > 1.0e-9
+                           ? 1.0 / dco.periodSamples : 0.0;
+        const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
+        geometry.reset = resetAndRise[0];
+        geometry.rise = resetAndRise[1];
+        geometry.periodKey = periodKey;
+        geometry.inverseRateKey = inverseRateKey;
+        geometry.valid = true;
+    }
+
+    const double previousPhase = dco.phase;
+    const double unwrapped = previousPhase + geometry.increment;
+    dco.phase = unwrapped >= 1.0
+              ? unwrapped - std::floor(unwrapped) : unwrapped;
+
+    // The divide-by-two sub clocks at the reset's start, exactly where the
+    // full render toggles it: count the base+rise points crossed this sample
+    // and flip on odd counts. Integers in (previousPhase - rise,
+    // unwrapped - rise] are those crossings.
+    const double rise = geometry.rise;
+    const long long crossings =
+        static_cast<long long>(std::floor(unwrapped - rise))
+        - static_cast<long long>(std::floor(previousPhase - rise));
+    if ((crossings & 1) != 0)
+        dco.subState = -dco.subState;
+
+    // Each wrap launches the next cycle on the slewing compensation's
+    // current ratio, as the full render does.
+    if (unwrapped >= 1.0)
+        dco.renderScale = dcoLaunchScale(voice);
+
+    // The card-local microscopic noise source keeps running.
+    voice.noiseState = xorshift32(voice.noiseState);
+}
+
 template <bool useCubicEarly>
 float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parameters,
                                     float noiseSample) noexcept
@@ -4977,6 +5201,19 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // but an unassigned slot has no DCO/filter/audio state that must run.
     if (!voice.active && voice.cardIndex >= hardwareVoices)
         return 0.0f;
+
+    // A retired physical card's render is computed and then discarded: the
+    // caller drops the sample, so the only thing this pass can change is the
+    // free-running state a later reassignment starts from. Under the fast
+    // tanh modes that state is advanced directly, at a fraction of the cost.
+    // Exact keeps the established full render, so the reference kernel's
+    // frozen fingerprints and work counters are untouched -- and switching
+    // back to Exact is the way to switch this behaviour off.
+    if (!voice.active && parameters.vcfTanhMode != VcfTanhMode::Exact)
+    {
+        freewheelVoiceCard(voice);
+        return 0.0f;
+    }
 
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(dcoFrames, 1);
@@ -4994,8 +5231,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // temperature has no term in its pitch: the count is the count. A revision
     // did scale this by a per-card thermal factor, which spread the six cards
     // over 13 cents and removed the one thing this architecture exists to
-    // guarantee -- see the note on tuning stability in
-    // Docs/circuit-modelling-research.md.
+    // guarantee -- see "No pitch drift and no inter-voice detune" under
+    // the README's "Known gaps".
     const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
     const auto inverseRateKey =
         std::bit_cast<std::uint32_t>(inverseOversampledRate_);
@@ -5987,7 +6224,15 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     // (`!voice.active && cardIndex >= hardwareVoices`, and
                     // `cardIndex` is always the slot). One guard, so the two
                     // cannot drift apart from that early return or each other.
-                    if (voice.active || slot < hardwareVoices)
+                    // A freewheeling card reads neither result either -- its
+                    // gate below is the same `!active` plus the fast tanh
+                    // mode, and the wake path recomputes both before the
+                    // first audible sample -- so the pair is skipped there
+                    // too, under the identical condition renderVoice tests.
+                    const bool freewheels = !voice.active
+                        && parameters.vcfTanhMode != VcfTanhMode::Exact;
+                    if (!freewheels
+                        && (voice.active || slot < hardwareVoices))
                     {
                         updatePulseComparator(voice, parameters);
                         updateVoiceAudio(voice, parameters);
@@ -6024,8 +6269,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                         sounding = true;
                 }
             };
+            // The cubic Early multiplier is the shipped default since the
+            // 2026-08-24 CPU pass, so neither arm is the unlikely one.
             if (useCubicEarly_)
-                [[unlikely]] renderVoices.template operator()<true>();
+                renderVoices.template operator()<true>();
             else
                 renderVoices.template operator()<false>();
 
@@ -6085,12 +6332,22 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // rail is inserted here; the main volume control follows it.
             float wetLeft = levelled;
             float wetRight = levelled;
-            chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
-                            wetLeft, wetRight,
-                            parameters.enableChorusClockBleed,
-                            parameters.enableChorusHyperbolicSweep,
-                            parameters.calibration,
-                            parameters.useChorusRateNoiseHypothesis);
+            // A switched-off, fully settled chorus outputs bit-exactly the
+            // dry routing whatever its muted lines hold, so the fast tanh
+            // modes skip the BBD work behind it; the wet path rebuilds from
+            // silence on engage. Exact keeps the established always-running
+            // lines -- the same policy split as the voice-card freewheel.
+            if (parameters.chorus != ChorusMode::Off
+                || parameters.vcfTanhMode == VcfTanhMode::Exact
+                || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
+                                                       wetRight))
+                chorus_.process(levelled, parameters.chorus,
+                                parameters.chorusNoise,
+                                wetLeft, wetRight,
+                                parameters.enableChorusClockBleed,
+                                parameters.enableChorusHyperbolicSweep,
+                                parameters.calibration,
+                                parameters.useChorusRateNoiseHypothesis);
 
             // TA75558S IC6 cannot swing past its own +/-15 V rails. Unlike the
             // modelled tolerances, this is not scaled by Unit Character: a

@@ -22,13 +22,18 @@ public:
     void drawButtonText (juce::Graphics&, juce::TextButton&,
                          bool isHighlighted, bool isDown) override;
     void drawLabel (juce::Graphics&, juce::Label&) override;
+    void drawComboBox (juce::Graphics&, int width, int height,
+                       bool isButtonDown, int buttonX, int buttonY,
+                       int buttonW, int buttonH, juce::ComboBox&) override;
+    void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+    juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
-// A guitar-oriented keyboard that keeps the latching keyswitch banks visually
-// separate from the playable Drop-E eight-string range. The picking-style and
-// play-style banks latch independently, so one key of each is highlighted.
+// A guitar-oriented keyboard for keyswitches and the pitched playable range.
+// Pick style stays latched; the play-style highlight follows either its latch
+// or the active HOLD override.
 class ElectryKeyboardComponent final : public juce::MidiKeyboardComponent
 {
 public:
@@ -56,7 +61,8 @@ private:
 class ElectryChoiceStrip final : public juce::Component
 {
 public:
-    ElectryChoiceStrip (juce::String title, juce::StringArray choices);
+    ElectryChoiceStrip (juce::String title, juce::StringArray choices,
+                        int maximumColumns = 8);
 
     std::function<void (int)> onChoice;
     void setSelectedIndex (int newIndex);
@@ -69,6 +75,7 @@ public:
 private:
     juce::String titleText;
     std::vector<std::unique_ptr<juce::TextButton>> buttons;
+    int maxColumns;
     int selectedIndex = 0;
 };
 
@@ -76,7 +83,6 @@ class ElectryKnob final : public juce::Component
 {
 public:
     explicit ElectryKnob (juce::String name);
-    void paint (juce::Graphics&) override;
     void resized() override;
 
     juce::Slider slider;
@@ -89,7 +95,9 @@ class ElectryStatusDisplay final : public juce::Component
 {
 public:
     void setStatus (int activeVoices, int sympatheticStrings, bool ready,
-                    double sampleRate, bool scheduleRepaint = true);
+                    double sampleRate, int midiMutePressure, int vibratoGesture,
+                    int tremoloGesture, bool scheduleRepaint = true);
+    juce::String getStatusText() const;
     void paint (juce::Graphics&) override;
 
 private:
@@ -97,23 +105,33 @@ private:
     int sympathetic = -1;
     bool isReady = false;
     double rate = 0.0;
+    int mutePressure = -1;
+    int vibrato = -1;
+    int tremolo = -1;
 };
 
 // Live eight-string fretboard. It shows which physical string carries every
 // sounding note, where it is stopped, how hard it is ringing, and which
-// strings are only ringing through the sympathetic bridge coupling. All of its
-// geometry and ballistics come from the JUCE-free electry::visuals helpers, so
-// the drawing code stays a thin renderer.
-class ElectryFretboardDisplay final : public juce::Component
+// strings are only ringing through the sympathetic bridge coupling. A click
+// on one row reuses the engine's existing held-string repick gesture. All of
+// its geometry and ballistics come from the JUCE-free electry::visuals helpers,
+// so the drawing code stays a thin renderer.
+class ElectryFretboardDisplay final : public juce::Component,
+                                       public juce::SettableTooltipClient
 {
 public:
     ElectryFretboardDisplay();
+
+    std::function<void (int)> onRepick;
 
     // Pulls one frame of per-string state. Returns true while the picture is
     // still changing, so the editor only repaints a moving display.
     bool refresh (const ElectryAudioProcessor&, float frameSeconds);
 
     void paint (juce::Graphics&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     struct StringRow
@@ -124,6 +142,9 @@ private:
     };
 
     std::array<StringRow, electry::ElectryEngine::stringCount> rows {};
+    int hoveredString = -1;
+
+    int stringAtY (float y) const noexcept;
 };
 
 class ElectryAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -162,7 +183,9 @@ private:
 
     juce::Label logoLabel;
     juce::Label editionLabel;
+    juce::Label factoryProgramLabel;
     juce::Label keyboardHintLabel;
+    juce::ComboBox factoryProgramSelector;
     ElectryStatusDisplay statusDisplay;
     juce::TextButton panicButton { "PANIC" };
 
@@ -170,32 +193,36 @@ private:
     // hands do. Any combination of the two is reachable.
     ElectryChoiceStrip pickStyleStrip {
         "PICK STROKE  (KEYSWITCHES C0..D0)",
-        { "DOWN", "UP", "ALTERNATE" }
+        { "DOWN", "UP", "ALT" }
     };
     ElectryChoiceStrip playStyleStrip {
         "PLAY STYLE  (KEYSWITCHES D#0..A0)",
-        { "SUSTAIN", "PALM MUTE", "HAMMER", "HARMONIC", "PINCH", "SLIDE",
+        { "SUSTAIN", "MUTE", "HAMMER", "HARMONIC", "PINCH", "SLIDE",
           "DEAD" }
     };
-    ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
-    ElectryChoiceStrip outputModeStrip { "OUTPUT FIELD", { "MONO", "STEREO" } };
+    ElectryChoiceStrip playStyleKeyModeStrip {
+        "PLAY-STYLE KEYS", { "LATCH", "HOLD" }
+    };
+    ElectryChoiceStrip pickupStrip {
+        "PICKUP", { "NECK", "BOTH", "BRIDGE" }, 1
+    };
+    ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "2X" } };
+    ElectryChoiceStrip ampModelStrip {
+        "AMP VOICE",
+        { "AMERICAN CLEAN", "BRITISH CRUNCH", "MODERN HIGH-GAIN" }
+    };
 
-    ElectryKnob bodyWoodKnob { "WOOD" };
-    ElectryKnob bodySizeKnob { "SIZE" };
-    ElectryKnob bodyShapeKnob { "SHAPE" };
-    ElectryKnob constructionKnob { "NECK JOIN" };
-    ElectryKnob scaleLengthKnob { "SCALE" };
+    ElectryKnob guitarBuildKnob { "BUILD" };
     ElectryKnob bodyResonanceKnob { "BODY RES" };
 
     ElectryKnob pickupTypeKnob { "COIL TYPE" };
     ElectryKnob toneKnob { "TONE" };
 
-    ElectryKnob stringGaugeKnob { "GAUGE" };
     ElectryKnob stringAgeKnob { "AGE" };
     ElectryKnob pickPositionKnob { "PICK POS" };
     ElectryKnob pickHardnessKnob { "HARDNESS" };
     ElectryKnob bendTimeKnob { "BEND TIME" };
-    ElectryKnob muteDampingKnob { "MUTE DAMP" };
+    ElectryKnob muteDampingKnob { "TIGHTNESS" };
     ElectryKnob velocityKnob { "VELOCITY" };
 
     ElectryKnob pickNoiseKnob { "PLECTRUM" };
@@ -204,8 +231,9 @@ private:
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob sympatheticKnob { "SYMPATHY" };
-    ElectryKnob palmMuteKnob { "PALM MUTE" };
+    ElectryKnob palmMuteKnob { "MUTE" };
     ElectryKnob strumSpreadKnob { "STRUM" };
+    ElectryKnob tremoloRateKnob { "TRM RATE" };
     ElectryKnob resonanceKnob { "RESONANCE" };
 
     ElectryKnob outputKnob { "OUTPUT" };
@@ -220,6 +248,7 @@ private:
 
     std::unique_ptr<juce::ParameterAttachment> pickupAttachment;
     std::unique_ptr<juce::ParameterAttachment> outputModeAttachment;
+    std::unique_ptr<juce::ParameterAttachment> ampModelAttachment;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::array<juce::Rectangle<int>, sectionCount> sectionBounds {};
 

@@ -1,6 +1,6 @@
 // The Septum engine: a behavioral model of the Roland SH-201's virtual
 // analog voice, grounded in the documents catalogued in
-// Docs/sh201-replica-research.md. The hardware computes its whole voice on one
+// the README's "How it works". The hardware computes its whole voice on one
 // custom DSP behind a documented analog output stage; this engine reproduces
 // the documented architecture exactly — two tones of
 // OSC1+OSC2 -> MIX/MOD -> FILTER -> AMP with three envelopes and two LFOs per
@@ -29,7 +29,7 @@ inline constexpr int dualPolyphony = 5;     // settled: DUAL halves polyphony
 inline constexpr int controlInterval = 8;   // samples per control tick (voiced)
 
 // --------------------------------------------------------------------------
-// Panel-value-to-physics mappings. Tiers per the research contract:
+// Panel-value-to-physics mappings. Tiers per the README's "How it works":
 // functions marked [settled] implement a documented law; [reported] follow a
 // published measurement of related hardware; [voiced] are this project's
 // choices, each owned by an open question.
@@ -53,7 +53,7 @@ namespace mapping
     // taper put the whole audible range of the control in the top fifth of
     // its travel: the filter peaked by 1.38 dB at the exact centre of the
     // knob. The square-root taper below was **chosen by ear** in the
-    // 2026-08-22 listening test recorded in Docs/best-in-class-plan.md; it
+    // 2026-08-22 listening test recorded in Docs/decisions.md; it
     // brings the centre of the knob to about +5.5 dB. That is a choice, not a
     // measurement — OQ-08 is still open, and a swept response from a real
     // unit is still what would close it.

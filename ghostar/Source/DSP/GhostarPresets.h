@@ -4,7 +4,7 @@
 // teaches eleven "Sound Charts" instead — panel drawings the player dials in
 // by hand, from the silent Preparatory Pattern through the Inverted Guitar.
 // Those charts are the first bank, voiced from the manual's own drawings and
-// lesson text (sources in Docs/circuit-modelling-research.md), behind an
+// lesson text (sources in the README's "How it works"), behind an
 // opening Init program that is the engine's default voice — so a fresh
 // instance, which hosts label with program 0, really is what program 0
 // sounds like.

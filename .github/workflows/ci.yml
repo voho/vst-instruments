@@ -41,7 +41,7 @@ jobs:
             directory: electry
             build_plugin_option: ELECTRY_BUILD_PLUGIN
             target_demo: ElectryRenderDemos
-            expected_demos: 14
+            expected_demos: 23
           - name: Taikor
             directory: taikor
             build_plugin_option: TAIKOR_BUILD_PLUGIN

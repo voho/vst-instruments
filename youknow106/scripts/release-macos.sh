@@ -4,8 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CMAKE_FILE="${PROJECT_DIR}/CMakeLists.txt"
-CHANGELOG_FILE="${PROJECT_DIR}/CHANGELOG.md"
-USER_GUIDE_FILE="${PROJECT_DIR}/Docs/USER_GUIDE.md"
+RELEASE_NOTES_FILE="${PROJECT_DIR}/README.md"
 CUSTOMER_LICENSE_FILE="${PROJECT_DIR}/EULA.md"
 
 if [[ -z "${APP_SIGN_IDENTITY:-}" || "${APP_SIGN_IDENTITY}" == "-" ]]; then
@@ -36,12 +35,8 @@ if [[ ! -f "${CMAKE_FILE}" ]]; then
     echo "error: missing ${CMAKE_FILE}" >&2
     exit 1
 fi
-if [[ ! -f "${CHANGELOG_FILE}" ]]; then
-    echo "error: missing ${CHANGELOG_FILE}" >&2
-    exit 1
-fi
-if [[ ! -f "${USER_GUIDE_FILE}" ]]; then
-    echo "error: missing ${USER_GUIDE_FILE}" >&2
+if [[ ! -f "${RELEASE_NOTES_FILE}" ]]; then
+    echo "error: missing ${RELEASE_NOTES_FILE}" >&2
     exit 1
 fi
 if [[ ! -f "${CUSTOMER_LICENSE_FILE}" ]]; then
@@ -63,17 +58,19 @@ if [[ -z "${PROJECT_VERSION}" ]]; then
     echo "error: could not read the YouKnow106 version from CMakeLists.txt" >&2
     exit 1
 fi
-CHANGELOG_DATE="$(awk -v prefix="## ${PROJECT_VERSION} - " \
-    'index($0, prefix) == 1 { print substr($0, length(prefix) + 1); exit }' \
-    "${CHANGELOG_FILE}")"
-if [[ ! "${CHANGELOG_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "error: CHANGELOG.md needs a dated ${PROJECT_VERSION} release heading" >&2
-    exit 1
-fi
-if ! grep -Fq "YouKnow106 ${PROJECT_VERSION} is" "${USER_GUIDE_FILE}" \
-        || ! grep -Fq "YouKnow106-${PROJECT_VERSION}-macOS-universal.pkg" \
-            "${USER_GUIDE_FILE}"; then
-    echo "error: user guide does not match version ${PROJECT_VERSION} and its universal PKG" >&2
+# The release history lives in the instrument README, under a per-version
+# heading. A release may only be cut once that heading carries a real date
+# instead of "unreleased", so the shipped notes can never describe a version as
+# unreleased while it is being packaged.
+RELEASE_DATE="$(awk -v version="${PROJECT_VERSION}" '
+    index($0, "### " version " ") == 1 {
+        if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
+            print substr($0, RSTART, RLENGTH)
+        exit
+    }
+' "${RELEASE_NOTES_FILE}")"
+if [[ ! "${RELEASE_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "error: README.md needs a dated '### ${PROJECT_VERSION}' release-history heading" >&2
     exit 1
 fi
 if ! git -C "${PROJECT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then

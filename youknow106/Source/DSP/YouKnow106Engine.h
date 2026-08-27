@@ -22,7 +22,14 @@ enum class HighPassMode { Boost, One, Two, Three };
 enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
-enum class VcfTanhMode { Exact = 0, ZonedHermite = 1 };
+// Published ordinals are stored by session state and must not move. PolyZoned
+// is appended rather than folded into ZonedHermite so a session saved on Fast
+// keeps reproducing the table-Hermite kernel bit for bit; the polynomial rung
+// replaces the fine-table lookup with an inner-zone odd polynomial
+// (|x| < 1 covers 95..99.8% of the arguments real patches produce, max
+// transfer error 5.08e-6 against libm) and batches the four stage
+// nonlinearities per right-hand-side evaluation.
+enum class VcfTanhMode { Exact = 0, ZonedHermite = 1, PolyZoned = 2 };
 enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
 // Which explicit Runge-Kutta tableau advances the four OTA capacitor states
 // over one internal interval. Numerical kernel only: every rung integrates the
@@ -37,7 +44,7 @@ enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
 // rungs exist because the fixed two-half-step Merson pair spends
 // ten right-hand-side evaluations per card per internal sample where the step
 // sizes musical settings actually produce need far fewer; see
-// Docs/vcf-solver-optimization.md for the measured error and CPU of each.
+// Docs/decisions.md for the measured error and CPU of each.
 //
 // Every rung's abscissae are a subset of `OtaCascade::controlNodePositions`,
 // so none of them moves a control node, changes the hold trajectory the
@@ -215,8 +222,8 @@ struct EngineParameters
     // switch under this repository's A-Z rules -- OQ-09's measured family
     // still owns the shape, so neither candidate is promoted by it.
     bool useCircuitDerivedResonanceShape { false };
-    // Engine-level aged-unit extension, defaulted off and deliberately not a
-    // host parameter yet (exposing it is a product-surface decision). Zero is
+    // Engine-level aged-unit extension, exposed as the Aging host parameter
+    // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
     // applies the single documented recalibration lead (2026-08-20 pass): a
     // unit re-trimmed after about four years whose undisturbed VCF trims had
@@ -343,8 +350,9 @@ public:
     // These are the circuit's own transfer relations, exposed as pure
     // functions so the regression suites can check them against the
     // service-note anchors and against an independent numeric solve without
-    // reaching into a live voice. Docs/circuit-modelling-research.md records
-    // where every constant below comes from.
+    // reaching into a live voice. The README's "How it works" records
+    // where every constant below comes from, and its "Known gaps" the
+    // evidence that would close each one still voiced.
     // ------------------------------------------------------------------
 
     // Counter clock the range divider feeds the note timer: the 8 MHz master
@@ -1283,7 +1291,7 @@ private:
         // cycle at 2.66 to 3.00 per half step -- exactly where RK4's region
         // ends -- so the bound below is 2.0 per half step, 72% of that radius.
         // Merson runs those intervals for every rung; see
-        // Docs/vcf-solver-optimization.md for both measurements.
+        // Docs/decisions.md for both measurements.
         static constexpr double singleStepRk4Limit = 1.25;
         static constexpr double halfStepRk4Limit = 4.0;
         // Bound on the cascade's fastest closed-loop eigenvalue, in units of
@@ -1538,6 +1546,14 @@ private:
         // restart is consumed when this voice's turn in the converter scan
         // arrives, never synchronously at the host MIDI event.
         bool dcoResetPending { true };
+        // The retired card is advancing only its free-running state (DCO
+        // phase, sub-divider level, render scale, card noise) through the
+        // cheap freewheel path rather than the full render whose output the
+        // engine discards anyway. Set only under the fast VCF tanh modes;
+        // Exact keeps the established always-on card render. Waking resumes
+        // from the frozen support state rather than flushing it -- measured
+        // closer to the always-rendered reference; see initialiseVoice.
+        bool freewheeling { false };
         // The assigner's note-memory table and the voice CPU's pitch byte are
         // separate RAM. A POLY-button handler clears the former, but the
         // latter -- and the portamento integrator it drives -- keep running.
@@ -1837,6 +1853,12 @@ private:
     template <bool useCubicEarly = false>
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
+    // The cheap advance a retired physical card takes under the fast VCF
+    // tanh modes: exactly the free-running state a reassignment can hear --
+    // DCO phase, sub-divider level, per-cycle render scale, card noise --
+    // with none of the reconstruction, comparator or filter work whose
+    // output is discarded behind the shut VCA. See Voice::freewheeling.
+    void freewheelVoiceCard(Voice& voice) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
     // The factor the engine would actually run for a requested rung at the

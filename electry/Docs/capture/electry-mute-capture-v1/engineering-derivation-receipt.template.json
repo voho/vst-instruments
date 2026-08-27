@@ -1,0 +1,11 @@
+{
+  "schema": "electry-engineering-derivation-receipt/v1",
+  "status": "not_frozen_missing_result",
+  "study_id": "REPLACE-STUDY-ID",
+  "derivation_result": {
+    "path": "REPLACE/engineering-derivation-result.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "required_schema": "electry-engineering-derivation-result/v1",
+    "required_status": "frozen"
+  }
+}

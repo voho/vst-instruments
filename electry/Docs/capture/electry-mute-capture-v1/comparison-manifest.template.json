@@ -1,0 +1,538 @@
+{
+  "schema": "electry-blind-comparison/v1",
+  "status": "not_frozen_missing_licensed_captures",
+  "study_id": "REPLACE-STUDY-ID",
+  "presentation_seed": "0000000000000000000000000000000000000000000000000000000000000000",
+  "participant_count": 30,
+  "source_cohort": {
+    "holdout_cluster_count": 2,
+    "holdout_clusters": [
+      {
+        "cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+        "player_ids": ["REPLACE-HOLDOUT-PLAYER-1"],
+        "guitar_ids": ["REPLACE-HOLDOUT-GUITAR-1"],
+        "sessions": [
+          {
+            "session_id": "REPLACE-HOLDOUT-SESSION-1",
+            "player_id": "REPLACE-HOLDOUT-PLAYER-1",
+            "guitar_id": "REPLACE-HOLDOUT-GUITAR-1",
+            "capture_manifest": {
+              "path": "REPLACE/holdout-session-1-manifest.json",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        ]
+      },
+      {
+        "cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+        "player_ids": ["REPLACE-HOLDOUT-PLAYER-2"],
+        "guitar_ids": ["REPLACE-HOLDOUT-GUITAR-2"],
+        "sessions": [
+          {
+            "session_id": "REPLACE-HOLDOUT-SESSION-2",
+            "player_id": "REPLACE-HOLDOUT-PLAYER-2",
+            "guitar_id": "REPLACE-HOLDOUT-GUITAR-2",
+            "capture_manifest": {
+              "path": "REPLACE/holdout-session-2-manifest.json",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        ]
+      }
+    ],
+    "engineering_train_clusters": [
+      {
+        "cluster_id": "REPLACE-TRAIN-CLUSTER-1",
+        "player_ids": ["REPLACE-TRAIN-PLAYER-1"],
+        "guitar_ids": ["REPLACE-TRAIN-GUITAR-1"],
+        "sessions": [
+          {
+            "session_id": "REPLACE-TRAIN-SESSION-1",
+            "player_id": "REPLACE-TRAIN-PLAYER-1",
+            "guitar_id": "REPLACE-TRAIN-GUITAR-1",
+            "capture_manifest": {
+              "path": "REPLACE/train-session-1-manifest.json",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        ]
+      },
+      {
+        "cluster_id": "REPLACE-TRAIN-CLUSTER-2",
+        "player_ids": ["REPLACE-TRAIN-PLAYER-2"],
+        "guitar_ids": ["REPLACE-TRAIN-GUITAR-2"],
+        "sessions": [
+          {
+            "session_id": "REPLACE-TRAIN-SESSION-2",
+            "player_id": "REPLACE-TRAIN-PLAYER-2",
+            "guitar_id": "REPLACE-TRAIN-GUITAR-2",
+            "capture_manifest": {
+              "path": "REPLACE/train-session-2-manifest.json",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        ]
+      },
+      {
+        "cluster_id": "REPLACE-TRAIN-CLUSTER-3",
+        "player_ids": ["REPLACE-TRAIN-PLAYER-3"],
+        "guitar_ids": ["REPLACE-TRAIN-GUITAR-3"],
+        "sessions": [
+          {
+            "session_id": "REPLACE-TRAIN-SESSION-3",
+            "player_id": "REPLACE-TRAIN-PLAYER-3",
+            "guitar_id": "REPLACE-TRAIN-GUITAR-3",
+            "capture_manifest": {
+              "path": "REPLACE/train-session-3-manifest.json",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        ]
+      }
+    ],
+    "practice_train_session_ids": [
+      "REPLACE-TRAIN-SESSION-1",
+      "REPLACE-TRAIN-SESSION-2"
+    ]
+  },
+  "practice": [
+    {
+      "id": "practice-1",
+      "content": "REPLACE-PRACTICE-CONTENT-1",
+      "processing": "dry",
+      "frames": 30870,
+      "source_session_id": "REPLACE-TRAIN-SESSION-1",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "REPLACE-PRACTICE-TAKE-1.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "slot", "index": 1, "stroke": "down"},
+        "electry_event_or_score": {
+          "path": "REPLACE/practice-1-event.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "qc": {
+        "physical_onset_frames": [2205],
+        "electry_onset_frames": [2205],
+        "physical_attenuation_db": 0.0,
+        "electry_attenuation_db": 0.0,
+        "post_match_delta_db": 0.0,
+        "final_true_peak_dbtp": -3.0,
+        "passed": true,
+        "failure_flags": [],
+        "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "practice-2",
+      "content": "REPLACE-PRACTICE-CONTENT-2",
+      "processing": "dry",
+      "frames": 30870,
+      "source_session_id": "REPLACE-TRAIN-SESSION-2",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "REPLACE-PRACTICE-TAKE-2.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "slot", "index": 2, "stroke": "up"},
+        "electry_event_or_score": {
+          "path": "REPLACE/practice-2-event.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "qc": {
+        "physical_onset_frames": [2205],
+        "electry_onset_frames": [2205],
+        "physical_attenuation_db": 0.0,
+        "electry_attenuation_db": 0.0,
+        "post_match_delta_db": 0.0,
+        "final_true_peak_dbtp": -3.0,
+        "passed": true,
+        "failure_flags": [],
+        "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ],
+  "cells": [
+    {
+      "id": 1,
+      "content": "palm_single_e1",
+      "processing": "dry",
+      "frames": 30870,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-2",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "e1-palm-middle.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "slot", "index": 1, "stroke": "down"},
+        "electry_event_or_score": {"path": "REPLACE/cell-01-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205], "electry_onset_frames": [2205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 2,
+      "content": "palm_single_e2",
+      "processing": "dry",
+      "frames": 30870,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-2",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "e2-palm-middle.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "slot", "index": 2, "stroke": "up"},
+        "electry_event_or_score": {"path": "REPLACE/cell-02-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205], "electry_onset_frames": [2205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 3,
+      "content": "dead_single_e1",
+      "processing": "dry",
+      "frames": 18963,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-2",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "e1-dead.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "slot", "index": 3, "stroke": "down"},
+        "electry_event_or_score": {"path": "REPLACE/cell-03-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205], "electry_onset_frames": [2205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 4,
+      "content": "dead_single_e2",
+      "processing": "dry",
+      "frames": 18963,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-1",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "e2-dead.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "slot", "index": 4, "stroke": "up"},
+        "electry_event_or_score": {"path": "REPLACE/cell-04-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205], "electry_onset_frames": [2205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 5,
+      "content": "palm_rapid_e1",
+      "processing": "dry",
+      "frames": 53802,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-1",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "e1-palm-middle-rapid.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "run", "index": 2, "stroke": "down_first"},
+        "electry_event_or_score": {"path": "REPLACE/cell-05-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205, 6205, 10205, 14205, 18205, 22205, 26205, 30205, 34205, 38205, 42205, 46205], "electry_onset_frames": [2205, 6205, 10205, 14205, 18205, 22205, 26205, 30205, 34205, 38205, 42205, 46205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 6,
+      "content": "palm_rapid_e1",
+      "processing": "common_chain",
+      "frames": 53802,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-1",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "e1-palm-middle-rapid.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "run", "index": 2, "stroke": "down_first"},
+        "electry_event_or_score": {"path": "REPLACE/cell-05-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205, 6205, 10205, 14205, 18205, 22205, 26205, 30205, 34205, 38205, 42205, 46205], "electry_onset_frames": [2205, 6205, 10205, 14205, 18205, 22205, 26205, 30205, 34205, 38205, 42205, 46205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 7,
+      "content": "dead_e1_e2_groove",
+      "processing": "dry",
+      "frames": 44541,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-1",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "dead-e1-e2-groove.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "run", "index": 1, "stroke": "down_first"},
+        "electry_event_or_score": {"path": "REPLACE/cell-07-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205, 7205, 12205, 17205, 22205, 27205, 32205, 37205], "electry_onset_frames": [2205, 7205, 12205, 17205, 22205, 27205, 32205, 37205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 8,
+      "content": "dead_e1_e2_groove",
+      "processing": "common_chain",
+      "frames": 44541,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-1",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-1",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "dead-e1-e2-groove.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "run", "index": 1, "stroke": "down_first"},
+        "electry_event_or_score": {"path": "REPLACE/cell-07-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205, 7205, 12205, 17205, 22205, 27205, 32205, 37205], "electry_onset_frames": [2205, 7205, 12205, 17205, 22205, 27205, 32205, 37205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 9,
+      "content": "palm_open_e1_e2_groove",
+      "processing": "dry",
+      "frames": 67032,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-2",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "palm-open-e1-e2-groove.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "run", "index": 1, "stroke": "down_first"},
+        "electry_event_or_score": {"path": "REPLACE/cell-09-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205, 10205, 18205, 26205, 34205, 42205, 50205, 58205], "electry_onset_frames": [2205, 10205, 18205, 26205, 34205, 42205, 50205, 58205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    },
+    {
+      "id": 10,
+      "content": "palm_open_e1_e2_groove",
+      "processing": "common_chain",
+      "frames": 67032,
+      "source_cluster_id": "REPLACE-HOLDOUT-CLUSTER-2",
+      "source_session_id": "REPLACE-HOLDOUT-SESSION-2",
+      "physical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "electry_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "provenance": {
+        "capture_take_file": "palm-open-e1-e2-groove.wav",
+        "capture_take_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "selection_unit": {"kind": "run", "index": 1, "stroke": "down_first"},
+        "electry_event_or_score": {"path": "REPLACE/cell-09-event.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+      },
+      "qc": {"physical_onset_frames": [2205, 10205, 18205, 26205, 34205, 42205, 50205, 58205], "electry_onset_frames": [2205, 10205, 18205, 26205, 34205, 42205, 50205, 58205], "physical_attenuation_db": 0.0, "electry_attenuation_db": 0.0, "post_match_delta_db": 0.0, "final_true_peak_dbtp": -3.0, "passed": true, "failure_flags": [], "record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    }
+  ],
+  "freezes": {
+    "selection": {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000000",
+      "receipt": {
+        "path": "REPLACE/frozen-selection-receipt.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "required_schema": "electry-blind-selection-receipt/v1",
+        "required_status": "frozen"
+      },
+      "implementation_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "settings": {
+        "candidate_rank": "sha256_seed_nul_protocol_nul_domain_nul_canonical_candidate_json_lowest_first",
+        "core_cluster_assignment": "lowest_rank_of_all_exact_5_5_group_assignments",
+        "single_direction_assignment": "lowest_rank_exactly_two_down_two_up_cells_1_4",
+        "single_slot_draw": "lowest_rank_complete_six_slot_fixed_direction_pool",
+        "phrase_run_draw": "lowest_rank_complete_eligible_session_take_run_pool",
+        "rapid_run_bpm": 180,
+        "palm_landmark": "middle_selected_on_train",
+        "selected_failure_rule": "missing_gate_failure_no_substitution"
+      },
+      "settings_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "render": {
+      "implementation_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "settings": {
+        "sample_rate_hz": 44100,
+        "channels": 1,
+        "bits_per_sample": 24,
+        "metadata": "none",
+        "single_pre_roll_frames": 2205,
+        "palm_single_frames": 30870,
+        "dead_single_frames": 18963,
+        "palm_level_match_window_frames": 2205,
+        "dead_level_match_window_frames": 1323,
+        "phrase_level_match": "median_corresponding_per_hit_rms",
+        "only_attenuate_louder": true,
+        "max_pair_attenuation_db": 6.0,
+        "retained_match_tolerance_db": 0.1,
+        "final_true_peak_dbtp": -3.0
+      },
+      "settings_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "chain": {
+      "implementation_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "preset_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "assets": [
+        {
+          "id": "REPLACE-ASSET-OR-IR-ID",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "settings": {
+        "sample_rate_hz": 44100,
+        "oversampling": 4,
+        "parameters": {
+          "distortion": 0.45,
+          "amp": 0.95,
+          "compressor": 0.6
+        }
+      },
+      "settings_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "analysis": {
+      "implementation_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "listener_scorer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "settings": {
+        "protocol": "electry-blind-analysis/v1",
+        "participant_count": 30,
+        "listener_strata": {
+          "extended_range_guitarist": 15,
+          "metal_producer": 15
+        },
+        "core_cells": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "palm_cells": [1, 2, 5, 6, 9, 10],
+        "dead_cells": [3, 4, 7, 8],
+        "priority_cells": [5, 6, 9, 10],
+        "hidden_repeat_cells": [5, 7, 9],
+        "bootstrap_replicates": 20000,
+        "bootstrap_unit": "whole_listener_within_stratum",
+        "bootstrap_percentile_method": "r7",
+        "identification_interval_percentiles": [5, 95],
+        "preference_lower_percentile": 5,
+        "stratum_weight": 0.5,
+        "preference_tie_value": 0.5,
+        "max_replays": 3,
+        "gate_thresholds": {
+          "a_side_choice_rate": {"minimum": 0.35, "maximum": 0.65},
+          "cell_identification": {"minimum": 0.30, "maximum": 0.70},
+          "articulation_identification": {"minimum": 0.35, "maximum": 0.65},
+          "overall_identification_interval": {"minimum": 0.40, "maximum": 0.60},
+          "priority_cell_identification": {"minimum": 0.35, "maximum": 0.65},
+          "cell_electry_preference_minimum": 0.30,
+          "articulation_electry_preference_minimum": 0.40,
+          "overall_electry_preference_lower_minimum": 0.40,
+          "repeat_same_source_agreement_minimum": 0.70
+        }
+      },
+      "settings_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "engineering_freeze": {
+    "baseline_build_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "candidate_build_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "analyzer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "evaluator_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "event_generator_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "depth_mapping": {"palm_near": 0.2, "palm_middle": 0.5, "palm_far": 0.8, "dead": 0.5},
+    "harmonic_grid_hz": [40.0, 80.0, 160.0, 320.0, 640.0, 1280.0, 2560.0],
+    "time_grid_ms": [0.0, 30.0, 100.0, 250.0, 380.0, 500.0, 1000.0],
+    "db_convention": "20_log10_rms_ratio",
+    "endpoint_weights": {
+      "palm_harmonic_contour_rmse": 1.0,
+      "palm_onset_to_peak_error": 0.0,
+      "palm_rms_50_150_error": 0.0,
+      "palm_rms_150_500_error": 0.0,
+      "palm_rms_500_1000_error": 0.0,
+      "palm_band_below_500_error": 0.0,
+      "palm_band_above_500_error": 0.0,
+      "palm_direction_interaction_error": 0.0,
+      "palm_track_loss_error": 0.0,
+      "palm_harmonic_residual_error": 0.0,
+      "dead_rms_0_30_error": 0.0,
+      "dead_rms_30_100_error": 0.0,
+      "dead_rms_100_250_error": 0.0,
+      "dead_rms_250_380_error": 0.0,
+      "dead_centroid_0_30_error": 0.0,
+      "dead_centroid_30_100_error": 0.0,
+      "dead_centroid_100_250_error": 0.0,
+      "dead_harmonicity_30_250_error": 0.0,
+      "dead_partial_decay_rmse": 0.0,
+      "dead_nonharmonic_residual_error": 0.0,
+      "rapid_envelope_shape_error": 0.0,
+      "rapid_first30_rms_displacement_error": 0.0,
+      "rapid_hit_drift_error": 0.0,
+      "dead_groove_inter_hit_residual_error": 0.0,
+      "dead_groove_transition_residual_error": 0.0,
+      "palm_open_pre_hit_residual_error": 0.0,
+      "palm_open_lift_attack_band_error": 0.0,
+      "palm_open_replant_attack_band_error": 0.0
+    },
+    "aggregation": "per_player_guitar_cluster_then_median_iqr",
+    "missing_partial_rule": "shared_retained_partial_rule_missing_primary_fails",
+    "missing_cell_rule": "missing_primary_cell_fails",
+    "primary_cells": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "candidate_contour_rmse_reduction_min": 0.25,
+    "engineering_contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "derivation_receipt": {
+      "path": "REPLACE/engineering-derivation-receipt.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "required_schema": "electry-engineering-derivation-receipt/v1",
+      "required_status": "frozen"
+    },
+    "endpoints": [
+      {"id": "palm_harmonic_contour_rmse", "orientation": "lower_is_better", "metric": "weighted_rmse", "aggregation": "per_cluster_harmonic_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_onset_to_peak_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_rms_50_150_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_rms_150_500_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_rms_500_1000_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_band_below_500_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_band_above_500_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_direction_interaction_error", "orientation": "lower_is_better", "metric": "weighted_rmse", "aggregation": "per_cluster_string_contact", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_track_loss_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_harmonic_residual_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_contact_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_rms_0_30_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_rms_30_100_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_rms_100_250_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_rms_250_380_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_centroid_0_30_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_centroid_30_100_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_centroid_100_250_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_harmonicity_30_250_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_partial_decay_rmse", "orientation": "lower_is_better", "metric": "weighted_rmse", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_nonharmonic_residual_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_string_stroke", "no_regression_margin": {"method": "balanced_three_versus_three_isolated_repetitions", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "rapid_envelope_shape_error", "orientation": "lower_is_better", "metric": "one_minus_correlation", "aggregation": "per_cluster_phrase", "no_regression_margin": {"method": "detector_analysis_quantization_only", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "detector_analysis_quantization"}},
+      {"id": "rapid_first30_rms_displacement_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_phrase", "no_regression_margin": {"method": "detector_analysis_quantization_only", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "detector_analysis_quantization"}},
+      {"id": "rapid_hit_drift_error", "orientation": "lower_is_better", "metric": "weighted_rmse", "aggregation": "per_cluster_phrase", "no_regression_margin": {"method": "detector_analysis_quantization_only", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "detector_analysis_quantization"}},
+      {"id": "dead_groove_inter_hit_residual_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_phrase", "no_regression_margin": {"method": "complete_groove_run_resampling", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "dead_groove_transition_residual_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_transition_stroke", "no_regression_margin": {"method": "complete_groove_run_resampling", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_open_pre_hit_residual_error", "orientation": "lower_is_better", "metric": "absolute_error", "aggregation": "per_cluster_transition_stroke", "no_regression_margin": {"method": "complete_groove_run_resampling", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_open_lift_attack_band_error", "orientation": "lower_is_better", "metric": "weighted_rmse", "aggregation": "per_cluster_transition_stroke", "no_regression_margin": {"method": "complete_groove_run_resampling", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}},
+      {"id": "palm_open_replant_attack_band_error", "orientation": "lower_is_better", "metric": "weighted_rmse", "aggregation": "per_cluster_transition_stroke", "no_regression_margin": {"method": "complete_groove_run_resampling", "detector_analysis_quantization": 0.0, "train_repeatability_p90": 0.0, "value": 0.0, "formula": "max(detector_analysis_quantization,train_repeatability_p90)"}}
+    ]
+  },
+  "listener_protocol": {
+    "qualification": {
+      "extended_range_guitarist_rule": "actively_plays_7_or_8_string_guitar_in_heavy_music",
+      "metal_producer_rule": "actively_produces_or_engineers_metal_music",
+      "playback_screen_rule": "passes_declared_headphone_and_playback_screen",
+      "dual_qualified_assignment": "least_filled_stratum_before_listening"
+    },
+    "recruitment": {
+      "valid_extended_range_guitarists": 15,
+      "valid_metal_producers": 15,
+      "replacement_reasons": ["qualification_failure", "playback_screen_failure", "incomplete_session"],
+      "replacement_assignment": "inherits_excluded_listener_id"
+    },
+    "stopping": {
+      "target_valid_responses": 30,
+      "outcome_based_stopping": false,
+      "outcomes_access": "sealed_until_all_valid_responses_arrive"
+    }
+  },
+  "artifact_registry": {
+    "path": "REPLACE/sealed-artifact-registry.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "required_schema": "electry-artifact-registry/v1",
+    "required_status": "sealed"
+  }
+}

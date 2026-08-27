@@ -81,7 +81,7 @@ struct ArticulationMetadata
 // how thick its hide is and how hard that hide is pulled - so the four octaves
 // are four instruments and not one instrument at four scales. A rescaling
 // cannot change a ratio, and these drums differ in their ratios: see
-// Docs/best-in-class-plan.md for the measured spread.
+// the README's release history for the measured spread.
 //
 // The four control fields are in the same units EngineParameters uses, so the
 // player's own controls can be carried across the family as a trim on them

@@ -3,9 +3,9 @@
 // parallel audio paths (series dual filter + ADSR VCA; Shaper-driven VCA +
 // passive brightness shelf), two ADSRs behind OR'ed gate sources, MOD X with six
 // sources and the arpeggiator, and the Shaper Y variable-rate integrator —
-// all per the modelling contract in Docs/circuit-modelling-research.md.
+// all per the modelling contract in the README's "How it works".
 // Constants marked "voiced" here are the first-pass choices recorded in
-// Docs/open-questions.md.
+// the README's "Known gaps".
 
 #include "DSP/GhostarEngine.h"
 

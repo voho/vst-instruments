@@ -10,23 +10,23 @@ namespace
 {
 namespace colours
 {
-const juce::Colour background { 0xff100b09 };
-const juce::Colour panel { 0x941a1512 };
-const juce::Colour panelTop { 0x9c2a211a };
-const juce::Colour panelOutline { 0xff8c7046 };
-const juce::Colour binding { 0xffd7c398 };
-const juce::Colour text { 0xfff3ead8 };
-const juce::Colour dimText { 0xffc0aa82 };
-const juce::Colour accent { 0xffd58b2b };
-const juce::Colour accentBright { 0xffffbd55 };
-const juce::Colour accentDark { 0xff6f301c };
-const juce::Colour oxblood { 0xff4f1716 };
-const juce::Colour knobFace { 0xff171310 };
-const juce::Colour knobRim { 0xff8f8069 };
-const juce::Colour nickel { 0xffb8ae9b };
-const juce::Colour warmBone { 0xffddcda9 };
+const juce::Colour background { 0xff100907 };
+const juce::Colour panel { 0xe3110e0c };
+const juce::Colour panelTop { 0xeb211815 };
+const juce::Colour panelOutline { 0xff806542 };
+const juce::Colour binding { 0xffeadaba };
+const juce::Colour text { 0xfff6f0e4 };
+const juce::Colour dimText { 0xffcbb997 };
+const juce::Colour accent { 0xffbb8544 };
+const juce::Colour accentBright { 0xffddb16b };
+const juce::Colour accentDark { 0xff57251d };
+const juce::Colour oxblood { 0xff5c211d };
+const juce::Colour knobFace { 0xff151210 };
+const juce::Colour bakeliteEdge { 0xff090807 };
+const juce::Colour nickel { 0xffaaa18f };
+const juce::Colour warmBone { 0xffe4d8ba };
 const juce::Colour ebony { 0xff17110e };
-const juce::Colour keyswitchBlack { 0xff70251f };
+const juce::Colour keyswitchBlack { 0xff51201d };
 const juce::Colour rosewood { 0xff33211a };
 const juce::Colour rosewoodDark { 0xff1d120e };
 const juce::Colour fretWire { 0xffbdb4a2 };
@@ -35,7 +35,7 @@ const juce::Colour sympatheticRing { 0xff6fa8b8 };
 
 constexpr int editorWidth = 1080;
 constexpr int editorHeight = 860;
-constexpr int fretboardPanelHeight = 148;
+constexpr int fretboardPanelHeight = 152;
 constexpr int timerHz = 30;
 constexpr int lastDrawnFret = electry::ElectryEngine::fretCount;
 constexpr int firstKeyboardNote = electry::ElectryEngine::firstKeyswitchNote; // C0
@@ -44,12 +44,13 @@ constexpr int lastKeyboardNote = electry::ElectryEngine::highestPlayableNote; //
 constexpr int keyswitchCount = electry::ElectryEngine::keyswitchCount;
 constexpr int keyboardWhiteKeyCount = 44; // C0..D6 inclusive
 constexpr auto visualWeightProperty = "electryVisualWeight";
+constexpr int sectionTitleHeight = 28;
+constexpr int sectionContentTrim = sectionTitleHeight - 10;
 
 enum class KnobTier
 {
     detail,
     contextual,
-    character,
     hero,
     master
 };
@@ -65,13 +66,12 @@ constexpr KnobTierMetrics metricsFor (KnobTier tier) noexcept
 {
     switch (tier)
     {
-        case KnobTier::detail:     return { 68, 116, 0.52f };
-        case KnobTier::contextual: return { 80, 126, 0.72f };
-        case KnobTier::character:  return { 88, 142, 0.82f };
-        case KnobTier::hero:       return { 104, 174, 1.00f };
-        case KnobTier::master:     return { 80, 148, 0.94f };
+        case KnobTier::detail:     return { 68, 110, 0.52f };
+        case KnobTier::contextual: return { 80, 116, 0.72f };
+        case KnobTier::hero:       return { 104, 128, 1.00f };
+        case KnobTier::master:     return { 80, 122, 0.94f };
     }
-    return { 88, 142, 0.82f };
+    return { 88, 122, 0.82f };
 }
 
 struct KnobSlot
@@ -87,8 +87,13 @@ void layoutKnobRow (juce::Rectangle<int> rowArea,
         return;
 
     int preferredWidth = gap * (static_cast<int> (slots.size()) - 1);
+    int preferredHeight = 0;
     for (const auto& slot : slots)
+    {
         preferredWidth += metricsFor (slot.tier).width;
+        preferredHeight = juce::jmax (preferredHeight,
+                                      metricsFor (slot.tier).height);
+    }
 
     const auto scale = juce::jmin (
         1.0f, static_cast<float> (rowArea.getWidth())
@@ -100,22 +105,23 @@ void layoutKnobRow (juce::Rectangle<int> rowArea,
             static_cast<float> (metricsFor (slot.tier).width) * scale));
 
     int x = rowArea.getX() + juce::jmax (0, (rowArea.getWidth() - groupWidth) / 2);
+    const int groupHeight = juce::jmin (rowArea.getHeight(), preferredHeight);
+    const int y = rowArea.getCentreY() - groupHeight / 2;
     for (const auto& slot : slots)
     {
         const auto metrics = metricsFor (slot.tier);
         const int width = juce::jmax (1, juce::roundToInt (
             static_cast<float> (metrics.width) * scale));
-        const int height = juce::jmin (rowArea.getHeight(), metrics.height);
         slot.knob->slider.getProperties().set (
             visualWeightProperty, metrics.visualWeight);
-        slot.knob->setBounds (x, rowArea.getCentreY() - height / 2, width, height);
+        slot.knob->setBounds (x, y, width, groupHeight);
         slot.knob->repaint();
         x += width + gap;
     }
 }
 
 constexpr std::array<const char*, keyswitchCount> keyswitchLabels {
-    "DN", "UP", "ALT", "SUS", "PM", "H/P", "HARM", "PNCH", "SLD", "DEAD"
+    "DN", "UP", "ALT", "SUS", "MUT", "H/P", "HRM", "PNC", "SLD", "X"
 };
 
 bool isKeyswitch (int midiNoteNumber) noexcept
@@ -124,39 +130,74 @@ bool isKeyswitch (int midiNoteNumber) noexcept
         && midiNoteNumber < firstKeyboardNote + keyswitchCount;
 }
 
-// The notes between the keyswitch banks and the playable range are dead: the
-// engine ignores them, and they are drawn muted so nobody hunts for a sound
-// there.
+bool isVibratoGesture (int midiNoteNumber) noexcept
+{
+    return electry::ElectryEngine::isVibratoGestureNote (midiNoteNumber);
+}
+
+bool isTremoloGesture (int midiNoteNumber) noexcept
+{
+    return electry::ElectryEngine::isTremoloGestureNote (midiNoteNumber);
+}
+
+// The remaining gaps around the playing range are dead: the engine ignores
+// them, and they are drawn muted so nobody hunts for a sound there.
 bool isDeadZoneNote (int midiNoteNumber) noexcept
 {
     return midiNoteNumber >= firstKeyboardNote + keyswitchCount
-        && midiNoteNumber < firstPlayableNote;
+        && midiNoteNumber < firstPlayableNote
+        && ! isVibratoGesture (midiNoteNumber)
+        && ! isTremoloGesture (midiNoteNumber);
 }
 
 void drawKeyswitchDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
                               int keyswitchIndex, bool selected, bool blackKey)
 {
-    const auto originalArea = area;
-    const auto tabHeight = blackKey ? 3.0f : 4.0f;
-    graphics.setColour ((selected ? colours::accentBright : colours::accent)
-                            .withAlpha (selected ? 1.0f : 0.78f));
-    graphics.fillRect (area.removeFromBottom (tabHeight));
-
-    auto labelArea = area.removeFromBottom (blackKey ? 14.0f : 19.0f).reduced (0.5f);
-    graphics.setColour (selected ? colours::accentBright : colours::binding);
-    graphics.setFont (juce::FontOptions (blackKey ? 7.2f : 9.2f, juce::Font::bold));
+    auto badge = area.removeFromBottom (blackKey ? 16.0f : 20.0f)
+                     .reduced (blackKey ? 1.0f : 2.0f, 2.0f);
+    graphics.setColour (selected ? colours::accentBright
+                                 : juce::Colours::black.withAlpha (0.34f));
+    graphics.fillRoundedRectangle (badge, 2.5f);
+    graphics.setColour (selected ? colours::rosewoodDark : colours::binding);
+    graphics.setFont (juce::FontOptions (blackKey ? 7.4f : 9.0f, juce::Font::bold));
     graphics.drawFittedText (
         keyswitchLabels[static_cast<std::size_t> (keyswitchIndex)],
-        labelArea.getSmallestIntegerContainer(), juce::Justification::centred,
-        1, 0.58f);
+        badge.getSmallestIntegerContainer(), juce::Justification::centred,
+        1, 0.72f);
 
     if (selected)
     {
-        graphics.setColour (colours::accentBright);
-        graphics.drawRoundedRectangle (originalArea.reduced (1.0f),
-                                       blackKey ? 2.0f : 1.5f, 2.0f);
+        graphics.setColour (colours::oxblood.withAlpha (0.55f));
+        graphics.drawRoundedRectangle (badge.reduced (0.5f), 2.0f, 0.8f);
     }
 }
+
+void drawVibratoDecoration (juce::Graphics& graphics,
+                            juce::Rectangle<float> area, bool isDown)
+{
+    auto badge = area.removeFromBottom (16.0f).reduced (1.0f, 2.0f);
+    graphics.setColour (isDown ? colours::accentBright
+                               : colours::accentDark.brighter (0.18f));
+    graphics.fillRoundedRectangle (badge, 2.5f);
+    graphics.setColour (isDown ? colours::rosewoodDark : colours::binding);
+    graphics.setFont (juce::FontOptions (7.4f, juce::Font::bold));
+    graphics.drawFittedText ("VIB", badge.getSmallestIntegerContainer(),
+                             juce::Justification::centred, 1, 0.72f);
+}
+
+void drawTremoloDecoration (juce::Graphics& graphics,
+                            juce::Rectangle<float> area, bool isDown)
+{
+    auto badge = area.removeFromBottom (20.0f).reduced (2.0f);
+    graphics.setColour (isDown ? colours::accentBright
+                               : colours::accentDark.brighter (0.18f));
+    graphics.fillRoundedRectangle (badge, 2.5f);
+    graphics.setColour (isDown ? colours::rosewoodDark : colours::binding);
+    graphics.setFont (juce::FontOptions (8.4f, juce::Font::bold));
+    graphics.drawFittedText ("TRM", badge.getSmallestIntegerContainer(),
+                             juce::Justification::centred, 1, 0.72f);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -167,14 +208,23 @@ ElectryLookAndFeel::ElectryLookAndFeel()
 {
     setColour (juce::ResizableWindow::backgroundColourId, colours::background);
     setColour (juce::Slider::textBoxTextColourId, colours::text);
+    setColour (juce::Slider::textBoxBackgroundColourId,
+               juce::Colours::transparentBlack);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     setColour (juce::Label::textColourId, colours::text);
+    setColour (juce::ComboBox::backgroundColourId, colours::knobFace);
+    setColour (juce::ComboBox::textColourId, colours::text);
+    setColour (juce::ComboBox::outlineColourId,
+               colours::panelOutline.withAlpha (0.75f));
+    setColour (juce::ComboBox::arrowColourId, colours::accentBright);
     setColour (juce::TextButton::buttonColourId, colours::knobFace);
     setColour (juce::TextButton::textColourOffId, colours::text);
     setColour (juce::TooltipWindow::backgroundColourId, colours::panel);
     setColour (juce::TooltipWindow::textColourId, colours::text);
     setColour (juce::MidiKeyboardComponent::whiteNoteColourId, colours::warmBone);
     setColour (juce::MidiKeyboardComponent::blackNoteColourId, colours::ebony);
+    setColour (juce::MidiKeyboardComponent::textLabelColourId,
+               colours::rosewoodDark);
     setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId,
                juce::Colour (0xff6d573b));
     setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId,
@@ -197,7 +247,8 @@ void ElectryLookAndFeel::drawRotarySlider (juce::Graphics& graphics, int x, int 
     const auto centre = bounds.getCentre();
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // Amp-style calibration ticks around the control.
+    // A quiet 0..10 scale keeps every tier readable without putting tiny
+    // numerals around the detail controls.
     for (int tick = 0; tick <= 10; ++tick)
     {
         const auto tickAngle = juce::jmap (static_cast<float> (tick), 0.0f, 10.0f,
@@ -207,67 +258,90 @@ void ElectryLookAndFeel::drawRotarySlider (juce::Graphics& graphics, int x, int 
             radius - (tick % 5 == 0 ? 4.5f : 3.0f), tickAngle);
         graphics.setColour ((tick == 0 || tick == 10 ? colours::binding
                                                       : colours::dimText)
-                                .withAlpha (0.34f + 0.38f * visualWeight));
+                                .withAlpha (0.24f + 0.32f * visualWeight));
         graphics.drawLine ({ inner, outer },
-                           (tick % 5 == 0 ? 1.25f : 0.8f) * visualWeight);
+                           (tick % 5 == 0 ? 1.15f : 0.72f) * visualWeight);
     }
 
-    // Recessed track and glowing value arc.
+    // A hairline brass arc reads clearly without the neon halo of the old
+    // control. The physical knob remains the visual focus.
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, radius - 6.0f, radius - 6.0f, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
-    graphics.setColour (juce::Colours::black.withAlpha (0.75f));
-    graphics.strokePath (track, juce::PathStrokeType (4.0f));
+    graphics.setColour (juce::Colours::black.withAlpha (0.62f));
+    graphics.strokePath (track, juce::PathStrokeType (2.3f));
 
     juce::Path value;
     value.addCentredArc (centre.x, centre.y, radius - 6.0f, radius - 6.0f, 0.0f,
                          rotaryStartAngle, angle, true);
     graphics.setColour (colours::accentBright.withAlpha (
-        0.10f + 0.18f * visualWeight));
-    graphics.strokePath (value, juce::PathStrokeType (3.8f + 1.4f * visualWeight));
-    graphics.setColour (colours::accentBright.withAlpha (
-        0.48f + 0.52f * visualWeight));
-    graphics.strokePath (value, juce::PathStrokeType (1.2f + 0.9f * visualWeight));
+        0.38f + 0.32f * visualWeight));
+    graphics.strokePath (value, juce::PathStrokeType (1.0f + 0.45f * visualWeight));
 
-    // Nickel knurled rim, shadow, and black bakelite cap.
-    const auto bodyRadius = radius * 0.70f;
-    graphics.setColour (juce::Colours::black.withAlpha (0.55f));
-    graphics.fillEllipse (centre.x - bodyRadius + 2.0f, centre.y - bodyRadius + 3.0f,
-                          bodyRadius * 2.0f, bodyRadius * 2.0f);
+    // Vintage moulded-plastic skirt: a recessed bushing, soft contact shadow,
+    // shallow radial flutes and a gently domed aged-ivory cap.
+    const auto skirtRadius = radius * 0.72f;
+    graphics.setColour (juce::Colours::black.withAlpha (0.42f));
+    graphics.fillEllipse (centre.x - skirtRadius + 1.8f,
+                          centre.y - skirtRadius + 3.0f,
+                          skirtRadius * 2.0f, skirtRadius * 2.0f);
 
-    juce::ColourGradient rimGradient (colours::nickel.brighter (0.35f),
-                                      centre.x - bodyRadius, centre.y - bodyRadius,
-                                      colours::knobRim.darker (0.55f),
-                                      centre.x + bodyRadius, centre.y + bodyRadius, false);
-    graphics.setGradientFill (rimGradient);
-    graphics.fillEllipse (centre.x - bodyRadius, centre.y - bodyRadius,
-                          bodyRadius * 2.0f, bodyRadius * 2.0f);
+    const auto bezelRadius = skirtRadius + 2.0f;
+    juce::ColourGradient bezelGradient (colours::nickel.brighter (0.18f),
+                                        centre.x - bezelRadius,
+                                        centre.y - bezelRadius,
+                                        colours::panelOutline.darker (0.68f),
+                                        centre.x + bezelRadius,
+                                        centre.y + bezelRadius, false);
+    graphics.setGradientFill (bezelGradient);
+    graphics.fillEllipse (centre.x - bezelRadius, centre.y - bezelRadius,
+                          bezelRadius * 2.0f, bezelRadius * 2.0f);
 
-    const auto capRadius = bodyRadius - 3.3f;
-    juce::ColourGradient capGradient (juce::Colour (0xff3b332c),
-                                      centre.x - capRadius * 0.45f,
-                                      centre.y - capRadius * 0.55f,
-                                      colours::knobFace,
-                                      centre.x + capRadius * 0.65f,
-                                      centre.y + capRadius * 0.75f, true);
+    juce::ColourGradient skirtGradient (colours::warmBone.brighter (0.08f),
+                                        centre.x - skirtRadius * 0.65f,
+                                        centre.y - skirtRadius * 0.75f,
+                                        colours::warmBone.darker (0.32f),
+                                        centre.x + skirtRadius * 0.65f,
+                                        centre.y + skirtRadius * 0.82f, false);
+    graphics.setGradientFill (skirtGradient);
+    graphics.fillEllipse (centre.x - skirtRadius, centre.y - skirtRadius,
+                          skirtRadius * 2.0f, skirtRadius * 2.0f);
+
+    for (int flute = 0; flute < 24; ++flute)
+    {
+        const auto fluteAngle = juce::MathConstants<float>::twoPi
+                              * static_cast<float> (flute) / 24.0f;
+        const auto inner = centre.getPointOnCircumference (skirtRadius * 0.78f,
+                                                           fluteAngle);
+        const auto outer = centre.getPointOnCircumference (skirtRadius * 0.96f,
+                                                           fluteAngle);
+        graphics.setColour (colours::bakeliteEdge.withAlpha (0.18f));
+        graphics.drawLine ({ inner, outer }, 0.7f);
+    }
+
+    const auto capRadius = skirtRadius * 0.72f;
+    juce::ColourGradient capGradient (colours::binding.brighter (0.02f),
+                                      centre.x - capRadius * 0.65f,
+                                      centre.y - capRadius * 0.72f,
+                                      colours::warmBone.darker (0.12f),
+                                      centre.x + capRadius * 0.55f,
+                                      centre.y + capRadius * 0.72f, false);
     graphics.setGradientFill (capGradient);
     graphics.fillEllipse (centre.x - capRadius, centre.y - capRadius,
                           capRadius * 2.0f, capRadius * 2.0f);
-    graphics.setColour (juce::Colours::white.withAlpha (0.11f));
+    graphics.setColour (juce::Colours::white.withAlpha (0.26f));
     graphics.drawEllipse (centre.x - capRadius, centre.y - capRadius,
-                          capRadius * 2.0f, capRadius * 2.0f, 1.0f);
+                          capRadius * 2.0f, capRadius * 2.0f, 0.85f);
 
-    // Inlaid ivory pointer.
-    const auto pointerLength = capRadius * 0.72f;
+    // Dark inlaid pointer, aligned exactly to the parameter angle.
+    const auto pointerLength = capRadius * 0.76f;
     juce::Path pointer;
-    pointer.addRoundedRectangle (-1.35f, -pointerLength, 2.7f, pointerLength, 1.3f);
+    pointer.addRoundedRectangle (-1.15f, -pointerLength,
+                                 2.3f, pointerLength * 0.72f, 1.0f);
     pointer.applyTransform (juce::AffineTransform::rotation (angle)
                                 .translated (centre.x, centre.y));
-    graphics.setColour (colours::binding);
+    graphics.setColour (colours::accentDark.darker (0.32f));
     graphics.fillPath (pointer);
-
-    graphics.setColour (colours::accent.withAlpha (0.65f));
-    graphics.fillEllipse (centre.x - 1.7f, centre.y - 1.7f, 3.4f, 3.4f);
 }
 
 void ElectryLookAndFeel::drawButtonBackground (juce::Graphics& graphics,
@@ -283,23 +357,21 @@ void ElectryLookAndFeel::drawButtonBackground (juce::Graphics& graphics,
     else if (isHighlighted)
         fill = fill.brighter (0.12f);
 
-    graphics.setColour (juce::Colours::black.withAlpha (0.45f));
-    graphics.fillRoundedRectangle (bounds.translated (0.0f, 1.5f), 4.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.38f));
+    graphics.fillRoundedRectangle (bounds.translated (0.0f, 1.5f), 5.0f);
 
-    juce::ColourGradient buttonGradient (fill.brighter (isHighlighted ? 0.12f : 0.04f),
+    juce::ColourGradient buttonGradient (fill.brighter (isHighlighted ? 0.12f : 0.06f),
                                          bounds.getCentreX(), bounds.getY(),
-                                         fill.darker (0.3f), bounds.getCentreX(),
+                                         fill.darker (0.22f), bounds.getCentreX(),
                                          bounds.getBottom(), false);
     graphics.setGradientFill (buttonGradient);
-    graphics.fillRoundedRectangle (bounds, 4.0f);
-    graphics.setColour (on ? colours::accentBright : colours::panelOutline.withAlpha (0.7f));
-    graphics.drawRoundedRectangle (bounds, 4.0f, on ? 1.5f : 0.8f);
-
-    if (on)
-    {
-        graphics.setColour (colours::accentBright.withAlpha (0.75f));
-        graphics.fillEllipse (bounds.getX() + 5.0f, bounds.getCentreY() - 1.5f, 3.0f, 3.0f);
-    }
+    graphics.fillRoundedRectangle (bounds, 5.0f);
+    graphics.setColour (on ? colours::accentBright.withAlpha (0.9f)
+                           : colours::panelOutline.withAlpha (0.48f));
+    graphics.drawRoundedRectangle (bounds, 5.0f, on ? 1.25f : 0.75f);
+    graphics.setColour (juce::Colours::white.withAlpha (on ? 0.07f : 0.035f));
+    graphics.drawLine (bounds.getX() + 5.0f, bounds.getY() + 2.0f,
+                       bounds.getRight() - 5.0f, bounds.getY() + 2.0f, 0.8f);
 }
 
 void ElectryLookAndFeel::drawButtonText (juce::Graphics& graphics, juce::TextButton& button,
@@ -321,11 +393,53 @@ void ElectryLookAndFeel::drawLabel (juce::Graphics& graphics, juce::Label& label
                              label.getJustificationType(), 2);
 }
 
+void ElectryLookAndFeel::drawComboBox (juce::Graphics& graphics, int width,
+                                        int height, bool isButtonDown,
+                                        int, int, int, int, juce::ComboBox&)
+{
+    auto bounds = juce::Rectangle<float> (0.5f, 0.5f,
+                                           static_cast<float> (width) - 1.0f,
+                                           static_cast<float> (height) - 1.0f);
+    auto fill = colours::knobFace.brighter (isButtonDown ? 0.18f : 0.04f);
+    juce::ColourGradient gradient (fill.brighter (0.08f), bounds.getCentreX(),
+                                   bounds.getY(), fill.darker (0.28f),
+                                   bounds.getCentreX(), bounds.getBottom(), false);
+    graphics.setGradientFill (gradient);
+    graphics.fillRoundedRectangle (bounds, 5.0f);
+    graphics.setColour (colours::panelOutline.withAlpha (0.58f));
+    graphics.drawRoundedRectangle (bounds, 5.0f, 0.9f);
+
+    const auto arrowX = bounds.getRight() - 18.0f;
+    const auto arrowY = bounds.getCentreY();
+    juce::Path arrow;
+    arrow.startNewSubPath (arrowX - 4.0f, arrowY - 2.0f);
+    arrow.lineTo (arrowX, arrowY + 2.0f);
+    arrow.lineTo (arrowX + 4.0f, arrowY - 2.0f);
+    graphics.setColour (colours::accentBright.withAlpha (0.9f));
+    graphics.strokePath (arrow, juce::PathStrokeType (1.5f,
+                                                       juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+}
+
+void ElectryLookAndFeel::positionComboBoxText (juce::ComboBox& box,
+                                                juce::Label& label)
+{
+    label.setBounds (10, 1, juce::jmax (0, box.getWidth() - 40),
+                     juce::jmax (0, box.getHeight() - 2));
+    label.setFont (getComboBoxFont (box));
+    label.setJustificationType (juce::Justification::centredLeft);
+}
+
+juce::Font ElectryLookAndFeel::getComboBoxFont (juce::ComboBox&)
+{
+    return juce::Font (juce::FontOptions (13.0f, juce::Font::bold));
+}
+
 juce::Label* ElectryLookAndFeel::createSliderTextBox (juce::Slider& slider)
 {
     auto* label = LookAndFeel_V4::createSliderTextBox (slider);
-    label->setFont (juce::FontOptions (12.0f));
-    label->setColour (juce::Label::textColourId, colours::dimText);
+    label->setFont (juce::FontOptions (11.5f));
+    label->setColour (juce::Label::textColourId, colours::binding.withAlpha (0.88f));
     label->setJustificationType (juce::Justification::centred);
     return label;
 }
@@ -371,7 +485,7 @@ bool ElectryKeyboardComponent::isKeyswitchSelected (int keyswitchIndex) const no
 
 juce::String ElectryKeyboardComponent::getWhiteNoteText (int midiNoteNumber)
 {
-    if (isKeyswitch (midiNoteNumber))
+    if (isKeyswitch (midiNoteNumber) || isDeadZoneNote (midiNoteNumber))
         return {};
 
     if (midiNoteNumber == firstPlayableNote || midiNoteNumber % 12 == 0)
@@ -386,9 +500,12 @@ void ElectryKeyboardComponent::drawWhiteNote (
     bool isDown, bool isOver, juce::Colour lineColour, juce::Colour textColour)
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
+    const auto tremoloGesture = isTremoloGesture (midiNoteNumber);
     const auto top = keyswitch ? colours::oxblood.brighter (0.22f)
+                   : tremoloGesture ? colours::accentDark.brighter (0.22f)
                                : colours::warmBone.brighter (0.08f);
     const auto bottom = keyswitch ? colours::oxblood.darker (0.32f)
+                      : tremoloGesture ? colours::accentDark.darker (0.28f)
                                   : colours::warmBone.darker (0.12f);
     graphics.setGradientFill ({ top, area.getCentreX(), area.getY(),
                                 bottom, area.getCentreX(), area.getBottom(), false });
@@ -397,11 +514,20 @@ void ElectryKeyboardComponent::drawWhiteNote (
     MidiKeyboardComponent::drawWhiteNote (
         midiNoteNumber, graphics, area, isDown, isOver, lineColour, textColour);
 
+    graphics.setColour (juce::Colours::white.withAlpha (0.12f));
+    graphics.fillRect (area.withHeight (1.0f));
+    graphics.setColour (juce::Colours::black.withAlpha (0.11f));
+    graphics.fillRect (area.withTop (area.getBottom() - 2.0f));
+
     if (keyswitch)
     {
         const auto index = midiNoteNumber - firstKeyboardNote;
         drawKeyswitchDecoration (graphics, area, index,
                                  isKeyswitchSelected (index), false);
+    }
+    else if (tremoloGesture)
+    {
+        drawTremoloDecoration (graphics, area, isDown);
     }
     else if (isDeadZoneNote (midiNoteNumber))
     {
@@ -414,6 +540,12 @@ void ElectryKeyboardComponent::drawWhiteNote (
         graphics.setColour (colours::accentBright.withAlpha (0.9f));
         graphics.fillRect (area.withWidth (2.0f));
     }
+
+    if (isDown && ! isDeadZoneNote (midiNoteNumber))
+    {
+        graphics.setColour (colours::accentBright.withAlpha (0.92f));
+        graphics.drawRoundedRectangle (area.reduced (1.0f), 1.5f, 1.5f);
+    }
 }
 
 void ElectryKeyboardComponent::drawBlackNote (
@@ -421,9 +553,31 @@ void ElectryKeyboardComponent::drawBlackNote (
     bool isDown, bool isOver, juce::Colour noteFillColour)
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
-    MidiKeyboardComponent::drawBlackNote (
-        midiNoteNumber, graphics, area, isDown, isOver,
-        keyswitch ? colours::keyswitchBlack : noteFillColour);
+    const auto vibratoGesture = isVibratoGesture (midiNoteNumber);
+    const auto fill = keyswitch ? colours::keyswitchBlack
+                    : vibratoGesture ? colours::accentDark : noteFillColour;
+
+    graphics.setColour (juce::Colours::black.withAlpha (0.48f));
+    graphics.fillRoundedRectangle (area.translated (0.0f, 1.0f), 2.0f);
+    graphics.setGradientFill ({ fill.brighter (0.15f), area.getCentreX(), area.getY(),
+                                fill.darker (0.28f), area.getCentreX(),
+                                area.getBottom(), false });
+    graphics.fillRoundedRectangle (area, 2.0f);
+    if (isOver)
+    {
+        graphics.setColour (findColour (
+            juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId));
+        graphics.fillRoundedRectangle (area, 2.0f);
+    }
+    if (isDown)
+    {
+        graphics.setColour (findColour (
+            juce::MidiKeyboardComponent::keyDownOverlayColourId));
+        graphics.fillRoundedRectangle (area, 2.0f);
+    }
+    graphics.setColour (juce::Colours::white.withAlpha (0.10f));
+    graphics.drawLine (area.getX() + 1.0f, area.getY() + 1.0f,
+                       area.getRight() - 1.0f, area.getY() + 1.0f, 0.8f);
 
     if (keyswitch)
     {
@@ -431,10 +585,20 @@ void ElectryKeyboardComponent::drawBlackNote (
         drawKeyswitchDecoration (graphics, area, index,
                                  isKeyswitchSelected (index), true);
     }
+    else if (vibratoGesture)
+    {
+        drawVibratoDecoration (graphics, area, isDown);
+    }
     else if (isDeadZoneNote (midiNoteNumber))
     {
         graphics.setColour (juce::Colours::black.withAlpha (0.55f));
         graphics.fillRect (area);
+    }
+
+    if (isDown && ! isDeadZoneNote (midiNoteNumber))
+    {
+        graphics.setColour (colours::accentBright.withAlpha (0.92f));
+        graphics.drawRoundedRectangle (area.reduced (0.8f), 1.8f, 1.4f);
     }
 }
 
@@ -442,8 +606,11 @@ void ElectryKeyboardComponent::drawBlackNote (
 // Choice strip
 // ---------------------------------------------------------------------------
 
-ElectryChoiceStrip::ElectryChoiceStrip (juce::String title, juce::StringArray choices)
-    : titleText (std::move (title))
+ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
+                                        juce::StringArray choices,
+                                        int maximumColumns)
+    : titleText (std::move (title)),
+      maxColumns (juce::jmax (1, maximumColumns))
 {
     for (int index = 0; index < choices.size(); ++index)
     {
@@ -479,21 +646,25 @@ void ElectryChoiceStrip::setTooltipText (const juce::String& text)
 
 void ElectryChoiceStrip::paint (juce::Graphics& graphics)
 {
-    graphics.setColour (colours::binding.withAlpha (0.82f));
-    graphics.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    graphics.drawText (titleText, getLocalBounds().removeFromTop (14),
-                       juce::Justification::centredLeft);
+    if (titleText.isEmpty())
+        return;
+
+    graphics.setColour (colours::binding.withAlpha (0.92f));
+    graphics.setFont (juce::Font (juce::FontOptions (11.5f, juce::Font::bold))
+                          .withExtraKerningFactor (0.035f));
+    graphics.drawFittedText (titleText, getLocalBounds().removeFromTop (17),
+                             juce::Justification::centred, 1, 0.8f);
 }
 
 void ElectryChoiceStrip::resized()
 {
     auto area = getLocalBounds();
-    area.removeFromTop (16);
+    if (titleText.isNotEmpty())
+        area.removeFromTop (19);
     if (buttons.empty())
         return;
 
     const int gap = 4;
-    const int maxColumns = 8;
     const int buttonCount = static_cast<int> (buttons.size());
     const int rowCount = (buttonCount + maxColumns - 1) / maxColumns;
     const int buttonHeight = (area.getHeight() - gap * (rowCount - 1)) / rowCount;
@@ -532,20 +703,6 @@ ElectryKnob::ElectryKnob (juce::String name)
     addAndMakeVisible (label);
 }
 
-void ElectryKnob::paint (juce::Graphics& graphics)
-{
-    const auto visualWeight = static_cast<float> (
-        slider.getProperties().getWithDefault (visualWeightProperty, 0.82f));
-    if (visualWeight < 0.9f)
-        return;
-
-    const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    graphics.setColour (colours::accentDark.withAlpha (0.08f));
-    graphics.fillRoundedRectangle (bounds, 7.0f);
-    graphics.setColour (colours::accent.withAlpha (0.20f));
-    graphics.drawRoundedRectangle (bounds.reduced (0.5f), 7.0f, 0.8f);
-}
-
 void ElectryKnob::resized()
 {
     const auto visualWeight = static_cast<float> (
@@ -554,16 +711,17 @@ void ElectryKnob::resized()
     const bool hero = visualWeight >= 0.9f;
 
     auto area = getLocalBounds();
-    const int labelHeight = hero ? 18 : (compact ? 13 : 15);
-    label.setFont (juce::FontOptions (hero ? 12.0f : (compact ? 9.5f : 10.8f),
+    constexpr int labelHeight = 19;
+    label.setFont (juce::FontOptions (hero ? 12.0f : (compact ? 10.6f : 11.0f),
                                      juce::Font::bold));
     label.setColour (juce::Label::textColourId,
                      hero ? colours::binding : colours::dimText);
-    label.setBounds (area.removeFromTop (labelHeight));
+    label.setBounds (area.removeFromTop (labelHeight).reduced (2, 0));
+    area.removeFromTop (3);
     slider.setTextBoxStyle (
         juce::Slider::TextBoxBelow, false,
         juce::jlimit (48, hero ? 88 : 78, juce::jmax (48, getWidth() - 4)),
-        hero ? 18 : 16);
+        18);
     slider.setBounds (area);
 }
 
@@ -573,43 +731,70 @@ void ElectryKnob::resized()
 
 void ElectryStatusDisplay::setStatus (int activeVoices, int sympatheticStrings,
                                       bool ready, double sampleRate,
+                                      int midiMutePressure, int vibratoGesture,
+                                      int tremoloGesture,
                                       bool scheduleRepaint)
 {
+    midiMutePressure = juce::jlimit (0, 127, midiMutePressure);
+    vibratoGesture = juce::jlimit (0, 127, vibratoGesture);
+    tremoloGesture = juce::jlimit (0, 127, tremoloGesture);
     if (voices == activeVoices && sympathetic == sympatheticStrings
-        && isReady == ready && juce::approximatelyEqual (rate, sampleRate))
+        && isReady == ready && juce::approximatelyEqual (rate, sampleRate)
+        && mutePressure == midiMutePressure && vibrato == vibratoGesture
+        && tremolo == tremoloGesture)
         return;
     voices = activeVoices;
     sympathetic = sympatheticStrings;
     isReady = ready;
     rate = sampleRate;
+    mutePressure = midiMutePressure;
+    vibrato = vibratoGesture;
+    tremolo = tremoloGesture;
+    setTitle (getStatusText());
     if (scheduleRepaint)
         repaint();
+}
+
+juce::String ElectryStatusDisplay::getStatusText() const
+{
+    if (! isReady)
+        return "ENGINE STANDBY";
+
+    juce::String status = juce::String (voices)
+                        + (voices == 1 ? " STRING" : " STRINGS");
+    if (sympathetic > 0)
+        status += " +" + juce::String (sympathetic) + " RING";
+    if (vibrato > 0)
+        status += "  |  VIB " + juce::String (juce::roundToInt (
+            100.0f * static_cast<float> (vibrato) / 127.0f)) + "%";
+    if (tremolo > 0)
+        status += "  |  TRM " + juce::String (juce::roundToInt (
+            100.0f * static_cast<float> (tremolo) / 127.0f)) + "%";
+    if (vibrato == 0 && tremolo == 0)
+    {
+        if (mutePressure > 0)
+            status += "  |  CC2 MUTE +" + juce::String (juce::roundToInt (
+                100.0f * static_cast<float> (mutePressure) / 127.0f)) + "%";
+        else if (rate > 0.0)
+            status += "  |  " + juce::String (rate / 1000.0, 1) + " kHz";
+    }
+    return status;
 }
 
 void ElectryStatusDisplay::paint (juce::Graphics& graphics)
 {
     auto bounds = getLocalBounds().toFloat();
-    graphics.setColour (juce::Colours::black.withAlpha (0.68f));
+    graphics.setColour (juce::Colours::black.withAlpha (0.62f));
     graphics.fillRoundedRectangle (bounds, 5.0f);
-    graphics.setColour (colours::nickel.withAlpha (0.45f));
+    graphics.setColour (colours::panelOutline.withAlpha (0.52f));
     graphics.drawRoundedRectangle (bounds.reduced (0.5f), 5.0f, 1.0f);
 
-    juce::String status;
-    if (! isReady)
-        status = "ENGINE STANDBY";
-    else
-    {
-        status = juce::String (voices) + (voices == 1 ? " STRING" : " STRINGS");
-        if (sympathetic > 0)
-            status += " +" + juce::String (sympathetic) + " RING";
-        if (rate > 0.0)
-            status += "  |  " + juce::String (rate / 1000.0, 1) + " kHz";
-    }
-
-    graphics.setColour (isReady ? colours::accent : colours::dimText);
-    graphics.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    graphics.drawText (status, getLocalBounds().reduced (8, 0),
-                       juce::Justification::centredLeft);
+    graphics.setColour (isReady ? colours::accentBright : colours::dimText);
+    graphics.fillEllipse (8.0f, bounds.getCentreY() - 1.8f, 3.6f, 3.6f);
+    graphics.setFont (juce::FontOptions (11.5f, juce::Font::bold));
+    graphics.drawFittedText (getStatusText(),
+                             getLocalBounds().withTrimmedLeft (18).reduced (0, 1),
+                             juce::Justification::centredLeft, 1, 0.72f);
 }
 
 // ---------------------------------------------------------------------------
@@ -618,8 +803,67 @@ void ElectryStatusDisplay::paint (juce::Graphics& graphics)
 
 ElectryFretboardDisplay::ElectryFretboardDisplay()
 {
-    setInterceptsMouseClicks (false, false);
+    setInterceptsMouseClicks (true, false);
     setName ("Fretboard display");
+    setTitle ("Live fretboard: click a held string to repick it");
+    setTooltip ("Click any held string row for one hard repick. Host MIDI "
+                "E6 through B6 provides the same eight-string trigger lane "
+                "with velocity control.");
+}
+
+int ElectryFretboardDisplay::stringAtY (float y) const noexcept
+{
+    const auto height = static_cast<float> (getHeight());
+    if (height <= 0.0f || y < 0.0f || y >= height)
+        return -1;
+
+    constexpr float inset = 0.085f;
+    const auto first = electry::visuals::stringRowFraction (
+        0, electry::ElectryEngine::stringCount, inset);
+    const auto second = electry::visuals::stringRowFraction (
+        1, electry::ElectryEngine::stringCount, inset);
+    const auto spacing = second - first;
+    const auto fraction = y / height;
+    const int stringIndex = juce::roundToInt ((fraction - first) / spacing);
+    if (stringIndex < 0
+        || stringIndex >= electry::ElectryEngine::stringCount)
+        return -1;
+
+    const auto row = electry::visuals::stringRowFraction (
+        stringIndex, electry::ElectryEngine::stringCount, inset);
+    return std::abs (fraction - row) <= spacing * 0.48f ? stringIndex : -1;
+}
+
+void ElectryFretboardDisplay::mouseMove (const juce::MouseEvent& event)
+{
+    const int next = stringAtY (event.position.y);
+    if (next == hoveredString)
+        return;
+
+    hoveredString = next;
+    setMouseCursor (next >= 0 ? juce::MouseCursor::PointingHandCursor
+                              : juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+void ElectryFretboardDisplay::mouseExit (const juce::MouseEvent&)
+{
+    if (hoveredString < 0)
+        return;
+
+    hoveredString = -1;
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+void ElectryFretboardDisplay::mouseDown (const juce::MouseEvent& event)
+{
+    if (! event.mods.isLeftButtonDown())
+        return;
+
+    const int stringIndex = stringAtY (event.position.y);
+    if (stringIndex >= 0 && onRepick)
+        onRepick (stringIndex);
 }
 
 bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
@@ -684,6 +928,24 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
     graphics.fillRoundedRectangle (neck, 3.0f);
     graphics.setColour (colours::panelOutline.withAlpha (0.55f));
     graphics.drawRoundedRectangle (neck.reduced (0.5f), 3.0f, 0.8f);
+
+    if (hoveredString >= 0)
+    {
+        const auto firstRow = electry::visuals::stringRowFraction (
+            0, electry::ElectryEngine::stringCount, 0.085f);
+        const auto secondRow = electry::visuals::stringRowFraction (
+            1, electry::ElectryEngine::stringCount, 0.085f);
+        const auto rowSpacing = neck.getHeight() * (secondRow - firstRow);
+        const auto rowY = neck.getY() + neck.getHeight()
+            * electry::visuals::stringRowFraction (
+                  hoveredString, electry::ElectryEngine::stringCount, 0.085f);
+        graphics.setColour (colours::accentBright.withAlpha (0.10f));
+        graphics.fillRoundedRectangle (
+            juce::Rectangle<float> (0.0f, rowY - rowSpacing * 0.46f,
+                                    static_cast<float> (getWidth()),
+                                    rowSpacing * 0.92f),
+            2.0f);
+    }
 
     const auto neckX = neck.getX();
     const auto neckWidth = neck.getWidth();
@@ -819,7 +1081,7 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
         // Tuning label.
         graphics.setColour (ringing ? colours::binding
                                     : colours::dimText.withAlpha (0.65f));
-        graphics.setFont (juce::FontOptions (8.6f, juce::Font::bold));
+        graphics.setFont (juce::FontOptions (9.6f, juce::Font::bold));
         graphics.drawText (tuningNames[static_cast<std::size_t> (stringIndex)],
                            juce::Rectangle<float> (tuningArea.getX(), y - 6.0f,
                                                    tuningArea.getWidth(), 12.0f),
@@ -851,28 +1113,61 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     : AudioProcessorEditor (&p),
       electryProcessor (p),
       backgroundImage (juce::ImageFileFormat::loadFrom (
-          BinaryData::electryguitartop_png,
-          BinaryData::electryguitartop_pngSize)),
+          BinaryData::electrymahoganysatinv2_png,
+          BinaryData::electrymahoganysatinv2_pngSize)),
       keyboard (p.keyboardState)
 {
     setLookAndFeel (&lookAndFeel);
 
     logoLabel.setText ("ELECTRY", juce::dontSendNotification);
-    logoLabel.setFont (juce::FontOptions (31.0f, juce::Font::bold));
+    logoLabel.setFont (juce::Font (juce::FontOptions (30.0f, juce::Font::bold))
+                           .withExtraKerningFactor (0.025f));
     logoLabel.setColour (juce::Label::textColourId, colours::binding);
+    logoLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (logoLabel);
 
     editionLabel.setText ("PHYSICALLY MODELED DROP-E 8-STRING GUITAR",
                           juce::dontSendNotification);
-    editionLabel.setFont (juce::FontOptions (11.5f));
+    editionLabel.setFont (juce::Font (juce::FontOptions (11.5f))
+                              .withExtraKerningFactor (0.045f));
     editionLabel.setColour (juce::Label::textColourId, colours::dimText);
+    editionLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (editionLabel);
 
+    factoryProgramLabel.setText ("RIG", juce::dontSendNotification);
+    factoryProgramLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    factoryProgramLabel.setColour (juce::Label::textColourId,
+                                   colours::binding.withAlpha (0.8f));
+    factoryProgramLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (factoryProgramLabel);
+
+    for (int index = 0; index < electryProcessor.getNumPrograms(); ++index)
+        factoryProgramSelector.addItem (
+            electryProcessor.getProgramName (index), index + 1);
+    factoryProgramSelector.setSelectedId (
+        electryProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
+    factoryProgramSelector.setTooltip (
+        "Rigs initialize guitar, FX, Mute Tightness and Mute Pressure. They "
+        "never change the PICK STROKE or PLAY STYLE latches; choose Mute "
+        "or Dead below.");
+    factoryProgramSelector.setName ("Factory rig");
+    factoryProgramSelector.setTitle ("Factory rig");
+    factoryProgramSelector.setComponentID ("factoryProgram");
+    factoryProgramSelector.onChange = [this]
+    {
+        const int index = factoryProgramSelector.getSelectedId() - 1;
+        if (index >= 0)
+            electryProcessor.setCurrentProgram (index);
+    };
+    addAndMakeVisible (factoryProgramSelector);
+
     keyboardHintLabel.setText (
-        "Oxblood keys latch the two banks: C0..D0 the pick stroke, D#0..A0 the play style - any combination. Bone and ebony keys play the Drop-E 8-string range E1..D6.",
+        "C0..D0 pick stroke; D#0..A0 style; hold A#0 VIB (vibrato) or B0 TRM (tremolo pick). E1..D6 plays.",
         juce::dontSendNotification);
     keyboardHintLabel.setFont (juce::FontOptions (11.0f));
-    keyboardHintLabel.setColour (juce::Label::textColourId, colours::dimText);
+    keyboardHintLabel.setColour (juce::Label::textColourId,
+                                 colours::binding.withAlpha (0.78f));
+    keyboardHintLabel.setJustificationType (juce::Justification::centredLeft);
     keyboardHintLabel.setComponentID ("keyboardHint");
     addAndMakeVisible (keyboardHintLabel);
 
@@ -885,21 +1180,35 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     pickStyleStrip.onChoice = [this] (int index)
     {
         keyboard.setSelectedKeyswitches (
-            index, electryProcessor.getCurrentPlayStyleIndex());
+            index, electryProcessor.getEffectivePlayStyleIndex());
         electryProcessor.triggerArticulation (index);
     };
+    pickStyleStrip.setTooltipText (
+        "Picking hand: Down, Up or Alternate. This bank combines independently with every play style.");
     pickStyleStrip.setComponentID ("pickStyleStrip");
     addAndMakeVisible (pickStyleStrip);
 
     playStyleStrip.onChoice = [this] (int index)
     {
         keyboard.setSelectedKeyswitches (
-            electryProcessor.getCurrentPickStyleIndex(), index);
+            electryProcessor.getCurrentPickStyleIndex(),
+            electryProcessor.getEffectivePlayStyleIndex());
         electryProcessor.triggerArticulation (
             electry::ElectryEngine::pickStyleKeyswitchCount + index);
     };
+    playStyleStrip.setTooltipText (
+        "Select the base style. Mute is the bridge hand; Dead is the fretting hand; the selected pick stroke still applies.");
     playStyleStrip.setComponentID ("playStyleStrip");
     addAndMakeVisible (playStyleStrip);
+
+    playStyleKeyModeStrip.onChoice = [this] (int index)
+    {
+        electryProcessor.setPlayStyleKeysHold (index == 1);
+    };
+    playStyleKeyModeStrip.setTooltipText (
+        "LATCH leaves MIDI play-style keys selected. HOLD uses them only while pressed, then returns to the PLAY STYLE choice.");
+    playStyleKeyModeStrip.setComponentID ("playStyleKeyMode");
+    addAndMakeVisible (playStyleKeyModeStrip);
 
     // The pickup selector strip binds to the choice parameter.
     pickupStrip.onChoice = [this] (int index)
@@ -930,14 +1239,15 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
 
     outputModeStrip.onChoice = [this] (int index)
     {
-        if (auto* parameter = electryProcessor.parameters.getParameter (
-                electry::parameters::outputMode))
-        {
-            parameter->beginChangeGesture();
-            parameter->setValueNotifyingHost (
-                parameter->convertTo0to1 (static_cast<float> (index)));
-            parameter->endChangeGesture();
-        }
+        auto* outputParameter = electryProcessor.parameters.getParameter (
+            electry::parameters::outputMode);
+        if (outputParameter == nullptr)
+            return;
+
+        outputParameter->beginChangeGesture();
+        outputParameter->setValueNotifyingHost (
+            outputParameter->convertTo0to1 (static_cast<float> (index)));
+        outputParameter->endChangeGesture();
     };
     if (auto* parameter = electryProcessor.parameters.getParameter (
             electry::parameters::outputMode))
@@ -952,9 +1262,42 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
         outputModeAttachment->sendInitialUpdate();
     }
     outputModeStrip.setTooltipText (
-        "Mono is an authentic summed DI. Stereo spreads the eight physical strings through a phase-coherent divided-pickup field; no delay or chorus.");
+        "Mono is an authentic summed DI. Stereo spreads one guitar's eight "
+        "strings through a phase-coherent divided-pickup field. 2X runs "
+        "two independent Electry performances, one per channel. Choose 2X "
+        "before the phrase; it does not clone notes already ringing.");
     outputModeStrip.setComponentID (electry::parameters::outputMode);
     addAndMakeVisible (outputModeStrip);
+
+    ampModelStrip.onChoice = [this] (int index)
+    {
+        auto* parameter = electryProcessor.parameters.getParameter (
+            electry::parameters::ampModel);
+        if (parameter == nullptr)
+            return;
+
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (
+            parameter->convertTo0to1 (static_cast<float> (index)));
+        parameter->endChangeGesture();
+    };
+    if (auto* parameter = electryProcessor.parameters.getParameter (
+            electry::parameters::ampModel))
+    {
+        ampModelAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter,
+            [this] (float newValue)
+            {
+                ampModelStrip.setSelectedIndex (juce::roundToInt (newValue));
+            },
+            nullptr);
+        ampModelAttachment->sendInitialUpdate();
+    }
+    ampModelStrip.setTooltipText (
+        "Selects the complete amplifier and cabinet voice: American clean, "
+        "British crunch, or modern high-gain.");
+    ampModelStrip.setComponentID (electry::parameters::ampModel);
+    addAndMakeVisible (ampModelStrip);
 
     using namespace electry::parameters;
     const auto setup = [this] (ElectryKnob& knob, const char* parameterId,
@@ -966,23 +1309,15 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
         attachSlider (knob.slider, parameterId);
     };
 
-    setup (bodyWoodKnob, bodyWood,
-           "Body wood: mahogany/maple blank toward swamp ash");
-    setup (bodySizeKnob, bodySize,
-           "Body mass and thickness: thick heavy blank toward thin light slab");
-    setup (bodyShapeKnob, bodyShape,
-           "Body outline: carved single-cut toward flat slab");
-    setup (constructionKnob, construction,
-           "Neck joint and bridge: set neck + stopbar toward bolt-on + through-body");
-    setup (scaleLengthKnob, scaleLength,
-           "Scale length: 25.5 in electric toward 28 in baritone / 8-string");
+    setup (guitarBuildKnob, guitarBuild,
+           "Morphs material damping, body mass and modes, neck and bridge "
+           "coupling, scale length, and Drop-E string gauge. Pickups and "
+           "playing controls remain independent.");
     setup (bodyResonanceKnob, bodyResonance,
            "How much solid-body structural colour reaches the pickups");
     setup (pickupTypeKnob, pickupType,
            "Pickup construction: wide humbucker toward narrow single coil");
     setup (toneKnob, tone, "Passive tone control loading the pickup resonance");
-    setup (stringGaugeKnob, stringGauge,
-           "Drop-E string set: light .009-.080 toward heavy .011-.098");
     setup (stringAgeKnob, stringAge, "String condition: fresh toward old and dead");
     setup (pickPositionKnob, pickPosition,
            "Picking spot: close to the bridge toward over the neck");
@@ -992,8 +1327,8 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "Travel time of a pitch-wheel bend: how long the strings take to "
            "reach the wheel rather than snapping to it");
     setup (muteDampingKnob, muteDamping,
-           "Palm-mute strength for the Palm mute play style: loose half-mute "
-           "toward a tight metal chug");
+           "Loose half-mute toward tight metal chug for the E0 Mute "
+           "play style");
     setup (velocityKnob, velocity, "How strongly MIDI velocity drives the pluck");
     setup (pickNoiseKnob, pickNoise, "Plectrum contact and scrape level");
     setup (fingerNoiseKnob, fingerNoise, "Fretting-hand contact level");
@@ -1004,31 +1339,45 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "Bridge-coupled sympathetic ring of the strings you are not fingering. "
            "At 0% the coupled waveguides are bypassed exactly.");
     setup (palmMuteKnob, palmMute,
-           "Continuous bridge-hand damping for every play style, on top of the "
-           "Palm Mute keyswitch. MIDI CC2 adds to it while you play.");
+           "Continuous bridge-hand pressure across every play style, including "
+           "Dead; MIDI CC2 adds to it while you play.");
     setup (strumSpreadKnob, strumSpread,
-           "Pick travel time per string crossed. At 0 ms a chord starts as one "
-           "block; higher values sweep it string by string.");
+           "Mean pick travel time per string crossed. At 0 ms a chord starts as "
+           "one block; any higher value groups cross-string arrivals for up to "
+           "35 ms from the first and adds a 20 ms assembly pre-roll.");
+    setup (tremoloRateKnob, tremoloRate,
+           "Free-running picking speed while B0 TRM is held (not transport "
+           "synced). 8, 12 and 16 strokes/s match the capture protocol; "
+           "12 strokes/s equals 180 BPM sixteenth notes.");
     setup (resonanceKnob, resonanceDepth,
            "Full-scale reach of the modulation-wheel (CC1) resonance: how far "
            "the wheel can raise the sympathetic coupling and how much of the "
            "amplified output may feed back into the strings. At 100% a "
            "distorted tone self-resonates with the wheel up.");
     setup (outputKnob, output, "Master output level");
-    setup (distortionKnob, distortion, "Parallel high-gain distortion drive");
-    setup (ampKnob, amp, "Saturated guitar amp and cabinet simulation");
+    setup (distortionKnob, distortion,
+           "Drive through the oversampled diode pedal; 0% is true bypass");
+    setup (ampKnob, amp,
+           "Drive through the tube, transformer and cabinet path; 0% is true bypass");
     setup (compressorKnob, compressor, "Fast levelling for tight rhythm playing");
     setup (delayKnob, delay, "Tempo-neutral 360 ms lead delay");
     setup (roomKnob, room, "Compact stereo room ambience");
 
     fretboardDisplay.setComponentID ("fretboard");
+    fretboardDisplay.onRepick = [this] (int stringIndex)
+    {
+        electryProcessor.triggerStringRepick (stringIndex);
+    };
     addAndMakeVisible (fretboardDisplay);
 
     keyboard.setAvailableRange (firstKeyboardNote, lastKeyboardNote);
     keyboard.setLowestVisibleKey (firstKeyboardNote);
     keyboard.setScrollButtonsVisible (false);
     keyboard.setKeyWidth (24.0f);
+    keyboard.setBlackNoteLengthProportion (0.64f);
     keyboard.setOctaveForMiddleC (4);
+    keyboard.setTitle (
+        "MIDI keyboard: hold A#0 for vibrato or B0 for tremolo picking; E1 to D6 plays");
     keyboard.setComponentID ("keyboard");
     addAndMakeVisible (keyboard);
 
@@ -1067,12 +1416,22 @@ void ElectryAudioProcessorEditor::timerCallback()
     statusDisplay.setStatus (electryProcessor.getActiveVoiceCount(),
                              electryProcessor.getSympatheticStringCount(),
                              electryProcessor.isEngineReady(),
-                             electryProcessor.getCurrentSampleRateForDisplay());
+                             electryProcessor.getCurrentSampleRateForDisplay(),
+                             electryProcessor.getMidiMutePressureForDisplay(),
+                             electryProcessor.getVibratoGestureForDisplay(),
+                             electryProcessor.getTremoloGestureForDisplay());
+    const int programId = electryProcessor.getCurrentProgram() + 1;
+    if (factoryProgramSelector.getSelectedId() != programId)
+        factoryProgramSelector.setSelectedId (programId, juce::dontSendNotification);
     const auto pickIndex = electryProcessor.getCurrentPickStyleIndex();
-    const auto styleIndex = electryProcessor.getCurrentPlayStyleIndex();
+    const auto baseStyleIndex = electryProcessor.getCurrentPlayStyleIndex();
+    const auto effectiveStyleIndex =
+        electryProcessor.getEffectivePlayStyleIndex();
     pickStyleStrip.setSelectedIndex (pickIndex);
-    playStyleStrip.setSelectedIndex (styleIndex);
-    keyboard.setSelectedKeyswitches (pickIndex, styleIndex);
+    playStyleStrip.setSelectedIndex (baseStyleIndex);
+    playStyleKeyModeStrip.setSelectedIndex (
+        electryProcessor.getPlayStyleKeysHold() ? 1 : 0);
+    keyboard.setSelectedKeyswitches (pickIndex, effectiveStyleIndex);
 
     if (fretboardDisplay.refresh (electryProcessor, 1.0f / static_cast<float> (timerHz)))
         fretboardDisplay.repaint();
@@ -1082,29 +1441,31 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
 {
     graphics.fillAll (colours::background);
     if (backgroundImage.isValid())
+    {
+        graphics.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
         graphics.drawImageWithin (backgroundImage, 0, 0, getWidth(), getHeight(),
-                                  juce::RectanglePlacement::stretchToFit);
+                                  juce::RectanglePlacement::fillDestination);
+    }
 
-    // Darken the centre enough for controls, while retaining the generated
-    // lacquer and binding at the perimeter.
-    juce::ColourGradient shade (juce::Colours::black.withAlpha (0.28f),
+    // The image is only the material. Lighting and contrast stay in the
+    // renderer so controls remain legible at every host scale.
+    juce::ColourGradient shade (juce::Colour (0xff180d09).withAlpha (0.46f),
                                 0.0f, 0.0f,
-                                juce::Colours::black.withAlpha (0.58f),
+                                juce::Colours::black.withAlpha (0.64f),
                                 0.0f, static_cast<float> (getHeight()), false);
     graphics.setGradientFill (shade);
     graphics.fillRect (getLocalBounds());
 
-    // Eight fine strings tie the header visually to the extended keyboard.
-    graphics.setColour (colours::nickel.withAlpha (0.23f));
-    for (int string = 0; string < 8; ++string)
-    {
-        const auto y = 51.0f + static_cast<float> (string) * 1.35f;
-        graphics.drawLine (12.0f, y, static_cast<float> (getWidth() - 12), y,
-                           0.42f + static_cast<float> (string) * 0.05f);
-    }
+    auto footerArea = getLocalBounds().reduced (12).removeFromBottom (20).toFloat();
+    graphics.setColour (juce::Colours::black.withAlpha (0.54f));
+    graphics.fillRoundedRectangle (footerArea, 3.0f);
+
+    graphics.setColour (colours::binding.withAlpha (0.18f));
+    graphics.drawLine (12.0f, 56.0f, static_cast<float> (getWidth() - 12),
+                       56.0f, 0.8f);
 
     const std::array<const char*, sectionCount> titles {
-        "", "FRETBOARD  (LIVE STRING VIEW)", "PERFORMANCE",
+        "", "FRETBOARD  (CLICK HELD STRING TO REPICK)", "PERFORMANCE",
         "CORE TONE & RESPONSE", "MASTER", "GUITAR BUILD", "PLAY DETAIL", "FX"
     };
 
@@ -1114,58 +1475,30 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
         if (bounds.isEmpty())
             continue;
         const auto panelBounds = bounds.toFloat();
-        const bool prioritySection = section == coreSection || section == masterSection;
-        graphics.setColour (juce::Colours::black.withAlpha (0.22f));
-        graphics.fillRoundedRectangle (panelBounds.translated (0.0f, 2.0f), 8.0f);
+        graphics.setColour (juce::Colours::black.withAlpha (0.34f));
+        graphics.fillRoundedRectangle (panelBounds.translated (0.0f, 2.0f), 7.0f);
 
         juce::ColourGradient panelGradient (
-                                            prioritySection
-                                                ? colours::panelTop.brighter (0.055f)
-                                                : colours::panelTop,
+                                            colours::panelTop,
                                             panelBounds.getCentreX(), panelBounds.getY(),
                                             colours::panel,
                                             panelBounds.getCentreX(), panelBounds.getBottom(), false);
         graphics.setGradientFill (panelGradient);
-        graphics.fillRoundedRectangle (panelBounds, 8.0f);
-        graphics.setColour (colours::panelOutline.withAlpha (0.78f));
-        graphics.drawRoundedRectangle (panelBounds.reduced (0.5f), 8.0f, 0.9f);
-        graphics.setColour (colours::binding.withAlpha (0.12f));
-        graphics.drawRoundedRectangle (panelBounds.reduced (2.0f), 6.5f, 0.8f);
-
-        // Small pickup-plate screws make each section feel physically mounted.
-        for (const auto corner : { panelBounds.getTopLeft(), panelBounds.getTopRight(),
-                                   panelBounds.getBottomLeft(), panelBounds.getBottomRight() })
-        {
-            const auto inset = juce::Point<float> (
-                corner.x < panelBounds.getCentreX() ? 6.0f : -6.0f,
-                corner.y < panelBounds.getCentreY() ? 6.0f : -6.0f);
-            const auto screw = corner + inset;
-            graphics.setColour (juce::Colours::black.withAlpha (0.65f));
-            graphics.fillEllipse (screw.x - 2.2f, screw.y - 2.2f, 4.4f, 4.4f);
-            graphics.setColour (colours::nickel.withAlpha (0.72f));
-            graphics.fillEllipse (screw.x - 1.6f, screw.y - 1.6f, 3.2f, 3.2f);
-            graphics.setColour (juce::Colours::black.withAlpha (0.65f));
-            graphics.drawLine (screw.x - 1.0f, screw.y, screw.x + 1.0f, screw.y, 0.65f);
-        }
+        graphics.fillRoundedRectangle (panelBounds, 7.0f);
+        graphics.setColour (colours::panelOutline.withAlpha (0.50f));
+        graphics.drawRoundedRectangle (panelBounds.reduced (0.5f), 7.0f, 0.8f);
+        graphics.setColour (colours::binding.withAlpha (0.07f));
+        graphics.drawRoundedRectangle (panelBounds.reduced (1.8f), 5.5f, 0.65f);
 
         if (titles[static_cast<std::size_t> (section)][0] != '\0')
         {
-            graphics.setColour ((prioritySection ? colours::accentBright
-                                                 : colours::binding)
-                                    .withAlpha (prioritySection ? 0.92f : 0.80f));
-            graphics.setFont (juce::FontOptions (
-                prioritySection ? 11.5f : 10.5f, juce::Font::bold));
+            graphics.setColour (colours::binding.withAlpha (0.96f));
+            graphics.setFont (
+                juce::Font (juce::FontOptions (13.8f, juce::Font::bold))
+                    .withExtraKerningFactor (0.035f));
             graphics.drawText (titles[static_cast<std::size_t> (section)],
-                               bounds.reduced (12, 6).removeFromTop (14),
+                               bounds.withHeight (sectionTitleHeight).reduced (12, 0),
                                juce::Justification::centredLeft);
-
-            if (prioritySection)
-            {
-                graphics.setColour (colours::accent.withAlpha (0.55f));
-                graphics.fillRoundedRectangle (
-                    static_cast<float> (bounds.getX() + 12),
-                    static_cast<float> (bounds.getY() + 23), 42.0f, 2.0f, 1.0f);
-            }
         }
     }
 }
@@ -1176,59 +1509,69 @@ void ElectryAudioProcessorEditor::resized()
 
     // Header.
     auto header = area.removeFromTop (44);
-    logoLabel.setBounds (header.removeFromLeft (170));
-    editionLabel.setBounds (header.removeFromLeft (330));
-    panicButton.setBounds (header.removeFromRight (76).reduced (0, 8));
-    header.removeFromRight (8);
-    statusDisplay.setBounds (header.removeFromRight (210).reduced (0, 8));
+    logoLabel.setBounds (header.removeFromLeft (158));
+    editionLabel.setBounds (header.removeFromLeft (314));
+    header.removeFromLeft (10);
+    panicButton.setBounds (header.removeFromRight (74).reduced (0, 7));
+    header.removeFromRight (10);
+    statusDisplay.setBounds (header.removeFromRight (208).reduced (0, 7));
+    header.removeFromRight (10);
+    factoryProgramLabel.setBounds (header.removeFromLeft (32));
+    header.removeFromLeft (6);
+    factoryProgramSelector.setBounds (header.reduced (0, 7));
 
     area.removeFromTop (6);
 
     // Keyboard and hint at the bottom.
-    keyboardHintLabel.setBounds (area.removeFromBottom (18));
-    keyboard.setBounds (area.removeFromBottom (96));
+    keyboardHintLabel.setBounds (area.removeFromBottom (18).reduced (2, 0));
+    keyboard.setBounds (area.removeFromBottom (100));
     keyboard.setKeyWidth (static_cast<float> (keyboard.getWidth())
                           / static_cast<float> (keyboardWhiteKeyCount));
-    area.removeFromBottom (8);
+    area.removeFromBottom (6);
 
-    // The two keyswitch strips across the top: the pick stroke and the play
-    // style, latched independently.
+    // The two keyswitch strips and their compact play-style operating mode.
     auto articulationArea = area.removeFromTop (76);
     sectionBounds[articulationSection] = articulationArea;
     auto stripRow = articulationArea.reduced (12, 8);
     const int pickWidth = juce::roundToInt (
-        static_cast<float> (stripRow.getWidth()) * 0.40f);
+        static_cast<float> (stripRow.getWidth()) * 0.24f);
+    const int modeWidth = juce::roundToInt (
+        static_cast<float> (stripRow.getWidth()) * 0.15f);
     pickStyleStrip.setBounds (stripRow.removeFromLeft (pickWidth));
+    stripRow.removeFromLeft (12);
+    playStyleKeyModeStrip.setBounds (stripRow.removeFromLeft (modeWidth));
     stripRow.removeFromLeft (12);
     playStyleStrip.setBounds (stripRow);
     area.removeFromTop (8);
 
-    // The live fretboard sits directly under the play styles, beside the four
+    // The live fretboard sits directly under the play styles, beside the five
     // performance controls that change what it shows.
     {
         auto fretboardRow = area.removeFromTop (
             juce::jmin (fretboardPanelHeight, juce::jmax (0, area.getHeight() - 260)));
         area.removeFromTop (8);
         auto performanceArea = fretboardRow.removeFromRight (
-            juce::jmin (300, fretboardRow.getWidth() / 3));
+            juce::jmin (360, fretboardRow.getWidth() / 2));
         fretboardRow.removeFromRight (8);
         sectionBounds[fretboardSection] = fretboardRow;
         sectionBounds[performanceSection] = performanceArea;
 
-        fretboardDisplay.setBounds (fretboardRow.reduced (12).withTrimmedTop (14));
+        fretboardDisplay.setBounds (
+            fretboardRow.reduced (12, 10).withTrimmedTop (sectionContentTrim));
         layoutKnobRow (
-            performanceArea.reduced (10).withTrimmedTop (14),
+            performanceArea.reduced (10).withTrimmedTop (sectionContentTrim),
             { { &sympatheticKnob, KnobTier::detail },
               { &palmMuteKnob, KnobTier::detail },
               { &strumSpreadKnob, KnobTier::detail },
+              { &tremoloRateKnob, KnobTier::detail },
               { &resonanceKnob, KnobTier::detail } },
             4);
     }
 
     // The remaining 410 px is deliberately split by sonic importance rather
     // than by parameter type. Controls that reshape every note occupy the
-    // large upper row; construction axes are medium; articulation-specific
-    // texture controls are visibly subordinate.
+    // large upper row; the single build macro and articulation-specific
+    // texture controls remain visibly subordinate.
     const int mainHeight = juce::jlimit (
         180, area.getHeight() - 150,
         juce::roundToInt (static_cast<float> (area.getHeight()) * 0.532f));
@@ -1236,17 +1579,18 @@ void ElectryAudioProcessorEditor::resized()
     area.removeFromTop (8);
     auto secondaryRow = area;
 
-    auto masterArea = mainRow.removeFromRight (104);
+    // Output mode stays comfortably operable beside the primary tone panel.
+    auto masterArea = mainRow.removeFromRight (184);
     mainRow.removeFromRight (8);
     auto coreArea = mainRow;
     sectionBounds[coreSection] = coreArea;
     sectionBounds[masterSection] = masterArea;
 
     {
-        auto inner = coreArea.reduced (12).withTrimmedTop (16);
-        auto selectorArea = inner.removeFromLeft (juce::jmin (150, inner.getWidth()));
-        pickupStrip.setBounds (selectorArea.withSizeKeepingCentre (
-            selectorArea.getWidth(), juce::jmin (64, selectorArea.getHeight())));
+        auto inner = coreArea.reduced (16, 10)
+                             .withTrimmedTop (sectionContentTrim);
+        auto selectorArea = inner.removeFromLeft (juce::jmin (80, inner.getWidth()));
+        pickupStrip.setBounds (selectorArea);
         inner.removeFromLeft (juce::jmin (6, inner.getWidth()));
         layoutKnobRow (
             inner,
@@ -1257,11 +1601,12 @@ void ElectryAudioProcessorEditor::resized()
               { &stringAgeKnob, KnobTier::hero },
               { &bodyResonanceKnob, KnobTier::hero },
               { &velocityKnob, KnobTier::hero } },
-            6);
+            10);
     }
 
     {
-        auto masterInner = masterArea.reduced (12).withTrimmedTop (16);
+        auto masterInner = masterArea.reduced (12, 10)
+                                     .withTrimmedTop (sectionContentTrim);
         outputModeStrip.setBounds (masterInner.removeFromTop (48));
         masterInner.removeFromTop (2);
         layoutKnobRow (
@@ -1271,11 +1616,11 @@ void ElectryAudioProcessorEditor::resized()
 
     const int secondaryContentWidth = juce::jmax (0, secondaryRow.getWidth() - 8);
     const int buildWidth = juce::roundToInt (
-        static_cast<float> (secondaryContentWidth) * 0.43f);
+        static_cast<float> (secondaryContentWidth) * 0.18f);
     auto buildArea = secondaryRow.removeFromLeft (buildWidth);
     secondaryRow.removeFromLeft (juce::jmin (8, secondaryRow.getWidth()));
     const int detailWidth = juce::roundToInt (
-        static_cast<float> (secondaryContentWidth) * 0.30f);
+        static_cast<float> (secondaryContentWidth) * 0.40f);
     auto detailArea = secondaryRow.removeFromLeft (detailWidth);
     secondaryRow.removeFromLeft (juce::jmin (8, secondaryRow.getWidth()));
     auto effectsArea = secondaryRow;
@@ -1284,17 +1629,11 @@ void ElectryAudioProcessorEditor::resized()
     sectionBounds[effectsSection] = effectsArea;
 
     layoutKnobRow (
-        buildArea.reduced (12).withTrimmedTop (16),
-        { { &bodyWoodKnob, KnobTier::character },
-          { &bodySizeKnob, KnobTier::character },
-          { &bodyShapeKnob, KnobTier::character },
-          { &constructionKnob, KnobTier::character },
-          { &scaleLengthKnob, KnobTier::character },
-          { &stringGaugeKnob, KnobTier::character } },
-        6);
+        buildArea.reduced (12, 10).withTrimmedTop (sectionContentTrim),
+        { { &guitarBuildKnob, KnobTier::hero } }, 0);
 
     layoutKnobRow (
-        detailArea.reduced (12).withTrimmedTop (16),
+        detailArea.reduced (12, 10).withTrimmedTop (sectionContentTrim),
         { { &muteDampingKnob, KnobTier::contextual },
           { &bendTimeKnob, KnobTier::detail },
           { &pickNoiseKnob, KnobTier::detail },
@@ -1303,8 +1642,12 @@ void ElectryAudioProcessorEditor::resized()
           { &artifactsKnob, KnobTier::detail } },
         4);
 
+    auto effectsInner = effectsArea.reduced (10, 8)
+                                  .withTrimmedTop (sectionContentTrim);
+    ampModelStrip.setBounds (effectsInner.removeFromTop (42));
+    effectsInner.removeFromTop (2);
     layoutKnobRow (
-        effectsArea.reduced (10).withTrimmedTop (16),
+        effectsInner,
         { { &distortionKnob, KnobTier::detail },
           { &ampKnob, KnobTier::detail },
           { &compressorKnob, KnobTier::detail },

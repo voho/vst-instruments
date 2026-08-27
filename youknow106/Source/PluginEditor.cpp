@@ -2036,13 +2036,19 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         "Scales the modeled hiss of the uncompanded bucket-brigade chorus. "
         "100% is the modeled floor; zero is a clean plug-in extension.",
         "Sets the active voice limit from 1 to 16. Six matches the hardware; "
-        "values above six add digital extension voices."
+        "values above six add digital extension voices.",
+        "Ages the modeled unit by the drift of one documented four-year "
+        "service interval: each voice's filter tuning drifts flat by its own "
+        "share of up to a quarter tone and the noise source rises by up to "
+        "3.5 dB. Zero is freshly serviced. Unit Character scales build "
+        "tolerances; Aging adds time since the last calibration."
     };
 
     configure (transposeSlider, transpose, "Transpose", utilityTooltips[0]);
     configure (tuneSlider, masterTune, "Master tune", utilityTooltips[1]);
     configure (velocitySlider, velocity, "Velocity", utilityTooltips[2]);
     configure (calibrationSlider, calibration, "Unit Character", utilityTooltips[3]);
+    configure (agingSlider, aging, "Aging", utilityTooltips[6]);
     configure (chorusNoiseSlider, chorusNoise, "Chorus noise", utilityTooltips[4]);
     configure (polyphonySlider, polyphony, "Polyphony", utilityTooltips[5]);
     // HISS now lives inside the primary CHORUS block, so its full-size knob
@@ -2050,9 +2056,10 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     chorusNoiseSlider.getProperties().set (secondaryStyleProperty, false);
 
     const char* captions[] = { "AMOUNT", "TUNE", "VELOCITY",
-                               "CHARACTER", "HISS", "VOICES" };
+                               "CHARACTER", "HISS", "VOICES", "AGING" };
     const char* controlNames[] = { "Transpose", "Master tune", "Velocity",
-                                   "Unit Character", "Chorus noise", "Polyphony" };
+                                   "Unit Character", "Chorus noise", "Polyphony",
+                                   "Aging" };
     for (std::size_t index = 0; index < utilityLabels.size(); ++index)
     {
         auto& label = utilityLabels[index];
@@ -2092,7 +2099,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     // session runs out of CPU rather than when it needs a different sound.
     // The help strip has a fixed line budget, so both processing tooltips are
     // written to fit it rather than to say everything; the full reasoning
-    // lives in Docs/USER_GUIDE.md and Docs/vcf-solver-optimization.md.
+    // lives in the README's "Performance and quality".
     const juce::String qualityTooltip =
         "Sets how far above the host's sample rate the whole engine runs. "
         "1x is the shipped setting and the cheapest; 2x and 4x alias less and "
@@ -3121,6 +3128,7 @@ const char* YouKnow106AudioProcessorEditor::parameterIdFor (
         { &tuneSlider,        masterTune },
         { &velocitySlider,    velocity },
         { &calibrationSlider, calibration },
+        { &agingSlider,       aging },
         { &chorusNoiseSlider, chorusNoise },
         { &polyphonySlider,   polyphony },
         { &qualityBox,        quality },
@@ -3335,21 +3343,30 @@ void YouKnow106AudioProcessorEditor::resized()
     constexpr float labelHeight = 16.0f;
     constexpr float knobSize = 56.0f;
 
-    // MODEL: global circuit character and processing quality sit beneath the
-    // global controller cheek rather than impersonating original synth blocks.
+    // MODEL: global circuit character, the age of the unit and processing
+    // quality sit beneath the global controller cheek rather than
+    // impersonating original synth blocks. Character keeps its full-width
+    // legend; AGING beside it, then the quality ladder.
     utilityLabels[3].setBounds (
         scaled (22.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     calibrationSlider.setBounds (
-        scaled (33.0f, knobTop, knobSize, knobSize).toNearestInt());
-    // The two processing-cost selectors share the MODEL zone's right half and
+        scaled (34.0f, knobTop, knobSize, knobSize).toNearestInt());
+    // AGING sits directly beside Unit Character at the HISS knob's smaller
+    // diameter, so the two instrument knobs and the selector stack all fit
+    // the widened MODEL zone without crowding its heading.
+    utilityLabels[6].setBounds (
+        scaled (106.0f, labelTop, 50.0f, labelHeight).toNearestInt());
+    agingSlider.setBounds (
+        scaled (106.0f, knobTop, 50.0f, 50.0f).toNearestInt());
+    // The two processing-cost selectors share the MODEL zone's right end and
     // stack there. Their column starts below the painted MODEL heading and
     // ends level with the Unit Character knob beside it, so neither the
-    // heading, the knob, nor the deck's lower edge is crowded, and the VOICE
+    // heading, the knobs, nor the deck's lower edge is crowded, and the VOICE
     // group's baseline does not move.
     // Wide enough for the longest menu entry. JUCE lays a ComboBox's text out
     // in `width + 3 - height`, so the arrow steals a square: the widest legend
     // here is VCF SOLVER's "Standard", and at 78 px it drew as "Sta...".
-    constexpr float selectorX = 104.0f;
+    constexpr float selectorX = 158.0f;
     constexpr float selectorWidth = 90.0f;
     constexpr float selectorBoxInset = 0.0f;
     constexpr float selectorLabelHeight = 15.0f;
@@ -3373,13 +3390,13 @@ void YouKnow106AudioProcessorEditor::resized()
 
     // VOICE: the continuous voice-limit and response controls share a baseline.
     utilityLabels[5].setBounds (
-        scaled (228.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+        scaled (276.0f, labelTop, 56.0f, labelHeight).toNearestInt());
     polyphonySlider.setBounds (
-        scaled (240.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (276.0f, knobTop, knobSize, knobSize).toNearestInt());
     utilityLabels[2].setBounds (
-        scaled (318.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+        scaled (336.0f, labelTop, 72.0f, labelHeight).toNearestInt());
     velocitySlider.setBounds (
-        scaled (330.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (344.0f, knobTop, knobSize, knobSize).toNearestInt());
 
     // PITCH follows the DCO footprint. Keep the hardware-style Transpose
     // switch next to its amount, then the fine tune control.

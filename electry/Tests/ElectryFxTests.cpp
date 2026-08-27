@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -60,12 +61,242 @@ struct ElectryFxTestAccess
         return fx.sampleRate_;
     }
 
-    // The five mix targets exactly as setParameters() sanitised them, before
-    // the per-sample smoothing that would otherwise blend the guard's output
-    // with whatever mix was in effect before the call.
+    // The five control targets exactly as setParameters() sanitised them,
+    // before per-sample smoothing would blend the guard's output with the
+    // value in effect before the call.
     static FxParameters targetParameters(const ElectryFx& fx) noexcept
     {
         return fx.targetParameters_;
+    }
+
+    static float diodeStep(double inputVolts, double rate,
+                           double& outputVolts,
+                           double& previousDerivative) noexcept
+    {
+        return ElectryFx::diodePairStep(inputVolts, rate, outputVolts,
+                                        previousDerivative);
+    }
+
+    static double cathodeCurrent(double plateVoltage,
+                                 double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::triodeCathodeCurrent(plateVoltage,
+                                               gridToCathodeVoltage);
+    }
+
+    static double plateCurrent(double plateVoltage,
+                               double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::triodePlateCurrent(plateVoltage,
+                                             gridToCathodeVoltage);
+    }
+
+    static double gridCurrent(double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::triodeGridCurrent(gridToCathodeVoltage);
+    }
+
+    static double solvePlate(double gridToCathodeVoltage,
+                             double supplyVoltage,
+                             double& warmStart) noexcept
+    {
+        return ElectryFx::solveTriodePlate(gridToCathodeVoltage,
+                                           supplyVoltage, warmStart);
+    }
+
+    static float triodeOutput(double gridVoltage,
+                              double& plateVoltage) noexcept
+    {
+        return ElectryFx::triodeStage(gridVoltage, plateVoltage);
+    }
+
+    static float triodeLookup(double gridVoltage) noexcept
+    {
+        return ElectryFx::triodeStageLookup(gridVoltage);
+    }
+
+    static double phaseInverterPlateCurrent(
+        AmpModel model, double plateToCathodeVoltage,
+        double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::phaseInverterPlateCurrent(
+            model, plateToCathodeVoltage, gridToCathodeVoltage);
+    }
+
+    static std::array<double, 6> phaseInverterDirect(
+        AmpModel model, double drive) noexcept
+    {
+        const auto result = ElectryFx::phaseInverterDirect(model, drive);
+        return { result.output, result.plateOne, result.plateTwo,
+                 result.cathode, result.tail, result.totalCurrent };
+    }
+
+    static double powerGridCurrentDirect(double gridVoltage) noexcept
+    {
+        return ElectryFx::powerGridCurrentDirect(gridVoltage);
+    }
+
+    static double powerGridCurrentLookup(double gridVoltage) noexcept
+    {
+        return ElectryFx::powerGridCurrentLookup(gridVoltage);
+    }
+
+    static std::array<double, 10> phaseInverterCoupledStep(
+        AmpModel model, double drive, double sampleRate,
+        std::array<double, 5>& state) noexcept
+    {
+        ElectryFx::AmpChannel channel {};
+        channel.phaseCurrentDelta = state[0];
+        channel.couplingHistoryOne = state[1];
+        channel.couplingHistoryTwo = state[2];
+        channel.powerGridOffsetOne = state[3];
+        channel.powerGridOffsetTwo = state[4];
+        const auto result = ElectryFx::phaseInverterCoupledStep(
+            channel, model, drive, sampleRate);
+        state = { channel.phaseCurrentDelta,
+                  channel.couplingHistoryOne,
+                  channel.couplingHistoryTwo,
+                  channel.powerGridOffsetOne,
+                  channel.powerGridOffsetTwo };
+        return { result.gridOne, result.gridTwo,
+                 result.plateOne, result.plateTwo,
+                 result.capacitorCurrentOne,
+                 result.capacitorCurrentTwo,
+                 result.gridCurrentOne, result.gridCurrentTwo,
+                 result.totalCurrent, result.maximumResidual };
+    }
+
+    static double powerTubePlateCurrent(
+        AmpModel model, double plateVoltage, double gridVoltage,
+        double screenVoltage) noexcept
+    {
+        return ElectryFx::powerTubePlateCurrent(
+            model, plateVoltage, gridVoltage, screenVoltage);
+    }
+
+    static double powerTubeScreenCurrent(
+        AmpModel model, double plateVoltage, double gridVoltage,
+        double screenVoltage) noexcept
+    {
+        return ElectryFx::powerTubeScreenCurrent(
+            model, plateVoltage, gridVoltage, screenVoltage);
+    }
+
+    static std::array<double, 5> powerTubePairDirect(
+        AmpModel model, double commonDrive, double differentialDrive,
+        double railScale) noexcept
+    {
+        const auto result = ElectryFx::powerTubePairDirect(
+            model, commonDrive, differentialDrive, railScale);
+        return { result.output, result.supplyDemand,
+                 result.screenVoltageOne, result.screenVoltageTwo,
+                 result.screenResidual };
+    }
+
+    static std::array<double, 2> powerTubePairLookup(
+        AmpModel model, float commonDrive, float differentialDrive,
+        float railScale) noexcept
+    {
+        const auto result = ElectryFx::powerTubePairLookup(
+            model, commonDrive, differentialDrive, railScale);
+        return { result.output, result.supplyDemand };
+    }
+
+    static bool pedalAtRest(const ElectryFx& fx) noexcept
+    {
+        return std::all_of(fx.gain_.begin(), fx.gain_.end(), [] (const auto& channel)
+        {
+            return ! channel.pedalWasActive
+                && channel.diodeVoltage == 0.0
+                && channel.diodeDerivative == 0.0
+                && channel.pedalHighpass.z1 == 0.0
+                && channel.pedalHighpass.z2 == 0.0
+                && channel.pedalVoice.z1 == 0.0
+                && channel.pedalVoice.z2 == 0.0
+                && channel.pedalTilt.z1 == 0.0
+                && channel.pedalTilt.z2 == 0.0;
+        });
+    }
+
+    static bool amplifierAtRest(const ElectryFx::AmpChannel& amplifier) noexcept
+    {
+        const bool cabinetClear = std::all_of(
+            amplifier.cabinet.begin(), amplifier.cabinet.end(),
+            [] (const auto& section)
+            {
+                return section.z1 == 0.0 && section.z2 == 0.0;
+            });
+        return ! amplifier.wasActive
+            && amplifier.bias == 0.0f && amplifier.sag == 0.0f
+            && amplifier.interstage.state == 0.0f
+            && amplifier.phaseInverterInput.state == 0.0f
+            && amplifier.phaseCurrentDelta == 0.0
+            && amplifier.couplingHistoryOne == 0.0
+            && amplifier.couplingHistoryTwo == 0.0
+            && amplifier.powerGridOffsetOne == 0.0
+            && amplifier.powerGridOffsetTwo == 0.0
+            && amplifier.flux.state == 0.0f
+            && amplifier.negativeFeedback.state == 0.0f
+            && amplifier.inputHighpass.z1 == 0.0
+            && amplifier.inputHighpass.z2 == 0.0
+            && amplifier.inputVoice.z1 == 0.0
+            && amplifier.inputVoice.z2 == 0.0
+            && amplifier.toneStack.z1 == 0.0
+            && amplifier.toneStack.z2 == 0.0
+            && amplifier.toneStack.z3 == 0.0
+            && amplifier.transformerHighpass.z1 == 0.0
+            && amplifier.transformerHighpass.z2 == 0.0
+            && cabinetClear;
+    }
+
+    static bool ampAtRest(const ElectryFx& fx) noexcept
+    {
+        return std::all_of(fx.gain_.begin(), fx.gain_.end(), [] (const auto& channel)
+        {
+            return ! channel.ampWasActive
+                && std::all_of(channel.amplifiers.begin(),
+                               channel.amplifiers.end(), [] (const auto& amplifier)
+                {
+                    return amplifierAtRest(amplifier);
+                });
+        });
+    }
+
+    static bool ampModelAtRest(const ElectryFx& fx, AmpModel model) noexcept
+    {
+        const auto index = static_cast<std::size_t>(model);
+        return std::all_of(fx.gain_.begin(), fx.gain_.end(), [index] (const auto& channel)
+        {
+            return amplifierAtRest(channel.amplifiers[index]);
+        });
+    }
+
+    static std::array<double, 7> toneStackCoefficients(
+        const ElectryFx& fx, AmpModel model) noexcept
+    {
+        const auto& stack = fx.gain_[0].amplifiers[
+            static_cast<std::size_t>(model)].toneStack;
+        return { stack.b0, stack.b1, stack.b2, stack.b3,
+                 stack.a1, stack.a2, stack.a3 };
+    }
+
+    static float phaseInverterInputCoefficient(
+        const ElectryFx& fx, AmpModel model) noexcept
+    {
+        return fx.phaseInverterInputCoefficient_[
+            static_cast<std::size_t>(model)];
+    }
+
+    static std::array<float, 3> ampModelWeights(
+        const ElectryFx& fx) noexcept
+    {
+        return fx.ampModelWeights_;
+    }
+
+    static float amplifierSag(const ElectryFx& fx, AmpModel model) noexcept
+    {
+        return fx.gain_[0].amplifiers[
+            static_cast<std::size_t>(model)].sag;
     }
 
     // Harmonic distortion the output transformer's core adds to a steady sine,
@@ -135,8 +366,14 @@ namespace
 {
 using electry::ElectryEngine;
 using electry::ElectryFx;
+using electry::AmpModel;
 using electry::EngineParameters;
 using electry::FxParameters;
+using electry::applyGuitarBuild;
+using electry::defaultGuitarBuild;
+using electry::PickStyle;
+using electry::PickupSelector;
+using electry::PlayStyle;
 using FxAccess = electry::ElectryFxTestAccess;
 
 constexpr double pi = 3.14159265358979323846;
@@ -225,13 +462,15 @@ constexpr int aliasProbeCycles = 431;
 // that legitimately belongs to the harmonic series. A nonlinearity fed at host
 // rate folds its own upper products back into the audio band, and that is
 // exactly what this ratio measures.
-double aliasFloorDb(float distortion, float amp, double amplitude)
+double aliasFloorDb(float distortion, float amp, double amplitude,
+                    AmpModel model = AmpModel::ModernHighGain)
 {
     ElectryFx fx;
     fx.prepare(sampleRate);
     FxParameters parameters;
     parameters.distortion = distortion;
     parameters.amp = amp;
+    parameters.ampModel = model;
     fx.setParameters(parameters);
 
     std::vector<float> left;
@@ -273,15 +512,23 @@ double aliasFloorDb(float distortion, float amp, double amplitude)
                              / std::max(harmonic, 1.0e-30));
 }
 
-// Small-signal magnitude of the amplifier path in decibels, which reads the
-// cabinet's voicing directly.
-double ampPathMagnitudeDb(double frequency)
+// Small-signal magnitude of either gain path in decibels. At this level the
+// nonlinearities stay near their local slope, so ratios between frequencies
+// read the physical coupling/voice/cabinet filters rather than clipping.
+double gainPathMagnitudeDb(double frequency, float distortion, float amp,
+                           AmpModel model = AmpModel::ModernHighGain,
+                           double rate = sampleRate,
+                           bool startSelected = false)
 {
     ElectryFx fx;
-    fx.prepare(sampleRate);
+    fx.prepare(rate);
     FxParameters parameters;
-    parameters.amp = 1.0f;
+    parameters.distortion = distortion;
+    parameters.amp = amp;
+    parameters.ampModel = model;
     fx.setParameters(parameters);
+    if (startSelected)
+        fx.reset();
 
     constexpr int blockLength = 8192;
     constexpr double amplitude = 0.0008; // low enough to stay near-linear
@@ -293,7 +540,7 @@ double ampPathMagnitudeDb(double frequency)
         for (int i = 0; i < blockLength; ++i)
         {
             const double phase = 2.0 * pi * frequency
-                               * (pass * blockLength + i) / sampleRate;
+                               * (pass * blockLength + i) / rate;
             left[static_cast<std::size_t>(i)] =
                 static_cast<float>(amplitude * std::sin(phase));
             right[static_cast<std::size_t>(i)] =
@@ -310,6 +557,125 @@ double ampPathMagnitudeDb(double frequency)
     const double rms = std::sqrt(sum / (blockLength / 2));
     return 20.0 * std::log10(std::max(rms, 1.0e-30)
                              / (amplitude / std::sqrt(2.0)));
+}
+
+double ampPathMagnitudeDb(
+    double frequency, float amount = 1.0f,
+    AmpModel model = AmpModel::ModernHighGain,
+    double rate = sampleRate,
+    bool startSelected = false)
+{
+    return gainPathMagnitudeDb(frequency, 0.0f, amount, model, rate,
+                               startSelected);
+}
+
+double pedalPathMagnitudeDb(double frequency, float amount = 1.0f)
+{
+    return gainPathMagnitudeDb(frequency, amount, 0.0f);
+}
+
+double toneStackMagnitudeDb(const std::array<double, 7>& coefficients,
+                            double frequency, double rate)
+{
+    const std::complex<double> delay = std::polar(
+        1.0, -2.0 * pi * frequency / rate);
+    const auto delay2 = delay * delay;
+    const auto delay3 = delay2 * delay;
+    const std::complex<double> numerator = coefficients[0]
+        + coefficients[1] * delay + coefficients[2] * delay2
+        + coefficients[3] * delay3;
+    const std::complex<double> denominator = 1.0
+        + coefficients[4] * delay + coefficients[5] * delay2
+        + coefficients[6] * delay3;
+    return 20.0 * std::log10(std::max(
+        std::abs(numerator / denominator), 1.0e-30));
+}
+
+double steadyAmpGainDb(AmpModel model, double amplitude)
+{
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.90f;
+    parameters.ampModel = model;
+    fx.setParameters(parameters);
+    // This fixture measures an already-selected amplifier, not the intentional
+    // model-switch crossfade from the default modern state.
+    fx.reset();
+
+    constexpr int blockLength = 512;
+    constexpr int cycles = 4; // 375 Hz at 48 kHz
+    double sum = 0.0;
+    int measuredSamples = 0;
+    for (int block = 0; block < 96; ++block)
+    {
+        auto left = sineBlock(blockLength, cycles, amplitude);
+        auto right = left;
+        fx.process(left.data(), right.data(), blockLength);
+        if (block >= 80)
+        {
+            for (const float value : left)
+                sum += static_cast<double>(value) * value;
+            measuredSamples += blockLength;
+        }
+    }
+    const double outputRms = std::sqrt(sum / measuredSamples);
+    return 20.0 * std::log10(std::max(outputRms, 1.0e-30)
+                             / (amplitude / std::sqrt(2.0)));
+}
+
+std::vector<float> renderAmpInBlocks(AmpModel model, int blockSize)
+{
+    constexpr int length = 12288;
+    auto source = sineBlock(length, 113, 0.28);
+    auto left = source;
+    auto right = source;
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.82f;
+    parameters.ampModel = model;
+    fx.setParameters(parameters);
+    fx.reset();
+    for (int offset = 0; offset < length; offset += blockSize)
+    {
+        const int count = std::min(blockSize, length - offset);
+        fx.process(left.data() + offset, right.data() + offset, count);
+    }
+    return left;
+}
+
+std::vector<float> renderModelSwitchesInBlocks(int blockSize)
+{
+    constexpr int segmentLength = 4096;
+    constexpr int length = 3 * segmentLength;
+    auto source = sineBlock(length, 79, 0.30);
+    auto left = source;
+    auto right = source;
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.90f;
+    parameters.ampModel = AmpModel::AmericanClean;
+    fx.setParameters(parameters);
+    fx.reset();
+
+    const std::array<AmpModel, 3> sequence {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    for (int segment = 0; segment < 3; ++segment)
+    {
+        parameters.ampModel = sequence[static_cast<std::size_t>(segment)];
+        fx.setParameters(parameters);
+        const int start = segment * segmentLength;
+        const int end = start + segmentLength;
+        for (int offset = start; offset < end; offset += blockSize)
+        {
+            const int count = std::min(blockSize, end - offset);
+            fx.process(left.data() + offset, right.data() + offset, count);
+        }
+    }
+    return left;
 }
 
 // A loud Drop-E rhythm figure straight from the string model, so the chain is
@@ -350,6 +716,199 @@ std::vector<float> throughChain(const FxParameters& parameters,
     std::vector<float> right = source;
     fx.process(left.data(), right.data(), static_cast<int>(left.size()));
     return left;
+}
+
+std::vector<float> throughSelectedChain(const FxParameters& parameters,
+                                        const std::vector<float>& source,
+                                        double rate = sampleRate)
+{
+    ElectryFx fx;
+    fx.prepare(rate);
+    fx.setParameters(parameters);
+    fx.reset();
+    std::vector<float> left = source;
+    std::vector<float> right = source;
+    fx.process(left.data(), right.data(), static_cast<int>(left.size()));
+    return left;
+}
+
+// Model-only guard for the 30-80 ms body of the shipping rapid-Palm demo.
+// The real reference take is useful evidence that this region needs more upper
+// body and less periodic ring, but its amp, cabinet and mastering are unknown,
+// so it is deliberately not treated as a numeric target here.
+void testRapidPalmBodyDirection()
+{
+    constexpr double rate = 44100.0;
+    constexpr int blockSize = 256;
+    constexpr int hitCount = 12;
+
+    EngineParameters engineParameters;
+    engineParameters.pickupSelector = PickupSelector::Bridge;
+    engineParameters.pickupType = 0.32f;
+    engineParameters.toneKnob = 1.0f;
+    applyGuitarBuild(engineParameters, defaultGuitarBuild);
+    engineParameters.stringAge = 0.10f;
+    engineParameters.pickHardness = 0.85f;
+    engineParameters.pickPosition = 0.18f;
+    engineParameters.velocityAmount = 0.7f;
+    engineParameters.sympatheticAmount = 0.25f;
+    engineParameters.muteDamping = 0.85f;
+    engineParameters.outputGain = 2.0f;
+    engineParameters.fingerNoise = 0.55f;
+    engineParameters.artifactAmount = 0.15f;
+
+    FxParameters fxParameters;
+    fxParameters.distortion = 0.45f;
+    fxParameters.amp = 0.95f;
+    fxParameters.compressor = 0.60f;
+
+    ElectryEngine engine;
+    engine.prepare(rate, blockSize);
+    engine.setParameters(engineParameters);
+    engine.reset();
+    ElectryFx fx;
+    fx.prepare(rate);
+    fx.setParameters(fxParameters);
+    engine.setAcousticReturnLevel(std::min(
+        1.0f, fxParameters.amp + 0.6f * fxParameters.distortion));
+    fx.reset();
+
+    std::vector<float> left;
+    std::vector<float> right;
+    const auto render = [&] (int sampleCount)
+    {
+        while (sampleCount > 0)
+        {
+            const int samples = std::min(blockSize, sampleCount);
+            const auto offset = left.size();
+            left.resize(offset + static_cast<std::size_t>(samples));
+            right.resize(offset + static_cast<std::size_t>(samples));
+            engine.process(left.data() + offset, right.data() + offset, samples);
+            fx.process(left.data() + offset, right.data() + offset, samples);
+            engine.pushAcousticReturn(left.data() + offset,
+                                      right.data() + offset, samples);
+            sampleCount -= samples;
+        }
+    };
+
+    // Take's constructor lead-in, then renderMuteAndDeadMetal's own lead-in.
+    render(static_cast<int>(0.25 * rate));
+    render(static_cast<int>(0.25 * rate));
+    engine.noteOn(ElectryEngine::firstKeyswitchNote
+                      + static_cast<int>(PickStyle::Alternate),
+                  1.0f);
+    engine.noteOn(ElectryEngine::firstPlayStyleKeyswitchNote
+                      + static_cast<int>(PlayStyle::PalmMute),
+                  1.0f);
+
+    std::array<std::size_t, hitCount> hitStarts {};
+    const int holdSamples = static_cast<int>(0.055 * rate);
+    const int gapSamples = static_cast<int>(0.028333 * rate);
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        hitStarts[static_cast<std::size_t>(hit)] = left.size();
+        engine.noteOn(28, hit % 2 == 0 ? 0.95f : 0.82f);
+        render(holdSamples);
+        engine.noteOff(28);
+        render(gapSamples);
+    }
+    expect(holdSamples + gapSamples == 3674,
+           "the rapid-Palm fixture no longer has the demo's 83.31 ms cadence");
+
+    constexpr int fftSize = 4096;
+    const int windowStart = static_cast<int>(0.030 * rate);
+    const int windowEnd = static_cast<int>(0.080 * rate);
+    const int windowLength = windowEnd - windowStart;
+    std::array<double, hitCount> upperBody {};
+    std::array<double, hitCount> harmonicity {};
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        std::vector<double> window(static_cast<std::size_t>(windowLength));
+        const auto first = hitStarts[static_cast<std::size_t>(hit)]
+                         + static_cast<std::size_t>(windowStart);
+        double mean = 0.0;
+        for (int i = 0; i < windowLength; ++i)
+            mean += left[first + static_cast<std::size_t>(i)];
+        mean /= windowLength;
+        for (int i = 0; i < windowLength; ++i)
+            window[static_cast<std::size_t>(i)] =
+                left[first + static_cast<std::size_t>(i)] - mean;
+
+        std::vector<std::complex<double>> spectrum(
+            static_cast<std::size_t>(fftSize));
+        for (int i = 0; i < windowLength; ++i)
+        {
+            const double hann = 0.5 - 0.5 * std::cos(
+                2.0 * pi * i / static_cast<double>(windowLength - 1));
+            spectrum[static_cast<std::size_t>(i)] =
+                { window[static_cast<std::size_t>(i)] * hann, 0.0 };
+        }
+        fft(spectrum);
+        double upperPower = 0.0;
+        double audiblePower = 0.0;
+        for (int bin = 1; bin <= fftSize / 2; ++bin)
+        {
+            const double frequency = bin * rate / fftSize;
+            if (frequency >= 20.0 && frequency <= 8000.0)
+            {
+                const double power = std::norm(
+                    spectrum[static_cast<std::size_t>(bin)]);
+                audiblePower += power;
+                if (frequency > 500.0)
+                    upperPower += power;
+            }
+        }
+        upperBody[static_cast<std::size_t>(hit)] = upperPower
+            / std::max(audiblePower, 1.0e-30);
+
+        // Autocorrelation uses the mean-removed body itself. The Hann belongs
+        // only to spectral power; applying it here would compare two different
+        // window gains one period apart and falsely lower harmonicity.
+        double strongestPeriod = -1.0;
+        const int firstLag = static_cast<int>(std::ceil(rate / 48.0));
+        const int lastLag = static_cast<int>(std::floor(rate / 36.0));
+        for (int lag = firstLag; lag <= lastLag; ++lag)
+        {
+            double product = 0.0;
+            double earlyPower = 0.0;
+            double latePower = 0.0;
+            for (int i = 0; i + lag < windowLength; ++i)
+            {
+                const double early = window[static_cast<std::size_t>(i)];
+                const double late = window[static_cast<std::size_t>(i + lag)];
+                product += early * late;
+                earlyPower += early * early;
+                latePower += late * late;
+            }
+            strongestPeriod = std::max(
+                strongestPeriod,
+                product / std::sqrt(std::max(earlyPower * latePower, 1.0e-30)));
+        }
+        harmonicity[static_cast<std::size_t>(hit)] = strongestPeriod;
+    }
+
+    const auto median = [] (auto values)
+    {
+        std::sort(values.begin(), values.end());
+        return 0.5 * (values[values.size() / 2 - 1]
+                    + values[values.size() / 2]);
+    };
+    const double medianUpperBody = median(upperBody);
+    const double medianHarmonicity = median(harmonicity);
+    const auto previousPrecision = std::cout.precision(9);
+    std::cout << "Rapid Palm 30-80 ms upper-body fraction (>500-8k / 20-8k): "
+              << medianUpperBody << " ("
+              << 10.0 * std::log10(std::max(medianUpperBody, 1.0e-30))
+              << " dB), harmonicity: " << medianHarmonicity << '\n';
+    std::cout.precision(previousPrecision);
+
+    // Loose one-sided rails: only a material regression toward a darker or
+    // more periodic chug should fail. They are not fits to the confounded real
+    // reference and intentionally leave room for evidence-led model work.
+    expect(medianUpperBody > 0.06,
+           "the rapid Palm body became materially darker");
+    expect(medianHarmonicity < 0.97,
+           "the rapid Palm body became materially more periodic");
 }
 
 // ---------------------------------------------------------------------------
@@ -435,23 +994,770 @@ void testExactDryBypass()
     }
 }
 
+void testCircuitGainStages()
+{
+    // The diode pair's three DC points come from the independent Shockley KCL
+    // equation (Vi - Vo) / 2.2k = 2 Is sinh(Vo / nVt), not from this solver.
+    const auto settledDiode = [] (double inputVolts)
+    {
+        double voltage = 0.0;
+        double derivative = 0.0;
+        for (int sample = 0; sample < 4096; ++sample)
+            FxAccess::diodeStep(inputVolts, 192000.0, voltage, derivative);
+        return voltage;
+    };
+    expect(std::abs(settledDiode(0.1) - 0.099950009) < 2.0e-6,
+           "the diode clipper misses its 0.1 V Shockley operating point");
+    expect(std::abs(settledDiode(1.0) - 0.514412245) < 2.0e-6,
+           "the diode clipper misses its 1 V Shockley operating point");
+    expect(std::abs(settledDiode(2.0) - 0.563440008) < 2.0e-6,
+           "the diode clipper misses its 2 V Shockley operating point");
+    expect(std::abs(settledDiode(1.0) + settledDiode(-1.0)) < 2.0e-7,
+           "the antiparallel diode pair is not symmetric");
+
+    double diodeVoltage = 0.0;
+    double diodeDerivative = 0.0;
+    const double first = FxAccess::diodeStep(
+        0.25, 192000.0, diodeVoltage, diodeDerivative);
+    const double released = FxAccess::diodeStep(
+        0.0, 192000.0, diodeVoltage, diodeDerivative);
+    expect(first > 0.0 && first < 0.25,
+           "the diode node does not charge through its RC network");
+    expect(released > 0.0 && released < 0.25,
+           "the diode node has no capacitor memory after the input releases");
+
+    // Independently derived coupled quiescent solution for 250 V / 100 kOhm
+    // plate loading and 1 kOhm cathode self-bias. Both KCL equations must hold;
+    // checking only the plate solve could conceal a mismatched cathode anchor.
+    constexpr double quiescentPlate = 152.15373624396778;
+    constexpr double quiescentCathode = 0.978501831350406;
+    const double cathode = FxAccess::cathodeCurrent(
+        quiescentPlate, -quiescentCathode);
+    const double plate = FxAccess::plateCurrent(
+        quiescentPlate, -quiescentCathode);
+    expect(std::abs(quiescentCathode - 1000.0 * cathode) < 1.0e-9,
+           "the measured triode model misses cathode-bias KCL");
+    expect(std::abs(quiescentPlate + 100000.0 * plate - 250.0) < 1.0e-8,
+           "the measured triode model misses plate-load KCL");
+
+    double arbitraryWarmStart = 10.0;
+    const double solvedPlate = FxAccess::solvePlate(
+        -quiescentCathode, 250.0, arbitraryWarmStart);
+    expect(std::abs(solvedPlate - quiescentPlate) < 1.0e-8,
+           "the plate-load Newton solve does not reach the DC operating point");
+
+    // Cross-check the warm-started Newton solver against an independent
+    // fixed-iteration bisection of the published current equations across the
+    // useful grid range. +2 V is already beyond the load line (the tube asks
+    // for more than 2.5 mA even at Vp=0), so both solvers must select the
+    // physical 0 V rail there; interior points must satisfy KCL themselves.
+    const auto referenceSoftplus = [] (double value)
+    {
+        return std::max(value, 0.0)
+             + std::log1p(std::exp(-std::abs(value)));
+    };
+    const auto referenceGridCurrent = [&] (double gridToCathode)
+    {
+        const double conduction = referenceSoftplus(11.99 * gridToCathode)
+                                / 11.99;
+        return 3.263e-4 * std::pow(conduction, 1.156) + 3.917e-8;
+    };
+    const auto referencePlateCurrent = [&] (double plateVoltage,
+                                             double gridToCathode)
+    {
+        const double drive = plateVoltage / 86.9 + gridToCathode;
+        const double conduction = referenceSoftplus(4.56 * drive) / 4.56;
+        const double cathodeCurrent = 1.371e-3
+            * std::pow(conduction, 1.349);
+        return cathodeCurrent - referenceGridCurrent(gridToCathode);
+    };
+    const auto referencePlate = [&] (double gridToCathode)
+    {
+        const auto residual = [&] (double plateVoltage)
+        {
+            return referencePlateCurrent(plateVoltage, gridToCathode)
+                 - (250.0 - plateVoltage) / 100000.0;
+        };
+        double lower = 0.0;
+        double upper = 250.0;
+        if (residual(lower) >= 0.0)
+            return lower;
+        if (residual(upper) <= 0.0)
+            return upper;
+        for (int iteration = 0; iteration < 64; ++iteration)
+        {
+            const double middle = 0.5 * (lower + upper);
+            if (residual(middle) > 0.0)
+                upper = middle;
+            else
+                lower = middle;
+        }
+        return 0.5 * (lower + upper);
+    };
+
+    double previousPlate = 251.0;
+    for (const double gridToCathode
+         : { -3.0, -2.0, -1.0, 0.0, 1.0, 1.5, 2.0 })
+    {
+        double warmStart = gridToCathode < 0.0 ? 5.0 : 245.0;
+        const double solved = FxAccess::solvePlate(
+            gridToCathode, 250.0, warmStart);
+        const double reference = referencePlate(gridToCathode);
+        expect(std::abs(solved - reference) < 1.0e-3,
+               "the triode Newton solve disagrees with independent bisection at Vgk="
+                   + std::to_string(gridToCathode));
+        expect(solved < previousPlate,
+               "triode plate voltage does not fall strictly as grid voltage rises");
+        previousPlate = solved;
+
+        const double currentResidual = referencePlateCurrent(
+            solved, gridToCathode) - (250.0 - solved) / 100000.0;
+        if (solved > 0.0 && solved < 250.0)
+            expect(std::abs(currentResidual) < 1.0e-8,
+                   "the triode plate solve misses load-line KCL at Vgk="
+                       + std::to_string(gridToCathode));
+        else
+            expect(gridToCathode == 2.0 && solved == 0.0
+                       && currentResidual > 0.0,
+                   "the triode solver selected the wrong physical plate rail");
+    }
+
+    // A clipped stage can move directly from the conducting 0 V rail to
+    // cutoff. That hostile warm start used to exhaust the safeguarded steps
+    // and return a point almost four volts away from the load-line root.
+    double railWarmStart = 0.0;
+    constexpr double cutoffJump = -4.2448;
+    const double jumpedPlate = FxAccess::solvePlate(
+        cutoffJump, 250.0, railWarmStart);
+    const double jumpedReference = referencePlate(cutoffJump);
+    const double jumpedResidual = referencePlateCurrent(
+        jumpedPlate, cutoffJump) - (250.0 - jumpedPlate) / 100000.0;
+    expect(std::abs(jumpedPlate - jumpedReference) < 1.0e-3,
+           "the plate solver did not recover from a rail-to-cutoff jump");
+    expect(std::abs(jumpedResidual) < 1.0e-8,
+           "the rail-to-cutoff fallback returned without satisfying KCL");
+
+    // Runtime uses a dense interpolation of this fixed, memoryless load-line
+    // solve. Probe between table knots across the full clamped grid range so
+    // the speedup cannot quietly replace the circuit curve with a coarse
+    // waveshaper.
+    double lookupWarmStart = 250.0;
+    double maximumLookupError = 0.0;
+    double previousLookup = -std::numeric_limits<double>::infinity();
+    bool lookupIsMonotonic = true;
+    for (double gridVoltage = -19.0; gridVoltage <= 20.9;
+         gridVoltage += 0.0317)
+    {
+        const double solved = FxAccess::triodeOutput(
+            gridVoltage, lookupWarmStart);
+        const double lookedUp = FxAccess::triodeLookup(gridVoltage);
+        maximumLookupError = std::max(
+            maximumLookupError, std::abs(solved - lookedUp));
+        lookupIsMonotonic = lookupIsMonotonic
+                         && lookedUp >= previousLookup;
+        previousLookup = lookedUp;
+    }
+    std::cout << "Maximum circuit-table transfer error: "
+              << maximumLookupError << '\n';
+    expect(maximumLookupError < 2.0e-4,
+           "the runtime triode table is too coarse ("
+               + std::to_string(maximumLookupError) + ")");
+    expect(lookupIsMonotonic,
+           "the runtime triode table folded back on its load-line curve");
+
+    expect(FxAccess::gridCurrent(1.0) > FxAccess::gridCurrent(-1.0),
+           "the measured triode grid current does not rise under positive drive");
+
+    double positivePlate = quiescentPlate;
+    double negativePlate = quiescentPlate;
+    const double smallPositive = FxAccess::triodeOutput(1.0e-4, positivePlate);
+    const double smallNegative = FxAccess::triodeOutput(-1.0e-4, negativePlate);
+    const double smallSignalSlope = (smallPositive - smallNegative) / 2.0e-4;
+    expect(std::abs(smallSignalSlope - 1.0) < 2.0e-4,
+           "the triode transfer is not unity-normalised at quiescence");
+
+    positivePlate = quiescentPlate;
+    negativePlate = quiescentPlate;
+    const double loudPositive = FxAccess::triodeOutput(2.0, positivePlate);
+    const double loudNegative = FxAccess::triodeOutput(-2.0, negativePlate);
+    expect(loudPositive > -loudNegative + 0.20,
+           "the measured triode transfer lost its plate-load asymmetry");
+}
+
+void testPhaseInverterCircuits()
+{
+    // Independent evaluations of TubeLib's ECC81/ECC83 TriodeK macros. The
+    // Vgk=0 anchors exercise the strict no-grid-current boundary as well as
+    // the ordinary negative-grid operating region.
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::AmericanClean, 150.0, -2.0)
+                    - 0.002302091834234943) < 1.0e-14,
+           "the ECC81 phase-inverter current no longer matches TubeLib");
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::AmericanClean, 200.0, 0.0)
+                    - 0.015442047889304224) < 1.0e-14,
+           "the ECC81 zero-grid current no longer matches TubeLib");
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::BritishCrunch, 200.0, -1.5)
+                    - 0.0014299974745466363) < 1.0e-14,
+           "the ECC83 phase-inverter current no longer matches TubeLib");
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::BritishCrunch, 200.0, 0.0)
+                    - 0.0046774689092718754) < 1.0e-14,
+           "the ECC83 zero-grid current no longer matches TubeLib");
+    expect(FxAccess::phaseInverterPlateCurrent(
+               AmpModel::AmericanClean, 200.0, 1.0)
+               == FxAccess::phaseInverterPlateCurrent(
+                   AmpModel::AmericanClean, 200.0, 0.0),
+           "the phase-inverter plate model crossed its grid-current boundary");
+
+    struct Expected
+    {
+        AmpModel model;
+        double supply;
+        double plateResistanceOne;
+        double plateResistanceTwo;
+        double tailResistance;
+        double gridBias;
+        double gridStopperResistance;
+        double inputVoltsPerDrive;
+        std::array<double, 6> idle;
+        double negativeOne;
+        double positiveOne;
+    };
+    const std::array<Expected, 2> expected {{
+        { AmpModel::AmericanClean, 410.0, 82000.0, 100000.0, 22100.0,
+          -37.0, 1500.0, 1.994433668044982,
+          { 0.0, 232.249049214088, 225.525768684732,
+            90.5606993644173, 88.6748540519992,
+            0.00401243683493209 },
+          -0.991960053849012, 0.984272776173345 },
+        { AmpModel::BritishCrunch, 400.0, 82000.0, 100000.0, 14700.0,
+          -36.0, 5600.0, 1.258852687134334,
+          { 0.0, 261.464563110962, 250.946889788538,
+            48.2404126435508, 46.7458184482661,
+            0.00317998764954191 },
+          -0.983753983104880, 0.978559763641025 },
+    }};
+
+    std::array<double, 2> recoveryAfterOneMillisecond {};
+    std::array<double, 2> recoveryAfterTwentyMilliseconds {};
+    for (const auto& circuit : expected)
+    {
+        const auto idle = FxAccess::phaseInverterDirect(circuit.model, 0.0);
+        for (std::size_t index = 0; index < idle.size(); ++index)
+            expect(std::abs(idle[index] - circuit.idle[index]) < 2.0e-7,
+                   "a phase-inverter DC operating point changed");
+
+        const double currentOne = FxAccess::phaseInverterPlateCurrent(
+            circuit.model, idle[1] - idle[3], idle[4] - idle[3]);
+        const double currentTwo = FxAccess::phaseInverterPlateCurrent(
+            circuit.model, idle[2] - idle[3], idle[4] - idle[3]);
+        expect(std::abs((circuit.supply - idle[1])
+                            / circuit.plateResistanceOne - currentOne)
+                       < 2.0e-12
+                   && std::abs((circuit.supply - idle[2])
+                                   / circuit.plateResistanceTwo - currentTwo)
+                       < 2.0e-12
+                   && std::abs(currentOne + currentTwo - idle[5]) < 2.0e-12,
+               "the phase-inverter idle point does not satisfy KCL");
+
+        const auto negative = FxAccess::phaseInverterDirect(
+            circuit.model, -1.0);
+        const auto positive = FxAccess::phaseInverterDirect(
+            circuit.model, 1.0);
+        expect(std::abs(negative[0] - circuit.negativeOne) < 2.0e-7
+                   && std::abs(positive[0] - circuit.positiveOne) < 2.0e-7,
+               "a loaded phase-inverter transfer anchor changed");
+        const auto smallNegative = FxAccess::phaseInverterDirect(
+            circuit.model, -1.0e-4);
+        const auto smallPositive = FxAccess::phaseInverterDirect(
+            circuit.model, 1.0e-4);
+        const double localSlope =
+            (smallPositive[0] - smallNegative[0]) / 2.0e-4;
+        expect(std::abs(localSlope - 1.0) < 2.0e-6,
+               "a phase inverter lost its unity small-signal calibration");
+
+        const auto expectLoadedKcl = [&] (
+            const std::array<double, 6>& driven, double drive)
+        {
+            const double currentDriven = FxAccess::phaseInverterPlateCurrent(
+                circuit.model, driven[1] - driven[3],
+                idle[4] + drive * circuit.inputVoltsPerDrive - driven[3]);
+            const double currentReference = FxAccess::phaseInverterPlateCurrent(
+                circuit.model, driven[2] - driven[3],
+                idle[4] - driven[3]);
+            const double residualOne = (circuit.supply - driven[1])
+                    / circuit.plateResistanceOne
+                + (idle[1] - driven[1]) / 220000.0 - currentDriven;
+            const double residualTwo = (circuit.supply - driven[2])
+                    / circuit.plateResistanceTwo
+                + (idle[2] - driven[2]) / 220000.0 - currentReference;
+            expect(std::abs(residualOne) < 2.0e-10
+                       && std::abs(residualTwo) < 2.0e-10
+                       && std::abs(currentDriven + currentReference
+                                       - driven[5]) < 2.0e-10,
+                   "a loaded phase-inverter point does not satisfy KCL");
+        };
+        expectLoadedKcl(negative, -1.0);
+        expectLoadedKcl(positive, 1.0);
+
+        // This catches the tempting but wrong formulation that lets both
+        // grids follow the instantaneous tail. With their coupling/bypass
+        // capacitors holding the idle reference, total current barely moves
+        // and the differential projection discards less than 4% common mode.
+        for (const auto& driven : { negative, positive })
+        {
+            const double common = ((driven[1] - idle[1])
+                                   + (driven[2] - idle[2]))
+                                / (2.0 * std::abs(circuit.gridBias));
+            expect(std::abs(common / driven[0]) < 0.04,
+                   "the LTP lost its finite-tail common-mode rejection");
+            expect(std::abs(driven[5] / idle[5] - 1.0) < 0.04,
+                   "the LTP total current moves like a live-grid tail model");
+        }
+
+        std::array<double, 5> idleState {};
+        const auto coupledIdle = FxAccess::phaseInverterCoupledStep(
+            circuit.model, 0.0, 192000.0, idleState);
+        expect(std::abs(coupledIdle[0] - circuit.gridBias) < 1.0e-12
+                   && std::abs(coupledIdle[1] - circuit.gridBias) < 1.0e-12
+                   && std::abs(coupledIdle[2] - idle[1]) < 2.0e-8
+                   && std::abs(coupledIdle[3] - idle[2]) < 2.0e-8
+                   && std::abs(coupledIdle[4]) < 1.0e-12
+                   && std::abs(coupledIdle[5]) < 1.0e-12
+                   && std::abs(coupledIdle[6]) < 1.0e-12
+                   && std::abs(coupledIdle[7]) < 1.0e-12
+                   && coupledIdle[9] < 1.0e-10,
+               "the coupled phase inverter is not exactly at DC rest");
+
+        std::array<double, 5> burstState {};
+        double maximumResidual = 0.0;
+        double maximumGridCurrent = 0.0;
+        double minimumCommonOffset = 0.0;
+        double maximumCommonOffset = 0.0;
+        double maximumDifferential = 0.0;
+        double maximumBranchResidual = 0.0;
+        for (int frame = 0; frame < 3840; ++frame)
+        {
+            const double burst = 4.0 * std::sin(
+                2.0 * pi * 1000.0 * frame / 192000.0);
+            const auto point = FxAccess::phaseInverterCoupledStep(
+                circuit.model, burst, 192000.0, burstState);
+            maximumResidual = std::max(maximumResidual, point[9]);
+            maximumGridCurrent = std::max(
+                maximumGridCurrent, std::max(point[6], point[7]));
+            minimumCommonOffset = std::min(
+                minimumCommonOffset,
+                0.5 * (point[0] + point[1]) - circuit.gridBias);
+            maximumCommonOffset = std::max(
+                maximumCommonOffset,
+                0.5 * (point[0] + point[1]) - circuit.gridBias);
+            maximumDifferential = std::max(
+                maximumDifferential,
+                std::abs(point[1] - point[0])
+                    / (2.0 * std::abs(circuit.gridBias)));
+            const double junctionOne = point[0]
+                + circuit.gridStopperResistance * point[6];
+            const double junctionTwo = point[1]
+                + circuit.gridStopperResistance * point[7];
+            maximumBranchResidual = std::max({
+                maximumBranchResidual,
+                std::abs(point[4]
+                    - ((junctionOne - circuit.gridBias) / 220000.0
+                       + point[6])),
+                std::abs(point[5]
+                    - ((junctionTwo - circuit.gridBias) / 220000.0
+                       + point[7])) });
+        }
+        std::array<double, 10> recovery {};
+        for (int frame = 0; frame < 192; ++frame)
+            recovery = FxAccess::phaseInverterCoupledStep(
+                circuit.model, 0.0, 192000.0, burstState);
+        const double commonAfterOneMillisecond =
+            0.5 * (recovery[0] + recovery[1]) - circuit.gridBias;
+        for (int frame = 192; frame < 3840; ++frame)
+            recovery = FxAccess::phaseInverterCoupledStep(
+                circuit.model, 0.0, 192000.0, burstState);
+        const double commonAfterTwentyMilliseconds =
+            0.5 * (recovery[0] + recovery[1]) - circuit.gridBias;
+        const auto modelIndex = static_cast<std::size_t>(circuit.model);
+        recoveryAfterOneMillisecond[modelIndex] =
+            commonAfterOneMillisecond;
+        recoveryAfterTwentyMilliseconds[modelIndex] =
+            commonAfterTwentyMilliseconds;
+        std::cout << (circuit.model == AmpModel::AmericanClean
+                          ? "American" : "British")
+                  << " PI grid current/residual/common 1/20 ms/diff: "
+                  << maximumGridCurrent << "/" << maximumResidual << "/"
+                  << commonAfterOneMillisecond << "/"
+                  << commonAfterTwentyMilliseconds << "/"
+                  << maximumDifferential << '\n';
+        expect(maximumGridCurrent > 1.0e-5
+                   && maximumResidual < 1.0e-7
+                   && minimumCommonOffset < -0.1
+                   && commonAfterOneMillisecond < -0.1
+                   && std::abs(commonAfterTwentyMilliseconds)
+                        < std::abs(commonAfterOneMillisecond)
+                   && minimumCommonOffset
+                        > -2.0 * std::abs(circuit.gridBias)
+                   && maximumCommonOffset
+                        < 0.5 * std::abs(circuit.gridBias)
+                   && maximumBranchResidual < 1.0e-12
+                   && maximumDifferential < 4.0,
+               "the coupled phase inverter lost grid clamp or recovery");
+
+        std::array<double, 5> edgeState {};
+        const auto edge = FxAccess::phaseInverterCoupledStep(
+            circuit.model, 4.0, 192000.0, edgeState);
+        std::array<double, 5> outsideState {};
+        const auto outside = FxAccess::phaseInverterCoupledStep(
+            circuit.model, 40.0, 192000.0, outsideState);
+        std::array<double, 5> nanState {};
+        const auto nonFinite = FxAccess::phaseInverterCoupledStep(
+            circuit.model, std::numeric_limits<double>::quiet_NaN(),
+            192000.0, nanState);
+        expect(edge == outside && std::isfinite(nonFinite[0])
+                   && FxAccess::phaseInverterDirect(
+                          circuit.model,
+                          std::numeric_limits<double>::quiet_NaN())[0]
+                      == FxAccess::phaseInverterDirect(
+                          circuit.model, 0.0)[0],
+               "a non-finite or out-of-range phase drive escaped sanitisation");
+
+        std::array<double, 5> hostileState {};
+        for (int frame = 0; frame < 1536; ++frame)
+        {
+            const double square = (frame / 96) % 2 == 0 ? -4.0 : 4.0;
+            const auto point = FxAccess::phaseInverterCoupledStep(
+                circuit.model, square, 192000.0, hostileState);
+            expect(std::all_of(point.begin(), point.end(), [] (double value)
+                   {
+                       return std::isfinite(value);
+                   }),
+                   "a hostile phase-inverter transition became non-finite");
+        }
+    }
+    expect(std::abs(recoveryAfterTwentyMilliseconds[0])
+               > 4.0 * std::abs(recoveryAfterTwentyMilliseconds[1])
+               && std::abs(recoveryAfterOneMillisecond[0]) > 1.0
+               && std::abs(recoveryAfterOneMillisecond[1]) > 1.0,
+           "the 100 nF American and 22 nF British blocking recoveries collapsed");
+
+    const std::array<std::array<double, 2>, 4> gridAnchors {{
+        { 0.5, 0.0001010041478199964 },
+        { 1.0, 0.0003353747286139267 },
+        { 2.0, 0.0008235187646659394 },
+        { 5.0, 0.0023094468173863484 }
+    }};
+    double maximumGridLookupError = 0.0;
+    for (const auto& anchor : gridAnchors)
+    {
+        const double direct = FxAccess::powerGridCurrentDirect(anchor[0]);
+        const double lookup = FxAccess::powerGridCurrentLookup(anchor[0]);
+        expect(std::abs(direct - anchor[1]) < 1.0e-14,
+               "a TubeLib power-grid current anchor changed");
+        maximumGridLookupError = std::max(
+            maximumGridLookupError, std::abs(direct - lookup));
+    }
+    double previousGridLookup = 0.0;
+    bool gridLookupMonotonic = true;
+    for (int probe = 0; probe < 1000; ++probe)
+    {
+        const double voltage = 99.9 * (probe + 0.31) / 1000.0;
+        const double lookup = FxAccess::powerGridCurrentLookup(voltage);
+        gridLookupMonotonic = gridLookupMonotonic
+            && lookup >= previousGridLookup;
+        previousGridLookup = lookup;
+        maximumGridLookupError = std::max(
+            maximumGridLookupError,
+            std::abs(FxAccess::powerGridCurrentDirect(voltage)
+                     - lookup));
+    }
+    expect(FxAccess::powerGridCurrentDirect(-1.0) == 0.0
+               && FxAccess::powerGridCurrentLookup(-1.0) == 0.0
+               && FxAccess::powerGridCurrentLookup(
+                    std::numeric_limits<double>::quiet_NaN()) == 0.0
+               && maximumGridLookupError < 2.0e-7
+               && gridLookupMonotonic,
+           "the TubeLib power-grid current lookup is inaccurate or unsafe");
+
+    ElectryFx fx;
+    fx.prepare(sampleRate); // 4x, so the circuit runs at 192 kHz
+    const float americanCoefficient = FxAccess::phaseInverterInputCoefficient(
+        fx, AmpModel::AmericanClean);
+    const float britishCoefficient = FxAccess::phaseInverterInputCoefficient(
+        fx, AmpModel::BritishCrunch);
+    expect(std::abs(americanCoefficient
+                    - std::exp(-1.0 / (1.0e-9 * 1.0e6 * 192000.0)))
+               < 1.0e-7
+               && std::abs(britishCoefficient
+                    - std::exp(-1.0 / (22.0e-9 * 1.0e6 * 192000.0)))
+               < 1.0e-7,
+           "a phase-inverter input no longer follows its capacitor/grid return");
+}
+
+void testMeasuredPowerTubes()
+{
+    // Independent numerical anchors from the distributed uTracer TubeLib
+    // BTetrodeDE/BTetrodeD macros. In particular, the screen values reproduce
+    // the fitted SPICE implementation, which does not add its secondary-
+    // emission E3 term to G2 even though the accompanying paper does.
+    const double sixL6Plate = FxAccess::powerTubePlateCurrent(
+        AmpModel::AmericanClean, 450.0, -37.0, 400.0);
+    const double sixL6Screen = FxAccess::powerTubeScreenCurrent(
+        AmpModel::AmericanClean, 450.0, -37.0, 400.0);
+    const double el34Plate = FxAccess::powerTubePlateCurrent(
+        AmpModel::BritishCrunch, 400.0, -36.0, 400.0);
+    const double el34Screen = FxAccess::powerTubeScreenCurrent(
+        AmpModel::BritishCrunch, 400.0, -36.0, 400.0);
+    expect(std::abs(sixL6Plate - 0.0492344897961332) < 1.0e-10,
+           "the fitted 6L6GC plate-current operating point changed");
+    expect(std::abs(sixL6Screen - 0.00285458706767009) < 1.0e-10,
+           "the fitted 6L6GC screen-current operating point changed");
+    expect(std::abs(el34Plate - 0.0284773203679533) < 1.0e-10,
+           "the fitted EL34 plate-current operating point changed");
+    expect(std::abs(el34Screen - 0.00360430813213864) < 1.0e-10,
+           "the fitted EL34 screen-current operating point changed");
+
+    // Low-plate/high-grid anchors exercise the model's knee and secondary-
+    // emission subtraction, where a generic pentode waveshaper differs most.
+    expect(std::abs(FxAccess::powerTubePlateCurrent(
+                        AmpModel::AmericanClean, 50.0, 0.0, 400.0)
+                    - 0.265332846126834) < 1.0e-9,
+           "the measured 6L6GC knee no longer matches TubeLib");
+    expect(std::abs(FxAccess::powerTubePlateCurrent(
+                        AmpModel::BritishCrunch, 50.0, 0.0, 400.0)
+                    - 0.369486234177639) < 1.0e-9,
+           "the measured EL34 knee no longer matches TubeLib");
+
+    const std::array<AmpModel, 2> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch };
+    double maximumOutputError = 0.0;
+    double maximumDemandError = 0.0;
+    double maximumScreenResidual = 0.0;
+    for (const auto model : models)
+    {
+        const auto idle = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.0, 1.0);
+        const auto lookupIdle = FxAccess::powerTubePairLookup(
+            model, 0.0f, 0.0f, 1.0f);
+        expect(std::abs(idle[0]) < 1.0e-12 && idle[1] == 0.0,
+               "a quiescent power-tube pair is not zero-centred");
+        expect(idle[2] > 0.0 && idle[2] < 400.0
+                   && idle[3] > 0.0 && idle[3] < 400.0
+                   && idle[4] < 1.0e-9,
+               "an idle output screen escaped its sourced resistor KCL");
+        const double idleScreenKcl = model == AmpModel::AmericanClean
+            ? 470.0 * FxAccess::powerTubeScreenCurrent(
+                model, 450.0, -37.0, idle[2])
+            : 800.0 * 2.0 * FxAccess::powerTubeScreenCurrent(
+                model, 400.0, -36.0, idle[2]);
+        expect(std::abs((400.0 - idle[2]) - idleScreenKcl) < 1.0e-9,
+               "the sourced output-screen resistance changed");
+        expect(lookupIdle[0] == 0.0 && lookupIdle[1] < 1.0e-12,
+               "power-table interpolation created demand at digital silence");
+        const auto smallPositive = FxAccess::powerTubePairDirect(
+            model, 0.0, 1.0e-4, 1.0);
+        const auto smallNegative = FxAccess::powerTubePairDirect(
+            model, 0.0, -1.0e-4, 1.0);
+        const double localSlope =
+            (smallPositive[0] - smallNegative[0]) / 2.0e-4;
+        expect(std::abs(localSlope - 1.0) < 2.0e-4,
+               "a power-tube pair lost its unity small-signal calibration");
+
+        const auto moderate = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.5, 1.0);
+        const auto opposed = FxAccess::powerTubePairDirect(
+            model, 0.0, -0.5, 1.0);
+        const auto driven = FxAccess::powerTubePairDirect(
+            model, 0.0, 1.0, 1.0);
+        expect(std::abs(moderate[0] + opposed[0]) < 1.0e-10
+                   && std::abs(moderate[1] - opposed[1]) < 1.0e-10,
+               "the ideal push-pull pair is not symmetric");
+        expect(moderate[1] > 0.0 && driven[1] > moderate[1],
+               "plate-plus-screen supply demand does not rise with drive");
+        expect(moderate[2] < idle[2] && driven[2] < moderate[2]
+                   && moderate[4] < 1.0e-9 && driven[4] < 1.0e-9,
+               "screen loading does not rise smoothly with output drive");
+        if (model == AmpModel::AmericanClean)
+            expect(moderate[3] > moderate[2],
+                   "the American screen branches no longer move independently");
+        else
+            expect(moderate[2] == moderate[3]
+                       && driven[2] == driven[3],
+                   "the Mullard common screen node split into two branches");
+        const auto blocked = FxAccess::powerTubePairDirect(
+            model, -0.5, 0.5, 1.0);
+        const auto forwardBiased = FxAccess::powerTubePairDirect(
+            model, 0.25, 0.5, 1.0);
+        expect(std::abs(blocked[0]) < std::abs(moderate[0])
+                   && std::abs(forwardBiased[0]) > std::abs(moderate[0])
+                   && forwardBiased[1] > blocked[1],
+               "power-tube common mode does not alter transfer and demand");
+        const auto drooped = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.8, 0.8);
+        const auto charged = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.8, 1.0);
+        expect(std::abs(drooped[0]) < std::abs(charged[0]),
+               "lower power-tube rails do not reduce available output swing");
+
+        // Terminal grid current can now cross zero, while the measured
+        // plate/screen surface remains explicitly clamped at its validated
+        // AB1 boundary. The pair domain itself is bounded independently.
+        expect(FxAccess::powerTubePlateCurrent(
+                   model, 200.0, 5.0, 400.0)
+                   == FxAccess::powerTubePlateCurrent(
+                       model, 200.0, 0.0, 400.0),
+               "the measured power-tube surface escaped its AB1 boundary");
+        for (const double sign : { -1.0, 1.0 })
+        {
+            const auto boundary = FxAccess::powerTubePairDirect(
+                model, 0.0, sign * 4.0, 0.83);
+            const auto clamped = FxAccess::powerTubePairDirect(
+                model, 0.0, sign * 40.0, 0.83);
+            const auto lookupBoundary = FxAccess::powerTubePairLookup(
+                model, 0.0f, static_cast<float>(sign * 4.0), 0.83f);
+            const auto lookupClamped = FxAccess::powerTubePairLookup(
+                model, 0.0f, static_cast<float>(sign * 40.0), 0.83f);
+            expect(std::abs(boundary[0] - clamped[0]) < 1.0e-12
+                       && std::abs(boundary[1] - clamped[1]) < 1.0e-12,
+                   "the direct power-tube solve escaped its solved domain");
+            expect(std::abs(lookupBoundary[0] - lookupClamped[0]) < 1.0e-12
+                       && std::abs(lookupBoundary[1] - lookupClamped[1])
+                           < 1.0e-12,
+                   "the power-tube table escaped its solved domain");
+        }
+
+        // Off-grid common, differential and rail positions prove that the
+        // audio-thread table retains the complete three-dimensional solve.
+        for (int probe = 0; probe < 47; ++probe)
+        {
+            const float common = static_cast<float>(
+                -1.97 + 2.44 * (probe + 0.37) / 47.0);
+            const float differential = static_cast<float>(
+                -3.91 + 7.82 * ((13 * probe + 3) % 47 + 0.41) / 47.0);
+            const float rail = static_cast<float>(
+                0.751 + 0.247 * ((19 * probe + 7) % 47 + 0.29) / 47.0);
+            const auto direct = FxAccess::powerTubePairDirect(
+                model, common, differential, rail);
+            const auto lookup = FxAccess::powerTubePairLookup(
+                model, common, differential, rail);
+            maximumOutputError = std::max(
+                maximumOutputError, std::abs(direct[0] - lookup[0]));
+            maximumDemandError = std::max(
+                maximumDemandError, std::abs(direct[1] - lookup[1]));
+            maximumScreenResidual = std::max(
+                maximumScreenResidual, direct[4]);
+        }
+
+        for (const double common : { -2.0, 0.5 })
+            for (const double differential : { 0.0, 4.0 })
+                for (const double rail : { 0.75, 1.0 })
+                {
+                    const auto boundary = FxAccess::powerTubePairDirect(
+                        model, common, differential, rail);
+                    const double screenSupply = 400.0 * rail;
+                    expect(boundary[2] >= 0.0
+                               && boundary[2] <= screenSupply
+                               && boundary[3] >= 0.0
+                               && boundary[3] <= screenSupply
+                               && boundary[4] < 1.0e-9,
+                           "a screen solve failed at its table-domain boundary");
+                }
+    }
+
+    const auto american = FxAccess::powerTubePairDirect(
+        AmpModel::AmericanClean, 0.0, 0.5, 1.0);
+    const auto british = FxAccess::powerTubePairDirect(
+        AmpModel::BritishCrunch, 0.0, 0.5, 1.0);
+    const auto americanIdle = FxAccess::powerTubePairDirect(
+        AmpModel::AmericanClean, 0.0, 0.0, 1.0);
+    const auto americanDriven = FxAccess::powerTubePairDirect(
+        AmpModel::AmericanClean, 0.0, 1.0, 1.0);
+    const auto britishIdle = FxAccess::powerTubePairDirect(
+        AmpModel::BritishCrunch, 0.0, 0.0, 1.0);
+    const auto britishDriven = FxAccess::powerTubePairDirect(
+        AmpModel::BritishCrunch, 0.0, 1.0, 1.0);
+    std::cout << std::setprecision(15)
+              << "Power-tube table max output/demand error: "
+              << maximumOutputError << "/" << maximumDemandError
+              << ", 6L6GC/EL34 half-drive " << american[0] << "/"
+              << british[0] << '\n';
+    expect(std::abs(american[0] - 0.481573134952497) < 1.0e-9
+               && std::abs(american[1] - 0.355604944502174) < 1.0e-9,
+           "the 6L6GC pair load-line anchor changed");
+    expect(std::abs(british[0] - 0.607340859201101) < 1.0e-9
+               && std::abs(british[1] - 0.336708725602724) < 1.0e-9,
+           "the EL34 pair load-line anchor changed");
+    const auto droopedAmerican = FxAccess::powerTubePairDirect(
+        AmpModel::AmericanClean, 0.0, 1.0, 0.75);
+    const auto droopedBritish = FxAccess::powerTubePairDirect(
+        AmpModel::BritishCrunch, 0.0, 1.0, 0.75);
+    std::cout << std::setprecision(15)
+              << "Screen-grid anchors A idle/half/full: "
+              << americanIdle[2] << "/" << american[2] << "/"
+              << americanDriven[2]
+              << ", B idle/half/full: "
+              << britishIdle[2] << "/" << british[2] << "/"
+              << britishDriven[2]
+              << ", half demands " << american[1] << "/" << british[1]
+              << ", drooped demands " << droopedAmerican[1] << "/"
+              << droopedBritish[1] << ", max residual "
+              << maximumScreenResidual << '\n';
+    expect(std::abs(americanIdle[2] - 398.678435789881) < 1.0e-9
+               && std::abs(american[2] - 395.462170219656) < 1.0e-9
+               && std::abs(americanDriven[2] - 390.829021651181) < 1.0e-9,
+           "the AB763-derived 470 Ohm screen branches changed");
+    expect(std::abs(britishIdle[2] - 394.697030874616) < 1.0e-9
+               && std::abs(british[2] - 381.858290392086) < 1.0e-9
+               && std::abs(britishDriven[2] - 341.452662312743) < 1.0e-9,
+           "the Mullard common 800 Ohm screen branch changed");
+    expect(maximumScreenResidual < 1.0e-9,
+           "an off-grid output-screen solve lost KCL convergence");
+    expect(std::abs(droopedAmerican[1] - 0.523929013622257) < 1.0e-9,
+           "the drooped 6L6GC demand lost nominal-idle self-limiting");
+    expect(std::abs(droopedBritish[1] - 0.636417890213624) < 1.0e-9,
+           "the drooped EL34 demand lost nominal-idle self-limiting");
+    expect(maximumOutputError < 3.0e-4
+               && maximumDemandError < 4.0e-4,
+           "the runtime power-tube table is too coarse");
+    expect(british[0] > american[0] + 0.12,
+           "the measured 6L6GC and EL34 load lines collapsed to one curve");
+}
+
 void testGainStageAliasing()
 {
     // The previous host-rate chain measured between -28 and -40 dB on these
     // same probes; the oversampled block has to stay far below that, because
     // folded intermodulation is what makes a high-gain tone read as digital.
-    struct Probe { float distortion; float amp; double amplitude; const char* name; };
-    static constexpr std::array<Probe, 4> probes {{
-        { 1.0f, 0.0f, 0.30, "distortion at full drive" },
-        { 0.0f, 1.0f, 0.30, "amp at full drive" },
-        { 0.7f, 1.0f, 0.30, "distortion stacked into the amp" },
-        { 0.0f, 1.0f, 0.08, "amp on a quiet signal" },
+    struct Probe
+    {
+        float distortion;
+        float amp;
+        double amplitude;
+        AmpModel model;
+        const char* name;
+    };
+    static constexpr std::array<Probe, 6> probes {{
+        { 1.0f, 0.0f, 0.30, AmpModel::ModernHighGain,
+          "distortion at full drive" },
+        { 0.0f, 1.0f, 0.30, AmpModel::ModernHighGain,
+          "Modern amp at full drive" },
+        { 0.0f, 1.0f, 0.30, AmpModel::AmericanClean,
+          "American amp at full drive" },
+        { 0.0f, 1.0f, 0.30, AmpModel::BritishCrunch,
+          "British amp at full drive" },
+        { 0.7f, 1.0f, 0.30, AmpModel::ModernHighGain,
+          "distortion stacked into the amp" },
+        { 0.0f, 1.0f, 0.08, AmpModel::ModernHighGain,
+          "amp on a quiet signal" },
     }};
 
     for (const auto& probe : probes)
     {
         const double floorDb = aliasFloorDb(probe.distortion, probe.amp,
-                                            probe.amplitude);
+                                            probe.amplitude, probe.model);
         std::cout << "Alias floor, " << probe.name << ": " << floorDb << " dB\n";
         expect(floorDb < -60.0,
                std::string("aliasing above -60 dB for ") + probe.name + " ("
@@ -472,7 +1778,7 @@ void testCabinetVoicing()
     const double top = ampPathMagnitudeDb(8000.0);
     const double beyond = ampPathMagnitudeDb(12000.0);
 
-    std::cout << "Cabinet response relative to 1 kHz: 60 Hz "
+    std::cout << "Cabinet response relative to 1 kHz: 45 Hz "
               << low - reference << ", 110 Hz " << thump - reference
               << ", 470 Hz " << honk - reference << ", 3.1 kHz "
               << presence - reference << ", 8 kHz " << top - reference
@@ -490,6 +1796,272 @@ void testCabinetVoicing()
            "the cabinet does not roll off above the speaker's range");
     expect(beyond - reference < -25.0,
            "the cabinet's top-end roll-off is not steep enough");
+
+    // Golden small-signal fingerprint of the pre-selector Modern path. These
+    // narrow cross-platform tolerances catch a changed coefficient or routing
+    // operation while allowing ordinary libm rounding in the sine fixture.
+    const std::array<double, 6> measured {
+        low - reference, thump - reference, honk - reference,
+        presence - reference, top - reference, beyond - reference };
+    const std::array<double, 6> golden {
+        -14.4325, 1.10772, -6.52226, 3.23156, -22.0021, -39.2035 };
+    for (std::size_t index = 0; index < measured.size(); ++index)
+        expect(std::abs(measured[index] - golden[index]) < 0.03,
+               "the Modern amplifier's shipping response fingerprint changed");
+}
+
+void testToneStackCircuits()
+{
+    ElectryFx fx;
+    fx.prepare(sampleRate); // 4x: tone stacks are designed at 192 kHz
+    const auto american = FxAccess::toneStackCoefficients(
+        fx, AmpModel::AmericanClean);
+    const auto british = FxAccess::toneStackCoefficients(
+        fx, AmpModel::BritishCrunch);
+    const std::array<double, 7> expectedAmerican {
+        0.612779548075920, -1.82867816038619, 1.81912444613279,
+        -0.603225833822526, -2.91534279152261, 2.83115837087876,
+        -0.915815449961636 };
+    const std::array<double, 7> expectedBritish {
+        0.735881452794362, -2.18610105484758, 2.16479824862014,
+        -0.714578646566917, -2.95140353681899, 2.90314018472511,
+        -0.951736328420460 };
+    for (std::size_t index = 0; index < american.size(); ++index)
+    {
+        expect(std::abs(american[index] - expectedAmerican[index]) < 2.0e-12,
+               "the American passive tone-stack BLT coefficients changed");
+        expect(std::abs(british[index] - expectedBritish[index]) < 2.0e-12,
+               "the British passive tone-stack BLT coefficients changed");
+    }
+
+    const double american1k = toneStackMagnitudeDb(american, 1000.0, 192000.0);
+    const double british1k = toneStackMagnitudeDb(british, 1000.0, 192000.0);
+    std::cout << "Passive tone-stack insertion at 1 kHz: American "
+              << american1k << " dB, British " << british1k << " dB\n";
+    expect(std::abs(american1k + 13.00577) < 0.002,
+           "the American tone-stack response does not match its RC circuit");
+    expect(std::abs(british1k + 5.84512) < 0.002,
+           "the British tone-stack response does not match its RC circuit");
+}
+
+void testAmpModelVoices()
+{
+    static constexpr std::array<AmpModel, 3> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    static constexpr std::array<const char*, 3> names {
+        "American", "British", "Modern" };
+    static constexpr std::array<double, 6> frequencies {
+        90.0, 120.0, 470.0, 700.0, 2800.0, 8000.0 };
+    static constexpr std::array<std::array<double, 6>, 3> goldenResponse {{
+        { -6.76776, -4.38230, -7.32158, -3.99830, 9.20223, -13.9867 },
+        {  1.44711,  3.41606, -1.52745, -0.69891, 2.92328, -21.1522 },
+        {  0.36333,  0.60681, -6.52226, -2.20414, 3.17347, -22.0021 },
+    }};
+    std::array<std::array<double, frequencies.size()>, models.size()> response {};
+
+    for (std::size_t model = 0; model < models.size(); ++model)
+    {
+        const double reference = ampPathMagnitudeDb(
+            1000.0, 1.0f, models[model]);
+        std::cout << names[model] << " response relative to 1 kHz:";
+        for (std::size_t band = 0; band < frequencies.size(); ++band)
+        {
+            response[model][band] = ampPathMagnitudeDb(
+                frequencies[band], 1.0f, models[model]) - reference;
+            std::cout << ' ' << frequencies[band] << " Hz "
+                      << response[model][band] << " dB";
+            expect(std::abs(response[model][band]
+                            - goldenResponse[model][band]) < 0.08,
+                   std::string(names[model])
+                       + " amplifier/cabinet response anchor changed");
+        }
+        std::cout << '\n';
+        expect(response[model].back() < -12.0,
+               std::string(names[model])
+                   + " cabinet passes implausible 8 kHz energy");
+    }
+
+    const auto distance = [&response] (std::size_t first, std::size_t second)
+    {
+        double sum = 0.0;
+        for (std::size_t band = 0; band < frequencies.size(); ++band)
+        {
+            const double delta = response[first][band] - response[second][band];
+            sum += delta * delta;
+        }
+        return std::sqrt(sum / frequencies.size());
+    };
+    const double americanBritish = distance(0, 1);
+    const double americanModern = distance(0, 2);
+    const double britishModern = distance(1, 2);
+    std::cout << "Amp spectral RMS separations: A/B " << americanBritish
+              << " dB, A/M " << americanModern << " dB, B/M "
+              << britishModern << " dB\n";
+    expect(americanBritish > 2.0 && americanModern > 2.0
+               && britishModern > 2.0,
+           "two amplifier models collapse to nearly the same response");
+
+    // The BLT must describe the same analogue network at every internal rate.
+    // Compare a musically relevant upper-mid ratio across the 4x and native
+    // host-rate paths rather than comparing latency-shifted waveforms.
+    for (std::size_t model = 0; model < models.size(); ++model)
+    {
+        const double at48 = ampPathMagnitudeDb(
+            2800.0, 0.01f, models[model], 48000.0, true)
+            - ampPathMagnitudeDb(
+                1000.0, 0.01f, models[model], 48000.0, true);
+        const double at384 = ampPathMagnitudeDb(
+            2800.0, 0.01f, models[model], 384000.0, true)
+            - ampPathMagnitudeDb(
+                1000.0, 0.01f, models[model], 384000.0, true);
+        std::cout << names[model] << " 2.8 kHz/1 kHz at 48/384 kHz: "
+                  << at48 << "/" << at384 << " dB\n";
+        expect(std::abs(at48 - at384) < 0.45,
+               std::string(names[model])
+                   + " response moved with host sample rate");
+    }
+}
+
+void testAmpModelDynamics()
+{
+    static constexpr std::array<AmpModel, 3> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    static constexpr std::array<const char*, 3> names {
+        "American", "British", "Modern" };
+    std::array<double, 3> quietGains {};
+    std::array<double, 3> compression {};
+    for (std::size_t index = 0; index < models.size(); ++index)
+    {
+        const double quietGain = steadyAmpGainDb(models[index], 0.002);
+        const double loudGain = steadyAmpGainDb(models[index], 0.35);
+        quietGains[index] = quietGain;
+        compression[index] = loudGain - quietGain;
+        std::cout << names[index] << " amp gain: quiet " << quietGain
+                  << " dB, loud " << loudGain << " dB, compression "
+                  << compression[index] << " dB\n";
+        expect(std::isfinite(quietGain) && std::isfinite(loudGain),
+               std::string(names[index]) + " dynamics are non-finite");
+        expect(loudGain > -18.0 && loudGain < 12.0,
+               std::string(names[index]) + " loud output is not playable");
+        expect(compression[index] < -0.20,
+               std::string(names[index])
+                   + " power path has no level-dependent compression");
+    }
+    expect(compression[0] > compression[1] + 0.25,
+           "the American model is not cleaner than the British model");
+    expect(compression[1] > compression[2] + 0.25,
+           "the British model is not cleaner than the Modern model");
+    const auto [quietMinimum, quietMaximum] = std::minmax_element(
+        quietGains.begin(), quietGains.end());
+    expect(*quietMaximum - *quietMinimum < 5.0,
+           "amp selection changes ordinary small-signal level by over 5 dB");
+}
+
+void testAmpModelSwitchingAndBlockInvariance()
+{
+    static constexpr std::array<AmpModel, 3> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    for (const auto model : models)
+    {
+        const auto oneBlock = renderAmpInBlocks(model, 12288);
+        const auto oddBlocks = renderAmpInBlocks(model, 137);
+        expect(std::memcmp(oneBlock.data(), oddBlocks.data(),
+                           oneBlock.size() * sizeof(float)) == 0,
+               "a stable amplifier model depends on host block size");
+    }
+    const auto switchedLarge = renderModelSwitchesInBlocks(4096);
+    const auto switchedSmall = renderModelSwitchesInBlocks(73);
+    expect(std::memcmp(switchedLarge.data(), switchedSmall.data(),
+                       switchedLarge.size() * sizeof(float)) == 0,
+           "amp-model automation depends on host block size");
+    expect(allFinite(switchedLarge) && peakOf(switchedLarge) < 1.5,
+           "a model change made mid-crossfade produced unsafe output");
+
+    constexpr int segmentLength = 16384;
+    constexpr int length = 3 * segmentLength;
+    auto source = sineBlock(length, 173, 0.28);
+    auto left = source;
+    auto right = source;
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.90f;
+    parameters.ampModel = AmpModel::AmericanClean;
+    fx.setParameters(parameters);
+    fx.reset();
+    for (int segment = 0; segment < 3; ++segment)
+    {
+        parameters.ampModel = models[static_cast<std::size_t>(segment)];
+        fx.setParameters(parameters);
+        fx.process(left.data() + segment * segmentLength,
+                   right.data() + segment * segmentLength, segmentLength);
+    }
+
+    const auto largestStep = [] (const std::vector<float>& buffer,
+                                 int begin, int end)
+    {
+        double result = 0.0;
+        for (int sample = std::max(begin, 1); sample < end; ++sample)
+            result = std::max(result, std::abs(
+                static_cast<double>(buffer[static_cast<std::size_t>(sample)])
+                - buffer[static_cast<std::size_t>(sample - 1)]));
+        return result;
+    };
+    const double allSteps = largestStep(left, 1, length);
+    const double americanSteps = largestStep(
+        left, segmentLength / 2, segmentLength);
+    const double britishSteps = largestStep(
+        left, segmentLength + segmentLength / 2, 2 * segmentLength);
+    const double modernSteps = largestStep(
+        left, 2 * segmentLength + segmentLength / 2, length);
+    const double settledStep = std::max(
+        americanSteps, std::max(britishSteps, modernSteps));
+    std::cout << "Amp model switch largest step " << allSteps
+              << ", settled model step " << settledStep << '\n';
+    expect(allSteps < 1.5 * settledStep + 0.01,
+           "switching amplifier model produced an audible discontinuity");
+    expect(allFinite(left) && peakOf(left) < 1.5,
+           "amp-model switching produced unsafe output");
+
+    const auto weights = FxAccess::ampModelWeights(fx);
+    std::cout << "Settled model weights: " << weights[0] << ", "
+              << weights[1] << ", " << weights[2] << '\n';
+    expect(weights[0] == 0.0f && weights[1] == 0.0f && weights[2] == 1.0f,
+           "the amp-model crossfade did not settle to one running circuit");
+    expect(FxAccess::ampModelAtRest(fx, AmpModel::AmericanClean)
+               && FxAccess::ampModelAtRest(fx, AmpModel::BritishCrunch)
+               && ! FxAccess::ampModelAtRest(fx, AmpModel::ModernHighGain),
+           "a faded-out amplifier retained recursive circuit state");
+}
+
+void testEnabledGainModulesStayInCircuit()
+{
+    // Distortion and Amp are drive knobs, not parallel blend controls. Once a
+    // module is enabled, even the UI's minimum 0.1% detent must retain the
+    // same coupling/voice filters and (for the amp) the speaker cabinet. The
+    // old setting leaked 99.9% unfiltered DI and measured almost flat.
+    constexpr float minimumDrive = 0.001f;
+    const double ampReference = ampPathMagnitudeDb(1000.0, minimumDrive);
+    const double ampTop = ampPathMagnitudeDb(8000.0, minimumDrive) - ampReference;
+    const double fullAmpTop = ampPathMagnitudeDb(8000.0) - ampPathMagnitudeDb(1000.0);
+    const double pedalReference = pedalPathMagnitudeDb(1000.0, minimumDrive);
+    const double pedalLow = pedalPathMagnitudeDb(40.0, minimumDrive) - pedalReference;
+    const double pedalTop = pedalPathMagnitudeDb(12000.0, minimumDrive) - pedalReference;
+    const double fullPedalLow = pedalPathMagnitudeDb(40.0) - pedalPathMagnitudeDb(1000.0);
+    const double fullPedalTop = pedalPathMagnitudeDb(12000.0) - pedalPathMagnitudeDb(1000.0);
+
+    std::cout << "Enabled 0.1% paths relative to 1 kHz: amp 8 kHz "
+              << ampTop << " dB, pedal 40 Hz " << pedalLow
+              << " dB, pedal 12 kHz " << pedalTop << " dB\n";
+    expect(ampTop < -15.0 && std::abs(ampTop - fullAmpTop) < 0.5,
+           "a low Amp setting leaked dry DI around the cabinet");
+    expect(pedalLow < -8.0 && pedalTop < -8.0
+               && std::abs(pedalLow - fullPedalLow) < 0.5
+               && std::abs(pedalTop - fullPedalTop) < 0.5,
+           "a low Distortion setting leaked dry DI around the pedal circuit");
 }
 
 // The back half of the amplifier: a supply that droops under load and an
@@ -605,6 +2177,58 @@ void testPowerStage()
                    + std::to_string(recovery) + " dB)");
     }
 
+    // The two measured output-tube paths drive their reservoirs from solved
+    // plate-plus-screen current, not from the absolute audio sample used by
+    // the legacy Modern branch. Read the private circuit state after matched
+    // loud/quiet holds and after a rest so this routing cannot regress while
+    // the cabinet happens to conceal it.
+    for (const auto model : { AmpModel::AmericanClean,
+                              AmpModel::BritishCrunch })
+    {
+        const auto demandAfter = [model] (double amplitude, bool recover)
+        {
+            ElectryFx fx;
+            fx.prepare(sampleRate);
+            FxParameters parameters;
+            parameters.amp = 1.0f;
+            parameters.ampModel = model;
+            fx.setParameters(parameters);
+            constexpr int block = 512;
+            for (int index = 0; index < 40; ++index)
+            {
+                std::vector<float> left(block, 0.0f);
+                std::vector<float> right(block, 0.0f);
+                fx.process(left.data(), right.data(), block);
+            }
+            for (int index = 0; index < 96; ++index)
+            {
+                auto left = sineBlock(block, 4, amplitude);
+                auto right = left;
+                fx.process(left.data(), right.data(), block);
+            }
+            const float held = FxAccess::amplifierSag(fx, model);
+            if (! recover)
+                return held;
+            for (int index = 0; index < 180; ++index)
+            {
+                std::vector<float> left(block, 0.0f);
+                std::vector<float> right(block, 0.0f);
+                fx.process(left.data(), right.data(), block);
+            }
+            return FxAccess::amplifierSag(fx, model);
+        };
+        const float loudDemand = demandAfter(0.35, false);
+        const float quietDemand = demandAfter(0.002, false);
+        const float recoveredDemand = demandAfter(0.35, true);
+        std::cout << (model == AmpModel::AmericanClean ? "6L6GC" : "EL34")
+                  << " sag state loud/quiet/recovered: " << loudDemand << "/"
+                  << quietDemand << "/" << recoveredDemand << '\n';
+        expect(loudDemand > quietDemand + 0.05f,
+               "a measured power-tube supply does not distinguish loud current demand");
+        expect(recoveredDemand < 0.20f * loudDemand,
+               "a measured power-tube supply did not recharge during silence");
+    }
+
     // The output transformer's core saturates on flux, and flux is the
     // integral of the voltage, so at the same level the low end reaches the
     // limit long before the top does. Measured at the stage rather than at the
@@ -691,16 +2315,46 @@ void testChainLevelMatching()
     // level jump between the endpoints that were checked above.
     const auto riff = renderDropERiff(false);
     const double dry = rmsOf(riff);
-    for (const float mix : { 0.05f, 0.25f, 0.5f, 0.75f, 1.0f })
+    for (const auto model : { AmpModel::AmericanClean,
+                              AmpModel::BritishCrunch,
+                              AmpModel::ModernHighGain })
+    {
+        for (const float mix : { 0.05f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            FxParameters parameters;
+            parameters.amp = mix;
+            parameters.ampModel = model;
+            const double gainDb = 20.0 * std::log10(
+                std::max(rmsOf(throughSelectedChain(parameters, riff)), 1.0e-30)
+                / dry);
+            expect(gainDb > -6.0 && gainDb < 12.0,
+                   "amp model " + std::to_string(static_cast<int>(model))
+                       + " control travel is not level-consistent at "
+                       + std::to_string(mix));
+        }
+    }
+
+    std::array<double, 3> modelGains {};
+    for (const auto model : { AmpModel::AmericanClean,
+                              AmpModel::BritishCrunch,
+                              AmpModel::ModernHighGain })
     {
         FxParameters parameters;
-        parameters.amp = mix;
+        parameters.amp = 0.90f;
+        parameters.ampModel = model;
         const double gainDb = 20.0 * std::log10(
-            std::max(rmsOf(throughChain(parameters, riff)), 1.0e-30) / dry);
+            std::max(rmsOf(throughSelectedChain(parameters, riff)), 1.0e-30)
+            / dry);
+        modelGains[static_cast<std::size_t>(model)] = gainDb;
+        std::cout << "Selected amp " << static_cast<int>(model)
+                  << " Drop-E gain at 90%: " << gainDb << " dB\n";
         expect(gainDb > -6.0 && gainDb < 12.0,
-               "the amp control's travel is not level-consistent at "
-                   + std::to_string(mix));
+               "an amp model's 90% Drop-E output is not in a playable range");
     }
+    const auto [modelMinimum, modelMaximum] = std::minmax_element(
+        modelGains.begin(), modelGains.end());
+    expect(*modelMaximum - *modelMinimum < 4.0,
+           "selecting an amp changes the same Drop-E riff by over 4 dB");
 }
 
 void testDelayAndRoom()
@@ -879,6 +2533,66 @@ void testEngagementIsClickFree()
     expect(std::memcmp(left.data(), source.data(),
                        source.size() * sizeof(float)) == 0,
            "the chain does not return to a bit-exact bypass");
+
+    // Turning only the amp off now skips its private tube/filter state while
+    // the distortion pedal stays live. Its 15 ms relay ramp must make the
+    // later cold-state re-entry just as smooth as an ordinary automation move.
+    ElectryFx switched;
+    switched.prepare(sampleRate);
+    FxParameters stacked;
+    stacked.distortion = 1.0f;
+    stacked.amp = 1.0f;
+    switched.setParameters(stacked);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        switched.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    const double stackedStep = largestStep(left);
+
+    FxParameters pedalOnly;
+    pedalOnly.distortion = 1.0f;
+    switched.setParameters(pedalOnly);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        switched.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    const double pedalStep = largestStep(left);
+    expect(FxAccess::ampAtRest(switched),
+           "an individually bypassed amp retained stale circuit state");
+
+    switched.setParameters(stacked);
+    left = source;
+    right = source;
+    switched.process(left.data(), right.data(), static_cast<int>(left.size()));
+    const double ampReentryStep = largestStep(left);
+    const double moduleBound = 1.5 * std::max(stackedStep, pedalStep) + 0.01;
+    expect(ampReentryStep < moduleBound,
+           "re-engaging the skipped amp while distortion stayed live produced a step");
+
+    ElectryFx reciprocal;
+    reciprocal.prepare(sampleRate);
+    reciprocal.setParameters(stacked);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        reciprocal.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    FxParameters ampOnly;
+    ampOnly.amp = 1.0f;
+    reciprocal.setParameters(ampOnly);
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        left = source;
+        right = source;
+        reciprocal.process(left.data(), right.data(), static_cast<int>(left.size()));
+    }
+    expect(FxAccess::pedalAtRest(reciprocal),
+           "an individually bypassed pedal retained stale RC/filter state");
 }
 
 void testDeterminismAndRateMatrix()
@@ -897,18 +2611,24 @@ void testDeterminismAndRateMatrix()
                        first.size() * sizeof(float)) == 0,
            "identical input did not render identical audio");
 
-    for (const double rate : { 22050.0, 44100.0, 48000.0, 88200.0, 96000.0,
-                               176400.0, 192000.0, 384000.0 })
+    for (const double rate : { 8000.0, 22050.0, 44100.0, 48000.0, 88200.0,
+                               96000.0, 176400.0, 192000.0, 384000.0 })
     {
         const int length = static_cast<int>(rate * 0.25);
         const auto probe = sineBlock(length, 431, 0.40);
-        const auto processed = throughChain(parameters, probe, rate);
-        expect(allFinite(processed),
-               "the chain produced a non-finite sample at "
-                   + std::to_string(rate) + " Hz");
-        expect(peakOf(processed) < 2.0001,
-               "the chain exceeded its output clamp at "
-                   + std::to_string(rate) + " Hz");
+        for (const auto model : { AmpModel::AmericanClean,
+                                  AmpModel::BritishCrunch,
+                                  AmpModel::ModernHighGain })
+        {
+            parameters.ampModel = model;
+            const auto processed = throughChain(parameters, probe, rate);
+            expect(allFinite(processed),
+                   "an amp model produced a non-finite sample at "
+                       + std::to_string(rate) + " Hz");
+            expect(peakOf(processed) < 2.0001,
+                   "an amp model exceeded the output clamp at "
+                       + std::to_string(rate) + " Hz");
+        }
 
         ElectryFx fx;
         fx.prepare(rate);
@@ -1049,8 +2769,10 @@ void testPrepareSanitisesSampleRate()
            "a sanitised prepare() sample rate produced non-finite audio");
 }
 
-// setParameters() runs each of the five mix controls through sanitiseMix(): a
-// non-finite value falls back to 0.0, then the result is clamped to 0..1.
+// setParameters() runs each of the five panel controls through sanitiseMix(): a
+// non-finite value falls back to 0.0, then the result is clamped to 0..1. The
+// discrete model is separately validated so a corrupt state cannot index past
+// the three prepared amplifier circuits.
 // testHostileInput only ever checked that the guard kept the chain finite,
 // never the sanitised value itself, so a clamp landing on the wrong boundary
 // (or a fallback that missed one of the five fields) would still pass it.
@@ -1083,12 +2805,15 @@ void testSetParametersSanitisation()
     outOfRange.compressor = -2.0f;
     outOfRange.delay = 1.0001f;
     outOfRange.room = 100.0f;
+    outOfRange.ampModel = static_cast<AmpModel>(99);
     const auto clamped = sanitised(outOfRange);
     expect(clamped.distortion == 0.0f, "a negative distortion mix was not clamped to 0.0");
     expect(clamped.amp == 1.0f, "an above-range amp mix was not clamped to 1.0");
     expect(clamped.compressor == 0.0f, "a negative compressor mix was not clamped to 0.0");
     expect(clamped.delay == 1.0f, "an above-range delay mix was not clamped to 1.0");
     expect(clamped.room == 1.0f, "an above-range room mix was not clamped to 1.0");
+    expect(clamped.ampModel == AmpModel::ModernHighGain,
+           "an invalid amp model did not fall back to Modern");
 
     FxParameters ordinary;
     ordinary.distortion = 0.25f;
@@ -1096,10 +2821,12 @@ void testSetParametersSanitisation()
     ordinary.compressor = 0.75f;
     ordinary.delay = 0.1f;
     ordinary.room = 0.9f;
+    ordinary.ampModel = AmpModel::BritishCrunch;
     const auto passedThrough = sanitised(ordinary);
     expect(passedThrough.distortion == 0.25f && passedThrough.amp == 0.5f
                && passedThrough.compressor == 0.75f && passedThrough.delay == 0.1f
-               && passedThrough.room == 0.9f,
+               && passedThrough.room == 0.9f
+               && passedThrough.ampModel == AmpModel::BritishCrunch,
            "ordinary in-range mixes were altered by sanitisation");
 }
 
@@ -1107,10 +2834,19 @@ void testSetParametersSanitisation()
 
 int main()
 {
+    testRapidPalmBodyDirection();
     testHalfbandKernel();
     testExactDryBypass();
+    testCircuitGainStages();
+    testPhaseInverterCircuits();
+    testMeasuredPowerTubes();
     testGainStageAliasing();
     testCabinetVoicing();
+    testToneStackCircuits();
+    testAmpModelVoices();
+    testAmpModelDynamics();
+    testAmpModelSwitchingAndBlockInvariance();
+    testEnabledGainModulesStayInCircuit();
     testPowerStage();
     testChainLevelMatching();
     testDelayAndRoom();

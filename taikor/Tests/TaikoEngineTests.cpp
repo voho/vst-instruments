@@ -2751,7 +2751,8 @@ struct TaikoEngineTestAccess
     // Two absence findings, each recomputed from the resolved drum rather than
     // pinned as a literal, so a change that made either mechanism matter would
     // be caught instead of silently invalidating what the README says is left
-    // out. See "Fifteen proposed mechanisms" in Docs/best-in-class-plan.md.
+    // out. See the 2026-08-19 adjudication entry in the README's release
+    // history.
 
     // The shell's per-ring-mode distance gain at a given Mic Distance control
     // value, relative to this drum's own factory position.

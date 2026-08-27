@@ -65,6 +65,10 @@ inline constexpr auto transpose    = "transpose";
 inline constexpr auto masterTune   = "masterTune";
 inline constexpr auto velocity     = "velocity";
 inline constexpr auto calibration  = "calibration";
+// Time since the modelled unit's last service, beside Unit Character in the
+// MODEL zone: Character is how far this unit sits from nominal build,
+// Aging how far its trims have drifted since calibration.
+inline constexpr auto aging        = "aging";
 inline constexpr auto chorusNoise  = "chorusNoise";
 inline constexpr auto polyphony    = "polyphony";
 // Internal-rate quality ladder: 1x, 2x, 4x. The earlier two-state `hq` id must
@@ -153,10 +157,12 @@ inline constexpr float vectorPadWidth = 170.0f;
 // below VOICE MODE, and pitch controls below the DCO.
 inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 10.0f;
 inline constexpr float extensionDeckHeight = 128.0f;
+// MODEL holds four controls (Character, Aging, and the stacked Quality and
+// VCF Solver selectors); VOICE lends it the width its two knobs never used.
 inline constexpr float modelZoneX = 14.0f;
-inline constexpr float modelZoneWidth = 190.0f;
-inline constexpr float voiceZoneX = 218.0f;
-inline constexpr float voiceZoneWidth = 190.0f;
+inline constexpr float modelZoneWidth = 244.0f;
+inline constexpr float voiceZoneX = 268.0f;
+inline constexpr float voiceZoneWidth = 150.0f;
 inline constexpr float pitchZoneX = 420.0f;
 inline constexpr float pitchZoneWidth = 232.0f;
 inline constexpr float monitorZoneX = 664.0f;

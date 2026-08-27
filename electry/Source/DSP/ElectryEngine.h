@@ -1,3 +1,88 @@
+// Electry: an original, physically modelled dry electric guitar.
+//
+// The engine is a white-box model with named references, not a capture of any
+// one instrument. Each block below names the published work it follows; what
+// the model implements from each, and where the claim stops, is set out block
+// by block in the README's "How it works". Constants not fixed by a cited
+// result are voiced -- this project's choices inside a range the sources bound
+// but do not pin.
+//
+//   String core, single-delay-loop waveguides
+//     Karjalainen, Valimaki and Tolonen, "Plucked-String Models: From the
+//     Karplus-Strong Algorithm to Digital Waveguides and Beyond", CMJ 1998.
+//     http://users.spa.aalto.fi/vpv/publications/cmj98.pdf
+//
+//   Stiffness dispersion, B = pi^3 E d^4 / (64 T L^2)
+//     Fletcher and Rossing, The Physics of Musical Instruments, for B itself;
+//     Rauhala and Valimaki, "Dispersion modeling in waveguide piano synthesis
+//     using tunable allpass filters",
+//     https://www.researchgate.net/publication/229009513_Dispersion_modeling_in_waveguide_piano_synthesis_using_tunable_allpass_filters
+//     and Abel and Smith, DAFx-06,
+//     https://www.dafx.de/paper-archive/2006/papers/p_013.pdf
+//     for the factored allpass design practice.
+//
+//   Dead spots
+//     Fleischer, "Investigating Dead Spots of Electric Guitars",
+//     https://www.researchgate.net/publication/233653803_Investigating_Dead_Spots_of_Electric_Guitars
+//
+//   Plectrum and finger excitation, touch and collisions
+//     Germain and Evangelista, WASPAA 2009,
+//     https://ieeexplore.ieee.org/document/5346502/
+//     Evangelista and Eckerholm, "Player-Instrument Interaction Models for
+//     Digital Waveguide Synthesis of Guitar: Touch and Collisions",
+//     https://www.researchgate.net/publication/224130817_Player-Instrument_Interaction_Models_for_Digital_Waveguide_Synthesis_of_Guitar_Touch_and_Collisions
+//
+//   Palm and distributed hand/string contact
+//     Biral, d'Alessandro and Freed, "Towards a Dynamic Model of the Palm Mute
+//     Guitar Technique",
+//     https://www.icmc14-smc14.net/images/proceedings/PS4-B10-TowardsaDynamicModel.pdf
+//     Reboursiere et al., "Left and right-hand guitar playing techniques
+//     detection", https://www.nime.org/proceedings/2012/nime2012_213.pdf
+//     Schafer, Frenstatsky and Rabenstein, "A Physical String Model with
+//     Adjustable Boundary Conditions",
+//     https://dafx.de/paper-archive/2016/dafxpapers/23-DAFx-16_paper_24-PN.pdf
+//     Exact corpus comparisons and their limits: Docs/evaluation.md.
+//
+//   Fret collisions
+//     Bilbao and Torin, "Numerical modeling and sound synthesis for
+//     articulated string/fretboard interactions",
+//     https://www.research.ed.ac.uk/en/publications/numerical-modeling-and-sound-synthesis-for-articulated-stringfret/
+//
+//   Slide, and the winding contact noise
+//     Pakarinen, Puputti and Valimaki, "Virtual Slide Guitar",
+//     https://research.aalto.fi/en/publications/virtual-slide-guitar
+//     NIME 2008 companion:
+//     https://www.nime.org/proceedings/2008/nime2008_049.pdf
+//
+//   Pickups
+//     Paiva, Pakarinen and Valimaki, "Acoustics and Modeling of Pickups",
+//     https://www.researchgate.net/publication/234034228_Acoustics_and_Modeling_of_Pickups
+//     Novak et al., "Measurements and Modeling of the Nonlinear Behavior of a
+//     Guitar Pickup at Low Frequencies",
+//     https://www.researchgate.net/publication/312046898_Measurements_and_Modeling_of_the_Nonlinear_Behavior_of_a_Guitar_Pickup_at_Low_Frequencies
+//     Aperture analysis: https://www.cycfi.com/2014/08/virtual-pickups-part-3/
+//
+//   Sympathetic coupling and bridge admittance
+//     Bank, "Model-based digital pianos ... in real time",
+//     https://home.mit.bme.hu/~bank/publist/dafx10adm.pdf
+//     Maestre et al., "Joint Modeling of Impedance and Radiation as a Recursive
+//     Parallel Filter Structure for Efficient Synthesis of String Instrument
+//     Sound by Digital Waveguides",
+//     https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Amaestre_jointmodeling_ieeeaslp_2017.pdf
+//
+//   Amplifier and cabinet
+//     Pakarinen and Yeh, "A Review of Digital Techniques for Modeling
+//     Vacuum-Tube Guitar Amplifiers", CMJ 2009,
+//     https://direct.mit.edu/comj/article/33/2/85/94374/A-Review-of-Digital-Techniques-for-Modeling-Vacuum
+//
+//   Why the runtime stays analytic rather than a solved FDTD or a learned model
+//     Bilbao et al., "Real-Time Guitar Synthesis",
+//     https://www.pure.ed.ac.uk/ws/portalfiles/portal/470239305/BilbaoEtal2024RealTimeGuitarSynthesis.pdf
+//     and the NeurIPS 2024 sound-and-motion simulation line,
+//     https://arxiv.org/abs/2407.05516
+//     -- both are why the cost model rules those out for an eight-string
+//     realtime voice, not why they would be wrong.
+
 #pragma once
 
 #include "DspMath.h"
@@ -6,6 +91,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 
 namespace electry
 {
@@ -26,7 +112,8 @@ enum class PickStyle
 // hand's thumb catches the string at the pick's own position, or the slide,
 // where the finger stays down and travels along the string, or the dead note,
 // where the fretting hand rests across the strings without stopping them so the
-// pick makes its attack and no pitch survives. Latched by its own keyswitch
+// pick makes its attack and leaves a short, dark percussive body. Latched by
+// its own keyswitch
 // bank, independently of the picking style. New styles are appended, so every
 // existing keyswitch note keeps its meaning.
 enum class PlayStyle
@@ -78,7 +165,7 @@ struct EngineParameters
     float pickNoise { 0.5f };       // plectrum contact/scrape level
     float fingerNoise { 0.4f };     // fretting-hand contact level
     float releaseNoise { 0.4f };    // note-end damping/lift noise level
-    float muteDamping { 0.55f };    // palm-mute strength for the Muted style
+    float muteDamping { 0.55f };    // Palm Tightness for the Palm Mute style
     float bendTimeSeconds { 0.28f };// finger-bend travel time
     float velocityAmount { 0.85f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
@@ -93,19 +180,29 @@ struct EngineParameters
     // Per-string offset of a strummed chord, in seconds of pick travel per
     // string crossed. 0 keeps simultaneous note-ons exactly simultaneous.
     float strumSpreadSeconds { 0.0f };
+    // Automatic held-string repick speed. The shipping 12 strokes/s is the
+    // centre of the commissioned 8/12/16-strokes/s capture protocol and maps
+    // to sixteenth notes at 180 BPM without making the engine transport-aware.
+    float tremoloRateHz { 12.0f };
     // Full-scale depth of the CC1 resonance control: how far a fully raised
     // modulation wheel can push the sympathetic coupling toward total and how
     // much amplified output is allowed to feed back into the strings. At 1 a
     // raised wheel lets a distorted tone self-resonate; at 0 CC1 does nothing.
     float resonanceDepth { 0.35f };
-    // Widest excursion the fretting-hand vibrato reaches at full channel
-    // pressure, mapped over the range a finger can actually cover: 10 cents
+    // Widest excursion the fretting-hand vibrato reaches at a full gesture,
+    // mapped over the range a finger can actually cover: 10 cents
     // at 0 is the narrow rock a player uses to keep a held note alive, and
     // 110 cents at 1 is the semitone-wide arc of a rock vibrato leaned all
     // the way in. The shipping default puts it at 40 cents, which is where
     // the fixed excursion this control replaced sat.
     float vibratoDepth { 0.30f };
 };
+
+// The plug-in exposes the six structural coordinates above as one playable
+// path through distinct solid-body builds. Pickups, tone, body-resonance
+// amount and playing controls deliberately remain independent.
+inline constexpr float defaultGuitarBuild = 0.8f;
+void applyGuitarBuild(EngineParameters& parameters, float build) noexcept;
 
 // Per-string readout for the editor's fretboard display. It is produced on
 // the audio thread and consumed on the message thread through the host's own
@@ -129,13 +226,19 @@ public:
 
     static constexpr int stringCount = 8;
     static constexpr int fretCount = 22;
+    // One timestamp can contain overlaps as well as eight distinct pitches.
+    // The bound keeps host input hostile-proof without allocating on the
+    // audio thread; ordinary MIDI/UI attack groups are far smaller.
+    static constexpr int maximumChordEvents = 128;
 
     // Keyswitches occupy one contiguous group below the playable range,
     // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
     // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics/Pinch/
     // Slide/Dead). The two banks latch independently, so any of the twenty-one
-    // combinations can be reached in two keyswitches at most. Notes between
-    // the banks and the playable range (22..27) are ignored.
+    // combinations can be reached in two keyswitches at most. A#0 (22) is the
+    // plug-in's momentary fretting-vibrato gesture and B0 (23) its momentary
+    // tremolo-picking wrist; the remaining notes before the playable range
+    // (24..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
@@ -145,9 +248,15 @@ public:
                                         + playStyleKeyswitchCount;
     static constexpr int firstPlayStyleKeyswitchNote
         = firstKeyswitchNote + pickStyleKeyswitchCount;
+    static constexpr int vibratoGestureNote = 22; // A#0, hold; velocity = width
+    static constexpr int tremoloGestureNote = 23; // B0, hold; velocity = force
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
+    // E6..B6 repick the physically held strings from low to high without
+    // adding another fretting-key owner. D#6 remains a silent separator.
+    static constexpr int firstRepickNote = 88;
+    static constexpr int repickNoteCount = stringCount;
     // How far the fretting hand reaches above its index finger. Four fret
     // spaces is one finger per fret with the ordinary stretch a player uses
     // without shifting, so the hand covers `position .. position + reach`.
@@ -155,35 +264,63 @@ public:
 
     static_assert(keyswitchCount == 10,
                   "three picking styles and seven play styles need one keyswitch each");
+    static_assert(firstKeyswitchNote + keyswitchCount == vibratoGestureNote,
+                  "A#0 vibrato must immediately follow the keyswitch banks");
+    static_assert(vibratoGestureNote + 1 == tremoloGestureNote,
+                  "B0 tremolo must immediately follow A#0 vibrato");
+    static_assert(tremoloGestureNote < lowestPlayableNote,
+                  "B0 tremolo must remain below the playable range");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
+    static_assert(highestPlayableNote + 2 == firstRepickNote,
+                  "D#6 must separate playable notes from repick keys");
+    static_assert(firstRepickNote + repickNoteCount <= 128,
+                  "repick keys must fit in the MIDI note range");
+
+    struct NoteOnEvent
+    {
+        int midiNote { -1 };
+        float velocity { 0.0f };
+    };
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
+    // Selects a deterministic player's contact, timing and strum variation
+    // stream. The default zero preserves the established render contract; a
+    // new seed takes effect at the next reset and never introduces wall-clock
+    // random.
+    void setVariationSeed(std::uint32_t seed) noexcept { variationSeed_ = seed; }
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
+    // Solves one complete sample-accurate chord as a whole, so host insertion
+    // order cannot change its physical strings, hand shape or variation
+    // stream. Because the edge is known up front, a non-zero Strum Spread
+    // delays only the strings the pick has not reached; it does not add the
+    // scalar note path's causal re-anchor pre-roll to the leading string.
+    void noteOnChord(std::span<const NoteOnEvent> events);
     void noteOff(int midiNote);
     void allNotesOff();
-    // The pitch wheel bends every string - fingered and sympathetically
-    // ringing alike - over a nominal -2..+2 semitone range, like a vibrato
-    // bar. Each string follows with its own physically derived sensitivity
-    // (elastic core stiffness against tension), and the strings travel to the
-    // new pitch over the Bend Time parameter rather than jumping.
+    // Standard MIDI pitch bend moves every played and sympathetically ringing
+    // string by the same nominal -2..+2 semitone interval. Bend Time controls
+    // how long the strings take to reach the target.
     void setPitchBend(float normalisedBipolar) noexcept;
     // MIDI CC1 controls the performance resonance (0 = the Sympathetic Ring
     // parameter alone, 1 = full bridge coupling plus acoustic feedback from
     // the amplified output, scaled by the Resonance Depth parameter).
     void setResonance(float normalised) noexcept;
-    // MIDI CC2 adds continuous bridge-hand damping on top of the Palm Mute
+    // MIDI CC2 adds continuous bridge-hand pressure on top of the Palm Pressure
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
-    // Channel pressure is the fretting hand leaning into a string it is
-    // already holding: a vibrato. It is a finger rather than the bar the
-    // pitch wheel models, so it moves only the strings that are being
-    // fingered, leaves the sympathetically ringing ones alone, and is
-    // upward-biased, because a finger can raise a string's tension and cannot
-    // lower it below the fret. Zero pressure is an exact no-op.
+    // Internal fretting-hand vibrato model. The plug-in maps its visible A#0
+    // momentary gesture here while leaving MIDI pressure unassigned. Zero is
+    // an exact no-op.
     void setVibrato(float normalised) noexcept;
+    // Arms one shared picking wrist. Starting it schedules an immediate
+    // contact on the next rendered sample; it then repicks every physically
+    // held string at EngineParameters::tremoloRateHz until stopped. The
+    // per-string E6..B6 commands remain compatible one-shot taps.
+    void beginTremoloPicking(float velocity) noexcept;
+    void endTremoloPicking() noexcept;
     // MIDI CC64. While held, a key-up leaves that string marked `sustained`
     // instead of releasing it immediately (see `noteOff()`); a string already
     // sounding when the pedal comes down is untouched either way, since it
@@ -192,13 +329,19 @@ public:
     // flag from every voice so a subsequent key-up releases normally again.
     void setSustainPedal(bool down) noexcept;
     // The acoustic return path: what the loudspeaker is playing back at the
-    // guitar, typically the previous block of the amplified output. The
-    // engine keeps its own bounded copy, so the pointers only need to stay
-    // valid for this call. With the resonance control at zero the stored
+    // guitar. The engine keeps its own bounded copy behind a fixed, voiced
+    // acoustic delay, so the pointers only need to stay valid for this call.
+    // Callers process and return chunks no longer than
+    // getAcousticReturnDelaySamples() to keep that delay independent of their
+    // outer host block size. With the resonance control at zero the stored
     // signal is never injected and the engine is bit-exact to one that was
     // never fed.
     void pushAcousticReturn(const float* left, const float* right,
                             int numSamples) noexcept;
+    [[nodiscard]] int getAcousticReturnDelaySamples() const noexcept
+    {
+        return feedbackDelaySamples_;
+    }
     // How loud the returned signal actually is in the room, 0..1. The
     // amplifier chain manages its own listening level - a saturating stage is
     // only a few decibels louder than the dry DI - but in the room a cranked
@@ -229,9 +372,22 @@ public:
         return midiNote >= firstKeyswitchNote
             && midiNote < firstKeyswitchNote + keyswitchCount;
     }
+    [[nodiscard]] static bool isVibratoGestureNote(int midiNote) noexcept
+    {
+        return midiNote == vibratoGestureNote;
+    }
+    [[nodiscard]] static bool isTremoloGestureNote(int midiNote) noexcept
+    {
+        return midiNote == tremoloGestureNote;
+    }
     [[nodiscard]] static bool isPlayableNote(int midiNote) noexcept
     {
         return midiNote >= lowestPlayableNote && midiNote <= highestPlayableNote;
+    }
+    [[nodiscard]] static bool isRepickNote(int midiNote) noexcept
+    {
+        return midiNote >= firstRepickNote
+            && midiNote < firstRepickNote + repickNoteCount;
     }
 
 private:
@@ -654,14 +810,32 @@ private:
         float releaseRate { 0.72f };
         float brightness { 1.0f };
         float noise { 1.0f };
-        float tension { 1.0f };
         float collision { 0.5f };
+    };
+
+    struct PendingRepick
+    {
+        bool active { false };
+        float velocity { 0.0f };
+        PlayStyle playStyle { PlayStyle::Sustain };
+        bool strokeIsUp { false };
+        std::uint32_t strokeVariationState { 0u };
+        std::uint64_t startOrder { 0 };
+        // Captured before scheduling marks the MIDI key down. At delayed
+        // contact that live flag can no longer distinguish a repick from a
+        // released/refretted note.
+        bool preservesVibratoFinger { false };
     };
 
     struct Voice
     {
         bool active { false };
         bool keyDown { false };
+        // Matching Note Offs still owed for this pitch. A sequencer may order
+        // the next repeated Note On before the previous Note Off at the same
+        // timestamp; the physical string is repicked, but that older end must
+        // not release the new stroke.
+        int keyDownCount { 0 };
         bool sustained { false };
         bool releasing { false };
         int stringIndex { 0 };
@@ -682,22 +856,32 @@ private:
         int midiNote { -1 };
         int fret { 0 };
         PlayStyle playStyle { PlayStyle::Sustain };
+        // The latest whole-hand position applied to this ringing loop. Kept
+        // apart from playStyle so a newer contact can move the damping without
+        // rewriting how this note was attacked.
+        PlayStyle dampingStyle { PlayStyle::Sustain };
         // The concrete stroke this note was picked with, resolved from the
-        // latched PickStyle (Alternate resolves per note).
+        // latched PickStyle (Alternate resolves per wrist stroke).
         bool strokeIsUp { false };
         float velocity { 0.0f };
         VelocityProfile velocityProfile {};
         std::uint64_t startOrder { 0 };
         std::uint32_t noiseState { 1u };
 
-        // What the picking hand did not repeat about this stroke. All four are
-        // drawn once per attack from the note counter, so identical MIDI still
-        // renders identical audio, and all four are neutral until an attack
-        // draws them.
+        // What the picking hand did not repeat about this stroke. One draw is
+        // shared by every string the wrist crosses and latched on each voice,
+        // so delayed contacts keep their originating gesture and identical
+        // MIDI still renders identical audio.
         float strokeContactOffsetMetres { 0.0f }; // along the string, from the nominal
         float strokeForceGain { 1.0f };           // linear, on the pick's amplitude
         float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
         float strokeWidthScale { 1.0f };          // on the contact's duration
+        // Raw draw retained so a delayed fresh contact can be promoted if a
+        // legato finger reaches the string before the plectrum does.
+        std::uint32_t strokeVariationState { 0u };
+        // Latched stroke force applied to the bridge hand's loss rate. It uses
+        // the same pick draw, so mute variation does not invent another player.
+        float handContactScale { 1.0f };
 
         // The finger that is rocking this string. Two fingers of one hand are
         // not one oscillator: each carries its own phase, its own rate and its
@@ -715,8 +899,7 @@ private:
         PolarisationLoop horizontal {};
 
         // Sounding pitch program. The compensated periods cache the loop
-        // filter phase compensation so the tension-modulation factor can be
-        // applied cheaply every control tick.
+        // filter phase compensation applied to the fractional delays.
         float baseFrequency { 110.0f };
         // The pitch the dispersion grid search was last fitted at; the fit is
         // quantised to a few cents so a wheel glide does not re-run it on
@@ -726,6 +909,11 @@ private:
         // The pitch the analytic phase compensation was last evaluated at;
         // this one tracks every sub-cent move so tuning stays exact.
         float lastCompensatedSemitones { -999.0f };
+        // The corresponding nominal period. Unlike the semitone offset it
+        // remains valid when a ringing string is assigned a new base note, so
+        // a damping-filter refit can translate only its phase-coordinate move
+        // without folding a real bend or refret into currentDelay.
+        float lastCompensatedPeriod { 0.0f };
         // Set whenever the loop filters move without the pitch moving, so the
         // analytic phase compensation is refreshed without paying for the
         // expensive dispersion grid search again.
@@ -736,9 +924,6 @@ private:
         float legatoBlend { 1.0f };
         float legatoIncrement { 0.0f };
 
-        // Tension-modulation state (attack pitch glide).
-        float energyEnvelope { 0.0f };
-        float tensionDepth { 0.0f };
         float palmImpactState { 0.0f };
         float palmImpactVel { 0.0f };
 
@@ -827,7 +1012,7 @@ private:
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
         // static_cast<float>(std::max(1, artifactCollisionLength)), solved
-        // once in startVoice() rather than every rendered sample of the
+        // once in startExcitation() rather than every rendered sample of the
         // incidental fret-contact window, which divides by this same clamped
         // length once per sample to form its progress fraction.
         float artifactCollisionLengthDenominator { 1.0f };
@@ -843,6 +1028,14 @@ private:
         // Strum travel: a chord's later strings start after the pick reaches
         // them. Zero for a simultaneous (non-strummed) note-on.
         int startDelaySamples { 0 };
+        // A same-note repick may be scheduled before the pick reaches an
+        // already-ringing string. Keep its small MIDI-side description here;
+        // the sounding Voice remains the preceding stroke until contact.
+        PendingRepick pendingRepick {};
+        // A delayed retrigger may still contain the preceding stroke. If its
+        // new contact is cancelled, keep that old ring; a genuinely fresh
+        // never-contacted voice can instead retire immediately.
+        bool pendingContactPreservesRing { false };
         // Which pick stroke this pending excitation belongs to. A note-on that
         // re-anchors the stroke may only push the strings of its own chord.
         std::uint64_t strumChordId { 0 };
@@ -890,8 +1083,9 @@ private:
         float sympatheticEnergy { 0.0f };
         OnePole sympatheticEmf {};
 
-        // A light finger or thumb resting on the string, at `touchFraction` of
-        // its sounding length. Mode n's displacement there goes as
+        // A light finger or thumb resting on the string, at
+        // `touchFraction` of its sounding length. Mode n's displacement there
+        // goes as
         // sin(n pi p), so the energy a light contact removes per round trip
         // goes as sin^2(n pi p) = (1 - cos(2 pi n p)) / 2. Condensed into the
         // single delay loop that is exactly a one-tap FIR
@@ -911,9 +1105,9 @@ private:
         // retuning the loop an octave up: the string keeps its own length,
         // inharmonicity, decay targets and pickup-comb geometry.
         //
-        // The finger lifts once the note has formed. By then the partials it
+        // The contact lifts once the note has formed. By then the partials it
         // removed are gone and cannot be re-excited, so lifting it is free and
-        // buys back two delay reads per sample.
+        // buys back the extra delay reads.
         float touchFraction { 0.0f };
         float touchDepth { 0.0f };
         int touchHoldRemaining { 0 };
@@ -945,7 +1139,7 @@ private:
         int openMidiNote { 40 };
         bool wound { true };
         float plainDiameterMm { 0.4064f }; // light-set reference gauge
-        float woundCoreScale { 0.30f };    // effective bending-core fraction
+        float bendingCoreScale { 0.30f };  // empirical flexural-core fraction
         float t60Seconds { 6.0f };
     };
 
@@ -967,6 +1161,8 @@ private:
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
     static float midiToHz(float midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
+    static std::uint32_t strokeVariationStateFor(
+        std::uint64_t startOrder, int stringIndex) noexcept;
     // Both run inside the per-sample excitation and artifact paths, so they
     // are defined here to inline rather than call.
     static float bipolarNoise(std::uint32_t& state) noexcept
@@ -1026,16 +1222,10 @@ private:
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;
-    // How far the wheel's nominal bend reaches on each string. A bar changes
-    // every string's tension by stretching it, and the pitch that change buys
-    // follows the string's elastic core stiffness against its tension, so the
-    // strings do not move by equal semitones. Depends only on the string set.
-    static float bendSensitivity(int stringIndex) noexcept;
-
     [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
-    void configureVoiceDamping(Voice& voice) noexcept;
+    void configureVoiceDamping(Voice& voice, PlayStyle dampingStyle) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
     void configureSympatheticString(Voice& voice) noexcept;
     void updateStyleWeights(Voice& voice, bool legato = false) noexcept;
@@ -1045,16 +1235,29 @@ private:
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     [[nodiscard]] static bool plectrumContacts(PlayStyle style, bool legato) noexcept;
-    void drawStrokeVariation(Voice& voice) noexcept;
+    void drawStrokeVariation(Voice& voice, std::uint32_t state) noexcept;
+    [[nodiscard]] bool hasHeldFrettedFinger(
+        const Voice* excluded = nullptr) const noexcept;
+    void resetVibratoOnset() noexcept;
     void seedVibratoFinger(Voice& voice) noexcept;
     void beginChordStroke(int stringIndex, bool strokeIsUp,
-                          float spreadSeconds) noexcept;
+                          float spreadSeconds, bool completeChord) noexcept;
     void reAnchorChordStroke(int stringIndex) noexcept;
     int strumTravelSamples(int crossings) const noexcept;
     void drawVibratoCycle(Voice& voice) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
-                    int startDelaySamples) noexcept;
+                    int startDelaySamples,
+                    std::uint32_t strokeVariationState,
+                    std::uint64_t reservedStartOrder = 0,
+                    bool keyStateAlreadyApplied = false) noexcept;
+    void repickHeldString(int stringIndex, float velocity,
+                          bool reanchorTremolo = true);
+    void noteOnInternal(int midiNote, float velocity, int forcedStringIndex,
+                        bool addKeyOwner, bool handPositionPlanned,
+                        bool completeChordStart = false,
+                        int completeChordAnchor = -1,
+                        bool reanchorTremolo = true);
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
                         PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
@@ -1064,9 +1267,11 @@ private:
     // fret-distance units. Lower wins; ties resolve toward the thicker string,
     // as they did when the rule was simply the lowest fret.
     [[nodiscard]] float frettingCost(int fret) const noexcept;
+    [[nodiscard]] static float frettingCost(int fret,
+                                            float handPosition) noexcept;
+    void returnFrettingHandIfIdle(bool newChord) noexcept;
     // The hand moves only when it has to, and only at the start of a chord.
     void updateFrettingHand(int fret, bool newChord) noexcept;
-    [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
     // Splits a neck/bridge-summed contribution across the stereo field the
     // same way renderVoice() and renderSympatheticString() each did with
@@ -1105,6 +1310,7 @@ private:
     PickStyle pickStyle_ { PickStyle::Down };
     PlayStyle playStyle_ { PlayStyle::Sustain };
     bool alternateNextStrokeIsUp_ { false };
+    std::uint64_t variationSeed_ { 0 };
     std::uint64_t noteSequence_ { 0 };
     int activeVoiceCount_ { 0 };
     int sympatheticStringCount_ { 0 };
@@ -1118,15 +1324,13 @@ private:
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
     float sympatheticAppliedBend_ { 0.0f };
-    // Fretting-hand vibrato from channel pressure. One hand, but not one
-    // finger: the phase, the rate and the excursion live on the voice, and
-    // only the pressure and the onset are shared. Upward-biased, so its
+    // Optional fretting-hand vibrato. One hand, but not one finger: the phase,
+    // rate and excursion live on the voice, while amount and onset are shared.
+    // Upward-biased, so its
     // minimum is the fretted pitch rather than its mean, because a finger can
     // only lengthen the string's path. Its depth is deliberately expressed in
-    // equal semitones rather than through the per-string elastic compliance
-    // the wheel's bar uses: a bar stretches every string by the same length
-    // and each answers differently, while a finger is controlling a pitch and
-    // adjusts its own displacement to get it.
+    // equal semitones: a finger controls pitch and adjusts its displacement to
+    // get it.
     static constexpr float vibratoMinimumSemitones = 0.10f;
     static constexpr float vibratoMaximumSemitones = 1.10f;
     // The pressure ramps at a bounded rate and is then shaped by smoothStep,
@@ -1153,19 +1357,43 @@ private:
     // at every host rate.
     std::int64_t engineClock_ { 0 };
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
+    // B0 consumes a same-sample played pick, but a hammer or legato slide is
+    // only the fretting hand and cannot suppress the wrist's due contact.
+    std::int64_t lastPlectrumContactClock_ { -(1ll << 40) };
+    // The most recent real string contact owns the shared muting-hand
+    // position. Keep that history at engine scope: retiring the voice that
+    // received the contact must not reveal an older voice and move the hand
+    // backward without a new performance event.
+    std::int64_t lastHandContactClock_ { -1 };
+    PlayStyle lastHandContactPlayStyle_ { PlayStyle::Sustain };
+    std::uint64_t lastHandContactOrder_ { 0 };
     // The neck edge the pick entered from, the direction it is travelling, and
     // the clock the chord's first note-on arrived on. Every voice of the chord
     // is scheduled against that one clock, so the ramp is laid down in stroke
-    // order however the host interleaved the note-ons.
+    // order however the host interleaved the note-ons. Alternate reserves one
+    // direction per accepted MIDI chord, not once per string. A fully pending
+    // current chord may return it before a later chord depends on that order;
+    // asking for an already-crossed string begins the next stroke.
     int chordAnchorString_ { 0 };
     bool chordStrokeIsUp_ { false };
+    bool chordAlternateConsumed_ { false };
+    bool chordContactOccurred_ { false };
+    // Manual/playable strokes reset a held B0 wrist at their first physical
+    // contact. B0's own generated strokes retain its fractional clock.
+    bool chordReanchorsTremolo_ { true };
     std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
     std::uint64_t chordSequence_ { 0 };
+    std::uint32_t chordStrokeVariationState_ { 0u };
+    // A separately seeded player reaches one picked wrist stroke a little
+    // before or after another player. Causality makes this lane the later one;
+    // all strings crossed by the stroke share the same offset.
+    int chordPerformanceDelaySamples_ { 0 };
     int chordWindowSamples_ { 1680 };
-    // The pre-roll every voice of a strummed chord carries, in internal
-    // samples, and the travel time from the anchor to each further string.
-    // Both are zero at a zero Strum Spread, which keeps the block chord
-    // bit-exact.
+    // The causal pre-roll used only while a scalar note stream may still
+    // reveal a different chord edge, and the travel time from the anchor to
+    // each further string. A complete noteOnChord batch knows its edge and
+    // therefore uses zero pre-roll even when travel is active. Both remain
+    // zero at a zero Strum Spread, which keeps a block chord bit-exact.
     int strumPreRollSamples_ { 0 };
     int strumReAnchorSamples_ { 0 };
     std::array<int, stringCount> chordTravelSamples_ {};
@@ -1184,6 +1412,16 @@ private:
     // of the range.
     float frettingHandPosition_ { 0.0f };
     int handReturnSamples_ { 72000 };
+    // MIDI-key ownership outlives audible waveguide state: a held Mute or Dead
+    // string may decay below the voice retirement floor and still be available
+    // to its per-string picking-hand trigger.
+    std::array<int, stringCount> heldMidiNotes_ {};
+    std::array<int, stringCount> heldNoteCounts_ {};
+    // The visible B0 gesture is one picking wrist, not eight clocks. Its
+    // phase is measured in strokes so a rate change takes effect immediately
+    // without resetting time or accumulating integer-sample drift.
+    float tremoloPickingVelocity_ { 0.0f };
+    double tremoloPickingPhase_ { 0.0 };
 
     // Continuous bridge-hand damping: the parameter plus the CC2 pressure.
     float palmMutePressure_ { 0.0f };
@@ -1217,16 +1455,19 @@ private:
     float bridgeCouplingRowSum_ { 0.0f };
 
     // Acoustic feedback from the amplified output back into the strings. The
-    // host pushes its previous processed block through pushAcousticReturn();
-    // the ring holds a bounded mono copy that process() consumes one host
-    // sample at a time, which gives the loop the one-block latency a real
-    // speaker-to-string air path has. With the resonance control at zero the
-    // gain is exactly zero and nothing stored here is ever injected.
+    // voiced nominal 5.805 ms path corresponds to about two metres of free-air
+    // travel and retains the voiced 256-sample reference at 44.1 kHz. The FIFO
+    // starts with that many silent samples and consumes/appends one host-rate
+    // sample at a time, so the nominal delay does not move with a DAW's
+    // block size. With the resonance control at zero the gain is exactly zero
+    // and nothing stored here is ever injected.
+    static constexpr double feedbackDelaySeconds = 256.0 / 44100.0;
     static constexpr int feedbackRingSize = 8192;
     std::array<float, feedbackRingSize> feedbackRing_ {};
     int feedbackWriteIndex_ { 0 };
     int feedbackReadIndex_ { 0 };
     int feedbackAvailable_ { 0 };
+    int feedbackDelaySamples_ { 256 };
     float feedbackCurrent_ { 0.0f };
     float feedbackPrevious_ { 0.0f };
     float feedbackGain_ { 0.0f };
@@ -1303,8 +1544,6 @@ private:
     // every rendered sample of every string. They depend only on the internal
     // clock, so prepare() is their only correct home.
     float handEnvelopeCoefficient_ { 0.0015f };
-    float energyAttackCoefficient_ { 0.004f };
-    float energyReleaseCoefficient_ { 0.00006f };
     float retireAttackCoefficient_ { 0.01f };
     float retireReleaseCoefficient_ { 0.0009f };
     float artifactBandCoefficient_ { 0.12f };
@@ -1312,13 +1551,10 @@ private:
     // voice.palmImpactState in renderVoice(). Fixed corner, rate-derived
     // coefficient - belongs here for the same reason as its neighbours above.
     float palmImpactThudCoefficient_ { 0.0f };
-    // The hand-loss dip's 40 ms settle window, in samples: used as
-    // updateVoiceControl()'s `ageSamples / handLossSettleWindowSamples_`
-    // divisor for every active voice with an engaged hand-loss dip, every
-    // control tick. It depends only on the internal clock, so - like its
-    // neighbours above - it is solved once here instead of being recomputed
-    // (a float multiply and a cast) on every one of those calls.
-    float handLossSettleWindowSamples_ { 1920.0f };
+    // Per-sample retention of the impact's driving velocity. The voicing was
+    // calibrated as 0.992 at 48 kHz and is converted to the internal clock in
+    // prepare(), so oversampling and high-rate hosts keep one physical decay.
+    float palmImpactVelocityRetention_ { 0.992f };
     float sympatheticEnergyCoefficient_ { 0.002f };
     float displayLevelAttack_ { 0.5f };
     float displayLevelRelease_ { 0.08f };

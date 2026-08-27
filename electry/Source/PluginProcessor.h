@@ -9,19 +9,15 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 namespace electry::parameters
 {
 inline constexpr auto pickupSelector = "pickupSelector";
 inline constexpr auto pickupType     = "pickupType";
 inline constexpr auto tone           = "tone";
-inline constexpr auto bodyWood       = "bodyWood";
-inline constexpr auto bodySize       = "bodySize";
-inline constexpr auto bodyShape      = "bodyShape";
-inline constexpr auto construction   = "construction";
-inline constexpr auto scaleLength    = "scaleLength";
+inline constexpr auto guitarBuild    = "guitarBuild";
 inline constexpr auto bodyResonance  = "bodyResonance";
-inline constexpr auto stringGauge    = "stringGauge";
 inline constexpr auto stringAge      = "stringAge";
 inline constexpr auto pickPosition   = "pickPosition";
 inline constexpr auto pickHardness   = "pickHardness";
@@ -39,14 +35,12 @@ inline constexpr auto amp            = "amp";
 inline constexpr auto compressor     = "compressor";
 inline constexpr auto delay          = "delay";
 inline constexpr auto room           = "room";
-// Version 1.1 additions, appended so every existing automation index is kept.
 inline constexpr auto sympathetic    = "sympathetic";
 inline constexpr auto palmMute       = "palmMute";
 inline constexpr auto strumSpread    = "strumSpread";
-// Version 1.2 repurposed this slot from the CC1 vibrato to the CC1 resonance
-// control. The stored ID is kept so existing sessions and automation lanes
-// keep pointing at the same parameter index.
-inline constexpr auto resonanceDepth = "vibratoDepth";
+inline constexpr auto tremoloRate    = "tremoloRate";
+inline constexpr auto resonanceDepth = "resonanceDepth";
+inline constexpr auto ampModel       = "ampModel";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -74,10 +68,10 @@ public:
     static constexpr double maximumTailLengthSeconds = 18.0;
     double getTailLengthSeconds() const override { return maximumTailLengthSeconds; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destinationData) override;
@@ -86,6 +80,8 @@ public:
     // Message-thread entry points used by the editor. Both route through the
     // same bounded lock-free queue as on-screen keyboard notes.
     void triggerArticulation (int articulationIndex);
+    void triggerStringRepick (int stringIndex, float velocity = 1.0f);
+    void setPlayStyleKeysHold (bool shouldHold);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
 
     int getActiveVoiceCount() const noexcept
@@ -115,6 +111,26 @@ public:
     {
         return playStyleIndex.load (std::memory_order_relaxed);
     }
+    int getEffectivePlayStyleIndex() const noexcept
+    {
+        return effectivePlayStyleIndex.load (std::memory_order_relaxed);
+    }
+    bool getPlayStyleKeysHold() const noexcept
+    {
+        return playStyleKeysHold.load (std::memory_order_relaxed);
+    }
+    int getMidiMutePressureForDisplay() const noexcept
+    {
+        return midiMutePressureForDisplay.load (std::memory_order_relaxed);
+    }
+    int getVibratoGestureForDisplay() const noexcept
+    {
+        return vibratoGestureForDisplay.load (std::memory_order_relaxed);
+    }
+    int getTremoloGestureForDisplay() const noexcept
+    {
+        return tremoloGestureForDisplay.load (std::memory_order_relaxed);
+    }
     double getCurrentSampleRateForDisplay() const noexcept
     {
         return displaySampleRate.load (std::memory_order_relaxed);
@@ -143,13 +159,8 @@ private:
         std::atomic<float>* pickupSelector = nullptr;
         std::atomic<float>* pickupType = nullptr;
         std::atomic<float>* tone = nullptr;
-        std::atomic<float>* bodyWood = nullptr;
-        std::atomic<float>* bodySize = nullptr;
-        std::atomic<float>* bodyShape = nullptr;
-        std::atomic<float>* construction = nullptr;
-        std::atomic<float>* scaleLength = nullptr;
+        std::atomic<float>* guitarBuild = nullptr;
         std::atomic<float>* bodyResonance = nullptr;
-        std::atomic<float>* stringGauge = nullptr;
         std::atomic<float>* stringAge = nullptr;
         std::atomic<float>* pickPosition = nullptr;
         std::atomic<float>* pickHardness = nullptr;
@@ -170,7 +181,9 @@ private:
         std::atomic<float>* sympathetic = nullptr;
         std::atomic<float>* palmMute = nullptr;
         std::atomic<float>* strumSpread = nullptr;
+        std::atomic<float>* tremoloRate = nullptr;
         std::atomic<float>* resonanceDepth = nullptr;
+        std::atomic<float>* ampModel = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -178,6 +191,14 @@ private:
         int note = 60;
         float velocity = 0.0f;
         bool noteOn = false;
+        bool selectsBaseArticulation = false;
+    };
+
+    struct NoteOnBatch
+    {
+        std::array<electry::ElectryEngine::NoteOnEvent,
+                   electry::ElectryEngine::maximumChordEvents> events {};
+        std::size_t size = 0;
     };
 
     static constexpr unsigned uiQueueCapacity = 128;
@@ -189,15 +210,41 @@ private:
                        int midiNoteNumber, float velocity) override;
     void handleNoteOff (juce::MidiKeyboardState*, int midiChannel,
                         int midiNoteNumber, float velocity) override;
-    void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn) noexcept;
+    void latchArticulation (int articulationIndex) noexcept;
+    void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn,
+                             bool selectsBaseArticulation = false) noexcept;
     void discardUiMidiEvents() noexcept;
-    void dispatchUiMidiEvents() noexcept;
+    void dispatchUiMidiEventPass (unsigned begin, unsigned end,
+                                  bool conditioning,
+                                  NoteOnBatch& batch) noexcept;
+    void batchOrDispatchNoteOn (int note, float velocity,
+                                bool selectsBaseArticulation,
+                                NoteOnBatch& batch) noexcept;
+    void flushNoteOnBatch (NoteOnBatch& batch) noexcept;
+    void applyVibratoGesture (float amount) noexcept;
+    void clearVibratoGesture() noexcept;
+    void applyTremoloGesture (float velocity) noexcept;
+    void clearTremoloGesture() noexcept;
+    void dispatchNoteOn (int note, float velocity,
+                         bool selectsBaseArticulation) noexcept;
+    void dispatchNoteOff (int note) noexcept;
+    void applyPlayStyle (int styleIndex) noexcept;
+    int latestHeldPlayStyle() const noexcept;
+    void clearHeldPlayStyles() noexcept;
+    void synchronisePlayStyleKeyMode() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
+    void resetEngineWithArticulations (int pickStyle, int playStyle) noexcept;
+    void renderEngines (float* left, float* right, int numSamples) noexcept;
     void updateEngineParameters() noexcept;
     void updateEffectParameters() noexcept;
     void publishStringVisualState() noexcept;
 
     electry::ElectryEngine engine;
+    // DOUBLE is two performances, not a delayed or widened copy. The second
+    // engine receives the same score with its own deterministic player draws.
+    std::unique_ptr<electry::ElectryEngine> doubleEngine {
+        std::make_unique<electry::ElectryEngine>()
+    };
     // The amplifier, cabinet and time effects live in the JUCE-free DSP
     // library alongside the string model, so the complete signal path is
     // regression tested on every platform rather than only inside a host.
@@ -206,10 +253,35 @@ private:
                electry::ElectryEngine::stringCount> visualScratch {};
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
+    bool doubleModeActive = false;
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<int> sympatheticStringCount { 0 };
+    std::atomic<int> currentProgram { 0 };
+    // Requested performance latches outlive the replaceable DSP engine state.
     std::atomic<int> pickStyleIndex { 0 };
+    // The strip and session state retain this base style. A HOLD keyswitch may
+    // temporarily change the effective style without overwriting it.
     std::atomic<int> playStyleIndex { 0 };
+    std::atomic<int> effectivePlayStyleIndex { 0 };
+    std::atomic<bool> playStyleKeysHold { false };
+    bool appliedPlayStyleKeysHold = false;
+    int appliedBasePlayStyleIndex = 0;
+    std::array<std::uint16_t,
+               electry::ElectryEngine::playStyleKeyswitchCount>
+        heldPlayStyleCounts {};
+    std::array<std::uint64_t,
+               electry::ElectryEngine::playStyleKeyswitchCount>
+        heldPlayStyleOrder {};
+    std::uint64_t heldPlayStyleSequence = 0;
+    std::uint16_t vibratoGestureOwners = 0;
+    std::uint16_t tremoloGestureOwners = 0;
+    bool sustainPedalDown = false;
+    // Raw CC2 is kept beside the other display-only atomics. The Mute Pressure
+    // knob shows the host parameter; this value makes its live MIDI addition
+    // visible without feeding UI state back into the engine.
+    std::atomic<int> midiMutePressureForDisplay { 0 };
+    std::atomic<int> vibratoGestureForDisplay { 0 };
+    std::atomic<int> tremoloGestureForDisplay { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
     std::array<std::atomic<std::uint32_t>,
                electry::ElectryEngine::stringCount> stringVisuals {};
