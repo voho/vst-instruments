@@ -894,14 +894,25 @@ struct NoiseSource
             }
             else
             {
-                // The inner stage runs internal -> 2x internal and the outer
-                // one 2x -> host, the same order and the same two filters the
-                // OVERDRIVE climbs, so each of the inner stage's two outputs
-                // becomes two host-rate samples.
+                // The sharp stage goes first, where the band it has to keep
+                // clean is full. A drawn value occupies everything up to the
+                // internal Nyquist, so the first interpolation is the one whose
+                // image lands hard against the signal; by the second the
+                // content fills only a quarter of the band and the shorter
+                // filter has an octave of room. That is the order the OVERDRIVE
+                // climbs in too — `outer` is designed against the rate whose
+                // band is full and `inner` against the one where "the images
+                // sit an octave further out".
+                //
+                // Reversed, as this was, the first stage ran the short filter:
+                // at 176.4 kHz its passband edge sat at 15.9 kHz rather than
+                // 19.0, against 10 dB less stopband, so the high-rate NOISE was
+                // both darker and less image-suppressed than the fixed-rate
+                // source the ladder exists to deliver.
                 double half0 = 0.0, half1 = 0.0;
-                inner.upsample (draw (rng), half0, half1);
-                outer.upsample (half0, pending[0], pending[1]);
-                outer.upsample (half1, pending[2], pending[3]);
+                outer.upsample (draw (rng), half0, half1);
+                inner.upsample (half0, pending[0], pending[1]);
+                inner.upsample (half1, pending[2], pending[3]);
             }
         }
         const double value = pending[static_cast<std::size_t> (pendingIndex)];
@@ -1043,21 +1054,35 @@ private:
         void advance (int position, double step) noexcept
         {
             const auto selected = clampPosition (position);
-            double total = 0.0;
+            double outgoing = 0.0;
             for (std::size_t i = 0; i < weight.size(); ++i)
+                if (i != selected)
+                    outgoing += weight[i];
+            if (! (outgoing > 0.0))
             {
-                const double target = (i == selected) ? 1.0 : 0.0;
-                weight[i] += std::clamp (target - weight[i], -step, step);
-                total += weight[i];
+                snapTo (selected);
+                return;
             }
-            // The steps are taken independently, so the weights drift off
-            // unity by at most one step; renormalising holds the mix at unit
-            // gain without changing how fast any one of them moves.
-            if (total > 1.0e-12)
-                for (auto& w : weight)
-                    w /= total;
-            else
-                snapTo (position);
+            // The selected weight takes `move`, and the weights it is taking
+            // it from give it up in proportion to what they still hold. So
+            // their sum falls by exactly `move`, none of them falls by more
+            // than `move` (each gives up `w·move/outgoing`, and `w <=
+            // outgoing`), and the total stays at one without a correction.
+            //
+            // Stepping every weight independently and renormalising afterwards
+            // was wrong, and only when more than one weight was on its way out:
+            // with two of them the sum came to `1 - step` rather than 1, so
+            // dividing by it handed the selected weight a second step. A fade
+            // retargeted half way through — LPF to HPF to BPF — finished in
+            // 3.47 ms against the 5.01 ms the same switch takes when it is
+            // moved once, and the selected weight moved 1.99x the registered
+            // rate in a single sample.
+            const double move = std::min (step, outgoing);
+            const double scale = (outgoing - move) / outgoing;
+            for (std::size_t i = 0; i < weight.size(); ++i)
+                if (i != selected)
+                    weight[i] *= scale;
+            weight[selected] = 1.0 - (outgoing - move);
         }
 
         // Sum a per-position signal against the weights. Every position but

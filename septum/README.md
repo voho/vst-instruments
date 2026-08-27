@@ -399,7 +399,10 @@ arriving a sample apart: the re-seed that recovers a CC overwritten
 mid-publish is a read-then-store and can itself be overtaken, which no
 compare-exchange closes — the overtaking value is the one the publish just
 wrote. It self-corrects on the next move of that controller, and it is the
-same defect the restructuring above is for.
+same defect the restructuring above is for. A device-control message landing
+inside a session restore is lost the same way and for the same reason: the
+restore writes every parameter from the message thread while the message writes
+one from the audio thread, and nothing orders the two.
 
 ## Release history
 

@@ -3669,6 +3669,57 @@ void testNoiseIsWhiteAtEveryHostRate()
 // does not move at all, so the balance inside one patch changed with the user's
 // interface setting. NOISE is drawn at the instrument's rate and interpolated
 // up now, which is what makes the two legs track.
+// The top of the band, which the flatness check above stops short of. The
+// factor-four ladder runs two half-band stages and they are not
+// interchangeable: `outer` is the long one, designed against the rate whose
+// band is full, and `inner` the short one for the stage where "the images sit
+// an octave further out". A drawn value occupies everything up to the internal
+// Nyquist, so the first interpolation is the one whose image lands hard against
+// the signal and the sharp filter belongs there — which is also the order the
+// OVERDRIVE climbs in.
+//
+// Reversed, the short filter ran first: its passband edge sits at 15.9 kHz
+// against 19.0, so the top of the band came out darker at exactly the host
+// rates the ladder exists to make sound like the others. Measured at 192 kHz,
+// 20-22 kHz fell 1.8 dB and 18-20 kHz 0.6 dB; below 18 kHz the two orders are
+// within the estimator's own scatter, which is why the flatness check above
+// could not see it.
+void testNoiseKeepsTheTopOfItsBandAtEveryHostRate()
+{
+    const auto topAt = [] (double sampleRate)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Noise;
+        patch.upper.balance = -63;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.2);
+        const double mid = bandPower (take.left, sampleRate, 1000.0, 4000.0, skip, 256);
+        const double top = bandPower (take.left, sampleRate, 20000.0, 22000.0, skip, 256);
+        return 10.0 * std::log10 (top / mid);
+    };
+
+    // 44.1 kHz draws one value per host sample and interpolates nothing, so it
+    // is the shape the ladder is trying to reproduce. The interpolated rates
+    // cannot match it exactly — `outer`'s own transition starts at 19.0 kHz —
+    // so the bound is what the right order delivers (1.1 dB at 96 kHz, 1.3 at
+    // 192) rather than zero, and the wrong one does not fit inside it (3.1).
+    const double reference = topAt (44100.0);
+    for (double sampleRate : { 96000.0, 192000.0 })
+    {
+        const double measured = topAt (sampleRate);
+        expect (reference - measured < 2.2,
+                "NOISE keeps the top of its band at "
+                    + std::to_string ((int) sampleRate) + " Hz (20-22 kHz sits "
+                    + std::to_string (measured) + " dB under the 1-4 kHz band,"
+                      " against " + std::to_string (reference)
+                    + " dB at 44.1 kHz)");
+    }
+}
+
 void testNoiseLevelDoesNotFollowTheHostRate()
 {
     const auto inBand = [] (double sampleRate, septum::Waveform wave)
@@ -4046,6 +4097,109 @@ void testTheTwoLfosDrawDifferentRandomValues()
     expect (difference > 1.0e-4,
             "LFO 1 and LFO 2 draw different random sequences (largest difference "
                 + std::to_string (difference) + ")");
+}
+
+// The rate half of the same switch. Continuity says the output does not step;
+// it does not say the cross still takes the time the switch registers. Stepping
+// every weight independently and renormalising afterwards broke that, and only
+// when more than one weight was on its way out: with two of them the weights
+// summed to `1 - step` rather than 1, so dividing by that handed the selected
+// weight a second step. A fade retargeted half way through finished in 3.47 ms
+// against the 5.01 ms the same switch takes when it is moved once.
+//
+// LOW FREQ is the switch to measure it on: its three positions differ by a
+// multiple of one shared signal, the shelf's own output, so a least-squares
+// projection of the moving take onto two held references is exactly the cross
+// weight even while three positions carry weight at once.
+void testASwitchRetargetedMidCrossStillTakesTheRegisteredTime()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t settle = 4096, watch = 2048;
+    const double registered =
+        septum::mapping::externalSwitchFadeSeconds * sampleRate;
+    const std::size_t retargetAt = (std::size_t) (registered / 2.0) & ~std::size_t (7);
+
+    // Every take runs the same number of samples before the watch begins, so
+    // the oscillator is at the same phase in all three and the projection reads
+    // like against like.
+    const auto take = [&] (septum::LowFreqMode start, septum::LowFreqMode middle,
+                           septum::LowFreqMode end)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.lowFreq = start;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (std::size_t samples)
+        {
+            std::vector<float> out;
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        run (settle);
+        septum::Patch moved = patch;
+        moved.upper.lowFreq = middle;
+        engine.setPatch (moved);
+        run (retargetAt);
+        septum::Patch again = patch;
+        again.upper.lowFreq = end;
+        engine.setPatch (again);
+        return run (watch);
+    };
+
+    const auto arrival = [&] (septum::LowFreqMode start, septum::LowFreqMode middle,
+                              septum::LowFreqMode end)
+    {
+        const auto held = take (start, start, start);
+        const auto dest = take (end, end, end);
+        const auto moving = take (start, middle, end);
+        constexpr std::size_t window = 16;
+        std::size_t arrived = 0;
+        for (std::size_t w0 = 0; w0 + window <= moving.size(); w0 += window)
+        {
+            double num = 0.0, den = 0.0;
+            for (std::size_t i = w0; i < w0 + window; ++i)
+            {
+                const double d = (double) dest[i] - (double) held[i];
+                num += ((double) moving[i] - (double) held[i]) * d;
+                den += d * d;
+            }
+            if (den < 1.0e-12)
+                continue;
+            if (num / den < 0.995)
+                arrived = w0 + window;
+            else if (arrived > 0)
+                break;
+        }
+        return (double) arrived;
+    };
+
+    const std::array<std::array<septum::LowFreqMode, 3>, 2> moves { {
+        { septum::LowFreqMode::Flat, septum::LowFreqMode::Cut,
+          septum::LowFreqMode::Boost },
+        { septum::LowFreqMode::Boost, septum::LowFreqMode::Flat,
+          septum::LowFreqMode::Cut } } };
+    for (const auto& move : moves)
+    {
+        const double measured = arrival (move[0], move[1], move[2]);
+        expect (measured >= registered - 16.0 && measured <= registered + 32.0,
+                "a LOW FREQ cross retargeted half way through still takes the"
+                " registered fade time (position "
+                    + std::to_string ((int) move[0]) + " -> "
+                    + std::to_string ((int) move[1]) + " -> "
+                    + std::to_string ((int) move[2]) + " measured "
+                    + std::to_string (measured) + " samples against "
+                    + std::to_string (registered) + ")");
+    }
 }
 
 // A switch that moves again before its own crossfade has finished. FILTER TYPE
@@ -5290,6 +5444,7 @@ int main()
     testAForeignSysExMessageDoesNotSplitAPatch();
     testADt1WritesAtTheAddressItNames();
     testNoiseIsWhiteAtEveryHostRate();
+    testNoiseKeepsTheTopOfItsBandAtEveryHostRate();
     testNoiseLevelDoesNotFollowTheHostRate();
     testFilterDoesNotDistortAtZeroResonance();
     testTwentyFourDbPeakIsPinned();
@@ -5300,6 +5455,7 @@ int main()
     testTheTwoLfosDrawDifferentRandomValues();
     testControlChangesDoNotStepTheOutput();
     testASwitchChangedAgainMidCrossStaysContinuous();
+    testASwitchRetargetedMidCrossStillTakesTheRegisteredTime();
     testSettledDampingTablesLandOnTheirFrequencies();
     testOutputStageMatchesItsComponentValues();
     testReverbTailSurvivesMono();

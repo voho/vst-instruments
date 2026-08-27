@@ -2143,9 +2143,25 @@ void SeptumAudioProcessor::setStateInformation (const void* data,
             // *during* the restore, and that message had already written the
             // raw value the engine renders from: the sound followed the MIDI
             // while the host and the panel stayed on the restored session, with
-            // nothing left to tell them. Cancelling first leaves the window
-            // open, so a message landing in it re-arms and is published to all
-            // three together.
+            // nothing left to tell them.
+            //
+            // Cancelling first ends that disagreement, which is what it is for.
+            // It does not save the message, and an earlier version of this
+            // comment claimed it did. A message landing in the window between
+            // the cancel and the `replaceState` below writes both of its cells
+            // and re-arms its flag, and then `replaceState` overwrites the raw
+            // value; the republish that follows publishes what the restore put
+            // there and finds its shadow baseline unmoved, so it consumes the
+            // flag without restoring anything. All three agree — on the
+            // restored session — and the message is gone.
+            //
+            // Which is the right answer is not something this code can know:
+            // the restore is a message-thread write of every parameter at once
+            // and the message is an audio-thread write of one, with no ordering
+            // between them. It is the same "who wrote last" question the
+            // publish protocol cannot answer and the same restructuring would,
+            // and it is named under Known gaps with the others rather than
+            // papered over here.
             cancelPendingRepublishes();
             parameters.replaceState (state);
             readImportedArpeggioFromState (state);
