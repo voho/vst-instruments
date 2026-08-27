@@ -12,6 +12,35 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep dedicated repicks in the picking hand
+
+E6..B6 and B0 are explicit picking-hand commands, but a latched Hammer was
+passed through as their attack style and turned every requested repick into a
+finger tap. The manual trigger and B0 both advanced note order while two
+successive Alternate contacts nevertheless stayed Down; neither produced
+plectrum contact or contact loss, and Pick Noise at 0 and 1 rendered
+byte-identically. On a two-string shape with 3 ms Strum Spread, B0 scheduled
+both strings with zero delay instead of one travelling pick. The same path also
+excluded pick noise and every other ordinary picked-contact detail.
+
+Decision: only when a dedicated E6..B6 or B0 repick enters the attack path,
+interpret Hammer as the neutral Sustain pick contact. Leave the global Hammer
+latch unchanged, so a later playable Note On still performs a genuine hammer or
+pull-off. Slide and every already picked style keep their existing semantics.
+The correction reuses the attack path's local style and adds no state, control
+or new articulation.
+
+The regression holds one stopped note under Alternate and a Hammer latch, then
+requires successive manual repicks to make Up/Down Sustain contacts, advance
+note order, preserve the fretting finger and leave Hammer latched. Separate
+rails require Pick Noise to affect the audio, B0 to make the same contact on its
+next sample, and a two-string B0 stroke to retain one shared direction,
+variation state and distinct nonzero 3 ms travel delays. Demo 22 now picks MIDI
+74, genuinely hammers to 76, leaves Hammer latched while B0 continues with
+picked Sustain contacts, then restores Sustain; its duration is unchanged.
+This is a hand-ownership invariant rather than a voicing choice, so no A–Z
+preference test was used.
+
 ## 2026-08-27 — let vibrato begin and end with a fretting finger
 
 A#0 owned one shared target and onset envelope even when no stopped key owned a

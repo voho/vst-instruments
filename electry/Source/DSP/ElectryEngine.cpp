@@ -1820,6 +1820,13 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     if (! isPlayableNote(midiNote) || velocity <= 0.0f)
         return;
 
+    // E6..B6 and B0 are picking-hand commands. A latched Hammer describes a
+    // fretting-hand contact, but there is no new fret move on a held-string
+    // repick; let that explicit wrist make the ordinary picked Sustain contact
+    // instead. The global latch remains Hammer for later playable notes.
+    const PlayStyle attackStyle = ! addKeyOwner && playStyle_ == PlayStyle::Hammer
+        ? PlayStyle::Sustain : playStyle_;
+
     const bool strokeCandidateIsUp = pickStyle_ == PickStyle::Up
         || (pickStyle_ == PickStyle::Alternate && alternateNextStrokeIsUp_);
 
@@ -1840,14 +1847,14 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
         returnFrettingHandIfIdle(newChord);
 
     const int stringIndex = forcedStringIndex >= 0
-        ? forcedStringIndex : chooseString(midiNote, playStyle_);
+        ? forcedStringIndex : chooseString(midiNote, attackStyle);
     if (stringIndex < 0)
         return;
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
-    const bool legato = (playStyle_ == PlayStyle::Hammer
-                         || playStyle_ == PlayStyle::Slide)
+    const bool legato = (attackStyle == PlayStyle::Hammer
+                         || attackStyle == PlayStyle::Slide)
                      && voice.active
                      && voice.midiNote != midiNote;
     // A hammered note has no pick stroke at all, while a slide needs a pick
@@ -1855,7 +1862,7 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     // before touching any wrist state, so a fretting-hand contact cannot
     // acquire strum pre-roll, re-anchor a pending picked chord, or consume an
     // Alternate stroke.
-    const bool plectrumStroke = plectrumContacts(playStyle_, legato);
+    const bool plectrumStroke = plectrumContacts(attackStyle, legato);
 
     // A wrist stroke cannot cross the same string twice. Even inside the chord
     // window, reusing a string already assigned to this chord is a new stroke;
@@ -1943,9 +1950,9 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     }
 
     if (legato)
-        legatoRetarget(voice, midiNote, velocity, playStyle_);
+        legatoRetarget(voice, midiNote, velocity, attackStyle);
     else
-        startVoice(voice, midiNote, velocity, playStyle_, strokeIsUp,
+        startVoice(voice, midiNote, velocity, attackStyle, strokeIsUp,
                    startDelaySamples,
                    plectrumStroke
                        ? chordStrokeVariationState_

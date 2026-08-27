@@ -1589,13 +1589,17 @@ Take renderTremoloPickingStudy()
     take.vibrato(0.42f);
     take.wait(0.24);
 
-    // The new finger blooms into a high sustained tremolo and slow wheel bend;
-    // velocity still controls pick force.
+    // Pick the high lead, hammer its destination, then deliberately leave
+    // Hammer latched while B0 supplies the alternating wrist. The fretting
+    // gesture must stay legato while every tremolo repick remains a real pick.
     parameters.tremoloRateHz = 12.0f;
     parameters.palmMute = 0.0f;
     take.setEngineParameters(parameters);
-    take.noteOn(76, 0.86f);
-    take.wait(0.20);
+    take.noteOn(74, 0.86f);
+    take.wait(0.10);
+    take.style(PlayStyle::Hammer);
+    take.noteOn(76, 0.82f);
+    take.wait(0.10);
     take.beginTremoloPicking(0.78f);
     take.wait(1.65);
     take.pitchBend(0.5f);
@@ -1603,7 +1607,9 @@ Take renderTremoloPickingStudy()
     take.pitchBend(0.0f);
     take.vibrato(0.0f);
     take.endTremoloPicking();
+    take.style(PlayStyle::Sustain);
     take.noteOff(76);
+    take.noteOff(74);
     take.wait(0.30);
 
     // Polyphonic B0 is one alternating wrist across the held shape. Just after

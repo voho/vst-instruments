@@ -2571,6 +2571,142 @@ void testHeldTremoloPickingGesture()
            "B0 repicked a sustain-only string without a physical key owner");
 }
 
+void testHammerLatchedRepicksUsePickingHand()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int heldNote = 47;
+
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    parameters.strumSpreadSeconds = 0.0f;
+
+    const auto makeHeld = [&] (const EngineParameters& heldParameters)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        engine->setParameters(heldParameters);
+        engine->reset();
+        engine->noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+        engine->noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        engine->noteOn(heldNote, 0.82f);
+        StereoBuffer establish(128);
+        renderInto(*engine, establish);
+        engine->noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        return engine;
+    };
+    const auto sameFinger = [] (const auto& left, const auto& right)
+    {
+        return left.vibratoSeed == right.vibratoSeed
+            && left.vibratoCycle == right.vibratoCycle
+            && left.vibratoPhase == right.vibratoPhase
+            && left.vibratoRateScale == right.vibratoRateScale
+            && left.vibratoDepthScale == right.vibratoDepthScale
+            && left.vibratoSemitones == right.vibratoSemitones;
+    };
+
+    // E6..B6 explicitly move the picking hand. Hammer may remain latched for
+    // later fretting gestures, but it cannot turn that wrist into another tap.
+    auto manual = makeHeld(parameters);
+    const int stringIndex = TestAccess::stringForNote(*manual, heldNote);
+    const auto beforeManual = TestAccess::snapshot(*manual, stringIndex);
+    manual->noteOn(ElectryEngine::firstRepickNote + stringIndex, 0.93f);
+    const auto manualUp = TestAccess::snapshot(*manual, stringIndex);
+    manual->noteOn(ElectryEngine::firstRepickNote + stringIndex, 0.93f);
+    const auto manualDown = TestAccess::snapshot(*manual, stringIndex);
+    expect(stringIndex >= 0 && manualUp.startOrder > beforeManual.startOrder
+               && manualUp.playStyle == PlayStyle::Sustain
+               && manualUp.strokeIsUp && manualUp.excitationInContact
+               && manualUp.contactFeedbackGain < 1.0f
+               && manualDown.startOrder > manualUp.startOrder
+               && ! manualDown.strokeIsUp && manualDown.excitationInContact,
+           "Hammer latch turned a one-shot held-string repick into a finger tap");
+    expect(manual->getCurrentPlayStyle() == PlayStyle::Hammer
+               && sameFinger(manualDown, beforeManual),
+           "one-shot Hammer repicks changed the latch or fretting finger");
+
+    // Pick Noise is deliberately absent from an ordinary Hammer. It must be
+    // audible here because the dedicated command is a real plectrum contact.
+    const auto renderRepick = [&] (float pickNoise)
+    {
+        auto engine = makeHeld(parameters);
+        auto changed = parameters;
+        changed.pickNoise = pickNoise;
+        engine->setParameters(changed);
+        StereoBuffer settle(static_cast<int>(0.080 * sampleRate));
+        renderInto(*engine, settle);
+        const int heldString = TestAccess::stringForNote(*engine, heldNote);
+        engine->noteOn(ElectryEngine::firstRepickNote + heldString, 0.93f);
+        StereoBuffer result(static_cast<int>(0.050 * sampleRate));
+        renderInto(*engine, result);
+        return result;
+    };
+    const auto quietPick = renderRepick(0.0f);
+    const auto noisyPick = renderRepick(1.0f);
+    expect(normalisedDifferenceRms(quietPick.left, noisyPick.left, 0,
+                                   quietPick.size()) > 0.001,
+           "Pick Noise remained inaudible on a Hammer-latched repick");
+
+    // B0 reaches the same path on the next sample and likewise preserves the
+    // held finger while Alternate supplies the wrist direction.
+    auto automatic = makeHeld(parameters);
+    const int automaticString = TestAccess::stringForNote(*automatic, heldNote);
+    const auto beforeAutomatic = TestAccess::snapshot(*automatic,
+                                                       automaticString);
+    automatic->beginTremoloPicking(0.93f);
+    StereoBuffer automaticContact(1);
+    renderInto(*automatic, automaticContact);
+    automatic->endTremoloPicking();
+    const auto afterAutomatic = TestAccess::snapshot(*automatic,
+                                                      automaticString);
+    expect(afterAutomatic.startOrder > beforeAutomatic.startOrder
+               && afterAutomatic.playStyle == PlayStyle::Sustain
+               && afterAutomatic.strokeIsUp
+               && afterAutomatic.excitationInContact
+               && afterAutomatic.contactFeedbackGain < 1.0f
+               && automatic->getCurrentPlayStyle() == PlayStyle::Hammer
+               && sameFinger(afterAutomatic, beforeAutomatic),
+           "Hammer latch turned B0 into a finger-tap clock");
+
+    // On a held shape the same correction must enter the shared Strum
+    // scheduler, not create simultaneous per-string taps.
+    auto strummedParameters = parameters;
+    strummedParameters.strumSpreadSeconds = 0.003f;
+    ElectryEngine strummed;
+    strummed.prepare(sampleRate, 512);
+    strummed.setParameters(strummedParameters);
+    strummed.reset();
+    strummed.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    const std::array<ElectryEngine::NoteOnEvent, 2> notes {{
+        { 47, 0.82f }, { 52, 0.82f }
+    }};
+    strummed.noteOnChord(notes);
+    StereoBuffer establishChord(static_cast<int>(0.080 * sampleRate));
+    renderInto(strummed, establishChord);
+    const int lowString = TestAccess::stringForNote(strummed, 47);
+    const int highString = TestAccess::stringForNote(strummed, 52);
+    const auto lowFinger = TestAccess::snapshot(strummed, lowString);
+    strummed.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+    strummed.beginTremoloPicking(0.90f);
+    StereoBuffer scheduleChord(1);
+    renderInto(strummed, scheduleChord);
+    strummed.endTremoloPicking();
+    const auto lowPending = TestAccess::snapshot(strummed, lowString);
+    const auto highPending = TestAccess::snapshot(strummed, highString);
+    expect(lowPending.pendingRepickActive && highPending.pendingRepickActive
+               && lowPending.pendingPlayStyle == PlayStyle::Sustain
+               && highPending.pendingPlayStyle == PlayStyle::Sustain
+               && lowPending.pendingStrokeIsUp && highPending.pendingStrokeIsUp
+               && lowPending.pendingStrokeVariationState
+                      == highPending.pendingStrokeVariationState
+               && lowPending.startDelaySamples > 0
+               && highPending.startDelaySamples > 0
+               && lowPending.startDelaySamples != highPending.startDelaySamples
+               && sameFinger(lowPending, lowFinger),
+           "Hammer-latched B0 did not schedule one shared travelling pick");
+}
+
 void testAlternateStrokeSequence()
 {
     constexpr double sampleRate = 48000.0;
@@ -14351,6 +14487,7 @@ int main()
     testOverlappingSameNoteOffKeepsLatestRepickHeld();
     testHeldStringRepickKeys();
     testHeldTremoloPickingGesture();
+    testHammerLatchedRepicksUsePickingHand();
     testAlternateStrokeSequence();
     testAlternateChordSharesOneStroke();
     testChordSharesPickingHandVariation();
