@@ -12,6 +12,33 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep the bridge hand planted through legato
+
+`startExcitation()` treated every Hammer, pull-off and legato Slide as a new
+shared-hand contact even though the same function correctly classified those
+gestures as having no plectrum. After a palm-muted chord, one moving fretting
+finger therefore lifted the picking hand from the bridge, reopened its own
+string and rewrote every untouched sibling's damping.
+
+Decision: a non-plectrum fretting gesture retains an existing Palm hand. The
+target keeps Hammer or Slide as its attack descriptor, but its loop is re-solved
+at the new fret with Palm damping. It does not advance shared-hand contact
+ownership, touch sibling loops or clear their point contacts. A real later
+Sustain, Mute or Dead pick still moves the shared hand normally. Sustain-to-
+legato remains open, and a stopped finger still replaces the fretting-hand Dead
+choke as before; continuous Palm Pressure remains an independent contact.
+
+The 48 kHz regression holds Palm E1/E2, then covers an ascending hammer-on, a
+pull-off to open E1 and a legato Slide. Before the correction, the target's live
+hand-loss depth fell from 0.144489 to zero and the untouched sibling's from
+0.074465 to zero. Each case now preserves the sibling's loop gain, damping
+coefficient and both hand-depth states exactly, while a subsequent real Sustain
+pick reopens both strings. Demo 03 now explicitly picks each Hammer example's
+base note instead of inheriting the preceding catalogue style. Demo 15 adds a
+Palm-held octave hammer/pull; a score-matched render is identical through the
+finger contact at 3.11034 s, then retains 12.3 dB more high-band attenuation in
+the hammer window and 15.8 dB more in the pull-off window.
+
 ## 2026-08-27 — let a travelling pick reach the moving fret
 
 `legatoRetarget()` treated every Hammer or Slide as authority to erase the

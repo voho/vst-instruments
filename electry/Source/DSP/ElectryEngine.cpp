@@ -3329,10 +3329,25 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         return style == PlayStyle::PalmMute || style == PlayStyle::Dead
             ? style : PlayStyle::Sustain;
     };
+    // Hammer-ons, pull-offs and legato slides are fretting-hand gestures. If
+    // the picking hand is already damping the bridge, they can change one
+    // speaking length but cannot lift that hand or reopen sibling strings.
+    const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+    const bool retainsExistingPalm = ! plectrumContact
+        && lastHandContactClock_ >= 0
+        && lastHandContactPlayStyle_ == PlayStyle::PalmMute;
     const bool isLatestHandContact = engineClock_ > lastHandContactClock_
         || (engineClock_ == lastHandContactClock_
             && voice.startOrder > lastHandContactOrder_);
-    if (isLatestHandContact)
+    if (retainsExistingPalm)
+    {
+        if (wholeHandStyle(voice.dampingStyle) != PlayStyle::PalmMute)
+        {
+            configureVoiceDamping(voice, PlayStyle::PalmMute);
+            configureVoicePitch(voice, false);
+        }
+    }
+    else if (isLatestHandContact)
     {
         const bool handDampingChanged = lastHandContactClock_ >= 0
             && wholeHandStyle(lastHandContactPlayStyle_)
@@ -3383,7 +3398,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // finger already down that simply moves. This one predicate gates every
     // picking-hand contribution so the excitation, impact and stroke geometry
     // cannot disagree about whether a pick was present.
-    const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
     if (plectrumContact)
         lastPlectrumContactClock_ = engineClock_;
     // Pick Hardness is a plectrum property. Keep the established default

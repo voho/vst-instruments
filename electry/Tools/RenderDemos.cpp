@@ -363,13 +363,15 @@ Take renderPlayStyles()
         take.style(style);
         if (style == PlayStyle::Hammer)
         {
-            // Hammer-ons and pull-offs continue one sounding string, whatever
-            // the latched stroke; finish by releasing onto its open note.
+            // Pick the base explicitly, then let Hammer continue that sounding
+            // string whatever the latched stroke; finish by pulling to open.
             for (const auto pick : { PickStyle::Down, PickStyle::Up })
             {
                 take.pick(pick);
+                take.style(PlayStyle::Sustain);
                 take.noteOn(40, 0.9f);
                 take.wait(0.16);
+                take.style(PlayStyle::Hammer);
                 take.noteOn(45, 0.8f);
                 take.wait(0.22);
                 take.noteOn(43, 0.78f);
@@ -980,6 +982,22 @@ Take renderMuteAndDeadAudition()
         take.style(PlayStyle::PalmMute);
         take.pluck(28, 0.95f, 0.38, 0.16);
     }
+
+    // Keep the bridge hand planted while the fretting hand hammers and pulls
+    // the low string inside a held octave. Neither finger gesture may reopen
+    // that string or its untouched E2 partner.
+    take.wait(0.16);
+    take.style(PlayStyle::PalmMute);
+    take.chord({ 28, 40 }, 0.90f);
+    take.wait(0.18);
+    take.style(PlayStyle::Hammer);
+    take.noteOn(31, 0.82f);
+    take.wait(0.22);
+    take.noteOn(28, 0.78f);
+    take.wait(0.26);
+    take.noteOff(31);
+    take.releaseChord({ 28, 40 });
+    take.wait(0.20);
 
     take.style(PlayStyle::Dead);
     take.pluck(28, 0.95f, 0.38, 0.16);
@@ -1664,8 +1682,9 @@ const std::array<Demo, 22>& demos()
           "self-sustaining amplifier feedback",
           renderWhammyAndFeedback },
         { "15-mute-and-dead-audition.wav",
-          "the same E1 open, at three Mute depths and Dead, followed by "
-          "alternate ghost grooves with Mute Pressure off and stacked",
+          "the same E1 open, at three Mute depths, a palm-held hammer/pull, "
+          "then Dead and alternate ghost grooves with Mute Pressure off and "
+          "stacked",
           renderMuteAndDeadAudition },
         { "16-mute-and-dead-metal.wav",
           "the same rapid E1 and mixed E1/E2 scores as Mute then Dead, "

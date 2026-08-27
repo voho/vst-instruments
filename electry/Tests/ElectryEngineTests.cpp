@@ -329,6 +329,24 @@ struct ElectryEngineTestAccess
             .vertical.handLossSolvedDepth;
     }
 
+    static std::int64_t lastHandContactClock(
+        const ElectryEngine& engine) noexcept
+    {
+        return engine.lastHandContactClock_;
+    }
+
+    static std::uint64_t lastHandContactOrder(
+        const ElectryEngine& engine) noexcept
+    {
+        return engine.lastHandContactOrder_;
+    }
+
+    static PlayStyle lastHandContactPlayStyle(
+        const ElectryEngine& engine) noexcept
+    {
+        return engine.lastHandContactPlayStyle_;
+    }
+
     static bool pickupPathActive(const ElectryEngine& engine, bool neck) noexcept
     {
         return neck ? engine.neckPathActive_ : engine.bridgePathActive_;
@@ -8091,6 +8109,120 @@ void testSharedHandRetunesActiveStringDamping()
                       == palmSolvedDepth,
            "a Palm contact did not move the older open loop to the exact "
            "Palm damping target");
+
+    // Hammer-ons, pull-offs and legato slides are fretting-hand gestures. They
+    // can change one speaking length, but they cannot teleport the picking
+    // hand off the bridge or reopen any other palm-muted string.
+    struct LegatoGesture
+    {
+        PlayStyle style;
+        int fromNote;
+        int toNote;
+        const char* label;
+    };
+    for (const auto gesture : {
+             LegatoGesture { PlayStyle::Hammer, 28, 31, "hammer-on" },
+             LegatoGesture { PlayStyle::Hammer, 31, 28, "pull-off" },
+             LegatoGesture { PlayStyle::Slide, 28, 33, "slide" } })
+    {
+        auto legato = std::make_unique<ElectryEngine>();
+        prepare(*legato);
+        legato->noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+        const std::array<ElectryEngine::NoteOnEvent, 2> chord {{
+            { gesture.fromNote, 0.92f }, { 40, 0.88f }
+        }};
+        legato->noteOnChord(chord);
+        StereoBuffer establishPalm(static_cast<int>(0.080 * sampleRate));
+        renderInto(*legato, establishPalm);
+
+        const int movedString = TestAccess::stringForNote(
+            *legato, gesture.fromNote);
+        const int siblingString = TestAccess::stringForNote(*legato, 40);
+        const auto siblingBefore = TestAccess::snapshot(*legato, siblingString);
+        const float siblingDepthBefore = TestAccess::handLossDepth(
+            *legato, siblingString);
+        const float siblingSolvedBefore = TestAccess::solvedHandLossDepth(
+            *legato, siblingString);
+        const auto handClockBefore = TestAccess::lastHandContactClock(*legato);
+        const auto handOrderBefore = TestAccess::lastHandContactOrder(*legato);
+        expect(movedString >= 0 && siblingString >= 0
+                   && movedString != siblingString
+                   && siblingDepthBefore > 0.0f
+                   && siblingSolvedBefore > 0.0f,
+               std::string("invalid Palm-to-") + gesture.label + " fixture");
+
+        legato->noteOn(styleKeyswitch(gesture.style), 1.0f);
+        legato->noteOn(gesture.toNote, 0.82f);
+        const auto moved = TestAccess::snapshot(*legato, movedString);
+        const auto sibling = TestAccess::snapshot(*legato, siblingString);
+        expect(moved.midiNote == gesture.toNote
+                   && moved.playStyle == gesture.style
+                   && moved.dampingStyle == PlayStyle::PalmMute
+                   && TestAccess::handLossDepth(*legato, movedString) > 0.0f
+                   && TestAccess::solvedHandLossDepth(*legato, movedString)
+                          > 0.0f,
+               std::string("a ") + gesture.label
+                   + " lifted Palm damping from its target string");
+        expect(sibling.playStyle == siblingBefore.playStyle
+                   && sibling.dampingStyle == siblingBefore.dampingStyle
+                   && sibling.loopGain == siblingBefore.loopGain
+                   && sibling.loopDampingCoefficient
+                          == siblingBefore.loopDampingCoefficient
+                   && TestAccess::handLossDepth(*legato, siblingString)
+                          == siblingDepthBefore
+                   && TestAccess::solvedHandLossDepth(*legato, siblingString)
+                          == siblingSolvedBefore,
+               std::string("a ") + gesture.label
+                   + " moved the shared Palm hand off a sibling string");
+        expect(TestAccess::lastHandContactClock(*legato) == handClockBefore
+                   && TestAccess::lastHandContactOrder(*legato)
+                          == handOrderBefore
+                   && TestAccess::lastHandContactPlayStyle(*legato)
+                          == PlayStyle::PalmMute,
+               std::string("a ") + gesture.label
+                   + " claimed picking-hand contact ownership");
+
+        legato->noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        legato->noteOn(45, 0.90f);
+        expect(TestAccess::snapshot(*legato, movedString).dampingStyle
+                   == PlayStyle::Sustain
+                   && TestAccess::snapshot(*legato, siblingString).dampingStyle
+                          == PlayStyle::Sustain,
+               std::string("a real pick did not reopen strings after the ")
+                   + gesture.label);
+    }
+
+    // Palm is the one bridge-hand state a fretting gesture must retain. An
+    // open hand stays open, while pressing a Dead string replaces that local
+    // whole-fretting-hand choke just as it did before this correction.
+    for (const auto initialStyle : { PlayStyle::Sustain, PlayStyle::Dead })
+    {
+        auto control = std::make_unique<ElectryEngine>();
+        prepare(*control);
+        control->noteOn(styleKeyswitch(initialStyle), 1.0f);
+        constexpr std::array<ElectryEngine::NoteOnEvent, 2> chord {{
+            { 28, 0.92f }, { 40, 0.88f }
+        }};
+        control->noteOnChord(chord);
+        StereoBuffer establish(static_cast<int>(0.080 * sampleRate));
+        renderInto(*control, establish);
+        const int targetString = TestAccess::stringForNote(*control, 28);
+        const int siblingString = TestAccess::stringForNote(*control, 40);
+        control->noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        control->noteOn(31, 0.82f);
+        const auto target = TestAccess::snapshot(*control, targetString);
+        const auto sibling = TestAccess::snapshot(*control, siblingString);
+        expect(target.playStyle == PlayStyle::Hammer
+                   && target.dampingStyle == PlayStyle::Hammer
+                   && TestAccess::handLossDepth(*control, targetString) == 0.0f
+                   && TestAccess::lastHandContactPlayStyle(*control)
+                          == PlayStyle::Hammer,
+               "Palm retention leaked into an open/Dead hammer target");
+        expect(sibling.dampingStyle
+                   == (initialStyle == PlayStyle::Dead
+                           ? PlayStyle::Hammer : PlayStyle::Sustain),
+               "an open/Dead hammer changed its established sibling semantics");
+    }
 
     // The coefficient checks above pin the mechanism; this paired render pins
     // what it does to the old string. The new E2 is silenced immediately after
