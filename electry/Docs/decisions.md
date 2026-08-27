@@ -12,6 +12,32 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep enabled gain circuits in series
+
+Distortion and Amp are labelled as drive/amount controls, but each smoothed
+value was also the dry/wet coefficient around its complete module. The 22%
+"clean amp" in demo 20 therefore sent 78% uncabbed DI around the loudspeaker;
+even the 95% metal amp leaked 5%. A 5% Amp setting retained only 5% of the
+52 Hz input network, tube stages, transformer and cabinet, and a 5% Distortion
+setting retained only 5% of its coupling, voice and diode circuit. That is a
+parallel studio blend, not the signal path of an enabled pedal or amplifier.
+
+Decision: keep zero as the exact, cost-free bypass, but separate each gain
+control's smoothed drive from a binary module-engagement target. The existing
+15 ms smoother now moves a relay-like wet coefficient only when the control
+crosses zero; at every nonzero steady setting the signal passes through the
+whole enabled circuit. The overall 12 ms oversampling engagement ramp, private
+state resets and level-compensated drive laws remain unchanged. No parameter,
+state migration or extra signal path was added.
+
+The regression measures small-signal response at the UI's minimum 0.1% drive. Relative to
+1 kHz, the Amp still removes 22.003 dB at 8 kHz through its cabinet; the pedal
+still removes 18.182 dB at 40 Hz and 20.961 dB at 12 kHz. Each is within 0.5 dB
+of the same circuit at full drive, which a dry leak cannot satisfy. The full
+aliasing, level, transition, exact-bypass, inactive-state and eight-rate rails
+remain in force. The affected canonical demos are regenerated because this is
+an actual topology correction, not a metadata change.
+
 ## 2026-08-27 — keep dedicated repicks in the picking hand
 
 E6..B6 and B0 are explicit picking-hand commands, but a latched Hammer was

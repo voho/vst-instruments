@@ -30,7 +30,9 @@ muted phrase.
 
 The compact FX panel provides a distortion pedal, an amplifier and modelled
 cabinet, compression, lead delay and a stereo room; every effect defaults to a
-true 0 % dry setting. The pedal solves its antiparallel-diode RC circuit at
+true 0 % dry setting. Once Distortion or Amp is moved above zero it is a drive
+control around a fully connected circuit, so no uncabbed DI leaks around an
+enabled loudspeaker. The pedal solves its antiparallel-diode RC circuit at
 every oversampled step; the amplifier interpolates two dense measured-12AX7
 plate-load transfers generated from exact circuit solves during preparation.
 Both run inside an up-to-4× oversampled domain. Supply sag,
@@ -72,24 +74,24 @@ real-recording boundaries and blind-study plan live in the
 | `02-range-full-fretboard.wav` | −11.3 dBFS | +8.3 dB |
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −12.9 dBFS | +9.9 dB |
-| `05-drop-e-rhythm-amp.wav` | −14.3 dBFS | +11.3 dB |
-| `06-lead-amp-delay-room.wav` | −9.2 dBFS | +6.2 dB |
+| `05-drop-e-rhythm-amp.wav` | −12.7 dBFS | +9.7 dB |
+| `06-lead-amp-delay-room.wav` | −11.6 dBFS | +8.6 dB |
 | `07-pickups-and-tone.wav` | −11.7 dBFS | +8.7 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
 | `09-guitar-build-contrasts.wav` | −8.1 dBFS | +5.1 dB |
 | `10-velocity-dynamics.wav` | −11.6 dBFS | +8.6 dB |
 | `11-power-chords-dry.wav` | −7.9 dBFS | +4.9 dB |
-| `12-power-chords-amp.wav` | −12.9 dBFS | +9.9 dB |
-| `13-long-rhythm-arrangement.wav` | −14.4 dBFS | +11.4 dB |
-| `14-whammy-and-feedback.wav` | −13.6 dBFS | +10.6 dB |
+| `12-power-chords-amp.wav` | −12.5 dBFS | +9.5 dB |
+| `13-long-rhythm-arrangement.wav` | −13.1 dBFS | +10.1 dB |
+| `14-whammy-and-feedback.wav` | −13.0 dBFS | +10.0 dB |
 | `15-mute-and-dead-audition.wav` | −12.4 dBFS | +9.4 dB |
-| `16-mute-and-dead-metal.wav` | −14.0 dBFS | +11.0 dB |
-| `17-extended-technique-solo.wav` | −11.5 dBFS | +8.5 dB |
-| `18-syncopated-djent-study.wav` | −13.9 dBFS | +10.9 dB |
-| `19-modern-metalcore-study.wav` | −12.8 dBFS | +9.8 dB |
-| `20-odd-meter-prog-study.wav` | −8.8 dBFS | +5.8 dB |
-| `21-blues-rock-lead-study.wav` | −11.0 dBFS | +8.0 dB |
-| `22-tremolo-picking-study.wav` | −13.5 dBFS | +10.5 dB |
+| `16-mute-and-dead-metal.wav` | −13.6 dBFS | +10.6 dB |
+| `17-extended-technique-solo.wav` | −12.1 dBFS | +9.1 dB |
+| `18-syncopated-djent-study.wav` | −12.4 dBFS | +9.4 dB |
+| `19-modern-metalcore-study.wav` | −12.5 dBFS | +9.5 dB |
+| `20-odd-meter-prog-study.wav` | +0.8 dBFS | −3.8 dB |
+| `21-blues-rock-lead-study.wav` | −9.5 dBFS | +6.5 dB |
+| `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
 <!-- peaks-table-end -->
 
 `15-mute-and-dead-audition.wav` is the quickest dry vocabulary check: the same
@@ -819,10 +821,14 @@ every platform rather than only inside a host.
   alias-generating content is removed before decimation rather than after it.
   This replaces a single one-pole low-pass, which had none of the four features
   that make a recorded metal guitar recognisable as a guitar.
-- **Level.** Each gain stage divides its own small-signal gain back out, so
-  reaching for the amp control is a change of tone rather than a jump in level;
-  a saturating stage still ends up a few decibels louder than the dry DI,
-  because compressing a signal raises its average.
+- **Level and topology.** Each gain stage divides its own small-signal gain
+  back out, so reaching for a drive control is a change of tone rather than a
+  jump in level; a saturating stage still ends up a few decibels louder than
+  the dry DI because compressing a signal raises its average. Zero remains an
+  exact bypass, but any nonzero steady Distortion or Amp setting places the
+  whole circuit in series. The 15 ms engagement crossfade exists only while a
+  control crosses zero; it is not a permanent dry blend around the diode node,
+  transformer or cabinet.
 - **Compressor, delay, room.** The compressor eases into roughly 3.5:1 above
   -20 dBFS through a soft knee, with makeup, so a palm-muted part sits still
   instead of the level grabbing at every pick attack. The 360 ms lead delay
@@ -830,10 +836,11 @@ every platform rather than only inside a host.
   do. The room is three allpass diffusers into two damped combs per channel at
   coprime lengths, with no modulation, Haas delay or randomised phase — the
   same constraint the instrument's own stereo field obeys.
-- **Bypass and smoothing.** All five mixes are smoothed per sample rather than
-  stepped per block, and each snaps to exactly zero, so a control left at zero
-  is a bit-exact dry bypass — verified by the regression suite — while engaging
-  or disengaging the gain block is crossfaded and cannot click.
+- **Bypass and smoothing.** All five controls are smoothed per sample rather
+  than stepped per block, and each snaps to exactly zero, so a control left at
+  zero is a bit-exact dry bypass — verified by the regression suite — while
+  engaging or disengaging either gain circuit and its oversampled block is
+  crossfaded and cannot click.
 - **Cost.** Stereo on an Apple M1 Max, best of three six-second runs at 48 kHz:
   0.002x realtime in bypass, 0.075x for Distortion alone, 0.025x for Amp alone,
   0.086x for the demonstrated 45% Distortion / 95% Amp metal chain, and 0.089x
@@ -925,8 +932,8 @@ output-mode changes crossfade over roughly 4 ms.
 | 15 | `output` | Output level | -24..+6 dB, default -6 dB |
 | 16 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
 | 17 | `outputMode` | Output mode | **Mono** / Stereo divided-pickup field / Double independent performances |
-| 18 | `distortion` | Distortion | dry..oversampled circuit-solved RC diode stage, default 0% |
-| 19 | `amp` | Amp simulation | dry..oversampled measured-12AX7 plate-load stages into the modelled cabinet, default 0% |
+| 18 | `distortion` | Distortion | bypass at 0%; otherwise drive through the fully connected oversampled RC diode circuit, default 0% |
+| 19 | `amp` | Amp simulation | bypass at 0%; otherwise drive through the fully connected measured-12AX7, transformer and cabinet path, default 0% |
 | 20 | `compressor` | Compressor | dry..fast rhythm levelling, default 0% |
 | 21 | `delay` | Delay | dry..360 ms lead delay, default 0% |
 | 22 | `room` | Room | dry..compact stereo ambience, default 0% |
@@ -1088,7 +1095,9 @@ with Alternate advance, Pick Noise, shared stroke state and Strum travel while
 the Hammer latch and live fretting finger remain unchanged;
 channel pressure and polyphonic aftertouch remaining pitch-neutral;
 hostile parameter and performance
-input safety; and a portable CPU ceiling with the eight-string render ratio
+input safety; low Distortion and Amp drive retaining the same physical input,
+voice and cabinet response as full drive instead of leaking dry DI around an
+enabled module; and a portable CPU ceiling with the eight-string render ratio
 printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
 Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
 physical low/high string orientation, coherent fold-down, bounded side level,
@@ -1239,6 +1248,19 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-27 series-connected gain circuits
+
+- Distortion and Amp used their drive value as a permanent parallel dry/wet
+  mix. Demo 20's 22% clean amp therefore bypassed its own loudspeaker with 78%
+  uncabbed DI, and the 95% metal rig still leaked 5% around the cabinet.
+- Zero remains the exact, cost-free bypass. At any nonzero steady setting the
+  whole pedal or amplifier is now in series; the knob changes drive, and the
+  existing 15 ms ramp acts only as a click-free relay when crossing zero.
+- At the UI's minimum 0.1% drive, the amp's 8 kHz response remains 22.003 dB below 1 kHz and the
+  pedal remains 18.182 dB down at 40 Hz and 20.961 dB down at 12 kHz, each
+  within 0.5 dB of its full-drive circuit response. Exact bypass, aliasing,
+  level, lifecycle, transition and sample-rate rails still pass.
 
 ### 2026-08-27 Hammer-latched dedicated repicks
 

@@ -60,9 +60,9 @@ struct ElectryFxTestAccess
         return fx.sampleRate_;
     }
 
-    // The five mix targets exactly as setParameters() sanitised them, before
-    // the per-sample smoothing that would otherwise blend the guard's output
-    // with whatever mix was in effect before the call.
+    // The five control targets exactly as setParameters() sanitised them,
+    // before per-sample smoothing would blend the guard's output with the
+    // value in effect before the call.
     static FxParameters targetParameters(const ElectryFx& fx) noexcept
     {
         return fx.targetParameters_;
@@ -363,14 +363,16 @@ double aliasFloorDb(float distortion, float amp, double amplitude)
                              / std::max(harmonic, 1.0e-30));
 }
 
-// Small-signal magnitude of the amplifier path in decibels, which reads the
-// cabinet's voicing directly.
-double ampPathMagnitudeDb(double frequency)
+// Small-signal magnitude of either gain path in decibels. At this level the
+// nonlinearities stay near their local slope, so ratios between frequencies
+// read the physical coupling/voice/cabinet filters rather than clipping.
+double gainPathMagnitudeDb(double frequency, float distortion, float amp)
 {
     ElectryFx fx;
     fx.prepare(sampleRate);
     FxParameters parameters;
-    parameters.amp = 1.0f;
+    parameters.distortion = distortion;
+    parameters.amp = amp;
     fx.setParameters(parameters);
 
     constexpr int blockLength = 8192;
@@ -400,6 +402,16 @@ double ampPathMagnitudeDb(double frequency)
     const double rms = std::sqrt(sum / (blockLength / 2));
     return 20.0 * std::log10(std::max(rms, 1.0e-30)
                              / (amplitude / std::sqrt(2.0)));
+}
+
+double ampPathMagnitudeDb(double frequency, float amount = 1.0f)
+{
+    return gainPathMagnitudeDb(frequency, 0.0f, amount);
+}
+
+double pedalPathMagnitudeDb(double frequency, float amount = 1.0f)
+{
+    return gainPathMagnitudeDb(frequency, amount, 0.0f);
 }
 
 // A loud Drop-E rhythm figure straight from the string model, so the chain is
@@ -951,6 +963,33 @@ void testCabinetVoicing()
            "the cabinet's top-end roll-off is not steep enough");
 }
 
+void testEnabledGainModulesStayInCircuit()
+{
+    // Distortion and Amp are drive knobs, not parallel blend controls. Once a
+    // module is enabled, even the UI's minimum 0.1% detent must retain the
+    // same coupling/voice filters and (for the amp) the speaker cabinet. The
+    // old setting leaked 99.9% unfiltered DI and measured almost flat.
+    constexpr float minimumDrive = 0.001f;
+    const double ampReference = ampPathMagnitudeDb(1000.0, minimumDrive);
+    const double ampTop = ampPathMagnitudeDb(8000.0, minimumDrive) - ampReference;
+    const double fullAmpTop = ampPathMagnitudeDb(8000.0) - ampPathMagnitudeDb(1000.0);
+    const double pedalReference = pedalPathMagnitudeDb(1000.0, minimumDrive);
+    const double pedalLow = pedalPathMagnitudeDb(40.0, minimumDrive) - pedalReference;
+    const double pedalTop = pedalPathMagnitudeDb(12000.0, minimumDrive) - pedalReference;
+    const double fullPedalLow = pedalPathMagnitudeDb(40.0) - pedalPathMagnitudeDb(1000.0);
+    const double fullPedalTop = pedalPathMagnitudeDb(12000.0) - pedalPathMagnitudeDb(1000.0);
+
+    std::cout << "Enabled 0.1% paths relative to 1 kHz: amp 8 kHz "
+              << ampTop << " dB, pedal 40 Hz " << pedalLow
+              << " dB, pedal 12 kHz " << pedalTop << " dB\n";
+    expect(ampTop < -15.0 && std::abs(ampTop - fullAmpTop) < 0.5,
+           "a low Amp setting leaked dry DI around the cabinet");
+    expect(pedalLow < -8.0 && pedalTop < -8.0
+               && std::abs(pedalLow - fullPedalLow) < 0.5
+               && std::abs(pedalTop - fullPedalTop) < 0.5,
+           "a low Distortion setting leaked dry DI around the pedal circuit");
+}
+
 // The back half of the amplifier: a supply that droops under load and an
 // output transformer whose core saturates on volt-seconds rather than on
 // volts. Both are level- and time-dependent, so both are measured on how the
@@ -1340,7 +1379,7 @@ void testEngagementIsClickFree()
            "the chain does not return to a bit-exact bypass");
 
     // Turning only the amp off now skips its private tube/filter state while
-    // the distortion pedal stays live. Its 15 ms wet-mix ramp must make the
+    // the distortion pedal stays live. Its 15 ms relay ramp must make the
     // later cold-state re-entry just as smooth as an ordinary automation move.
     ElectryFx switched;
     switched.prepare(sampleRate);
@@ -1568,7 +1607,7 @@ void testPrepareSanitisesSampleRate()
            "a sanitised prepare() sample rate produced non-finite audio");
 }
 
-// setParameters() runs each of the five mix controls through sanitiseMix(): a
+// setParameters() runs each of the five panel controls through sanitiseMix(): a
 // non-finite value falls back to 0.0, then the result is clamped to 0..1.
 // testHostileInput only ever checked that the guard kept the chain finite,
 // never the sanitised value itself, so a clamp landing on the wrong boundary
@@ -1632,6 +1671,7 @@ int main()
     testCircuitGainStages();
     testGainStageAliasing();
     testCabinetVoicing();
+    testEnabledGainModulesStayInCircuit();
     testPowerStage();
     testChainLevelMatching();
     testDelayAndRoom();

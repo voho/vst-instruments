@@ -302,9 +302,10 @@ void ElectryFx::prepare(double sampleRate)
     // perform thread-safe static initialisation on the audio thread.
     static_cast<void>(triodeStageLookup(0.0));
 
-    // 15 ms on the five mixes and 12 ms on the gain block's engagement ramp.
-    // Both are per-sample: the previous chain read its controls once per block
-    // and stepped, which is audible as zipper noise on an automated drive.
+    // 15 ms on the five panel controls and their module relays, and 12 ms on
+    // the whole gain block's engagement ramp. All are per-sample: the previous
+    // chain read its controls once per block and stepped, which is audible as
+    // zipper noise on an automated drive.
     parameterCoefficient_ = 1.0f - std::exp(
         -1.0f / static_cast<float>(0.015 * sampleRate_));
     engagementCoefficient_ = 1.0f - std::exp(
@@ -482,8 +483,10 @@ void ElectryFx::reset() noexcept
             comb.reset();
     compressorEnvelope_ = 0.0f;
     gainEngagement_ = 0.0f;
-    distortionMix_ = targetParameters_.distortion;
-    ampMix_ = targetParameters_.amp;
+    distortionDrive_ = targetParameters_.distortion;
+    ampDrive_ = targetParameters_.amp;
+    pedalWet_ = targetParameters_.distortion > 0.0f ? 1.0f : 0.0f;
+    ampWet_ = targetParameters_.amp > 0.0f ? 1.0f : 0.0f;
     compressorMix_ = targetParameters_.compressor;
     delayMix_ = targetParameters_.delay;
     roomMix_ = targetParameters_.room;
@@ -757,9 +760,9 @@ void ElectryFx::updateDriveConstants() noexcept
     // together. The trims below hold the chain's loudness within a few
     // decibels of the dry DI across the whole travel, so auditioning the amp is
     // a change of tone rather than a jump in level.
-    pedalDrive_ = 1.0f + 24.0f * distortionMix_;
-    ampDriveFirst_ = 1.0f + 7.0f * ampMix_;
-    ampDriveSecond_ = 1.0f + 11.0f * ampMix_;
+    pedalDrive_ = 1.0f + 24.0f * distortionDrive_;
+    ampDriveFirst_ = 1.0f + 7.0f * ampDrive_;
+    ampDriveSecond_ = 1.0f + 11.0f * ampDrive_;
     // Each stage's trim divides its own small-signal gain back out, so the
     // control travels through tone rather than through level: a saturating
     // stage still ends up louder than the dry DI, because compressing a signal
@@ -854,17 +857,17 @@ float ElectryFx::renderGainFrame(GainChannel& channel, float input) noexcept
     // from the circuit's resting state rather than a tail frozen seconds ago;
     // mix smoothing brings that clean state in from an inaudible fraction.
     float result = input;
-    if (distortionMix_ > 0.0f)
+    if (pedalWet_ > 0.0f)
     {
         channel.pedalWasActive = true;
-        result = lerp(result, pedalStage(channel, result), distortionMix_);
+        result = lerp(result, pedalStage(channel, result), pedalWet_);
     }
     else if (channel.pedalWasActive)
         channel.resetPedal();
-    if (ampMix_ > 0.0f)
+    if (ampWet_ > 0.0f)
     {
         channel.ampWasActive = true;
-        result = lerp(result, ampStage(channel, result), ampMix_);
+        result = lerp(result, ampStage(channel, result), ampWet_);
     }
     else if (channel.ampWasActive)
         channel.resetAmp();
@@ -944,8 +947,10 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
 
     for (int i = 0; i < numSamples; ++i)
     {
-        smooth(distortionMix_, target.distortion);
-        smooth(ampMix_, target.amp);
+        smooth(distortionDrive_, target.distortion);
+        smooth(ampDrive_, target.amp);
+        smooth(pedalWet_, target.distortion > 0.0f ? 1.0f : 0.0f);
+        smooth(ampWet_, target.amp > 0.0f ? 1.0f : 0.0f);
         smooth(compressorMix_, target.compressor);
         smooth(delayMix_, target.delay);
         smooth(roomMix_, target.room);
@@ -982,11 +987,11 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         // The oversampled gain block. With both controls at zero it is skipped
         // outright, so the chain costs nothing and adds no group delay; while
         // it engages and disengages it is crossfaded, so it cannot click.
-        // pedalDrive_/ampDriveFirst_/ampDriveSecond_/pedalMakeup_/ampMakeup_
-        // are read only inside pedalStage()/ampStage(), reached only from
-        // here, so recomputing them is skipped along with the block itself
-        // instead of running on every sample regardless of whether either
-        // gain control is open.
+        // The two drive smoothers and their derived constants are read only
+        // inside pedalStage()/ampStage(), reached only from here, so their
+        // recomputation is skipped with the block itself. pedalWet_/ampWet_
+        // are engagement ramps, not parallel effect amounts: after the short
+        // bypass transition every enabled amp sample has passed its cabinet.
         if (gainEngagement_ > 0.0f)
         {
             updateDriveConstants();

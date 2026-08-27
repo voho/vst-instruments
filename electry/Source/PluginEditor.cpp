@@ -1325,8 +1325,10 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "amplified output may feed back into the strings. At 100% a "
            "distorted tone self-resonates with the wheel up.");
     setup (outputKnob, output, "Master output level");
-    setup (distortionKnob, distortion, "Parallel high-gain distortion drive");
-    setup (ampKnob, amp, "Saturated guitar amp and cabinet simulation");
+    setup (distortionKnob, distortion,
+           "Drive through the oversampled diode pedal; 0% is true bypass");
+    setup (ampKnob, amp,
+           "Drive through the tube, transformer and cabinet path; 0% is true bypass");
     setup (compressorKnob, compressor, "Fast levelling for tight rhythm playing");
     setup (delayKnob, delay, "Tempo-neutral 360 ms lead delay");
     setup (roomKnob, room, "Compact stereo room ambience");

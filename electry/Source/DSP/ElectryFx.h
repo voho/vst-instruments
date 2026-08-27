@@ -7,13 +7,15 @@
 namespace electry
 {
 
-// The five FX-panel controls. Every one of them is a 0..1 mix in which exactly
-// zero is a bit-exact dry bypass: no filter, no oversampler and no recirculated
-// tail reaches the output, so the authentic dry DI is always available.
+// The five FX-panel controls. Exactly zero is a bit-exact dry bypass: no
+// filter, oversampler or recirculated tail reaches the output, so the authentic
+// dry DI is always available. Distortion and Amp are drive amounts once their
+// circuits are enabled; unlike a parallel blend, an enabled amplifier always
+// keeps its cabinet between the strings and the output.
 struct FxParameters
 {
-    float distortion { 0.0f }; // pedal-style clipping ahead of the amp
-    float amp { 0.0f };        // cascaded gain stages into a modelled cabinet
+    float distortion { 0.0f }; // pedal drive ahead of the amp
+    float amp { 0.0f };        // amplifier drive into a modelled cabinet
     float compressor { 0.0f }; // fast rhythm levelling
     float delay { 0.0f };      // 360 ms lead delay with darkening repeats
     float room { 0.0f };       // compact stereo ambience
@@ -318,8 +320,10 @@ private:
     [[nodiscard]] float ampStage(GainChannel& channel, float input) noexcept;
 
     FxParameters targetParameters_ {};
-    float distortionMix_ { 0.0f };
-    float ampMix_ { 0.0f };
+    float distortionDrive_ { 0.0f };
+    float ampDrive_ { 0.0f };
+    float pedalWet_ { 0.0f };
+    float ampWet_ { 0.0f };
     float compressorMix_ { 0.0f };
     float delayMix_ { 0.0f };
     float roomMix_ { 0.0f };
