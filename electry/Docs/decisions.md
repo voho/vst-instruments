@@ -12,6 +12,39 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — select complete amplifier families, not post-EQ presets
+
+One high-gain path could not provide a convincing clean American response, a
+British crunch transition and Electry's established tight metal voice by
+changing one drive law or placing EQ after a shared clipper. Decision: append
+one `ampModel` choice and give each selection independent recursive preamp,
+output, sag, transformer and six-section speaker/cabinet state. Crossfade the
+complete paths with a 15 ms exponential smoothing time constant during a
+change, then clear the faded circuit after its weight settles and run only the
+selected one. Keep the default Modern and explicitly migrate a
+development state that lacks the new field to Modern; the first 27 host indices
+do not move.
+
+American and British use the exact third-order Yeh/Smith unloaded passive tone
+stack for documented component families. All voices reuse the existing dense
+measured-12AX7 load-line table. The two new output sections evaluate that same
+triode curve on opposed drives, with a deliberately small British imbalance,
+causal output-derived negative feedback, independent supply followers and
+transformer-flux states. Their output pair is an approximation: it is not a
+phase-splitter, 6L6, EL34 or pentode solve. The six-section speaker/cabinet
+responses are parametric voices, not loudspeaker mechanics, impulse responses,
+microphones or rooms. These boundaries stay visible rather than borrowing the
+identity of a cited Fender-, Marshall- or 6505-family product.
+
+The existing Modern arithmetic remains a dedicated branch so its output and
+demos 01–22 stay byte-identical. At 90% Amp, the same Drop-E fixture measures
++2.98/+4.81/+5.87 dB gain across American/British/Modern, while the loud-versus-
+quiet compression ordering is −5.59/−10.80/−18.33 dB. All three stay below
+−61 dB on the alias probe and within 0.05 dB from 48 to 384 kHz on the pinned
+2.8 kHz/1 kHz response. Demo 23 uses a fresh instance for each model and one
+global normalisation so the comparison does not hide their nonlinear level
+behaviour.
+
 ## 2026-08-27 — keep enabled gain circuits in series
 
 Distortion and Amp are labelled as drive/amount controls, but each smoothed
@@ -24,14 +57,15 @@ parallel studio blend, not the signal path of an enabled pedal or amplifier.
 
 Decision: keep zero as the exact, cost-free bypass, but separate each gain
 control's smoothed drive from a binary module-engagement target. The existing
-15 ms smoother now moves a relay-like wet coefficient only when the control
+15 ms exponential smoother now moves a relay-like wet coefficient only when the control
 crosses zero; at every nonzero steady setting the signal passes through the
 whole enabled circuit. The overall 12 ms oversampling engagement ramp, private
 state resets and level-compensated drive laws remain unchanged. No parameter,
 state migration or extra signal path was added.
 
-The regression measures small-signal response at the UI's minimum 0.1% drive. Relative to
-1 kHz, the Amp still removes 22.003 dB at 8 kHz through its cabinet; the pedal
+The regression measures small-signal response at the UI's minimum 0.1% drive.
+Relative to 1 kHz, the then-sole Amp path—now Modern High-Gain—still removes
+22.003 dB at 8 kHz through its cabinet; the pedal
 still removes 18.182 dB at 40 Hz and 20.961 dB at 12 kHz. Each is within 0.5 dB
 of the same circuit at full drive, which a dry leak cannot satisfy. The full
 aliasing, level, transition, exact-bypass, inactive-state and eight-rate rails

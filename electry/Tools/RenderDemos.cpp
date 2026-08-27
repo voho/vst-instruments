@@ -29,6 +29,7 @@ namespace
 {
 using electry::ElectryEngine;
 using electry::ElectryFx;
+using electry::AmpModel;
 using electry::EngineParameters;
 using electry::FxParameters;
 using electry::OutputMode;
@@ -252,6 +253,12 @@ public:
             sample *= gain;
         for (auto& sample : right_)
             sample *= gain;
+    }
+
+    void append(const Take& other)
+    {
+        left_.insert(left_.end(), other.left_.begin(), other.left_.end());
+        right_.insert(right_.end(), other.right_.begin(), other.right_.end());
     }
 
     void fadeOut(double seconds) noexcept
@@ -1082,6 +1089,69 @@ void playPowerChordHit(Take& take, int root, float velocity, double length,
     take.wait(length * 0.14);
 }
 
+// One identical compact performance through each fresh amplifier. Keeping the
+// phrase and every continuous setting fixed makes model topology the only
+// variable; the leading rest each Take supplies separates the three renders.
+void playAmpVoicePhrase(Take& take)
+{
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::Sustain);
+    for (const float velocity : { 0.34f, 0.58f, 0.80f, 1.0f })
+        take.pluck(40, velocity, 0.16, 0.07);
+
+    playPowerChordHit(take, 28, 0.72f, 0.58, PlayStyle::Sustain);
+    playPowerChordHit(take, 31, 0.98f, 0.58, PlayStyle::Sustain);
+
+    take.style(PlayStyle::PalmMute);
+    static constexpr std::array<int, 8> chugs {{
+        28, 28, 31, 28, 28, 30, 28, 33
+    }};
+    for (std::size_t hit = 0; hit < chugs.size(); ++hit)
+        take.pluck(chugs[hit], hit == 0 || hit == 6 ? 1.0f : 0.82f,
+                   0.085, 0.055);
+
+    playPowerChordHit(take, 28, 1.0f, 0.52, PlayStyle::Sustain);
+    static constexpr std::array<int, 8> lead {{
+        64, 67, 69, 71, 74, 71, 69, 67
+    }};
+    playPickedRun(take, lead, 0.105, 0.82f);
+
+    take.style(PlayStyle::Sustain);
+    take.noteOn(69, 0.94f);
+    take.wait(0.24);
+    take.pitchBend(0.5f);
+    take.wait(0.38);
+    take.pitchBend(0.0f);
+    take.vibrato(0.46f);
+    take.wait(0.62);
+    take.vibrato(0.0f);
+    take.noteOff(69);
+    take.wait(0.75);
+    take.fadeOut(0.35);
+}
+
+Take renderAmpVoice(AmpModel model)
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.strumSpreadSeconds = 0.004f;
+    parameters.sympatheticAmount = 0.18f;
+
+    FxParameters fx;
+    fx.ampModel = model;
+    fx.amp = 0.90f;
+    Take take(parameters, fx, false);
+    playAmpVoicePhrase(take);
+    return take;
+}
+
+Take renderAmpVoices()
+{
+    auto take = renderAmpVoice(AmpModel::AmericanClean);
+    take.append(renderAmpVoice(AmpModel::BritishCrunch));
+    take.append(renderAmpVoice(AmpModel::ModernHighGain));
+    return take;
+}
+
 // A long, deliberately exposed lead performance rather than a test sweep. It
 // visits every play style in a musical order, surrounds the fast passages with
 // space, and gives the slide and vibrato enough time to be heard as gestures.
@@ -1640,9 +1710,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 22>& demos()
+const std::array<Demo, 23>& demos()
 {
-    static const std::array<Demo, 22> table {{
+    static const std::array<Demo, 23> table {{
         { "01-range-open-strings.wav",
           "the eight open strings, then all of them ringing together",
           renderOpenStrings },
@@ -1727,6 +1797,10 @@ const std::array<Demo, 22>& demos()
           "the visible B0 tremolo-picking gesture at 8, 12 and 16 strokes/s, "
           "then a pre-held entrance, vibrato lead and in-flight chord slide",
           renderTremoloPickingStudy },
+        { "23-amp-voices.wav",
+          "one identical dynamic phrase through fresh American clean, British "
+          "crunch and modern high-gain amplifier chains",
+          renderAmpVoices },
     }};
     return table;
 }

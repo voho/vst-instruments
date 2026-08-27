@@ -7,7 +7,19 @@
 namespace electry
 {
 
-// The five FX-panel controls. Exactly zero is a bit-exact dry bypass: no
+// Three complete amplifier and loudspeaker paths. The names describe circuit
+// families rather than claiming an emulation of a particular trademarked
+// product: a wide, feedback-controlled American combo; a mid-forward British
+// head and closed cabinet; and Electry's original tight modern metal stack.
+enum class AmpModel
+{
+    AmericanClean = 0,
+    BritishCrunch = 1,
+    ModernHighGain = 2,
+};
+
+// The five FX amount controls plus the Amp Voice selector. Exactly zero is a
+// bit-exact dry bypass for each amount: no
 // filter, oversampler or recirculated tail reaches the output, so the authentic
 // dry DI is always available. Distortion and Amp are drive amounts once their
 // circuits are enabled; unlike a parallel blend, an enabled amplifier always
@@ -16,6 +28,7 @@ struct FxParameters
 {
     float distortion { 0.0f }; // pedal drive ahead of the amp
     float amp { 0.0f };        // amplifier drive into a modelled cabinet
+    AmpModel ampModel { AmpModel::ModernHighGain };
     float compressor { 0.0f }; // fast rhythm levelling
     float delay { 0.0f };      // 360 ms lead delay with darkening repeats
     float room { 0.0f };       // compact stereo ambience
@@ -70,11 +83,10 @@ private:
     static constexpr double minimumSampleRate = 8000.0;
     static constexpr double maximumSampleRate = 384000.0;
 
-    // Double coefficients and double state. The cabinet's 82 Hz high-pass can
-    // be asked to run at 1.5 MHz on a fast host with the gain stage
-    // oversampled, where float coefficient cancellation would materially move
-    // its corner; the string engine's modal bank uses double for the same
-    // reason.
+    // Double coefficients and double state. The speaker/cabinet voices' low
+    // high-pass corners are evaluated as high as 384 kHz; float coefficient
+    // cancellation would materially move them, so the string engine's modal
+    // bank uses double for the same reason.
     struct Biquad
     {
         double b0 { 1.0 }, b1 { 0.0 }, b2 { 0.0 }, a1 { 0.0 }, a2 { 0.0 };
@@ -106,6 +118,32 @@ private:
         {
             state += (1.0f - coefficient) * (input - state);
             return state;
+        }
+    };
+
+    // Exact bilinear transform of the third-order passive tone-stack transfer
+    // derived by Yeh and Smith. Coefficients and state stay in double because
+    // the analogue RC time constants map to tightly clustered poles when the
+    // circuit runs at Electry's 192-384 kHz nonlinear-stage rate.
+    struct ToneStack
+    {
+        double b0 { 1.0 }, b1 { 0.0 }, b2 { 0.0 }, b3 { 0.0 };
+        double a1 { 0.0 }, a2 { 0.0 }, a3 { 0.0 };
+        double z1 { 0.0 }, z2 { 0.0 }, z3 { 0.0 };
+
+        void reset() noexcept { z1 = z2 = z3 = 0.0; }
+        void design(double c1, double c2, double c3,
+                    double r1, double r2, double r3, double r4,
+                    double treble, double middle, double bass,
+                    double sampleRate) noexcept;
+        float process(float input) noexcept
+        {
+            const double x = static_cast<double>(input);
+            const double output = b0 * x + z1;
+            z1 = b1 * x - a1 * output + z2;
+            z2 = b2 * x - a2 * output + z3;
+            z3 = b3 * x - a3 * output;
+            return static_cast<float>(output);
         }
     };
 
@@ -234,6 +272,27 @@ private:
         }
     };
 
+    // One complete amplifier path. Every model owns its recursive state and
+    // its already-designed coefficients, so changing model never rewrites a
+    // live filter on the audio thread. During the short switch crossfade the
+    // old and new circuits simply run beside one another.
+    struct AmpChannel
+    {
+        Biquad inputHighpass {};
+        Biquad inputVoice {};
+        OnePole interstage {};
+        ToneStack toneStack {};
+        float bias { 0.0f };
+        float sag { 0.0f };
+        Biquad transformerHighpass {};
+        OnePole flux {};
+        OnePole negativeFeedback {};
+        std::array<Biquad, 6> cabinet {};
+        bool wasActive { false };
+
+        void reset() noexcept;
+    };
+
     // Everything the oversampled gain block needs for one channel.
     struct GainChannel
     {
@@ -250,33 +309,7 @@ private:
         double diodeDerivative { 0.0 };
         bool pedalWasActive { false };
 
-        Biquad ampHighpass {};
-        Biquad ampVoice {};
-        OnePole interstage {};
-        float bias { 0.0f };
-
-        // The power stage's supply rail. A loud passage draws current the
-        // supply cannot hold up, so the plate voltage droops - measured on
-        // real amplifiers from around 350 V to around 250 V within a tenth of
-        // a second, recovering over three to six tenths - and the stage's
-        // headroom goes with it. The follower is deliberately asymmetric: the
-        // reservoir discharges far faster than it recharges.
-        float sag { 0.0f };
-
-        // The output transformer. A core saturates at a flux limit, and flux
-        // is the integral of the voltage, so the limit is a volt-second limit
-        // and the low end reaches it first at the same level. `flux` is a
-        // one-pole at the primary-inductance corner - unity at DC, falling as
-        // 1/f above it, which is that integral normalised - and what the core
-        // cannot carry is subtracted back out of the signal, so the stage is
-        // transparent well above the corner and compresses and thickens
-        // underneath it. The high-pass in front of it is the transformer's own
-        // inability to pass DC, and it also keeps the bias drift's residue out
-        // of the flux.
-        Biquad transformerHighpass {};
-        OnePole flux {};
-
-        std::array<Biquad, 6> cabinet {};
+        std::array<AmpChannel, 3> amplifiers {};
         bool ampWasActive { false };
 
         void resetPedal() noexcept;
@@ -317,13 +350,17 @@ private:
     [[nodiscard]] float renderGainFrame(GainChannel& channel,
                                         float input) noexcept;
     [[nodiscard]] float pedalStage(GainChannel& channel, float input) noexcept;
-    [[nodiscard]] float ampStage(GainChannel& channel, float input) noexcept;
+    [[nodiscard]] float ampStage(AmpChannel& channel, AmpModel model,
+                                 float input) noexcept;
+    [[nodiscard]] float blendedAmpStage(GainChannel& channel,
+                                        float input) noexcept;
 
     FxParameters targetParameters_ {};
     float distortionDrive_ { 0.0f };
     float ampDrive_ { 0.0f };
     float pedalWet_ { 0.0f };
     float ampWet_ { 0.0f };
+    std::array<float, 3> ampModelWeights_ { 0.0f, 0.0f, 1.0f };
     float compressorMix_ { 0.0f };
     float delayMix_ { 0.0f };
     float roomMix_ { 0.0f };
@@ -333,9 +370,9 @@ private:
     // per channel per oversampled frame.
     float pedalDrive_ { 1.0f };
     float pedalMakeup_ { 1.0f };
-    float ampDriveFirst_ { 1.0f };
-    float ampDriveSecond_ { 1.0f };
-    float ampMakeup_ { 1.0f };
+    std::array<float, 3> ampDriveFirst_ { 1.0f, 1.0f, 1.0f };
+    std::array<float, 3> ampDriveSecond_ { 1.0f, 1.0f, 1.0f };
+    std::array<float, 3> ampMakeup_ { 1.0f, 1.0f, 1.0f };
 
     double sampleRate_ { 48000.0 };
     // A fast host already carries the bandwidth the gain stages need, so it is
@@ -346,11 +383,12 @@ private:
     float oversampledRate_ { 192000.0f };
     float parameterCoefficient_ { 0.01f };
     float engagementCoefficient_ { 0.02f };
-    float interstageCoefficient_ { 0.5f };
+    std::array<float, 3> interstageCoefficient_ { 0.5f, 0.5f, 0.5f };
     float biasCoefficient_ { 0.001f };
-    float sagAttack_ { 0.001f };
-    float sagRelease_ { 0.0001f };
-    float fluxCoefficient_ { 0.99f };
+    std::array<float, 3> sagAttack_ { 0.001f, 0.001f, 0.001f };
+    std::array<float, 3> sagRelease_ { 0.0001f, 0.0001f, 0.0001f };
+    std::array<float, 3> fluxCoefficient_ { 0.99f, 0.99f, 0.99f };
+    std::array<float, 3> feedbackCoefficient_ { 0.5f, 0.5f, 0.5f };
     float compressorAttack_ { 0.0f };
     float compressorRelease_ { 0.0f };
     float compressorEnvelope_ { 0.0f };

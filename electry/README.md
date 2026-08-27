@@ -28,17 +28,22 @@ only while its key is held, then return to the visible base choice. Any stroke
 can therefore drive any style without programming an Open switch around every
 muted phrase.
 
-The compact FX panel provides a distortion pedal, an amplifier and modelled
-cabinet, compression, lead delay and a stereo room; every effect defaults to a
-true 0 % dry setting. Once Distortion or Amp is moved above zero it is a drive
-control around a fully connected circuit, so no uncabbed DI leaks around an
-enabled loudspeaker. The pedal solves its antiparallel-diode RC circuit at
-every oversampled step; the amplifier interpolates two dense measured-12AX7
-plate-load transfers generated from exact circuit solves during preparation.
-Both run inside an up-to-4× oversampled domain. Supply sag,
-output-transformer core saturation and the
-filter-modelled cabinet remain downstream, so a high-gain metal tone saturates
-instead of folding its own harmonics back into the guitar band. Mono is the
+The compact FX panel provides five amount controls plus an **Amp Voice**
+selector: a distortion pedal; American Clean, British Crunch and Modern
+High-Gain amplifier/cabinet paths; compression; lead delay; and a stereo room.
+Every amount defaults to a true 0 % dry setting. Once Distortion or Amp is moved
+above zero it is a drive control around a fully connected circuit, so no
+uncabbed DI leaks around an enabled loudspeaker. The pedal solves its
+antiparallel-diode RC circuit at every oversampled step. All three amplifiers
+use dense measured-12AX7 plate-load transfers generated from exact circuit
+solves; the American and British paths add exact third-order passive RC tone
+stacks, model-specific opposed-output-stage approximations, negative feedback,
+sag, transformer flux and six-section speaker/cabinet voicing. The Modern path
+retains Electry's established metal circuit and output sample-for-sample.
+The nonlinear blocks run inside an up-to-4× oversampled domain, so a high-gain
+tone saturates instead of folding its own harmonics back into the guitar band.
+These are meticulously bounded circuit-derived families, not capture-accurate
+replicas of named amplifiers, power tubes, microphones or rooms. Mono is the
 authentic summed dry DI; Stereo is one engine's
 phase-coherent divided-pickup view of the eight physical strings; Double is two
 separately seeded deterministic Electry performances, one per channel, with
@@ -54,14 +59,14 @@ to be a capture-accurate clone of any one instrument.
 
 ## Audio demos
 
-Twenty-two takes, rendered by [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp)
+Twenty-three takes, rendered by [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp)
 from the same JUCE-free code the plug-in runs: the full playable range, every
 pick-stroke and play style, dry and amplified rhythm, lead tone, pickup and
 tone contrasts, sympathetic strum, guitar-build contrasts, velocity dynamics,
 power chords, a long arrangement, the pitch-bend and feedback wheels, a focused
 dry Sustain/Mute/Dead audition, a matched high-gain Mute/Dead comparison, an
-extended all-technique solo, four original genre studies and a tremolo-picking
-study. They are
+extended all-technique solo, four original genre studies, a tremolo-picking
+study and one level-matched three-amp comparison. They are
 demonstrations, not evidence — an audible example is not a measurement, and
 none of the claims below rest on them. The reproducible ten-probe model renderer,
 real-recording boundaries and blind-study plan live in the
@@ -92,6 +97,7 @@ real-recording boundaries and blind-study plan live in the
 | `20-odd-meter-prog-study.wav` | +0.8 dBFS | −3.8 dB |
 | `21-blues-rock-lead-study.wav` | −9.5 dBFS | +6.5 dB |
 | `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
+| `23-amp-voices.wav` | −12.2 dBFS | +9.2 dB |
 <!-- peaks-table-end -->
 
 `15-mute-and-dead-audition.wav` is the quickest dry vocabulary check: the same
@@ -131,7 +137,17 @@ retargets the reserved low-string contact to the moving fret without stealing
 the stroke from the other strings. Those three anchors equal sixteenth notes at
 120, 180 and 240 BPM.
 
-They are original Electry studies, not endorsements or artist sound-alikes.
+`23-amp-voices.wav` sends the same deterministic Drop-E performance through
+three fresh FX instances in order: American Clean, British Crunch and Modern
+High-Gain. Amp remains at 90%, every other performance and FX setting is held
+fixed, each segment has the same duration, and one gain is applied to the whole
+file. The phrase moves from two power chords through chugs and a ringing chord
+to a bent, vibrato lead, exposing response and nonlinear dynamics rather than a
+level-matched succession of unrelated presets. Existing amplified demos 05–22
+retain the sample-identical Modern path.
+
+Files 18–22 are original Electry studies, not endorsements or artist
+sound-alikes.
 The finger-vibrato moments in files 06, 17, 21 and 22 use the same model available
 from the visible A#0 **VIB** key. Hold it before or while a physically held
 stopped note rings; pre-held intent waits for the finger to land, and velocity
@@ -141,13 +157,14 @@ aftertouch cannot bend a chord by surprise.
 ## Factory rigs and quick start
 
 The editor's **RIG** selector provides three deterministic starting points and
-sets all 27 host parameters, so it cannot inherit a forgotten control from the
+sets all 28 host parameters, so it cannot inherit a forgotten control from the
 previous patch. Rigs deliberately leave Pick Stroke, the base Play Style and
 the `LATCH | HOLD` choice alone.
 
 - **Factory Default:** the dry Drop-E guitar documented in the parameter table.
-- **Drop-E Metal:** the demonstrated 45% distortion / 95% amp / 60%
-  compressor chain and tight rhythm setup used by the matched Mute/Dead demo.
+- **Drop-E Metal:** the demonstrated 45% distortion / 95% Modern High-Gain amp /
+  60% compressor chain and tight rhythm setup used by the matched Mute/Dead
+  demo.
 - **Mute / Dead DI:** dry, +6 dB, hard near-bridge pick, no sympathetic ring
   and middle Mute Tightness, exposing the two hand contacts without an amp.
 
@@ -749,9 +766,11 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
 
 ### Amplifier chain
 
-The five FX controls run in the same JUCE-free library as the string model
-(`Source/DSP/ElectryFx.*`), so the complete signal path is regression tested on
-every platform rather than only inside a host.
+The five FX amount controls and three-choice Amp Voice selector run in the same
+JUCE-free library as the string model (`Source/DSP/ElectryFx.*`), so the
+complete signal path is regression tested on every platform rather than only
+inside a host. Amp Voice selects a complete nonlinear amplifier and
+speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
 
 - **Oversampled clipping.** The distortion pedal and the amplifier run inside a
   4x oversampled domain, reached through two cascaded Kaiser-windowed halfband
@@ -760,7 +779,7 @@ every platform rather than only inside a host.
   the guitar band, and that folded intermodulation is most of what makes a
   modelled high-gain tone read as digital: across pedal, amplifier, stacked
   and quiet-amplifier steady-tone probes, the current non-harmonic floor is
-  -61.8 to -72.3 dB; the previous host-rate chain measured -28 to -40 dB on
+  -61.3 to -77.1 dB; the previous host-rate chain measured -28 to -40 dB on
   the same class of probes. Above 96 kHz one halfband stage is
   dropped and above 192 kHz both are, because a host already running that fast
   supplies the bandwidth the stages need. While the block is engaged it adds
@@ -776,7 +795,18 @@ every platform rather than only inside a host.
   end of a Drop-E eighth string into the clipping node turns the fundamental
   into intermodulation mud instead of a note, so the input and voice filters
   remain part of Electry's metal voicing.
-- **Voiced for the eighth string.** The input stage passes the whole Drop-E
+- **Three circuit families.** American Clean uses a mid-1960s American
+  component family (250 pF / 100 nF / 47 nF capacitors, 100 kOhm slope resistor
+  and fixed 6.8 kOhm mid leg); British Crunch uses a late British family
+  (500 pF / 22 nF / 22 nF, 33 kOhm slope resistor and 25 kOhm mid control).
+  The resulting unloaded third-order passive networks are evaluated from
+  [Yeh and Smith's exact symbolic transfer](https://dafx.de/paper-archive/2006/papers/p_001.pdf)
+  and bilinear transformed at the nonlinear stage's internal rate. Their
+  measured 1 kHz insertion losses at 192 kHz are −13.0058 and −5.84512 dB;
+  recovery happens before the output section, not as post-cabinet EQ. Modern
+  High-Gain deliberately retains the previous Electry path coefficient- and
+  operation-for-operation, preserving demos 01–22 byte-for-byte.
+- **Voiced for the eighth string.** The Modern input stage passes the whole Drop-E
   fundamental rather than cutting it at 84 Hz, because clipping it is what
   generates the second and third harmonics the cabinet turns into a chug's
   weight; the pre-gain mid emphasis sits at 850 Hz, above the cabinet's scoop
@@ -786,7 +816,7 @@ every platform rather than only inside a host.
   figure, a whole-file Hann spectrum from 20 Hz to 8 kHz puts 29.2% of the
   amplified energy in 80-160 Hz against 12.5% of the dry DI's, while 320-640
   Hz drops from 22.3% to 10.7%.
-- **Amplifier.** Two cascaded stages use the measured 12AX7 cathode- and
+- **Measured preamplifier.** Every voice uses the measured 12AX7 cathode- and
   grid-current equations published by
   [Dempwolf and Zölzer at DAFx-11](https://dafx.de/paper-archive/2011/Papers/76_e.pdf).
   During preparation a residual-checked bracketed Newton solve evaluates plate
@@ -794,41 +824,39 @@ every platform rather than only inside a host.
   mV grid; every oversampled step linearly interpolates that fixed memoryless
   load-line transfer with at most 0.00000072 normalized error in the regression
   sweep. A standing grid bias,
-  level-tracking bias drift and the existing interstage Miller roll-off retain
-  the asymmetric, level-dependent response and darkening of cascaded stages.
-  This is a circuit solve of the nonlinear plate-load stages, not a claim that
-  the surrounding amplifier is a complete named schematic.
-- **Power stage.** The back half of the amplifier, inside the same oversampled
-  domain. The supply sags: the current the stage draws follows its own output,
-  a follower tracks that with a 70 ms attack and a 400 ms recovery, and the
-  headroom envelope droops by up to 30%, following the cited 350 V-to-250 V
-  supply behaviour. What
-  the rail sets is the headroom rather than the gain, so the stage is
-  `droop * plateStage(u / droop)`: the small-signal slope is untouched and the
-  ceiling falls in proportion, which is why a held loud tone blooms and then
-  ducks by 1.06 dB while a quiet passage changes by only 0.03 dB, and why the level comes back
-  during a rest. The output transformer follows: a core saturates at a flux
-  limit and flux is the integral of the voltage, so the limit is a volt-second
-  limit and the low end reaches it first. A one-pole at the 45 Hz
-  primary-inductance corner is that integral normalised, what the core cannot
-  carry is subtracted back out, and a second-order high-pass in front is the
-  transformer's own inability to pass DC. Measured at the stage, a full-level
-  tone distorts at −25 dB at 48 Hz, −71 dB at 480 Hz and −131 dB at 4.8 kHz,
-  and a tone 24 dB quieter distorts 41 dB less at 48 Hz.
-- **Cabinet.** A second-order high-pass at the box frequency, a low-mid thump,
-  a scooped boxy region, a presence peak, and a fourth-order Butterworth
-  roll-off from 5 kHz, all inside the oversampled domain so the
-  alias-generating content is removed before decimation rather than after it.
-  This replaces a single one-pole low-pass, which had none of the four features
-  that make a recorded metal guitar recognisable as a guitar.
+  level-tracking bias drift and model-specific interstage roll-off retain the
+  asymmetric, level-dependent response and darkening of cascaded stages.
+- **Output dynamics.** American and British evaluate that same measured 12AX7
+  transfer on opposed drives. The balanced American pair suppresses more even
+  order content; a small British imbalance retains crunch. This is an explicit
+  push-pull approximation—not a solved 6L6, EL34, phase-splitter or pentode
+  circuit. A causal, bandwidth-limited copy of the transformer output represents
+  a secondary-side negative-feedback return, with voiced normalized coefficients
+  of 0.42 for the tighter American path and 0.12 for British. Independent supply
+  followers lower headroom by up to 20%
+  with 55/550 ms attack/recovery for American, 24% with 80/300 ms for British,
+  and the established 30% with 70/400 ms for Modern. On the pinned loud/quiet
+  probe their nonlinear gain reductions are −5.59, −10.80 and −18.33 dB,
+  respectively. These values are voiced and regression-pinned, not measured
+  component tolerances from named products.
+- **Transformer and speaker/cabinet voice.** Each path has independent
+  transformer high-pass and flux-integrating saturation state; the voiced flux
+  corners are 35, 55 and 45 Hz. Six zero-latency biquads then provide an
+  American open-combo-style broad voice, a woody British closed-stack-style
+  voice, or the Modern sealed metal thump, 430 Hz cut and 3.1 kHz presence. All
+  three end in a fourth-order loudspeaker roll-off inside the oversampled domain
+  before decimation. These are parametric response models—not cabinet impulse
+  responses, individual speaker solves, microphones or room captures.
 - **Level and topology.** Each gain stage divides its own small-signal gain
   back out, so reaching for a drive control is a change of tone rather than a
   jump in level; a saturating stage still ends up a few decibels louder than
   the dry DI because compressing a signal raises its average. Zero remains an
   exact bypass, but any nonzero steady Distortion or Amp setting places the
-  whole circuit in series. The 15 ms engagement crossfade exists only while a
-  control crosses zero; it is not a permanent dry blend around the diode node,
-  transformer or cabinet.
+  whole circuit in series. The engagement crossfade uses a 15 ms exponential
+  smoothing time constant only while a control crosses zero; it is not a
+  permanent dry blend around the diode node, transformer or cabinet. Amp Voice
+  uses the same time constant between independent recursive circuits; after the
+  weights settle only the selected circuit runs and inactive state is cleared.
 - **Compressor, delay, room.** The compressor eases into roughly 3.5:1 above
   -20 dBFS through a soft knee, with makeup, so a palm-muted part sits still
   instead of the level grabbing at every pick attack. The 360 ms lead delay
@@ -836,12 +864,13 @@ every platform rather than only inside a host.
   do. The room is three allpass diffusers into two damped combs per channel at
   coprime lengths, with no modulation, Haas delay or randomised phase — the
   same constraint the instrument's own stereo field obeys.
-- **Bypass and smoothing.** All five controls are smoothed per sample rather
+- **Bypass and smoothing.** All five amount controls are smoothed per sample rather
   than stepped per block, and each snaps to exactly zero, so a control left at
   zero is a bit-exact dry bypass — verified by the regression suite — while
   engaging or disengaging either gain circuit and its oversampled block is
   crossfaded and cannot click.
-- **Cost.** Stereo on an Apple M1 Max, best of three six-second runs at 48 kHz:
+- **Cost.** With Modern High-Gain selected, Stereo on an Apple M1 Max, best of
+  three six-second runs at 48 kHz:
   0.002x realtime in bypass, 0.075x for Distortion alone, 0.025x for Amp alone,
   0.086x for the demonstrated 45% Distortion / 95% Amp metal chain, and 0.089x
   with all five controls at maximum. At 96 kHz the corresponding metal/all-max
@@ -903,15 +932,20 @@ smaller fraction of the whole; Body Resonance is worst hit. The current
 while the lower-level material tests state the instrument they measure instead
 of inheriting the default.
 
-### 27 host parameters
+### 28 host parameters
 
 Electry is unreleased, so this development parameter layout makes no
 compatibility promise to earlier snapshots. It exposes one Guitar Build
-parameter in place of six construction axes, and one three-choice Output Mode
-parameter in place of a binary field plus a separate Double switch. Tonal
-continuous controls are smoothed inside the engine; Tremolo Rate, Strum Spread
-and Bend Time intentionally reach their schedulers directly, while pickup and
-output-mode changes crossfade over roughly 4 ms.
+parameter in place of six construction axes, one three-choice Output Mode
+parameter in place of a binary field plus a separate Double switch, and one
+three-choice Amp Voice selector. Tonal continuous controls are smoothed inside
+the engine; Tremolo Rate, Strum Spread and Bend Time intentionally reach their
+schedulers directly, pickup and output-mode changes crossfade over roughly
+4 ms, and Amp Voice crossfades independent circuit state with a 15 ms
+exponential smoothing time constant.
+The new `ampModel` field is appended, so the first 27 host indices stay fixed;
+development states that do not contain it explicitly migrate to Modern
+High-Gain.
 
 | # | ID | Name | Range and default |
 | --- | --- | --- | --- |
@@ -933,7 +967,7 @@ output-mode changes crossfade over roughly 4 ms.
 | 16 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
 | 17 | `outputMode` | Output mode | **Mono** / Stereo divided-pickup field / Double independent performances |
 | 18 | `distortion` | Distortion | bypass at 0%; otherwise drive through the fully connected oversampled RC diode circuit, default 0% |
-| 19 | `amp` | Amp simulation | bypass at 0%; otherwise drive through the fully connected measured-12AX7, transformer and cabinet path, default 0% |
+| 19 | `amp` | Amp simulation | bypass at 0%; otherwise drive through the complete selected measured-12AX7-derived amp and speaker/cabinet path, default 0% |
 | 20 | `compressor` | Compressor | dry..fast rhythm levelling, default 0% |
 | 21 | `delay` | Delay | dry..360 ms lead delay, default 0% |
 | 22 | `room` | Room | dry..compact stereo ambience, default 0% |
@@ -942,6 +976,7 @@ output-mode changes crossfade over roughly 4 ms.
 | 25 | `strumSpread` | Strum spread | 0..40 ms mean travel per crossed string plus 20 ms pre-roll when nonzero; different-string notes up to 35 ms from the stroke's first event group, while same-string reuse starts a new stroke; default 0 ms |
 | 26 | `resonanceDepth` | Resonance depth | 0..100% full-scale reach of the CC 1 resonance (coupling lift and amplifier feedback), default 35% |
 | 27 | `tremoloRate` | Tremolo picking rate | 4..20 strokes/s for the momentary B0 TRM wrist, default 12 strokes/s; appended after the published controls so their host automation indices remain unchanged |
+| 28 | `ampModel` | Amp voice | American Clean / British Crunch / **Modern High-Gain**; switches the complete amp, output dynamics, transformer and six-section speaker/cabinet voice, with legacy development states defaulting to Modern |
 
 ### References and claim boundaries
 
@@ -977,7 +1012,7 @@ output-mode changes crossfade over roughly 4 ms.
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
 | Output modes | Phase-coherent divided/hex pickup practice, ordinary double-tracked guitar performance, and four CC-BY HiMMP rhythm DIs | Mono is the conventional summed DI. Stereo weights one engine's modeled strings by physical lateral position and folds coherently to mono. Double runs two complete, differently seeded mono engines into left and right before one shared FX chain; the second gets one deterministic 0-6 ms causal timing offset per picked wrist stroke, shared across a chord and composed with strum travel | Stereo is a virtual divided-pickup string field and Double is two deterministic modeled performances rather than a delayed copy. Its tight timing envelope is directionally grounded in conventional Drop-C takes, not capture-fitted eight-string timing, and it does not claim to reproduce the decisions of two human performances |
 | Distortion pedal | [Yeh, Abel and Smith's antiparallel-diode RC formulation](https://dafx.de/paper-archive/2007/Papers/p197.pdf) and standard nonlinear-audio antialiasing practice | A 2.2 kOhm / 10 nF Shockley-diode node whose capacitor state is trapezoidally integrated and solved with bounded Newton iterations at every oversampled step, surrounded by Electry's eighth-string input and voice filters | A real circuit solve of the documented clipping node; not a full named pedal schematic, component-tolerance study, or SPICE validation |
-| Amplifier and cabinet | [Dempwolf and Zölzer's measured 12AX7 model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf); published supply-sag behaviour; transformer core saturation as a volt-second limit; standard antialiasing practice; sealed-guitar-cabinet response measurements; extended-range metal rhythm practice | A residual-checked bounded Newton solve generates a dense 250 V / 100 kOhm measured-current plate-load transfer during preparation; two cascaded stages interpolate that circuit curve with standing bias, level-tracking bias drift and interstage Miller roll-off, while the existing 70/400 ms sag envelope, flux-integrating output transformer and filter-modelled cabinet remain inside the up-to-4x oversampled gain path | Circuit-derived nonlinear plate-load stages inside a deliberately voiced amplifier chain; not a complete named amplifier schematic, SPICE-validated model, measured cabinet impulse response, or model of a named amp, speaker or cabinet |
+| Amplifier and speaker/cabinet | [Yeh and Smith's exact passive tone-stack derivation](https://dafx.de/paper-archive/2006/papers/p_001.pdf); [Dempwolf and Zölzer's measured 12AX7 model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf); official [Fender amplifier](https://www.fmicassets.com/Damroot/Original/10001/021730_gamp_manual_all_revE.pdf), [Marshall 1959](https://www.marshall.com/us/en/product/1959-handwired-head?pid=1007086) and [Peavey 6505](https://assets.peavey.com/literature/manuals/00575680.pdf) architecture references; official [Jensen C12K](https://www.jensentone.com/vintage-ceramic/c12k), [Celestion G12M](https://celestion.com/product/g12m-greenback/) and [Vintage 30](https://celestion.com/product/vintage-30/) response boundaries | Three complete paths share a residual-checked measured-current 12AX7 table. American and British add exact unloaded third-order passive RC stacks, opposed evaluations of that same triode transfer, voiced imbalance/negative feedback, independent sag and transformer state; Modern preserves the established cascaded path. Six biquads per path supply distinct zero-latency speaker/cabinet response voices, and all nonlinear work stays inside the up-to-4× oversampled block | Exact passive RC transfers and a circuit-derived 12AX7 load-line table inside three deliberately voiced families; the opposed 12AX7 output pair is only a push-pull approximation. Not a phase-splitter, 6L6/EL34/pentode solve, complete named schematic, SPICE validation, cabinet IR, loudspeaker mechanics, microphone or room capture, nor a capture-verified replica of any cited product |
 
 ## Known gaps
 
@@ -1095,20 +1130,22 @@ with Alternate advance, Pick Noise, shared stroke state and Strum travel while
 the Hammer latch and live fretting finger remain unchanged;
 channel pressure and polyphonic aftertouch remaining pitch-neutral;
 hostile parameter and performance
-input safety; low Distortion and Amp drive retaining the same physical input,
-voice and cabinet response as full drive instead of leaking dry DI around an
-enabled module; and a portable CPU ceiling with the eight-string render ratio
+input safety; low Distortion and Modern Amp drive retaining the same physical
+input, voice and cabinet response as full drive instead of leaking dry DI
+around an enabled module; and a portable CPU ceiling with the eight-string render ratio
 printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
 Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
 physical low/high string orientation, coherent fold-down, bounded side level,
 energy balance, determinism, and opposite string endpoints. The plug-in suite
-additionally pins the 27-parameter layout, including Tremolo Rate's appended
-index, Guitar Build's named anchors,
+additionally pins the 28-parameter layout, including Tremolo Rate's and Amp
+Voice's appended indices, Guitar Build's named anchors,
 formatted values, current-state round trips, bus layout, sample-accurate
 note starts, MIDI controller behavior (uniform pitch bend, unassigned channel
 pressure and polyphonic aftertouch, sustain, all-sound-off, all-notes-off), UI
 keyswitch triggering of both banks, panic, output-gain and APVTS
-output-mode effects, three visible non-overlapping mode buttons, deterministic
+output-mode effects, three visible non-overlapping mode buttons, three visible
+non-overlapping Amp Voice buttons, Modern default and missing-field migration,
+deterministic
 distinct Double channels, an unchanged primary lane and clean Double re-entry,
 the sympathetic, Mute Pressure (parameter and CC 2) and Strum Spread controls
 reaching the rendered audio, offscreen editor rendering including the live
@@ -1124,16 +1161,22 @@ node's independent DC points, symmetry and capacitor memory; the measured
 12AX7 model's cathode/plate KCL residuals, rail-to-cutoff recovery, plate-load
 convergence, quiescent normalisation and asymmetry; a monotonic 16,385-point
 runtime circuit table whose maximum checked error is 0.00000072; a bit-exact dry bypass with every control at zero
-and an audible effect from each control on its own at 100%; the alias floor of
-the pedal, the amplifier, and the two
+and an audible effect from each amount control on its own at 100%; exact
+American and British third-order tone-stack coefficients and 1 kHz insertion
+loss; the six-point response fingerprint and pairwise spectral separation of
+all three amp/speaker paths; model-ordered nonlinear compression and a
+same-performance Drop-E level bound; the alias floor of the pedal, every
+amplifier, and the two
 stacked, at two input levels; a supply that droops on a loud sustained passage
 and far less on a quiet one, develops over its modelled time constant and
 recovers during a rest; an output transformer whose distortion falls about
 46 dB per decade of frequency and 41 dB for 24 dB of level, measured at the
-stage rather than through the cabinet; each of the cabinet's five voicing features
+stage rather than through the cabinet; each Modern cabinet voicing feature
 relative to 1 kHz; loudness bounds across the whole amp travel and every
 combination of the gain and compressor controls on a rendered Drop-E rhythm
-figure, dry and palm muted; the lead delay's first repeat at 360 ms with a
+figure, dry and palm muted; 48/384 kHz response agreement for every Amp Voice;
+stable and mid-switch block-size invariance, bounded switching steps, exact
+one-hot settling and inactive-state clearing; the lead delay's first repeat at 360 ms with a
 clean gap before it; a decaying, decorrelated room tail; bounded sample steps
 across whole-block and individual-module engagement, resting-state resets for
 each independently bypassed circuit, and a return to bit-exact bypass;
@@ -1146,7 +1189,7 @@ box corner, which is deliberately low enough that a Drop-E eighth string's
 fundamental reaches the cabinet rather than being cut before it. A further test renders a short take through the demo
 renderer, so the committed demonstration audio's toolchain is covered too.
 
-Twenty-two rendered examples of the whole path are committed under
+Twenty-three rendered examples of the whole path are committed under
 `Docs/audio/` and produced from this same JUCE-free code by
 `Tools/RenderDemos.cpp`, so what the document describes can be listened to
 rather than only read. They are demonstrations, not evidence: an audible
@@ -1249,6 +1292,26 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-27 three complete amplifier voices
+
+- Added American Clean, British Crunch and Modern High-Gain as complete
+  selectable amplifier, output-dynamics, transformer and speaker/cabinet paths;
+  switching crossfades independent recursive state with a 15 ms exponential
+  time constant and returns to one running circuit after the weights settle.
+- American and British use exact third-order Yeh/Smith passive tone-stack
+  transfers, the existing measured-12AX7 circuit table, opposed-transfer output
+  approximations, causal output-derived negative feedback, independent sag and
+  transformer state, and distinct six-section parametric cabinet voices. The
+  exact pieces and voiced approximations are identified separately; these are
+  not named-amp, power-tube, cabinet-IR or microphone replicas.
+- The established Modern path remains coefficient- and sample-identical. On the
+  same 90% Amp Drop-E fixture, model gain spans +2.98 to +5.87 dB; pinned loud
+  versus quiet compression is −5.59/−10.80/−18.33 dB, alias floors are
+  −73.38/−77.14/−61.28 dB, and 48-to-384 kHz response drift stays below 0.05 dB.
+- Demo 23 renders the same deterministic power-chord, chug, chord and lead
+  phrase through fresh American, British and Modern instances, with one global
+  normalisation and no per-model loudness hiding.
+
 ### 2026-08-27 series-connected gain circuits
 
 - Distortion and Amp used their drive value as a permanent parallel dry/wet
@@ -1256,9 +1319,11 @@ regression-measured model—not capture parity or market leadership.
   uncabbed DI, and the 95% metal rig still leaked 5% around the cabinet.
 - Zero remains the exact, cost-free bypass. At any nonzero steady setting the
   whole pedal or amplifier is now in series; the knob changes drive, and the
-  existing 15 ms ramp acts only as a click-free relay when crossing zero.
-- At the UI's minimum 0.1% drive, the amp's 8 kHz response remains 22.003 dB below 1 kHz and the
-  pedal remains 18.182 dB down at 40 Hz and 20.961 dB down at 12 kHz, each
+  existing 15 ms exponential smoothing time constant acts only as a click-free
+  relay when crossing zero.
+- At the UI's minimum 0.1% drive, the then-sole amp path—now Modern
+  High-Gain—keeps its 8 kHz response 22.003 dB below 1 kHz. The pedal remains
+  18.182 dB down at 40 Hz and 20.961 dB down at 12 kHz; each response stays
   within 0.5 dB of its full-drive circuit response. Exact bypass, aliasing,
   level, lifecycle, transition and sample-rate rails still pass.
 
@@ -1531,10 +1596,11 @@ Standalone:
 - A four-mode solid-body structural path, geometry-informed and passive, with
   a six-anchor Guitar Build macro and independent pickup/tone/body-colour
   controls.
-- An FX chain — distortion, amplifier with supply sag and output transformer,
-  modelled cabinet, compression, lead delay and stereo room — with the
-  circuit-solved nonlinear stages inside an up-to-4× oversampled domain, and
-  every effect defaulting to a true 0 % dry setting.
+- An FX chain — distortion; selectable American, British and Modern amplifier,
+  sag, transformer and parametric speaker/cabinet paths; compression; lead
+  delay; and stereo room — with the circuit-derived nonlinear stages inside an
+  up-to-4× oversampled domain, and every amount defaulting to a true 0 % dry
+  setting.
 - Mono as the summed dry DI, Stereo as a phase-coherent divided-pickup view
   that folds coherently back to mono, and Double as two independent engines.
 - Audible-work culling: a faded-out pickup is skipped entirely, Mono runs one

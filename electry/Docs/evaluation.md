@@ -7,7 +7,7 @@ to one phrase is useful evidence; it is not a market-leading claim by itself.
 
 ## Current product surface
 
-The unreleased plug-in currently exposes 27 host parameters; development
+The unreleased plug-in currently exposes 28 host parameters; development
 snapshots have no backward-compatibility contract. One **Guitar Build**
 parameter replaces six separate construction axes and follows a smooth path
 through Slab fixed, Contoured, Angular set, Modern bolt, Dense extended and
@@ -21,6 +21,11 @@ second player's picked wrist strokes also carry a deterministic 0-6 ms causal
 timing offset; the primary player and fretting-hand articulations keep their
 established clocks.
 
+**Amp Voice** selects American Clean, British Crunch or Modern High-Gain as a
+complete amplifier, output-dynamics, transformer and speaker/cabinet path. It
+defaults to Modern, is appended after the first 27 host indices, and a
+development state missing the field is explicitly migrated to Modern.
+
 Within each engine, pick position offset, force, angle and contact width are
 drawn once per physical wrist stroke and shared by every crossed string; each
 string still maps that common gesture through its own gauge, pitch and contact
@@ -31,16 +36,23 @@ Tightness** and **Mute Pressure**. This document retains “palm mute” where i
 names the physical technique, public-corpus annotation or frozen evaluator
 filename.
 
-The wet path is outside the dry probes below. Its Distortion module now solves
+The wet path is outside the dry probes below. Its Distortion module solves
 the 2.2 kOhm / 10 nF antiparallel Shockley-diode RC node from
 [Yeh, Abel and Smith](https://dafx.de/paper-archive/2007/Papers/p197.pdf), and
-its two amplifier stages interpolate a dense transfer generated during
+all three amplifier paths interpolate a dense transfer generated during
 preparation by solving
 [Dempwolf and Zölzer's measured 12AX7 current model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf)
-against a 250 V / 100 kOhm plate load with a residual-checked solver. Existing
-oversampling, sag, transformer-flux model and filter cabinet remain. These are
-circuit solves of the nonlinear modules, not a complete named pedal or amp
-schematic, a SPICE validation, or a measured cabinet impulse response.
+against a 250 V / 100 kOhm plate load with a residual-checked solver. American
+and British also evaluate [Yeh and Smith's exact third-order passive tone-stack
+transfer](https://dafx.de/paper-archive/2006/papers/p_001.pdf) for two component
+families, then use opposed evaluations of the same 12AX7 transfer as an
+explicitly approximate output pair. Model-specific negative feedback, sag,
+transformer state and six-biquad speaker/cabinet voices stay inside the
+oversampled path; Modern preserves the previous Electry arithmetic. Exact
+claims stop at the diode node, passive RC transfer and measured-triode
+load-line table. This is not a complete named pedal or amp schematic, a solved
+phase splitter or 6L6/EL34/pentode stage, a SPICE validation, a cabinet impulse
+response, loudspeaker mechanics, microphone, room, or capture-verified replica.
 
 ### Double-performance timing audit
 
@@ -190,7 +202,7 @@ a physically held note, while All Notes Off, Panic, prepare and release clear
 it. Channel and polyphonic pressure remain discarded. Exact eight-string lead
 captures are still required before rate, depth and onset can be called frozen.
 
-### CC0 metal-cabinet audit
+### Historical CC0 Modern-cabinet audit
 
 [Jester Dyne's Brutal IR Pack](https://www.jester-dyne-productions.com/brutal-ir-pack/)
 supplies a lawful real 4x12 reference: its bundled handbook dedicates the pack
@@ -202,7 +214,8 @@ the source ZIP's is
 `299dc053f01ebd1e980459adc48f9c6b8a8c7af91917b4f946512eefdbb311ea`.
 Neither file is committed.
 
-At that checkpoint, the six-section cabinet and the IR were normalized over an equal-log
+At that checkpoint, the then-sole six-section cabinet—now the Modern
+High-Gain voice—and the IR were normalized over an equal-log
 70 Hz-8 kHz grid and compared after identical log-frequency smoothing. Their
 broad-magnitude RMSE is 4.40 dB. The largest useful directions are less output
 below the box and a shallower 430-470 Hz cut; the existing upper roll-off is
@@ -788,7 +801,7 @@ An independent chain audit locates this gap upstream of `ElectryFx`. For the
 last muted E1 of demo 04's first bar (known contact frame 103,622), the 30-100
 ms dry body had a 0.0071% upper-band share and 0.9837 harmonicity at the
 retired-contact checkpoint. The current body-corrected frame measures 0.0703%
-and 0.9899; the identical frame in demo 05's common chain raises those to
+and 0.9899; the identical frame in demo 05's Modern common chain raises those to
 0.8877% and 0.9848. The FX adds
 upper harmonics rather than removing them. Only about 1.2%
 of the real region's power lies above 5 kHz, so the cabinet's fourth-order
@@ -1482,10 +1495,10 @@ releasing-string obstacles and the deterministic lowest-eight overflow policy
 have their own gates. The solve is deliberately chord-local; it does not claim
 phrase-wide fingering look-ahead.
 
-`LATCH | HOLD` is saved as non-parameter state alongside the current 27 host
-parameters; transient held keys are never serialized. Because Electry is not
-released, the suite pins current-state round trips rather than migration from
-older development layouts. Play-style Note On, Note
+`LATCH | HOLD` is saved as non-parameter state alongside the current 28 host
+parameters; transient held keys are never serialized. The suite pins
+current-state round trips and the one deliberate development migration: a
+state without `ampModel` selects Modern High-Gain. Play-style Note On, Note
 Off and zero-velocity Note On are stably
 conditioned before a same-sample attack in either host insertion order; CC123
 joins that pass and retains its source order against them.
@@ -1934,7 +1947,8 @@ a frozen missing/failing cell, never a reason to re-record or substitute;
 retained pairs must be within 0.1 dB. One common final gain keeps both below
 -3 dBTP. For processed cells, match real and model DI drive first, run both
 through the comparison manifest's exact hashed chain, then match their outputs.
-Distortion 0.45, Amp 0.95 and Compressor 0.60 are the current train-only starting point,
+Distortion 0.45, Amp 0.95, Amp Voice Modern High-Gain and Compressor 0.60 are
+the current train-only starting point,
 not values that may change after holdout access. Export metadata-free mono
 24-bit PCM with the frozen renderer/exporter. Do not gate, EQ, denoise or
 normalize individual hits.

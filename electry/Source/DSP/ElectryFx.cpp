@@ -21,6 +21,23 @@ float sanitiseMix(float value) noexcept
     return clampf(value, 0.0f, 1.0f);
 }
 
+constexpr std::size_t ampModelIndex(AmpModel model) noexcept
+{
+    return static_cast<std::size_t>(model);
+}
+
+AmpModel sanitiseAmpModel(AmpModel model) noexcept
+{
+    switch (model)
+    {
+        case AmpModel::AmericanClean:
+        case AmpModel::BritishCrunch:
+        case AmpModel::ModernHighGain:
+            return model;
+    }
+    return AmpModel::ModernHighGain;
+}
+
 // Zeroth-order modified Bessel function, used only by the halfband window
 // design in prepare(). The series converges quickly for the betas a halfband
 // kernel needs.
@@ -187,6 +204,90 @@ void ElectryFx::Biquad::setPeaking(float frequencyHz, float q, float gainDb,
     a2 = (1.0 - basis.alpha / amplitude) / a0;
 }
 
+void ElectryFx::ToneStack::design(
+    double c1, double c2, double c3,
+    double r1, double r2, double r3, double r4,
+    double treble, double middle, double bass,
+    double sampleRate) noexcept
+{
+    // Yeh and Smith's closed-form passive guitar tone-stack transfer:
+    // H(s) = (B1 s + B2 s^2 + B3 s^3)
+    //      / (1 + A1 s + A2 s^2 + A3 s^3).
+    // Keeping the component products visible makes this implementation
+    // directly auditable against the circuit derivation rather than against a
+    // set of fitted EQ points.
+    const double analogB1 = treble * c1 * r1 + middle * c3 * r3
+        + bass * (c1 * r2 + c2 * r2) + c1 * r3 + c2 * r3;
+    const double analogB2 =
+          treble * (c1 * c2 * r1 * r4 + c1 * c3 * r1 * r4)
+        - middle * middle * (c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + middle * (c1 * c3 * r1 * r3 + c1 * c3 * r3 * r3
+                    + c2 * c3 * r3 * r3)
+        + bass * (c1 * c2 * r1 * r2 + c1 * c2 * r2 * r4
+                  + c1 * c3 * r2 * r4)
+        + bass * middle * (c1 * c3 * r2 * r3 + c2 * c3 * r2 * r3)
+        + c1 * c2 * r1 * r3 + c1 * c2 * r3 * r4
+        + c1 * c3 * r3 * r4;
+    const double analogB3 =
+          bass * middle * (c1 * c2 * c3 * r1 * r2 * r3
+                           + c1 * c2 * c3 * r2 * r3 * r4)
+        - middle * middle * (c1 * c2 * c3 * r1 * r3 * r3
+                             + c1 * c2 * c3 * r3 * r3 * r4)
+        + middle * (c1 * c2 * c3 * r1 * r3 * r3
+                    + c1 * c2 * c3 * r3 * r3 * r4)
+        + treble * c1 * c2 * c3 * r1 * r3 * r4
+        - treble * middle * c1 * c2 * c3 * r1 * r3 * r4
+        + treble * bass * c1 * c2 * c3 * r1 * r2 * r4;
+
+    const double analogA1 = c1 * r1 + c1 * r3 + c2 * r3 + c2 * r4
+        + c3 * r4 + middle * c3 * r3
+        + bass * (c1 * r2 + c2 * r2);
+    const double analogA2 =
+          middle * (c1 * c3 * r1 * r3 - c2 * c3 * r3 * r4
+                    + c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + bass * middle * (c1 * c3 * r2 * r3 + c2 * c3 * r2 * r3)
+        - middle * middle * (c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + bass * (c1 * c2 * r2 * r4 + c1 * c2 * r1 * r2
+                  + c1 * c3 * r2 * r4 + c2 * c3 * r2 * r4)
+        + c1 * c2 * r1 * r4 + c1 * c3 * r1 * r4
+        + c1 * c2 * r3 * r4 + c1 * c2 * r1 * r3
+        + c1 * c3 * r3 * r4 + c2 * c3 * r3 * r4;
+    const double analogA3 =
+          bass * middle * (c1 * c2 * c3 * r1 * r2 * r3
+                           + c1 * c2 * c3 * r2 * r3 * r4)
+        - middle * middle * (c1 * c2 * c3 * r1 * r3 * r3
+                             + c1 * c2 * c3 * r3 * r3 * r4)
+        + middle * (c1 * c2 * c3 * r3 * r3 * r4
+                    + c1 * c2 * c3 * r1 * r3 * r3
+                    - c1 * c2 * c3 * r1 * r3 * r4)
+        + bass * c1 * c2 * c3 * r1 * r2 * r4
+        + c1 * c2 * c3 * r1 * r3 * r4;
+
+    // Bilinear transform s = c(1-z^-1)/(1+z^-1), expanded at order three.
+    const double bilinear = 2.0 * std::max(sampleRate, 1.0);
+    const double cSquared = bilinear * bilinear;
+    const double cCubed = cSquared * bilinear;
+    const double denominator0 = 1.0 + analogA1 * bilinear
+        + analogA2 * cSquared + analogA3 * cCubed;
+    const double inverse = 1.0 / denominator0;
+
+    b0 = (analogB1 * bilinear + analogB2 * cSquared
+          + analogB3 * cCubed) * inverse;
+    b1 = (analogB1 * bilinear - analogB2 * cSquared
+          - 3.0 * analogB3 * cCubed) * inverse;
+    b2 = (-analogB1 * bilinear - analogB2 * cSquared
+          + 3.0 * analogB3 * cCubed) * inverse;
+    b3 = (-analogB1 * bilinear + analogB2 * cSquared
+          - analogB3 * cCubed) * inverse;
+    a1 = (3.0 + analogA1 * bilinear - analogA2 * cSquared
+          - 3.0 * analogA3 * cCubed) * inverse;
+    a2 = (3.0 - analogA1 * bilinear - analogA2 * cSquared
+          + 3.0 * analogA3 * cCubed) * inverse;
+    a3 = (1.0 - analogA1 * bilinear + analogA2 * cSquared
+          - analogA3 * cCubed) * inverse;
+    reset();
+}
+
 void ElectryFx::HalfbandStage::design(float kaiserBeta) noexcept
 {
     // Ideal halfband impulse response h[n] = sin(pi n / 2) / (pi n), which is
@@ -255,17 +356,26 @@ void ElectryFx::GainChannel::resetPedal() noexcept
     pedalWasActive = false;
 }
 
-void ElectryFx::GainChannel::resetAmp() noexcept
+void ElectryFx::AmpChannel::reset() noexcept
 {
-    ampHighpass.reset();
-    ampVoice.reset();
+    inputHighpass.reset();
+    inputVoice.reset();
     interstage.reset();
+    toneStack.reset();
     bias = 0.0f;
     sag = 0.0f;
     transformerHighpass.reset();
     flux.reset();
+    negativeFeedback.reset();
     for (auto& section : cabinet)
         section.reset();
+    wasActive = false;
+}
+
+void ElectryFx::GainChannel::resetAmp() noexcept
+{
+    for (auto& amplifier : amplifiers)
+        amplifier.reset();
     ampWasActive = false;
 }
 
@@ -302,8 +412,9 @@ void ElectryFx::prepare(double sampleRate)
     // perform thread-safe static initialisation on the audio thread.
     static_cast<void>(triodeStageLookup(0.0));
 
-    // 15 ms on the five panel controls and their module relays, and 12 ms on
-    // the whole gain block's engagement ramp. All are per-sample: the previous
+    // A 15 ms exponential time constant on the five panel controls, their
+    // module relays and Amp Voice weights, and 12 ms on the whole gain block's
+    // engagement ramp. All are per-sample: the previous
     // chain read its controls once per block and stepped, which is audible as
     // zipper noise on an automated drive.
     parameterCoefficient_ = 1.0f - std::exp(
@@ -326,16 +437,48 @@ void ElectryFx::prepare(double sampleRate)
         -twoPi * std::min(4200.0f, 0.40f * hostRate) / hostRate);
     delayFeedbackHighpass_ = 1.0f - std::exp(-twoPi * 150.0f / hostRate);
 
-    interstageCoefficient_ = std::exp(
+    interstageCoefficient_[ampModelIndex(AmpModel::AmericanClean)] = std::exp(
+        -twoPi * std::min(7600.0f, 0.40f * oversampledRate_) / oversampledRate_);
+    interstageCoefficient_[ampModelIndex(AmpModel::BritishCrunch)] = std::exp(
+        -twoPi * std::min(5600.0f, 0.40f * oversampledRate_) / oversampledRate_);
+    // Keep the original modern circuit's exact coefficient expression.
+    interstageCoefficient_[ampModelIndex(AmpModel::ModernHighGain)] = std::exp(
         -twoPi * std::min(6800.0f, 0.40f * oversampledRate_) / oversampledRate_);
     // 45 ms on the grid-bias follower: long enough that a held chord shifts the
     // operating point, short enough to recover between chugs.
     biasCoefficient_ = 1.0f - std::exp(-1.0f / (0.045f * oversampledRate_));
     // The reservoir discharges far faster than it recharges, which is the
     // whole character of sag: the note blooms, ducks, and comes back.
-    sagAttack_ = 1.0f - std::exp(-1.0f / (0.070f * oversampledRate_));
-    sagRelease_ = 1.0f - std::exp(-1.0f / (0.400f * oversampledRate_));
-    fluxCoefficient_ = transformerFluxCoefficient(oversampledRate_);
+    sagAttack_[ampModelIndex(AmpModel::AmericanClean)] =
+        1.0f - std::exp(-1.0f / (0.055f * oversampledRate_));
+    sagRelease_[ampModelIndex(AmpModel::AmericanClean)] =
+        1.0f - std::exp(-1.0f / (0.550f * oversampledRate_));
+    sagAttack_[ampModelIndex(AmpModel::BritishCrunch)] =
+        1.0f - std::exp(-1.0f / (0.080f * oversampledRate_));
+    sagRelease_[ampModelIndex(AmpModel::BritishCrunch)] =
+        1.0f - std::exp(-1.0f / (0.300f * oversampledRate_));
+    sagAttack_[ampModelIndex(AmpModel::ModernHighGain)] =
+        1.0f - std::exp(-1.0f / (0.070f * oversampledRate_));
+    sagRelease_[ampModelIndex(AmpModel::ModernHighGain)] =
+        1.0f - std::exp(-1.0f / (0.400f * oversampledRate_));
+
+    fluxCoefficient_[ampModelIndex(AmpModel::AmericanClean)] = std::exp(
+        -twoPi * 35.0f / oversampledRate_);
+    fluxCoefficient_[ampModelIndex(AmpModel::BritishCrunch)] = std::exp(
+        -twoPi * 55.0f / oversampledRate_);
+    fluxCoefficient_[ampModelIndex(AmpModel::ModernHighGain)] =
+        transformerFluxCoefficient(oversampledRate_);
+
+    // The feedback return is bandwidth limited by the output transformer and
+    // phase compensation. Stronger, wider American feedback holds the clean
+    // power stage taut; the British path releases it sooner for upper-mid bite.
+    feedbackCoefficient_[ampModelIndex(AmpModel::AmericanClean)] = std::exp(
+        -twoPi * std::min(6200.0f, 0.40f * oversampledRate_)
+        / oversampledRate_);
+    feedbackCoefficient_[ampModelIndex(AmpModel::BritishCrunch)] = std::exp(
+        -twoPi * std::min(3900.0f, 0.40f * oversampledRate_)
+        / oversampledRate_);
+    feedbackCoefficient_[ampModelIndex(AmpModel::ModernHighGain)] = 0.0f;
 
     for (auto& channel : gain_)
     {
@@ -434,34 +577,62 @@ void ElectryFx::designFilters() noexcept
         channel.pedalVoice.setPeaking(800.0f, 0.85f, 5.5f, rate);
         channel.pedalTilt.setLowpass(6800.0f, 0.70f, rate);
 
-        // Amp: the input stage passes the whole Drop-E fundamental, because
-        // clipping it is what generates the second and third harmonics the
-        // cabinet turns into a chug's weight. The mid emphasis sits above the
-        // cabinet's scoop rather than inside it: pushing 560 Hz into the stage
-        // and then cutting 470 Hz after it wasted gain on the one region a
-        // metal rhythm tone wants out of the way.
-        channel.ampHighpass.setHighpass(52.0f, 0.80f, rate);
-        channel.ampVoice.setPeaking(850.0f, 0.75f, 4.25f, rate);
-        // A transformer passes no DC, and this also keeps the bias drift's
-        // residue out of the flux integrator in front of the core model.
-        channel.transformerHighpass.setHighpass(26.0f, 0.707f, rate);
+        auto& american = channel.amplifiers[
+            ampModelIndex(AmpModel::AmericanClean)];
+        auto& british = channel.amplifiers[
+            ampModelIndex(AmpModel::BritishCrunch)];
+        auto& modern = channel.amplifiers[
+            ampModelIndex(AmpModel::ModernHighGain)];
 
-        // Cabinet. A single one-pole - the previous model - has neither the
-        // thump, the mid character nor the steep top-end death of a real sealed
-        // 4x12, and those three features are most of what makes a recorded
-        // metal guitar recognisable as a guitar rather than as a waveshaper.
-        // A 4x12's useful output starts just below the low strings' second
-        // harmonic, and the thump that a palm-muted chug lives on sits in the
-        // octave above that.
-        channel.cabinet[0].setHighpass(74.0f, 0.80f, rate);   // no output below the box
-        channel.cabinet[1].setPeaking(102.0f, 1.20f, 4.35f, rate); // cabinet thump
-        channel.cabinet[2].setPeaking(430.0f, 0.85f, -6.5f, rate); // boxy honk removed
-        channel.cabinet[3].setPeaking(3100.0f, 1.10f, 6.5f, rate); // presence
-        // Fourth-order Butterworth roll-off: a 12-inch speaker is essentially
-        // gone an octave above five kilohertz. Running it here rather than
-        // after decimation removes the alias-generating content first.
-        channel.cabinet[4].setLowpass(5000.0f, 0.5412f, rate);
-        channel.cabinet[5].setLowpass(5000.0f, 1.3066f, rate);
+        // Mid-1960s American component family: the fixed 6.8 kOhm mid leg and
+        // 100 kOhm slope resistor feed the exact third-order passive network.
+        // Its parametric open-combo-style voice stays broad and comparatively
+        // even, with a restrained presence rise rather than a metal scoop; it
+        // is not a loudspeaker or cabinet solve.
+        american.inputHighpass.setHighpass(48.0f, 0.72f, rate);
+        american.toneStack.design(
+            250.0e-12, 100.0e-9, 47.0e-9,
+            250.0e3, 250.0e3, 6.8e3, 100.0e3,
+            0.60, 1.0, 0.130028710878, rate);
+        american.transformerHighpass.setHighpass(21.0f, 0.707f, rate);
+        american.cabinet[0].setHighpass(68.0f, 0.66f, rate);
+        american.cabinet[1].setPeaking(112.0f, 0.85f, 2.2f, rate);
+        american.cabinet[2].setPeaking(520.0f, 0.72f, -1.6f, rate);
+        american.cabinet[3].setPeaking(2450.0f, 0.90f, 3.2f, rate);
+        american.cabinet[4].setLowpass(4300.0f, 0.5412f, rate);
+        american.cabinet[5].setLowpass(4300.0f, 1.3066f, rate);
+
+        // Late British component family: the 33 kOhm slope resistor and
+        // 500 pF treble capacitor move the passive stack's centre of gravity
+        // upward. A parametric closed-stack-style voice retains the woody
+        // 600-800 Hz body and rolls off sooner; it is not an individual
+        // loudspeaker or cabinet solve.
+        british.inputHighpass.setHighpass(60.0f, 0.78f, rate);
+        british.toneStack.design(
+            500.0e-12, 22.0e-9, 22.0e-9,
+            250.0e3, 1.0e6, 25.0e3, 33.0e3,
+            0.60, 0.65, 0.130028710878, rate);
+        british.transformerHighpass.setHighpass(32.0f, 0.707f, rate);
+        british.cabinet[0].setHighpass(76.0f, 0.78f, rate);
+        british.cabinet[1].setPeaking(118.0f, 1.00f, 3.1f, rate);
+        british.cabinet[2].setPeaking(690.0f, 0.82f, 2.5f, rate);
+        british.cabinet[3].setPeaking(2250.0f, 1.00f, 4.4f, rate);
+        british.cabinet[4].setLowpass(4800.0f, 0.5412f, rate);
+        british.cabinet[5].setLowpass(4800.0f, 1.3066f, rate);
+
+        // Electry's shipping modern path is intentionally left coefficient-
+        // for-coefficient unchanged. It passes the Drop-E fundamental into the
+        // nonlinear stages, removes boxy 430 Hz energy and adds a tight 3.1 kHz
+        // presence shelf before the steep sealed-cabinet roll-off.
+        modern.inputHighpass.setHighpass(52.0f, 0.80f, rate);
+        modern.inputVoice.setPeaking(850.0f, 0.75f, 4.25f, rate);
+        modern.transformerHighpass.setHighpass(26.0f, 0.707f, rate);
+        modern.cabinet[0].setHighpass(74.0f, 0.80f, rate);
+        modern.cabinet[1].setPeaking(102.0f, 1.20f, 4.35f, rate);
+        modern.cabinet[2].setPeaking(430.0f, 0.85f, -6.5f, rate);
+        modern.cabinet[3].setPeaking(3100.0f, 1.10f, 6.5f, rate);
+        modern.cabinet[4].setLowpass(5000.0f, 0.5412f, rate);
+        modern.cabinet[5].setLowpass(5000.0f, 1.3066f, rate);
     }
 }
 
@@ -487,6 +658,8 @@ void ElectryFx::reset() noexcept
     ampDrive_ = targetParameters_.amp;
     pedalWet_ = targetParameters_.distortion > 0.0f ? 1.0f : 0.0f;
     ampWet_ = targetParameters_.amp > 0.0f ? 1.0f : 0.0f;
+    ampModelWeights_.fill(0.0f);
+    ampModelWeights_[ampModelIndex(targetParameters_.ampModel)] = 1.0f;
     compressorMix_ = targetParameters_.compressor;
     delayMix_ = targetParameters_.delay;
     roomMix_ = targetParameters_.room;
@@ -497,6 +670,7 @@ void ElectryFx::setParameters(const FxParameters& parameters) noexcept
 {
     targetParameters_.distortion = sanitiseMix(parameters.distortion);
     targetParameters_.amp = sanitiseMix(parameters.amp);
+    targetParameters_.ampModel = sanitiseAmpModel(parameters.ampModel);
     targetParameters_.compressor = sanitiseMix(parameters.compressor);
     targetParameters_.delay = sanitiseMix(parameters.delay);
     targetParameters_.room = sanitiseMix(parameters.room);
@@ -757,19 +931,39 @@ float ElectryFx::triodeStageLookup(double gridVoltage) noexcept
 void ElectryFx::updateDriveConstants() noexcept
 {
     // A pedal's gain range, and two amplifier stages whose drives rise
-    // together. The trims below hold the chain's loudness within a few
-    // decibels of the dry DI across the whole travel, so auditioning the amp is
-    // a change of tone rather than a jump in level.
+    // together. The three pairs deliberately do not collapse to different EQ
+    // presets: the American path keeps its first voltage stage clean and moves
+    // high-control breakup into the opposed output pair, the British path
+    // shares drive between them, and the original modern path provides the
+    // most cascaded preamp saturation.
     pedalDrive_ = 1.0f + 24.0f * distortionDrive_;
-    ampDriveFirst_ = 1.0f + 7.0f * ampDrive_;
-    ampDriveSecond_ = 1.0f + 11.0f * ampDrive_;
+    ampDriveFirst_[ampModelIndex(AmpModel::AmericanClean)] =
+        1.0f + 1.8f * ampDrive_;
+    ampDriveSecond_[ampModelIndex(AmpModel::AmericanClean)] =
+        1.0f + 20.0f * ampDrive_;
+    ampDriveFirst_[ampModelIndex(AmpModel::BritishCrunch)] =
+        1.0f + 4.5f * ampDrive_;
+    ampDriveSecond_[ampModelIndex(AmpModel::BritishCrunch)] =
+        1.0f + 7.0f * ampDrive_;
+    ampDriveFirst_[ampModelIndex(AmpModel::ModernHighGain)] =
+        1.0f + 7.0f * ampDrive_;
+    ampDriveSecond_[ampModelIndex(AmpModel::ModernHighGain)] =
+        1.0f + 11.0f * ampDrive_;
     // Each stage's trim divides its own small-signal gain back out, so the
     // control travels through tone rather than through level: a saturating
     // stage still ends up louder than the dry DI, because compressing a signal
     // raises its average, but not by the tens of decibels raw cascaded gain
     // would otherwise add.
     pedalMakeup_ = pedalTrim / pedalDrive_;
-    ampMakeup_ = ampTrim / (ampDriveFirst_ * ampDriveSecond_);
+    ampMakeup_[ampModelIndex(AmpModel::AmericanClean)] = 3.80f
+        / (ampDriveFirst_[ampModelIndex(AmpModel::AmericanClean)]
+           * ampDriveSecond_[ampModelIndex(AmpModel::AmericanClean)]);
+    ampMakeup_[ampModelIndex(AmpModel::BritishCrunch)] = 1.80f
+        / (ampDriveFirst_[ampModelIndex(AmpModel::BritishCrunch)]
+           * ampDriveSecond_[ampModelIndex(AmpModel::BritishCrunch)]);
+    ampMakeup_[ampModelIndex(AmpModel::ModernHighGain)] = ampTrim
+        / (ampDriveFirst_[ampModelIndex(AmpModel::ModernHighGain)]
+           * ampDriveSecond_[ampModelIndex(AmpModel::ModernHighGain)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -787,10 +981,49 @@ float ElectryFx::pedalStage(GainChannel& channel, float input) noexcept
     return sample * pedalMakeup_;
 }
 
-float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
+float ElectryFx::ampStage(AmpChannel& channel, AmpModel model,
+                          float input) noexcept
 {
-    float sample = channel.ampHighpass.process(input);
-    sample = channel.ampVoice.process(sample);
+    const auto index = ampModelIndex(model);
+
+    // This is the original shipping path kept as its own branch: same filter
+    // coefficients, operation order, nonlinear transfers and constants. A
+    // stable Modern selection therefore renders the same samples as it did
+    // before the selector existed.
+    if (model == AmpModel::ModernHighGain)
+    {
+        float sample = channel.inputHighpass.process(input);
+        sample = channel.inputVoice.process(sample);
+
+        channel.bias += biasCoefficient_ * (std::abs(sample) - channel.bias);
+        const float bias = -0.22f - 1.10f * channel.bias;
+        const float biasTriode = triodeStageLookup(bias);
+
+        float stage = triodeStageLookup(
+            sample * ampDriveFirst_[index] * ampGridVolts + bias) - biasTriode;
+        stage = channel.interstage.process(stage, interstageCoefficient_[index]);
+
+        const float droop = 1.0f
+            - 0.30f * channel.sag / (0.30f + channel.sag);
+        stage = droop
+            * (triodeStageLookup(
+                   stage * ampDriveSecond_[index] * ampGridVolts / droop + bias)
+               - biasTriode);
+        const float rectified = stage < 0.0f ? -stage : stage;
+        channel.sag += (rectified > channel.sag
+                            ? sagAttack_[index] : sagRelease_[index])
+                     * (rectified - channel.sag);
+
+        stage = channel.transformerHighpass.process(stage);
+        stage = transformerCore(channel.flux, stage, fluxCoefficient_[index]);
+
+        for (auto& section : channel.cabinet)
+            stage = section.process(stage);
+        return stage * ampMakeup_[index];
+    }
+
+    const bool american = model == AmpModel::AmericanClean;
+    float sample = channel.inputHighpass.process(input);
 
     // The operating point: a standing grid bias plus the drift that grid
     // current adds under sustained level. Each transfer call interpolates the
@@ -798,56 +1031,116 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // subtracting the bias point keeps the stage centred instead of pumping DC
     // into the cabinet.
     channel.bias += biasCoefficient_ * (std::abs(sample) - channel.bias);
-    const float bias = -0.22f - 1.10f * channel.bias;
+    const float bias = (american ? -0.12f : -0.18f)
+        - (american ? 0.40f : 0.78f) * channel.bias;
     const float biasTriode = triodeStageLookup(bias);
 
     float stage = triodeStageLookup(
-        sample * ampDriveFirst_ * ampGridVolts + bias) - biasTriode;
+        sample * ampDriveFirst_[index] * ampGridVolts + bias) - biasTriode;
     // Miller capacitance between the stages: each one is progressively darker,
     // which is why a cascaded amplifier saturates smoothly instead of
     // accumulating fizz.
-    stage = channel.interstage.process(stage, interstageCoefficient_);
+    stage = channel.interstage.process(stage, interstageCoefficient_[index]);
 
-    // Supply sag. The second stage stands in for the power stage, so it is
-    // where the rail droop is charged. A loud passage draws current the supply
-    // cannot hold up and the plate voltage falls - real amplifiers measure
-    // around 350 V down to around 250 V within a tenth of a second, recovering
-    // over three to six tenths - so the follower attacks in about 70 ms and
-    // recovers over about 400 ms.
+    // The passive RC stack sits where it does in the physical signal path:
+    // after the preamplifier and before the driven output pair. Its insertion
+    // loss is recovered by the following voltage-amplification stage (4.35x
+    // for the deeper American stack and 1.95x for the British stack), not by a
+    // post-cabinet EQ or a normalised response fit.
+    stage = channel.toneStack.process(stage)
+        * (american ? 4.35f : 1.95f);
+
+    // A paired-tube approximation evaluates the same measured nonlinear load
+    // line on opposed drives. This cancels the single-ended stage's dominant
+    // even term like a push-pull output section without claiming that a 12AX7
+    // table is a solved 6L6 or EL34. The small British imbalance leaves some
+    // even-order crunch; the American pair is exactly balanced.
     //
-    // What the rail sets is the *headroom*, not the gain: `droop * triode(u /
-    // droop)` leaves the small-signal slope exactly where it was and lowers
-    // the ceiling in proportion. That is why a chug blooms and then ducks - the
-    // follower has not caught up when the pick lands - and why a quiet passage
-    // is bit-for-bit what it was without the feature, since a droop of one is
-    // the identity.
-    // What discharges the reservoir is the current the stage draws, which
-    // follows its *output* rather than its grid signal - so the follower reads
-    // the stage's own last sample, not the drive. Bounded at 30%, which is the
-    // roughly 350 V to 250 V a real supply measures.
-    const float droop = 1.0f - 0.30f * channel.sag / (0.30f + channel.sag);
-    stage = droop
-        * (triodeStageLookup(
-               stage * ampDriveSecond_ * ampGridVolts / droop + bias)
-           - biasTriode);
+    // Output-derived negative feedback is returned around that nonlinear
+    // transfer. Its one-pole bandwidth represents the transformer/loop phase
+    // limit: the American circuit returns more low/mid output for cleaner,
+    // tighter behaviour, while the British circuit opens up earlier.
+    const float feedbackAmount = american ? 0.42f : 0.12f;
+    const float powerInput = stage * ampDriveSecond_[index] * ampGridVolts
+        - feedbackAmount * channel.negativeFeedback.state;
+
+    // Supply sag lowers headroom while retaining the local small-signal slope.
+    // The American reservoir has a 20% ceiling and a slow 550 ms recovery;
+    // the British path permits 24% and recovers in 300 ms. These are separate
+    // per-model followers, so a crossfade never transfers stored rail energy.
+    const float sagLimit = american ? 0.20f : 0.24f;
+    const float droop = 1.0f
+        - sagLimit * channel.sag / (0.30f + channel.sag);
+    const float driven = powerInput / droop;
+    const float positive = triodeStageLookup(driven + bias) - biasTriode;
+    const float negative = triodeStageLookup(-driven + bias) - biasTriode;
+    const float balance = american ? 0.50f : 0.53f;
+    stage = droop * (balance * positive - (1.0f - balance) * negative);
+
     const float rectified = stage < 0.0f ? -stage : stage;
-    channel.sag += (rectified > channel.sag ? sagAttack_ : sagRelease_)
+    channel.sag += (rectified > channel.sag
+                        ? sagAttack_[index] : sagRelease_[index])
                  * (rectified - channel.sag);
 
-    // The output transformer. Its core saturates at a flux limit, and flux is
-    // the integral of the voltage, so the limit is a volt-second one: at the
-    // same level the low end reaches it long before the top does. The one-pole
-    // is that integral normalised - unity at DC, falling as 1/f above the
-    // primary-inductance corner - and the excess the core cannot carry is
-    // subtracted back out, which leaves the stage transparent well above the
-    // corner and compressing and thickening underneath it. The high-pass in
-    // front is the transformer's own inability to pass DC.
+    // Different primary-inductance corners and drive levels make the two
+    // output transformers react differently to the same low note. Scaling
+    // back after the core keeps the distinction in saturation, not volume.
+    const float transformerDrive = american ? 0.72f : 1.08f;
     stage = channel.transformerHighpass.process(stage);
-    stage = transformerCore(channel.flux, stage, fluxCoefficient_);
+    stage = transformerCore(channel.flux, stage * transformerDrive,
+                            fluxCoefficient_[index]) / transformerDrive;
+    // The loop represents a transformer-secondary feedback tap before the
+    // parametric speaker/cabinet voice. This filtered value becomes the next
+    // oversampled frame's causal return around the output pair; it is not a
+    // solved transformer/phase-inverter feedback network.
+    channel.negativeFeedback.process(stage, feedbackCoefficient_[index]);
 
     for (auto& section : channel.cabinet)
         stage = section.process(stage);
-    return stage * ampMakeup_;
+    return stage * ampMakeup_[index];
+}
+
+float ElectryFx::blendedAmpStage(GainChannel& channel, float input) noexcept
+{
+    std::size_t soleModel = ampModelWeights_.size();
+    int activeCount = 0;
+    for (std::size_t index = 0; index < ampModelWeights_.size(); ++index)
+    {
+        if (ampModelWeights_[index] > 0.0f)
+        {
+            soleModel = index;
+            ++activeCount;
+        }
+        else if (channel.amplifiers[index].wasActive)
+        {
+            channel.amplifiers[index].reset();
+        }
+    }
+
+    // The steady-state fast path is also what preserves the modern model's
+    // exact pre-selector arithmetic: no multiply, sum or normalisation is put
+    // around its result.
+    if (activeCount == 1)
+    {
+        auto& amplifier = channel.amplifiers[soleModel];
+        amplifier.wasActive = true;
+        return ampStage(amplifier, static_cast<AmpModel>(soleModel), input);
+    }
+
+    float output = 0.0f;
+    float weightSum = 0.0f;
+    for (std::size_t index = 0; index < ampModelWeights_.size(); ++index)
+    {
+        const float weight = ampModelWeights_[index];
+        if (weight <= 0.0f)
+            continue;
+        auto& amplifier = channel.amplifiers[index];
+        amplifier.wasActive = true;
+        output += weight
+            * ampStage(amplifier, static_cast<AmpModel>(index), input);
+        weightSum += weight;
+    }
+    return weightSum > 0.0f ? output / weightSum : input;
 }
 
 float ElectryFx::renderGainFrame(GainChannel& channel, float input) noexcept
@@ -867,7 +1160,7 @@ float ElectryFx::renderGainFrame(GainChannel& channel, float input) noexcept
     if (ampWet_ > 0.0f)
     {
         channel.ampWasActive = true;
-        result = lerp(result, ampStage(channel, result), ampWet_);
+        result = lerp(result, blendedAmpStage(channel, result), ampWet_);
     }
     else if (channel.ampWasActive)
         channel.resetAmp();
@@ -951,6 +1244,18 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         smooth(ampDrive_, target.amp);
         smooth(pedalWet_, target.distortion > 0.0f ? 1.0f : 0.0f);
         smooth(ampWet_, target.amp > 0.0f ? 1.0f : 0.0f);
+        const auto targetModel = ampModelIndex(target.ampModel);
+        for (std::size_t model = 0; model < ampModelWeights_.size(); ++model)
+        {
+            smooth(ampModelWeights_[model], model == targetModel ? 1.0f : 0.0f);
+            // A float recurrence toward one stalls roughly 2e-5 short when
+            // its correction falls below half an ulp. The older continuous
+            // controls retain their established behaviour; model weights use
+            // a reachable endpoint so exactly one recursive circuit remains
+            // active after a switch.
+            if (model == targetModel && ampModelWeights_[model] > 0.99995f)
+                ampModelWeights_[model] = 1.0f;
+        }
         smooth(compressorMix_, target.compressor);
         smooth(delayMix_, target.delay);
         smooth(roomMix_, target.room);

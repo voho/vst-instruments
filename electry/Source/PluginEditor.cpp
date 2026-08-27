@@ -1269,6 +1269,36 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     outputModeStrip.setComponentID (electry::parameters::outputMode);
     addAndMakeVisible (outputModeStrip);
 
+    ampModelStrip.onChoice = [this] (int index)
+    {
+        auto* parameter = electryProcessor.parameters.getParameter (
+            electry::parameters::ampModel);
+        if (parameter == nullptr)
+            return;
+
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (
+            parameter->convertTo0to1 (static_cast<float> (index)));
+        parameter->endChangeGesture();
+    };
+    if (auto* parameter = electryProcessor.parameters.getParameter (
+            electry::parameters::ampModel))
+    {
+        ampModelAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter,
+            [this] (float newValue)
+            {
+                ampModelStrip.setSelectedIndex (juce::roundToInt (newValue));
+            },
+            nullptr);
+        ampModelAttachment->sendInitialUpdate();
+    }
+    ampModelStrip.setTooltipText (
+        "Selects the complete amplifier and cabinet voice: American clean, "
+        "British crunch, or modern high-gain.");
+    ampModelStrip.setComponentID (electry::parameters::ampModel);
+    addAndMakeVisible (ampModelStrip);
+
     using namespace electry::parameters;
     const auto setup = [this] (ElectryKnob& knob, const char* parameterId,
                                const char* tooltip)
@@ -1612,8 +1642,12 @@ void ElectryAudioProcessorEditor::resized()
           { &artifactsKnob, KnobTier::detail } },
         4);
 
+    auto effectsInner = effectsArea.reduced (10, 8)
+                                  .withTrimmedTop (sectionContentTrim);
+    ampModelStrip.setBounds (effectsInner.removeFromTop (42));
+    effectsInner.removeFromTop (2);
     layoutKnobRow (
-        effectsArea.reduced (10).withTrimmedTop (sectionContentTrim),
+        effectsInner,
         { { &distortionKnob, KnobTier::detail },
           { &ampKnob, KnobTier::detail },
           { &compressorKnob, KnobTier::detail },

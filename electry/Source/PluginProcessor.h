@@ -40,6 +40,7 @@ inline constexpr auto palmMute       = "palmMute";
 inline constexpr auto strumSpread    = "strumSpread";
 inline constexpr auto tremoloRate    = "tremoloRate";
 inline constexpr auto resonanceDepth = "resonanceDepth";
+inline constexpr auto ampModel       = "ampModel";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -182,6 +183,7 @@ private:
         std::atomic<float>* strumSpread = nullptr;
         std::atomic<float>* tremoloRate = nullptr;
         std::atomic<float>* resonanceDepth = nullptr;
+        std::atomic<float>* ampModel = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent

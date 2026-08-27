@@ -40,7 +40,7 @@ struct ParameterExpectation
 // struct, so reading it here too would make the check tautological. This table is
 // the independent statement of what the plug-in promises a new instance, and it is
 // what would have caught the two lists silently drifting apart.
-constexpr std::array<ParameterExpectation, 27> expectedParameters {{
+constexpr std::array<ParameterExpectation, 28> expectedParameters {{
     { electry::parameters::pickupSelector, 2.0f,  1.0e-5f },
     { electry::parameters::pickupType,     0.32f,  1.0e-5f },
     { electry::parameters::tone,           0.70f,  1.0e-5f },
@@ -68,6 +68,7 @@ constexpr std::array<ParameterExpectation, 27> expectedParameters {{
     { electry::parameters::strumSpread,    0.0f,  1.0e-4f },
     { electry::parameters::resonanceDepth,  35.0f,  1.0e-4f },
     { electry::parameters::tremoloRate,    12.0f, 1.0e-4f },
+    { electry::parameters::ampModel,        2.0f, 1.0e-5f },
 }};
 
 float parameterValue (const ElectryAudioProcessor& processor, const char* id)
@@ -235,7 +236,7 @@ void testParameterLayoutAndDefaults()
     ElectryAudioProcessor processor;
     expect (processor.getParameters().size()
                 == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 27 APVTS parameters");
+            "processor does not expose exactly 28 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     for (std::size_t index = 0; index < expectedParameters.size(); ++index)
@@ -433,6 +434,12 @@ void testParameterTextFormatting()
     expectParameterText (processor, electry::parameters::outputMode, 0.0f, "Mono");
     expectParameterText (processor, electry::parameters::outputMode, 1.0f, "Stereo");
     expectParameterText (processor, electry::parameters::outputMode, 2.0f, "Double");
+    expectParameterText (processor, electry::parameters::ampModel, 0.0f,
+                         "American Clean");
+    expectParameterText (processor, electry::parameters::ampModel, 1.0f,
+                         "British Crunch");
+    expectParameterText (processor, electry::parameters::ampModel, 2.0f,
+                         "Modern High-Gain");
     expectParameterText (processor, electry::parameters::bendTime, 0.28f, "280 ms");
     expectParameterText (processor, electry::parameters::pickupType, 0.0f, "Humbucker");
     expectParameterText (processor, electry::parameters::pickupType, 1.0f, "Single coil");
@@ -552,6 +559,7 @@ void testStateRoundTrip()
     setParameterValue (source, electry::parameters::strumSpread, 22.0f);
     setParameterValue (source, electry::parameters::tremoloRate, 16.0f);
     setParameterValue (source, electry::parameters::resonanceDepth, 80.0f);
+    setParameterValue (source, electry::parameters::ampModel, 1.0f);
     source.triggerArticulation (static_cast<int> (electry::PickStyle::Up));
     source.triggerArticulation (
         electry::ElectryEngine::pickStyleKeyswitchCount
@@ -600,6 +608,9 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, electry::parameters::resonanceDepth)
                           - 80.0f) < 1.0e-3f,
             "resonance depth did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, electry::parameters::ampModel)
+                          - 1.0f) < 1.0e-4f,
+            "amp model did not survive a state round trip");
     expect (restored.getCurrentPickStyleIndex()
                 == static_cast<int> (electry::PickStyle::Up)
                 && restored.getCurrentPlayStyleIndex()
@@ -607,6 +618,35 @@ void testStateRoundTrip()
             "the two articulation latches did not survive a state round trip");
     expect (restored.getPlayStyleKeysHold(),
             "the play-style key mode did not survive a state round trip");
+
+    // Sessions written before ampModel existed have no matching PARAM child.
+    // They used today's Modern circuit, so loading one must select Modern even
+    // when the receiving instance happened to have another model selected.
+    const auto savedXml = juce::AudioProcessor::getXmlFromBinary (
+        state.getData(), static_cast<int> (state.getSize()));
+    expect (savedXml != nullptr, "could not decode state for legacy migration check");
+    if (savedXml != nullptr)
+    {
+        auto legacyState = juce::ValueTree::fromXml (*savedXml);
+        const auto ampModelState = legacyState.getChildWithProperty (
+            "id", electry::parameters::ampModel);
+        expect (ampModelState.isValid(),
+                "saved state omitted the new amp-model parameter");
+        legacyState.removeChild (ampModelState, nullptr);
+
+        juce::MemoryBlock legacyData;
+        if (const auto legacyXml = legacyState.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*legacyXml, legacyData);
+
+        ElectryAudioProcessor legacyRestored;
+        setParameterValue (legacyRestored, electry::parameters::ampModel, 0.0f);
+        legacyRestored.setStateInformation (
+            legacyData.getData(), static_cast<int> (legacyData.getSize()));
+        expect (std::abs (parameterValue (
+                            legacyRestored, electry::parameters::ampModel) - 2.0f)
+                    < 1.0e-4f,
+                "legacy state did not migrate to the established Modern amp");
+    }
 
 }
 
@@ -3191,7 +3231,8 @@ void testEditorRendering()
                     "visible editor control escaped the editor bounds: "
                         + child->getName().toStdString());
     }
-    // Nineteen instrument/master controls plus five FX controls.
+    // Twenty instrument/master knobs plus five FX amount knobs; Amp Voice is a
+    // choice strip and therefore deliberately absent from this knob count.
     expect (knobs.size() == 25u, "editor did not expose all 25 knob controls");
 
     for (std::size_t first = 0; first < knobs.size(); ++first)
@@ -3350,6 +3391,60 @@ void testEditorRendering()
             expect (parameterValue (
                         processor, electry::parameters::outputMode) < 0.5f,
                     "MONO editor button did not restore the summed DI");
+        }
+    }
+
+    auto* ampModelControl = findControl (electry::parameters::ampModel);
+    const auto* ampControl = findControl (electry::parameters::amp);
+    expect (ampModelControl != nullptr && ampControl != nullptr,
+            "FX panel is missing its amp-model buttons or Amp control");
+    if (ampModelControl != nullptr && ampControl != nullptr)
+    {
+        expect (! ampModelControl->getBounds().intersects (ampControl->getBounds()),
+                "amp-model buttons overlap the Amp knob");
+        expect (ampModelControl->getBottom() <= ampControl->getY(),
+                "amp-model selector is not placed above the Amp control");
+
+        const std::array<juce::String, 3> expectedLabels {
+            "AMERICAN CLEAN", "BRITISH CRUNCH", "MODERN HIGH-GAIN"
+        };
+        std::array<juce::TextButton*, 3> modelButtons {};
+        int modelButtonCount = 0;
+        for (auto* child : ampModelControl->getChildren())
+        {
+            auto* button = dynamic_cast<juce::TextButton*> (child);
+            if (button == nullptr)
+                continue;
+            if (modelButtonCount < static_cast<int> (modelButtons.size()))
+                modelButtons[static_cast<std::size_t> (modelButtonCount)] = button;
+            expect (modelButtonCount >= static_cast<int> (expectedLabels.size())
+                        || button->getButtonText()
+                               == expectedLabels[static_cast<std::size_t> (
+                                   modelButtonCount)],
+                    "amp-model button lost its complete readable label");
+            expect (button->getWidth() >= 100 && button->getHeight() >= 22,
+                    "amp-model button is too small to operate clearly");
+            expect (button->getTooltip().contains ("amplifier")
+                        && button->getTooltip().contains ("cabinet"),
+                    "amp-model button does not explain the complete rig choice");
+            ++modelButtonCount;
+        }
+        expect (modelButtonCount == 3,
+                "amp-model selector did not expose all three voices");
+        if (modelButtons[0] != nullptr && modelButtons[1] != nullptr
+            && modelButtons[2] != nullptr)
+        {
+            modelButtons[0]->onClick();
+            expect (parameterValue (processor, electry::parameters::ampModel) < 0.5f,
+                    "American Clean button did not select its amp model");
+            modelButtons[1]->onClick();
+            expect (std::abs (parameterValue (
+                               processor, electry::parameters::ampModel) - 1.0f)
+                        < 1.0e-5f,
+                    "British Crunch button did not select its amp model");
+            modelButtons[2]->onClick();
+            expect (parameterValue (processor, electry::parameters::ampModel) > 1.5f,
+                    "Modern High-Gain button did not select its amp model");
         }
     }
 

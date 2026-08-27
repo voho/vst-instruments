@@ -207,6 +207,10 @@ private:
         "PICKUP", { "NECK", "BOTH", "BRIDGE" }, 1
     };
     ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "2X" } };
+    ElectryChoiceStrip ampModelStrip {
+        "AMP VOICE",
+        { "AMERICAN CLEAN", "BRITISH CRUNCH", "MODERN HIGH-GAIN" }
+    };
 
     ElectryKnob guitarBuildKnob { "BUILD" };
     ElectryKnob bodyResonanceKnob { "BODY RES" };
@@ -244,6 +248,7 @@ private:
 
     std::unique_ptr<juce::ParameterAttachment> pickupAttachment;
     std::unique_ptr<juce::ParameterAttachment> outputModeAttachment;
+    std::unique_ptr<juce::ParameterAttachment> ampModelAttachment;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::array<juce::Rectangle<int>, sectionCount> sectionBounds {};
 

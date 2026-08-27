@@ -130,27 +130,66 @@ struct ElectryFxTestAccess
         });
     }
 
+    static bool amplifierAtRest(const ElectryFx::AmpChannel& amplifier) noexcept
+    {
+        const bool cabinetClear = std::all_of(
+            amplifier.cabinet.begin(), amplifier.cabinet.end(),
+            [] (const auto& section)
+            {
+                return section.z1 == 0.0 && section.z2 == 0.0;
+            });
+        return ! amplifier.wasActive
+            && amplifier.bias == 0.0f && amplifier.sag == 0.0f
+            && amplifier.interstage.state == 0.0f
+            && amplifier.flux.state == 0.0f
+            && amplifier.negativeFeedback.state == 0.0f
+            && amplifier.inputHighpass.z1 == 0.0
+            && amplifier.inputHighpass.z2 == 0.0
+            && amplifier.inputVoice.z1 == 0.0
+            && amplifier.inputVoice.z2 == 0.0
+            && amplifier.toneStack.z1 == 0.0
+            && amplifier.toneStack.z2 == 0.0
+            && amplifier.toneStack.z3 == 0.0
+            && amplifier.transformerHighpass.z1 == 0.0
+            && amplifier.transformerHighpass.z2 == 0.0
+            && cabinetClear;
+    }
+
     static bool ampAtRest(const ElectryFx& fx) noexcept
     {
         return std::all_of(fx.gain_.begin(), fx.gain_.end(), [] (const auto& channel)
         {
-            const bool cabinetClear = std::all_of(
-                channel.cabinet.begin(), channel.cabinet.end(), [] (const auto& section)
-                {
-                    return section.z1 == 0.0 && section.z2 == 0.0;
-                });
             return ! channel.ampWasActive
-                && channel.bias == 0.0f && channel.sag == 0.0f
-                && channel.interstage.state == 0.0f
-                && channel.flux.state == 0.0f
-                && channel.ampHighpass.z1 == 0.0
-                && channel.ampHighpass.z2 == 0.0
-                && channel.ampVoice.z1 == 0.0
-                && channel.ampVoice.z2 == 0.0
-                && channel.transformerHighpass.z1 == 0.0
-                && channel.transformerHighpass.z2 == 0.0
-                && cabinetClear;
+                && std::all_of(channel.amplifiers.begin(),
+                               channel.amplifiers.end(), [] (const auto& amplifier)
+                {
+                    return amplifierAtRest(amplifier);
+                });
         });
+    }
+
+    static bool ampModelAtRest(const ElectryFx& fx, AmpModel model) noexcept
+    {
+        const auto index = static_cast<std::size_t>(model);
+        return std::all_of(fx.gain_.begin(), fx.gain_.end(), [index] (const auto& channel)
+        {
+            return amplifierAtRest(channel.amplifiers[index]);
+        });
+    }
+
+    static std::array<double, 7> toneStackCoefficients(
+        const ElectryFx& fx, AmpModel model) noexcept
+    {
+        const auto& stack = fx.gain_[0].amplifiers[
+            static_cast<std::size_t>(model)].toneStack;
+        return { stack.b0, stack.b1, stack.b2, stack.b3,
+                 stack.a1, stack.a2, stack.a3 };
+    }
+
+    static std::array<float, 3> ampModelWeights(
+        const ElectryFx& fx) noexcept
+    {
+        return fx.ampModelWeights_;
     }
 
     // Harmonic distortion the output transformer's core adds to a steady sine,
@@ -220,6 +259,7 @@ namespace
 {
 using electry::ElectryEngine;
 using electry::ElectryFx;
+using electry::AmpModel;
 using electry::EngineParameters;
 using electry::FxParameters;
 using electry::applyGuitarBuild;
@@ -315,13 +355,15 @@ constexpr int aliasProbeCycles = 431;
 // that legitimately belongs to the harmonic series. A nonlinearity fed at host
 // rate folds its own upper products back into the audio band, and that is
 // exactly what this ratio measures.
-double aliasFloorDb(float distortion, float amp, double amplitude)
+double aliasFloorDb(float distortion, float amp, double amplitude,
+                    AmpModel model = AmpModel::ModernHighGain)
 {
     ElectryFx fx;
     fx.prepare(sampleRate);
     FxParameters parameters;
     parameters.distortion = distortion;
     parameters.amp = amp;
+    parameters.ampModel = model;
     fx.setParameters(parameters);
 
     std::vector<float> left;
@@ -366,14 +408,20 @@ double aliasFloorDb(float distortion, float amp, double amplitude)
 // Small-signal magnitude of either gain path in decibels. At this level the
 // nonlinearities stay near their local slope, so ratios between frequencies
 // read the physical coupling/voice/cabinet filters rather than clipping.
-double gainPathMagnitudeDb(double frequency, float distortion, float amp)
+double gainPathMagnitudeDb(double frequency, float distortion, float amp,
+                           AmpModel model = AmpModel::ModernHighGain,
+                           double rate = sampleRate,
+                           bool startSelected = false)
 {
     ElectryFx fx;
-    fx.prepare(sampleRate);
+    fx.prepare(rate);
     FxParameters parameters;
     parameters.distortion = distortion;
     parameters.amp = amp;
+    parameters.ampModel = model;
     fx.setParameters(parameters);
+    if (startSelected)
+        fx.reset();
 
     constexpr int blockLength = 8192;
     constexpr double amplitude = 0.0008; // low enough to stay near-linear
@@ -385,7 +433,7 @@ double gainPathMagnitudeDb(double frequency, float distortion, float amp)
         for (int i = 0; i < blockLength; ++i)
         {
             const double phase = 2.0 * pi * frequency
-                               * (pass * blockLength + i) / sampleRate;
+                               * (pass * blockLength + i) / rate;
             left[static_cast<std::size_t>(i)] =
                 static_cast<float>(amplitude * std::sin(phase));
             right[static_cast<std::size_t>(i)] =
@@ -404,14 +452,123 @@ double gainPathMagnitudeDb(double frequency, float distortion, float amp)
                              / (amplitude / std::sqrt(2.0)));
 }
 
-double ampPathMagnitudeDb(double frequency, float amount = 1.0f)
+double ampPathMagnitudeDb(
+    double frequency, float amount = 1.0f,
+    AmpModel model = AmpModel::ModernHighGain,
+    double rate = sampleRate,
+    bool startSelected = false)
 {
-    return gainPathMagnitudeDb(frequency, 0.0f, amount);
+    return gainPathMagnitudeDb(frequency, 0.0f, amount, model, rate,
+                               startSelected);
 }
 
 double pedalPathMagnitudeDb(double frequency, float amount = 1.0f)
 {
     return gainPathMagnitudeDb(frequency, amount, 0.0f);
+}
+
+double toneStackMagnitudeDb(const std::array<double, 7>& coefficients,
+                            double frequency, double rate)
+{
+    const std::complex<double> delay = std::polar(
+        1.0, -2.0 * pi * frequency / rate);
+    const auto delay2 = delay * delay;
+    const auto delay3 = delay2 * delay;
+    const std::complex<double> numerator = coefficients[0]
+        + coefficients[1] * delay + coefficients[2] * delay2
+        + coefficients[3] * delay3;
+    const std::complex<double> denominator = 1.0
+        + coefficients[4] * delay + coefficients[5] * delay2
+        + coefficients[6] * delay3;
+    return 20.0 * std::log10(std::max(
+        std::abs(numerator / denominator), 1.0e-30));
+}
+
+double steadyAmpGainDb(AmpModel model, double amplitude)
+{
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.90f;
+    parameters.ampModel = model;
+    fx.setParameters(parameters);
+    // This fixture measures an already-selected amplifier, not the intentional
+    // model-switch crossfade from the default modern state.
+    fx.reset();
+
+    constexpr int blockLength = 512;
+    constexpr int cycles = 4; // 375 Hz at 48 kHz
+    double sum = 0.0;
+    int measuredSamples = 0;
+    for (int block = 0; block < 96; ++block)
+    {
+        auto left = sineBlock(blockLength, cycles, amplitude);
+        auto right = left;
+        fx.process(left.data(), right.data(), blockLength);
+        if (block >= 80)
+        {
+            for (const float value : left)
+                sum += static_cast<double>(value) * value;
+            measuredSamples += blockLength;
+        }
+    }
+    const double outputRms = std::sqrt(sum / measuredSamples);
+    return 20.0 * std::log10(std::max(outputRms, 1.0e-30)
+                             / (amplitude / std::sqrt(2.0)));
+}
+
+std::vector<float> renderAmpInBlocks(AmpModel model, int blockSize)
+{
+    constexpr int length = 12288;
+    auto source = sineBlock(length, 113, 0.28);
+    auto left = source;
+    auto right = source;
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.82f;
+    parameters.ampModel = model;
+    fx.setParameters(parameters);
+    fx.reset();
+    for (int offset = 0; offset < length; offset += blockSize)
+    {
+        const int count = std::min(blockSize, length - offset);
+        fx.process(left.data() + offset, right.data() + offset, count);
+    }
+    return left;
+}
+
+std::vector<float> renderModelSwitchesInBlocks(int blockSize)
+{
+    constexpr int segmentLength = 4096;
+    constexpr int length = 3 * segmentLength;
+    auto source = sineBlock(length, 79, 0.30);
+    auto left = source;
+    auto right = source;
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.90f;
+    parameters.ampModel = AmpModel::AmericanClean;
+    fx.setParameters(parameters);
+    fx.reset();
+
+    const std::array<AmpModel, 3> sequence {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    for (int segment = 0; segment < 3; ++segment)
+    {
+        parameters.ampModel = sequence[static_cast<std::size_t>(segment)];
+        fx.setParameters(parameters);
+        const int start = segment * segmentLength;
+        const int end = start + segmentLength;
+        for (int offset = start; offset < end; offset += blockSize)
+        {
+            const int count = std::min(blockSize, end - offset);
+            fx.process(left.data() + offset, right.data() + offset, count);
+        }
+    }
+    return left;
 }
 
 // A loud Drop-E rhythm figure straight from the string model, so the chain is
@@ -448,6 +605,20 @@ std::vector<float> throughChain(const FxParameters& parameters,
     ElectryFx fx;
     fx.prepare(rate);
     fx.setParameters(parameters);
+    std::vector<float> left = source;
+    std::vector<float> right = source;
+    fx.process(left.data(), right.data(), static_cast<int>(left.size()));
+    return left;
+}
+
+std::vector<float> throughSelectedChain(const FxParameters& parameters,
+                                        const std::vector<float>& source,
+                                        double rate = sampleRate)
+{
+    ElectryFx fx;
+    fx.prepare(rate);
+    fx.setParameters(parameters);
+    fx.reset();
     std::vector<float> left = source;
     std::vector<float> right = source;
     fx.process(left.data(), right.data(), static_cast<int>(left.size()));
@@ -911,18 +1082,33 @@ void testGainStageAliasing()
     // The previous host-rate chain measured between -28 and -40 dB on these
     // same probes; the oversampled block has to stay far below that, because
     // folded intermodulation is what makes a high-gain tone read as digital.
-    struct Probe { float distortion; float amp; double amplitude; const char* name; };
-    static constexpr std::array<Probe, 4> probes {{
-        { 1.0f, 0.0f, 0.30, "distortion at full drive" },
-        { 0.0f, 1.0f, 0.30, "amp at full drive" },
-        { 0.7f, 1.0f, 0.30, "distortion stacked into the amp" },
-        { 0.0f, 1.0f, 0.08, "amp on a quiet signal" },
+    struct Probe
+    {
+        float distortion;
+        float amp;
+        double amplitude;
+        AmpModel model;
+        const char* name;
+    };
+    static constexpr std::array<Probe, 6> probes {{
+        { 1.0f, 0.0f, 0.30, AmpModel::ModernHighGain,
+          "distortion at full drive" },
+        { 0.0f, 1.0f, 0.30, AmpModel::ModernHighGain,
+          "Modern amp at full drive" },
+        { 0.0f, 1.0f, 0.30, AmpModel::AmericanClean,
+          "American amp at full drive" },
+        { 0.0f, 1.0f, 0.30, AmpModel::BritishCrunch,
+          "British amp at full drive" },
+        { 0.7f, 1.0f, 0.30, AmpModel::ModernHighGain,
+          "distortion stacked into the amp" },
+        { 0.0f, 1.0f, 0.08, AmpModel::ModernHighGain,
+          "amp on a quiet signal" },
     }};
 
     for (const auto& probe : probes)
     {
         const double floorDb = aliasFloorDb(probe.distortion, probe.amp,
-                                            probe.amplitude);
+                                            probe.amplitude, probe.model);
         std::cout << "Alias floor, " << probe.name << ": " << floorDb << " dB\n";
         expect(floorDb < -60.0,
                std::string("aliasing above -60 dB for ") + probe.name + " ("
@@ -961,6 +1147,245 @@ void testCabinetVoicing()
            "the cabinet does not roll off above the speaker's range");
     expect(beyond - reference < -25.0,
            "the cabinet's top-end roll-off is not steep enough");
+
+    // Golden small-signal fingerprint of the pre-selector Modern path. These
+    // narrow cross-platform tolerances catch a changed coefficient or routing
+    // operation while allowing ordinary libm rounding in the sine fixture.
+    const std::array<double, 6> measured {
+        low - reference, thump - reference, honk - reference,
+        presence - reference, top - reference, beyond - reference };
+    const std::array<double, 6> golden {
+        -14.4325, 1.10772, -6.52226, 3.23156, -22.0021, -39.2035 };
+    for (std::size_t index = 0; index < measured.size(); ++index)
+        expect(std::abs(measured[index] - golden[index]) < 0.03,
+               "the Modern amplifier's shipping response fingerprint changed");
+}
+
+void testToneStackCircuits()
+{
+    ElectryFx fx;
+    fx.prepare(sampleRate); // 4x: tone stacks are designed at 192 kHz
+    const auto american = FxAccess::toneStackCoefficients(
+        fx, AmpModel::AmericanClean);
+    const auto british = FxAccess::toneStackCoefficients(
+        fx, AmpModel::BritishCrunch);
+    const std::array<double, 7> expectedAmerican {
+        0.612779548075920, -1.82867816038619, 1.81912444613279,
+        -0.603225833822526, -2.91534279152261, 2.83115837087876,
+        -0.915815449961636 };
+    const std::array<double, 7> expectedBritish {
+        0.735881452794362, -2.18610105484758, 2.16479824862014,
+        -0.714578646566917, -2.95140353681899, 2.90314018472511,
+        -0.951736328420460 };
+    for (std::size_t index = 0; index < american.size(); ++index)
+    {
+        expect(std::abs(american[index] - expectedAmerican[index]) < 2.0e-12,
+               "the American passive tone-stack BLT coefficients changed");
+        expect(std::abs(british[index] - expectedBritish[index]) < 2.0e-12,
+               "the British passive tone-stack BLT coefficients changed");
+    }
+
+    const double american1k = toneStackMagnitudeDb(american, 1000.0, 192000.0);
+    const double british1k = toneStackMagnitudeDb(british, 1000.0, 192000.0);
+    std::cout << "Passive tone-stack insertion at 1 kHz: American "
+              << american1k << " dB, British " << british1k << " dB\n";
+    expect(std::abs(american1k + 13.00577) < 0.002,
+           "the American tone-stack response does not match its RC circuit");
+    expect(std::abs(british1k + 5.84512) < 0.002,
+           "the British tone-stack response does not match its RC circuit");
+}
+
+void testAmpModelVoices()
+{
+    static constexpr std::array<AmpModel, 3> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    static constexpr std::array<const char*, 3> names {
+        "American", "British", "Modern" };
+    static constexpr std::array<double, 6> frequencies {
+        90.0, 120.0, 470.0, 700.0, 2800.0, 8000.0 };
+    static constexpr std::array<std::array<double, 6>, 3> goldenResponse {{
+        { -0.60845, -0.17510, -6.95864, -3.88443, 9.13335, -14.0654 },
+        {  1.73019,  3.53850, -1.51333, -0.69068, 2.93125, -21.1634 },
+        {  0.36333,  0.60681, -6.52226, -2.20414, 3.17347, -22.0021 },
+    }};
+    std::array<std::array<double, frequencies.size()>, models.size()> response {};
+
+    for (std::size_t model = 0; model < models.size(); ++model)
+    {
+        const double reference = ampPathMagnitudeDb(
+            1000.0, 1.0f, models[model]);
+        std::cout << names[model] << " response relative to 1 kHz:";
+        for (std::size_t band = 0; band < frequencies.size(); ++band)
+        {
+            response[model][band] = ampPathMagnitudeDb(
+                frequencies[band], 1.0f, models[model]) - reference;
+            std::cout << ' ' << frequencies[band] << " Hz "
+                      << response[model][band] << " dB";
+            expect(std::abs(response[model][band]
+                            - goldenResponse[model][band]) < 0.08,
+                   std::string(names[model])
+                       + " amplifier/cabinet response anchor changed");
+        }
+        std::cout << '\n';
+        expect(response[model].back() < -12.0,
+               std::string(names[model])
+                   + " cabinet passes implausible 8 kHz energy");
+    }
+
+    const auto distance = [&response] (std::size_t first, std::size_t second)
+    {
+        double sum = 0.0;
+        for (std::size_t band = 0; band < frequencies.size(); ++band)
+        {
+            const double delta = response[first][band] - response[second][band];
+            sum += delta * delta;
+        }
+        return std::sqrt(sum / frequencies.size());
+    };
+    const double americanBritish = distance(0, 1);
+    const double americanModern = distance(0, 2);
+    const double britishModern = distance(1, 2);
+    std::cout << "Amp spectral RMS separations: A/B " << americanBritish
+              << " dB, A/M " << americanModern << " dB, B/M "
+              << britishModern << " dB\n";
+    expect(americanBritish > 2.0 && americanModern > 2.0
+               && britishModern > 2.0,
+           "two amplifier models collapse to nearly the same response");
+
+    // The BLT must describe the same analogue network at every internal rate.
+    // Compare a musically relevant upper-mid ratio across the 4x and native
+    // host-rate paths rather than comparing latency-shifted waveforms.
+    for (std::size_t model = 0; model < models.size(); ++model)
+    {
+        const double at48 = ampPathMagnitudeDb(
+            2800.0, 0.01f, models[model], 48000.0, true)
+            - ampPathMagnitudeDb(
+                1000.0, 0.01f, models[model], 48000.0, true);
+        const double at384 = ampPathMagnitudeDb(
+            2800.0, 0.01f, models[model], 384000.0, true)
+            - ampPathMagnitudeDb(
+                1000.0, 0.01f, models[model], 384000.0, true);
+        std::cout << names[model] << " 2.8 kHz/1 kHz at 48/384 kHz: "
+                  << at48 << "/" << at384 << " dB\n";
+        expect(std::abs(at48 - at384) < 0.45,
+               std::string(names[model])
+                   + " response moved with host sample rate");
+    }
+}
+
+void testAmpModelDynamics()
+{
+    static constexpr std::array<AmpModel, 3> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    static constexpr std::array<const char*, 3> names {
+        "American", "British", "Modern" };
+    std::array<double, 3> quietGains {};
+    std::array<double, 3> compression {};
+    for (std::size_t index = 0; index < models.size(); ++index)
+    {
+        const double quietGain = steadyAmpGainDb(models[index], 0.002);
+        const double loudGain = steadyAmpGainDb(models[index], 0.35);
+        quietGains[index] = quietGain;
+        compression[index] = loudGain - quietGain;
+        std::cout << names[index] << " amp gain: quiet " << quietGain
+                  << " dB, loud " << loudGain << " dB, compression "
+                  << compression[index] << " dB\n";
+        expect(std::isfinite(quietGain) && std::isfinite(loudGain),
+               std::string(names[index]) + " dynamics are non-finite");
+        expect(loudGain > -18.0 && loudGain < 12.0,
+               std::string(names[index]) + " loud output is not playable");
+        expect(compression[index] < -0.20,
+               std::string(names[index])
+                   + " power path has no level-dependent compression");
+    }
+    expect(compression[0] > compression[1] + 0.25,
+           "the American model is not cleaner than the British model");
+    expect(compression[1] > compression[2] + 0.25,
+           "the British model is not cleaner than the Modern model");
+    const auto [quietMinimum, quietMaximum] = std::minmax_element(
+        quietGains.begin(), quietGains.end());
+    expect(*quietMaximum - *quietMinimum < 5.0,
+           "amp selection changes ordinary small-signal level by over 5 dB");
+}
+
+void testAmpModelSwitchingAndBlockInvariance()
+{
+    static constexpr std::array<AmpModel, 3> models {
+        AmpModel::AmericanClean, AmpModel::BritishCrunch,
+        AmpModel::ModernHighGain };
+    for (const auto model : models)
+    {
+        const auto oneBlock = renderAmpInBlocks(model, 12288);
+        const auto oddBlocks = renderAmpInBlocks(model, 137);
+        expect(std::memcmp(oneBlock.data(), oddBlocks.data(),
+                           oneBlock.size() * sizeof(float)) == 0,
+               "a stable amplifier model depends on host block size");
+    }
+    const auto switchedLarge = renderModelSwitchesInBlocks(4096);
+    const auto switchedSmall = renderModelSwitchesInBlocks(73);
+    expect(std::memcmp(switchedLarge.data(), switchedSmall.data(),
+                       switchedLarge.size() * sizeof(float)) == 0,
+           "amp-model automation depends on host block size");
+    expect(allFinite(switchedLarge) && peakOf(switchedLarge) < 1.5,
+           "a model change made mid-crossfade produced unsafe output");
+
+    constexpr int segmentLength = 16384;
+    constexpr int length = 3 * segmentLength;
+    auto source = sineBlock(length, 173, 0.28);
+    auto left = source;
+    auto right = source;
+    ElectryFx fx;
+    fx.prepare(sampleRate);
+    FxParameters parameters;
+    parameters.amp = 0.90f;
+    parameters.ampModel = AmpModel::AmericanClean;
+    fx.setParameters(parameters);
+    fx.reset();
+    for (int segment = 0; segment < 3; ++segment)
+    {
+        parameters.ampModel = models[static_cast<std::size_t>(segment)];
+        fx.setParameters(parameters);
+        fx.process(left.data() + segment * segmentLength,
+                   right.data() + segment * segmentLength, segmentLength);
+    }
+
+    const auto largestStep = [] (const std::vector<float>& buffer,
+                                 int begin, int end)
+    {
+        double result = 0.0;
+        for (int sample = std::max(begin, 1); sample < end; ++sample)
+            result = std::max(result, std::abs(
+                static_cast<double>(buffer[static_cast<std::size_t>(sample)])
+                - buffer[static_cast<std::size_t>(sample - 1)]));
+        return result;
+    };
+    const double allSteps = largestStep(left, 1, length);
+    const double americanSteps = largestStep(
+        left, segmentLength / 2, segmentLength);
+    const double britishSteps = largestStep(
+        left, segmentLength + segmentLength / 2, 2 * segmentLength);
+    const double modernSteps = largestStep(
+        left, 2 * segmentLength + segmentLength / 2, length);
+    const double settledStep = std::max(
+        americanSteps, std::max(britishSteps, modernSteps));
+    std::cout << "Amp model switch largest step " << allSteps
+              << ", settled model step " << settledStep << '\n';
+    expect(allSteps < 1.5 * settledStep + 0.01,
+           "switching amplifier model produced an audible discontinuity");
+    expect(allFinite(left) && peakOf(left) < 1.5,
+           "amp-model switching produced unsafe output");
+
+    const auto weights = FxAccess::ampModelWeights(fx);
+    std::cout << "Settled model weights: " << weights[0] << ", "
+              << weights[1] << ", " << weights[2] << '\n';
+    expect(weights[0] == 0.0f && weights[1] == 0.0f && weights[2] == 1.0f,
+           "the amp-model crossfade did not settle to one running circuit");
+    expect(FxAccess::ampModelAtRest(fx, AmpModel::AmericanClean)
+               && FxAccess::ampModelAtRest(fx, AmpModel::BritishCrunch)
+               && ! FxAccess::ampModelAtRest(fx, AmpModel::ModernHighGain),
+           "a faded-out amplifier retained recursive circuit state");
 }
 
 void testEnabledGainModulesStayInCircuit()
@@ -1199,6 +1624,28 @@ void testChainLevelMatching()
                "the amp control's travel is not level-consistent at "
                    + std::to_string(mix));
     }
+
+    std::array<double, 3> modelGains {};
+    for (const auto model : { AmpModel::AmericanClean,
+                              AmpModel::BritishCrunch,
+                              AmpModel::ModernHighGain })
+    {
+        FxParameters parameters;
+        parameters.amp = 0.90f;
+        parameters.ampModel = model;
+        const double gainDb = 20.0 * std::log10(
+            std::max(rmsOf(throughSelectedChain(parameters, riff)), 1.0e-30)
+            / dry);
+        modelGains[static_cast<std::size_t>(model)] = gainDb;
+        std::cout << "Selected amp " << static_cast<int>(model)
+                  << " Drop-E gain at 90%: " << gainDb << " dB\n";
+        expect(gainDb > -6.0 && gainDb < 12.0,
+               "an amp model's 90% Drop-E output is not in a playable range");
+    }
+    const auto [modelMinimum, modelMaximum] = std::minmax_element(
+        modelGains.begin(), modelGains.end());
+    expect(*modelMaximum - *modelMinimum < 4.0,
+           "selecting an amp changes the same Drop-E riff by over 4 dB");
 }
 
 void testDelayAndRoom()
@@ -1455,18 +1902,24 @@ void testDeterminismAndRateMatrix()
                        first.size() * sizeof(float)) == 0,
            "identical input did not render identical audio");
 
-    for (const double rate : { 22050.0, 44100.0, 48000.0, 88200.0, 96000.0,
-                               176400.0, 192000.0, 384000.0 })
+    for (const double rate : { 8000.0, 22050.0, 44100.0, 48000.0, 88200.0,
+                               96000.0, 176400.0, 192000.0, 384000.0 })
     {
         const int length = static_cast<int>(rate * 0.25);
         const auto probe = sineBlock(length, 431, 0.40);
-        const auto processed = throughChain(parameters, probe, rate);
-        expect(allFinite(processed),
-               "the chain produced a non-finite sample at "
-                   + std::to_string(rate) + " Hz");
-        expect(peakOf(processed) < 2.0001,
-               "the chain exceeded its output clamp at "
-                   + std::to_string(rate) + " Hz");
+        for (const auto model : { AmpModel::AmericanClean,
+                                  AmpModel::BritishCrunch,
+                                  AmpModel::ModernHighGain })
+        {
+            parameters.ampModel = model;
+            const auto processed = throughChain(parameters, probe, rate);
+            expect(allFinite(processed),
+                   "an amp model produced a non-finite sample at "
+                       + std::to_string(rate) + " Hz");
+            expect(peakOf(processed) < 2.0001,
+                   "an amp model exceeded the output clamp at "
+                       + std::to_string(rate) + " Hz");
+        }
 
         ElectryFx fx;
         fx.prepare(rate);
@@ -1608,7 +2061,9 @@ void testPrepareSanitisesSampleRate()
 }
 
 // setParameters() runs each of the five panel controls through sanitiseMix(): a
-// non-finite value falls back to 0.0, then the result is clamped to 0..1.
+// non-finite value falls back to 0.0, then the result is clamped to 0..1. The
+// discrete model is separately validated so a corrupt state cannot index past
+// the three prepared amplifier circuits.
 // testHostileInput only ever checked that the guard kept the chain finite,
 // never the sanitised value itself, so a clamp landing on the wrong boundary
 // (or a fallback that missed one of the five fields) would still pass it.
@@ -1641,12 +2096,15 @@ void testSetParametersSanitisation()
     outOfRange.compressor = -2.0f;
     outOfRange.delay = 1.0001f;
     outOfRange.room = 100.0f;
+    outOfRange.ampModel = static_cast<AmpModel>(99);
     const auto clamped = sanitised(outOfRange);
     expect(clamped.distortion == 0.0f, "a negative distortion mix was not clamped to 0.0");
     expect(clamped.amp == 1.0f, "an above-range amp mix was not clamped to 1.0");
     expect(clamped.compressor == 0.0f, "a negative compressor mix was not clamped to 0.0");
     expect(clamped.delay == 1.0f, "an above-range delay mix was not clamped to 1.0");
     expect(clamped.room == 1.0f, "an above-range room mix was not clamped to 1.0");
+    expect(clamped.ampModel == AmpModel::ModernHighGain,
+           "an invalid amp model did not fall back to Modern");
 
     FxParameters ordinary;
     ordinary.distortion = 0.25f;
@@ -1654,10 +2112,12 @@ void testSetParametersSanitisation()
     ordinary.compressor = 0.75f;
     ordinary.delay = 0.1f;
     ordinary.room = 0.9f;
+    ordinary.ampModel = AmpModel::BritishCrunch;
     const auto passedThrough = sanitised(ordinary);
     expect(passedThrough.distortion == 0.25f && passedThrough.amp == 0.5f
                && passedThrough.compressor == 0.75f && passedThrough.delay == 0.1f
-               && passedThrough.room == 0.9f,
+               && passedThrough.room == 0.9f
+               && passedThrough.ampModel == AmpModel::BritishCrunch,
            "ordinary in-range mixes were altered by sanitisation");
 }
 
@@ -1671,6 +2131,10 @@ int main()
     testCircuitGainStages();
     testGainStageAliasing();
     testCabinetVoicing();
+    testToneStackCircuits();
+    testAmpModelVoices();
+    testAmpModelDynamics();
+    testAmpModelSwitchingAndBlockInvariance();
     testEnabledGainModulesStayInCircuit();
     testPowerStage();
     testChainLevelMatching();

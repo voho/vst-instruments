@@ -239,6 +239,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.strumSpread    = parameters.getRawParameterValue (strumSpread);
     parameterPointers.tremoloRate    = parameters.getRawParameterValue (tremoloRate);
     parameterPointers.resonanceDepth = parameters.getRawParameterValue (resonanceDepth);
+    parameterPointers.ampModel       = parameters.getRawParameterValue (ampModel);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
@@ -252,7 +253,8 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.palmMute != nullptr
              && parameterPointers.strumSpread != nullptr
              && parameterPointers.tremoloRate != nullptr
-             && parameterPointers.resonanceDepth != nullptr);
+             && parameterPointers.resonanceDepth != nullptr
+             && parameterPointers.ampModel != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -317,7 +319,7 @@ ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (27);
+    result.reserve (28);
 
     // Every default below is read from the engine's own struct rather than
     // written out again here. These two lists had drifted apart: the engine's
@@ -427,6 +429,11 @@ ElectryAudioProcessor::createParameterLayout()
                           return juce::String (value, 1) + " strokes/s";
                       })
                   .withValueFromStringFunction (plainNumericValue));
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { ampModel, 1 }, "Amp voice",
+        juce::StringArray { "American Clean", "British Crunch",
+                            "Modern High-Gain" },
+        static_cast<int> (electry::FxParameters {}.ampModel)));
 
     return { result.begin(), result.end() };
 }
@@ -1085,6 +1092,8 @@ void ElectryAudioProcessor::updateEffectParameters() noexcept
     electry::FxParameters next;
     next.distortion = valueOf (parameterPointers.distortion);
     next.amp = valueOf (parameterPointers.amp);
+    next.ampModel = static_cast<electry::AmpModel> (juce::jlimit (
+        0, 2, juce::roundToInt (valueOf (parameterPointers.ampModel))));
     next.compressor = valueOf (parameterPointers.compressor);
     next.delay = valueOf (parameterPointers.delay);
     next.room = valueOf (parameterPointers.room);
@@ -1288,6 +1297,15 @@ void ElectryAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
+        if (! restoredState.getChildWithProperty ("id", electry::parameters::ampModel)
+                  .isValid())
+        {
+            juce::ValueTree legacyAmpModel { "PARAM" };
+            legacyAmpModel.setProperty ("id", electry::parameters::ampModel, nullptr);
+            legacyAmpModel.setProperty (
+                "value", static_cast<int> (electry::AmpModel::ModernHighGain), nullptr);
+            restoredState.appendChild (legacyAmpModel, nullptr);
+        }
         const int restoredProgram = static_cast<int> (
             restoredState.getProperty (factoryProgramProperty, 0));
         pickStyleIndex.store (juce::jlimit (
