@@ -815,6 +815,10 @@ private:
         bool strokeIsUp { false };
         std::uint32_t strokeVariationState { 0u };
         std::uint64_t startOrder { 0 };
+        // Captured before scheduling marks the MIDI key down. At delayed
+        // contact that live flag can no longer distinguish a repick from a
+        // released/refretted note.
+        bool preservesVibratoFinger { false };
     };
 
     struct Voice

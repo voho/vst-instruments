@@ -12,6 +12,32 @@ recasting that observation as a measurement. Where a constant is voiced rather
 than literature-derived it is labelled as voicing in the
 [claim boundaries](../README.md#references-and-claim-boundaries).
 
+## 2026-08-27 — keep the live fretting finger through a repick
+
+Every same-string plectrum contact re-entered `startVoice()` and seeded a new
+vibrato finger from the pick's note order. B0 therefore replaced phase, rate
+and excursion on every repeat even though the fretting key never moved. In
+demo 22's 12-strokes/s lead, the reset arrived every 83.3 ms while one nominal
+full-pressure finger cycle takes about 156 ms; the finger could not complete a
+single natural rock before the next pick assigned another one.
+
+Decision: read the physical voice's live key ownership before restarting its
+string excitation. A same-note contact on that live, held string advances every
+plectrum and string state while retaining the finger's seed, phase, cycle,
+rate, depth and current excursion. This covers immediate and delayed E6..B6
+contacts, B0 and overlapping same-note owners through their shared repick path
+while the voice is still ringing. A Note Off followed by a reattack, a new fret,
+a different physical string or a repick after the damped voice has retired
+assigns a new finger.
+
+This changes no vibrato rate, depth, scatter or onset coefficient. The
+regression requires all six finger-state coordinates to survive a new audible
+pick order and separately requires a released/refretted note to reseed. Across
+demo 22's 18 post-vibrato contacts, the old reset implied 3.682 cents median,
+8.867 cents RMS and 18.919 cents maximum discontinuity; the retained state
+makes that reset component exactly zero while the finger completes eight
+natural cycle wraps. The repicked lead is the direct audible proof.
+
 ## 2026-08-27 — keep one picking hand across a chord
 
 Stroke variation described one player's pick position, force, angle and contact

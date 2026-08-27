@@ -3984,6 +3984,18 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     const int fret = midiNote - spec.openMidiNote;
 
     const bool wasRinging = voice.active;
+    // A same-note picking-hand contact does not replace the fretting finger.
+    // Read the live ownership before startVoice() rewrites it: a reattack
+    // after Note Off is a newly assigned finger even when the old string is
+    // still ringing, while B0, E6..B6 and overlapping Note Ons on a held note
+    // all keep the finger that is already there.
+    // A pending contact already captured whether this was the same finger.
+    // Keep a fresh delayed refret fresh even if another overlapping Note On
+    // arrives after scheduling has marked its key down.
+    const bool sameHeldFinger = wasRinging && voice.keyDown
+        && voice.midiNote == midiNote
+        && (! voice.pendingRepick.active
+            || voice.pendingRepick.preservesVibratoFinger);
     const int repeatedKeyDownCount = wasRinging && voice.midiNote == midiNote
         ? voice.keyDownCount : 0;
     const bool delayedSameNoteRepick = reservedStartOrder == 0
@@ -4006,7 +4018,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         voice.pendingContactPreservesRing = preservesExistingRing;
         voice.pendingRepick = {
             true, velocity, playStyle, strokeIsUp, strokeVariationState,
-            ++noteSequence_
+            ++noteSequence_, sameHeldFinger
         };
         return;
     }
@@ -4049,7 +4061,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
             * (plectrumContacts(playStyle, false)
                    ? voice.strokeForceGain : 1.0f),
         0.32f, 1.25f);
-    seedVibratoFinger(voice);
+    if (! sameHeldFinger)
+        seedVibratoFinger(voice);
     voice.ageSamples = 0;
     // Per-note, for the same reason ageSamples is: the relax factor is
     // measured against this note's own peak. Carried over, a quiet note
@@ -5689,7 +5702,9 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                     const bool keyDown = voice.keyDown;
                     const int keyDownCount = voice.keyDownCount;
                     const bool sustained = voice.sustained;
-                    voice.pendingRepick.active = false;
+                    // Leave the descriptor active through startVoice(): its
+                    // scheduling-time finger decision is needed before that
+                    // function clears the pending state itself.
                     startVoice(voice, voice.midiNote, pending.velocity,
                                pending.playStyle, pending.strokeIsUp, 0,
                                pending.strokeVariationState,

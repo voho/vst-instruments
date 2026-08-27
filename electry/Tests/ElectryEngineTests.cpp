@@ -73,7 +73,12 @@ struct ElectryEngineTestAccess
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
         float loopDampingCoefficient { 0.0f };
+        float vibratoPhase { 0.0f };
+        float vibratoRateScale { 1.0f };
+        float vibratoDepthScale { 1.0f };
         float vibratoSemitones { 0.0f };
+        std::uint32_t vibratoSeed { 0u };
+        std::uint32_t vibratoCycle { 0u };
     };
 
     static VoiceSnapshot snapshot(const ElectryEngine& engine, int stringIndex)
@@ -132,7 +137,12 @@ struct ElectryEngineTestAccess
         result.artifactCollisionRemaining = voice.artifactCollisionRemaining;
         result.artifactCollisionLength = voice.artifactCollisionLength;
         result.loopDampingCoefficient = voice.vertical.loopDampingCoefficient;
+        result.vibratoPhase = voice.vibratoPhase;
+        result.vibratoRateScale = voice.vibratoRateScale;
+        result.vibratoDepthScale = voice.vibratoDepthScale;
         result.vibratoSemitones = voice.vibratoSemitones;
+        result.vibratoSeed = voice.vibratoSeed;
+        result.vibratoCycle = voice.vibratoCycle;
         return result;
     }
 
@@ -6114,6 +6124,97 @@ void testFrettingHandVibrato()
             identical = identical
                 && withoutControl.left[i] == withSilentControl.left[i];
         expect(identical, "a zero vibrato gesture is not a bit-exact no-op");
+    }
+
+    // A picking-hand repick does not replace the fretting finger. Its contact
+    // advances the audible stroke, but the finger's phase and per-cycle draw
+    // must continue exactly; releasing and fretting the note again is the
+    // event that assigns a new finger.
+    {
+        ElectryEngine engine;
+        ElectryEngine control;
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.strumSpreadSeconds = 0.0f;
+        for (auto* target : { &engine, &control })
+        {
+            target->prepare(sampleRate, 512);
+            target->setParameters(parameters);
+            target->reset();
+            target->noteOn(47, 0.85f);
+            target->setVibrato(1.0f);
+        }
+        StereoBuffer establish(static_cast<int>(0.45 * sampleRate));
+        StereoBuffer controlEstablish(static_cast<int>(0.45 * sampleRate));
+        renderInto(engine, establish);
+        renderInto(control, controlEstablish);
+        const int stringIndex = TestAccess::stringForNote(engine, 47);
+        const auto beforeRepick = TestAccess::snapshot(engine, stringIndex);
+        const auto sameFinger = [] (const auto& left, const auto& right)
+        {
+            return left.vibratoSeed == right.vibratoSeed
+                && left.vibratoCycle == right.vibratoCycle
+                && left.vibratoPhase == right.vibratoPhase
+                && left.vibratoRateScale == right.vibratoRateScale
+                && left.vibratoDepthScale == right.vibratoDepthScale
+                && left.vibratoSemitones == right.vibratoSemitones;
+        };
+
+        engine.noteOn(ElectryEngine::firstRepickNote + stringIndex, 0.92f);
+        const auto afterRepick = TestAccess::snapshot(engine, stringIndex);
+        expect(afterRepick.startOrder > beforeRepick.startOrder,
+               "the held-string trigger did not make a new pick contact");
+        expect(sameFinger(afterRepick, beforeRepick),
+               "a picking-hand repick replaced the fretting finger");
+
+        // The same rule survives scheduling lookahead. The delayed pick must
+        // retain the finger decision made at reservation time: a held-string
+        // trigger preserves it, while Note Off followed by the same note is a
+        // real refret and replaces it even though the scheduler has marked the
+        // key down again by the time contact arrives.
+        parameters.strumSpreadSeconds = 0.020f;
+        engine.setParameters(parameters);
+        control.setParameters(parameters);
+        // The immediate E6..B6 contact above happened between host samples.
+        // Advance its clock before asking B0 for another physical contact;
+        // equal-clock contacts are intentionally de-duplicated.
+        StereoBuffer advanceContactClock(1);
+        StereoBuffer controlAdvanceContactClock(1);
+        renderInto(engine, advanceContactClock);
+        renderInto(control, controlAdvanceContactClock);
+        engine.beginTremoloPicking(0.92f);
+        StereoBuffer scheduleB0(1);
+        StereoBuffer controlScheduleB0(1);
+        renderInto(engine, scheduleB0);
+        renderInto(control, controlScheduleB0);
+        expect(TestAccess::snapshot(engine, stringIndex).pendingRepickActive,
+               "the B0 finger-continuity fixture had no pending repick");
+        StereoBuffer delayedRepick(static_cast<int>(0.050 * sampleRate));
+        StereoBuffer controlDelay(static_cast<int>(0.050 * sampleRate));
+        renderInto(engine, delayedRepick);
+        renderInto(control, controlDelay);
+        engine.endTremoloPicking();
+        const auto afterDelayedRepick = TestAccess::snapshot(engine,
+                                                              stringIndex);
+        const auto withoutDelayedRepick = TestAccess::snapshot(control,
+                                                                stringIndex);
+        expect(afterDelayedRepick.startOrder > afterRepick.startOrder
+                   && sameFinger(afterDelayedRepick, withoutDelayedRepick),
+               "a delayed B0 repick replaced the fretting finger");
+
+        engine.noteOff(47);
+        engine.noteOn(47, 0.85f);
+        engine.noteOn(47, 0.80f);
+        expect(TestAccess::snapshot(engine, stringIndex).pendingRepickActive,
+               "the overlapping delayed-refret fixture had no pending contact");
+        StereoBuffer delayedRefret(static_cast<int>(0.050 * sampleRate));
+        renderInto(engine, delayedRefret);
+        const auto refretted = TestAccess::snapshot(engine, stringIndex);
+        expect(refretted.startOrder > afterDelayedRepick.startOrder
+                   && refretted.vibratoSeed
+                          != afterDelayedRepick.vibratoSeed,
+               "an overlapping delayed refret reused the old finger");
     }
 
     // Measure the vibrato against the same note without it rather than against
