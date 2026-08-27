@@ -52,30 +52,33 @@ while British solves its distinct ECC83/12AX7 family at the 400 V rail used by
 [Macak and Schimmel's Fig. 11 model](https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf), in the 82/100
 kOhm, 470 Ohm and 10 kOhm/presence-tail [Marshall Super Lead family](https://www.prowessamplifiers.com/schematics/Marshall/1959_superlead.pdf).
 The driven grids include their 1 nF × 1 MOhm and 22 nF × 1 MOhm input coupling;
-both nonlinear dual-plate solves include finite-tail behaviour, unequal arms
-and the midband load of the 220 kOhm output-grid returns. Their differentially
-projected tables retain the direct solve within the checked interpolation bound.
-At normalized ±1 their omitted common-mode component remains below 4% and
-total current within 4% of idle, pinning the strict-AB1 checkpoint's boundary.
+both nonlinear dual-plate solves include finite-tail behaviour and unequal arms.
+Their outputs remain separate through the source circuits: American uses 100 nF
+capacitors, 220 kOhm bias returns and 1.5 kOhm power-grid stoppers; British uses
+22 nF, 220 kOhm and 5.6 kOhm. TubeLib's generic 2 kOhm plus `IS=1 nA`,
+`RS=1 Ohm` diode branch conducts at each terminal. A residual-bounded three-unknown
+Newton step jointly solves total LTP current and both grid voltages while the
+two capacitors are trapezoidally integrated, retaining independent plate load,
+common bias displacement and blocking recovery.
 
 The output stages directly translate Reefman's measured-curve-fitted
 [uTracer TubeLib](https://www.dos4ever.com/uTracer3/TubeLib.inc) 6L6GC
 beam-tetrode and EL34 true-pentode equations, solve an ideal balanced pair
-against one quarter of the source-documented plate-to-plate load, and table
-output plus plate/screen demand over drive and rail voltage. That drive is
-strictly bounded at the normalized ±1 zero-grid AB1 boundary; no ideal source
-is allowed to force a positive control grid without the missing output-coupling
-and grid-current circuit. Current demand drives model-specific sag; negative feedback,
-transformer state and six-biquad speaker/cabinet voices stay inside the
-oversampled path. Modern preserves the previous Electry arithmetic. Exact
-claims stop at the diode node, passive RC transfer, translated measured-current
-formulae and numerically residual-bounded load-line/table solves. These are
-tube-family fits, not universal specimens. The LTP currently treats equal
-output capacitors as their static midband load and passes only differential
-drive; two independent output-cap/grid states, grid-current blocking memory,
-the small AC grid-return currents, complete presence network, screen-resistor
-dynamics and a reactive transformer-reflected loudspeaker remain explicit
-omissions.
+against one quarter of the source-documented plate-to-plate load, and retain
+output plus plate/screen demand over both terminal-grid coordinates and rail
+voltage. The pair receives common as well as differential drive. A positive
+terminal can load its PI through the diode, but the measured-fitted power-current
+surface is clamped at `Vg=0`; Electry therefore claims an AB1-bounded power
+transfer with overload-grid conduction, not an unmeasured ideal AB2 source.
+Current demand drives model-specific sag; negative feedback, transformer state
+and six-biquad speaker/cabinet voices stay inside the oversampled path. Modern
+preserves the previous Electry arithmetic. Exact claims stop at the diode node,
+passive RC transfer, translated measured-current formulae and numerically
+residual-bounded coupled/load-line solves. These are tube-family fits, not
+universal specimens. TubeLib diode junction capacitance/transit time, PI grid
+conduction, bias-supply impedance, the complete presence network,
+screen-resistor dynamics and a reactive transformer-reflected loudspeaker
+remain explicit omissions.
 They are not complete named pedal/amp schematics, cabinet impulses, loudspeaker
 mechanics, microphones, rooms or capture-verified replicas.
 

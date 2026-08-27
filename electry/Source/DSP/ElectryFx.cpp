@@ -113,6 +113,8 @@ struct PhaseInverterParameters
     double cathodeResistance;
     double tailResistance;
     double outputGridLeakResistance;
+    double outputCouplingCapacitance;
+    double powerGridStopperResistance;
     double inputCapacitance;
     double inputGridResistance;
     double powerGridBias;
@@ -121,20 +123,20 @@ struct PhaseInverterParameters
 constexpr PhaseInverterParameters ecc81PhaseInverter {
     63.24, 1.338, 306.7, 208.5, 2363.0,
     410.0, 82000.0, 100000.0, 470.0, 22100.0,
-    220000.0, 1.0e-9, 1.0e6, -37.0
+    220000.0, 100.0e-9, 1500.0, 1.0e-9, 1.0e6, -37.0
 };
 
 constexpr PhaseInverterParameters ecc83PhaseInverter {
     108.93, 0.988, 389.8, 677.7, 10751.0,
     400.0, 82000.0, 100000.0, 470.0, 14700.0,
-    220000.0, 22.0e-9, 1.0e6, -36.0
+    220000.0, 22.0e-9, 5600.0, 22.0e-9, 1.0e6, -36.0
 };
 
-constexpr std::size_t phaseInverterDrivePoints = 769;
 constexpr double minimumPhaseInverterDrive = -4.0;
 constexpr double maximumPhaseInverterDrive = 4.0;
 
 double softplus(double value) noexcept;
+double sigmoid(double value) noexcept;
 
 const PhaseInverterParameters& phaseInverterParameters(
     AmpModel model) noexcept
@@ -143,7 +145,14 @@ const PhaseInverterParameters& phaseInverterParameters(
         ? ecc83PhaseInverter : ecc81PhaseInverter;
 }
 
-double measuredPhaseInverterPlateCurrent(
+struct PhaseInverterCurrent
+{
+    double plate { 0.0 };
+    double plateSlope { 0.0 };
+    double gridSlope { 0.0 };
+};
+
+PhaseInverterCurrent phaseInverterCurrentAndSlopes(
     AmpModel model, double plateToCathodeVoltage,
     double gridToCathodeVoltage) noexcept
 {
@@ -153,11 +162,34 @@ double measuredPhaseInverterPlateCurrent(
     // 2 kOhm/diode grid branch needs the two output coupling-cap states to be
     // meaningful, so no TriodeK curve is extrapolated past Vgk = 0 here.
     const double grid = std::min(gridToCathodeVoltage, 0.0);
+    const double root = std::sqrt(tube.kneeVoltage + plate * plate);
     const double drive = tube.kneeSoftness
-        * (1.0 / tube.mu
-           + grid / std::sqrt(tube.kneeVoltage + plate * plate));
-    const double e1 = plate / tube.kneeSoftness * softplus(drive);
-    return std::pow(std::max(e1, 0.0), tube.exponent) / tube.plateScale;
+        * (1.0 / tube.mu + grid / root);
+    const double softened = softplus(drive);
+    const double e1 = plate / tube.kneeSoftness * softened;
+    if (e1 <= 1.0e-18 || plate <= 0.0)
+        return {};
+
+    const double current = std::pow(e1, tube.exponent) / tube.plateScale;
+    const double currentPerE = tube.exponent * current / e1;
+    const double softSlope = sigmoid(drive);
+    const double drivePlate = -tube.kneeSoftness * grid * plate
+        / (root * root * root);
+    const double ePlate = softened / tube.kneeSoftness
+        + plate / tube.kneeSoftness * softSlope * drivePlate;
+    const double eGrid = gridToCathodeVoltage < 0.0
+        ? plate * softSlope / root : 0.0;
+    return { current,
+             std::max(currentPerE * ePlate, 0.0),
+             std::max(currentPerE * eGrid, 0.0) };
+}
+
+double measuredPhaseInverterPlateCurrent(
+    AmpModel model, double plateToCathodeVoltage,
+    double gridToCathodeVoltage) noexcept
+{
+    return phaseInverterCurrentAndSlopes(
+        model, plateToCathodeVoltage, gridToCathodeVoltage).plate;
 }
 
 struct RawPhaseInverter
@@ -311,8 +343,9 @@ const PhaseInverterCalibration& phaseInverterCalibration(
 // https://frank.pocnet.net/sheets/129/e/EL34.pdf
 // This isolated pair solve retains an ideal fixed screen rail and resistive
 // transformer load. The nonlinear LTP above now supplies its differential
-// drive; the Mullard common screen resistor, two output coupling/grid-current
-// branches and reactive speaker load remain explicit boundaries.
+// and common drive through two explicit output-coupling/grid-current branches;
+// the Mullard common screen resistor and reactive speaker load remain explicit
+// boundaries.
 struct PowerTubeParameters
 {
     double mu;
@@ -351,17 +384,24 @@ constexpr PowerTubeParameters el34Parameters {
     400.0, 400.0, -36.0, 3500.0, false
 };
 
-constexpr std::size_t powerTubeDrivePoints = 4097;
-constexpr std::size_t powerTubeRailPoints = 17;
-// This checkpoint is strictly class AB1: neither control grid crosses zero.
-// TubeLib includes a grid-current diode, but without the phase inverter's
-// source impedance and coupling capacitor an ideal positive grid-voltage
-// source would be an unphysical class-AB2 driver. Stop at the zero-grid AB1
-// boundary; the dynamic grid circuit remains the next stage.
-constexpr double minimumPowerTubeDrive = -1.0;
-constexpr double maximumPowerTubeDrive = 1.0;
+constexpr std::size_t powerTubeGridPoints = 257;
+constexpr std::size_t powerTubeRailPoints = 13;
+constexpr double minimumPowerTubeCommonDrive = -2.0;
+constexpr double maximumPowerTubeCommonDrive = 0.5;
+constexpr double maximumPowerTubeDifferentialDrive = 4.0;
+constexpr double minimumNormalisedPowerGrid = -7.0;
 constexpr double minimumPowerTubeRail = 0.75;
 constexpr double maximumPowerTubeRail = 1.0;
+
+// TubeLib puts the same generic grid branch on both power-tube macros: a
+// 2 kOhm series resistor and a SPICE diode with IS=1 nA, RS=1 Ohm. It is not a
+// measured tube-specific fit, so its static current is kept separate from the
+// measured AB1 plate/screen surface. CJO=10 pF and TT=1 ns are above this
+// output-coupling checkpoint's explicit bandwidth boundary.
+constexpr double powerGridSaturationCurrent = 1.0e-9;
+constexpr double powerGridInternalResistance = 2001.0;
+constexpr double powerGridThermalVoltage = 0.025851999786;
+constexpr double maximumGridCurrentTableVoltage = 100.0;
 
 const PowerTubeParameters& powerTubeParameters(AmpModel model) noexcept
 {
@@ -386,6 +426,7 @@ struct PowerTubeCurrents
 {
     double plate { 0.0 };
     double screen { 0.0 };
+    double plateSlope { 0.0 };
 };
 
 PowerTubeCurrents measuredPowerTubeCurrents(
@@ -395,33 +436,53 @@ PowerTubeCurrents measuredPowerTubeCurrents(
     const auto& tube = powerTubeParameters(model);
     const double plate = std::max(plateVoltage, 0.0);
     const double screen = std::max(screenVoltage, 1.0e-12);
+    // The uTracer fit is validated on the non-positive control-grid surface.
+    // The separate TubeLib diode below may conduct at a positive terminal,
+    // but it must not silently turn this measured AB1 plate-current fit into
+    // an ideal, unvalidated AB2 voltage source.
+    const double grid = std::min(gridVoltage, 0.0);
     const double drive = tube.kneeSoftness
         * (1.0 / tube.mu
-           + gridVoltage / std::sqrt(tube.kneeVoltage + screen * screen));
+           + grid / std::sqrt(tube.kneeVoltage + screen * screen));
     const double e1 = screen / tube.kneeSoftness * softplus(drive);
     const double korenCurrent = std::pow(std::max(e1, 0.0), tube.exponent);
     const double lowPlate = tube.beamTetrode
         ? std::exp(-tube.lowPlateSlope * plate
                    * std::sqrt(tube.lowPlateSlope * plate))
         : 1.0 / (1.0 + tube.lowPlateSlope * plate);
+    const double lowPlateSlope = tube.beamTetrode
+        ? lowPlate * -1.5 * tube.lowPlateSlope
+            * std::sqrt(tube.lowPlateSlope * plate)
+        : -tube.lowPlateSlope * lowPlate * lowPlate;
+    const double secondaryArgument = -tube.secondarySlope
+        * (plate - screen / tube.secondaryScreenRatio
+           + tube.secondaryOffset
+           + tube.secondaryGridWeight * grid);
+    const double secondaryTanh = std::tanh(secondaryArgument);
     const double secondaryEmission = tube.secondaryScale / tube.screenScale
-        * plate
-        * (1.0 + std::tanh(-tube.secondarySlope
-            * (plate - screen / tube.secondaryScreenRatio
-               + tube.secondaryOffset
-               + tube.secondaryGridWeight * gridVoltage)));
+        * plate * (1.0 + secondaryTanh);
+    const double secondarySlope = tube.secondaryScale / tube.screenScale
+        * (1.0 + secondaryTanh
+           - tube.secondarySlope * plate
+                * (1.0 - secondaryTanh * secondaryTanh));
 
     // TubeLib's fitted BTetrodeD/DE macros subtract E3 from plate current but
     // do not add it to G2. Reefman's accompanying theory does add that term to
     // screen current; reproducing the distributed fit here is deliberate, and
     // changing to the charge-conserving variant requires a new fit/validation.
-    const double plateCurrent = korenCurrent
-        * (tube.plateConstant + tube.plateSlope * plate
-           - tube.lowPlateConstant * lowPlate - secondaryEmission);
+    const double plateFactor = tube.plateConstant + tube.plateSlope * plate
+        - tube.lowPlateConstant * lowPlate - secondaryEmission;
+    const double plateCurrent = korenCurrent * plateFactor;
     const double screenCurrent = korenCurrent / tube.screenScale
         * (1.0 + tube.lowPlateScreenScale * lowPlate);
     return { std::max(plateCurrent, 0.0),
-             std::max(screenCurrent, 0.0) };
+             std::max(screenCurrent, 0.0),
+             plateCurrent > 0.0
+                 ? korenCurrent
+                    * (tube.plateSlope
+                       - tube.lowPlateConstant * lowPlateSlope
+                       - secondarySlope)
+                 : 0.0 };
 }
 
 struct RawPowerTubePair
@@ -431,51 +492,71 @@ struct RawPowerTubePair
 };
 
 RawPowerTubePair solvePowerTubePairRaw(
-    AmpModel model, double drive, double railScale) noexcept
+    AmpModel model, double commonDrive, double differentialDrive,
+    double railScale) noexcept
 {
     const auto& tube = powerTubeParameters(model);
     const double rail = std::clamp(
         railScale, minimumPowerTubeRail, maximumPowerTubeRail);
     const double plateSupply = tube.plateSupply * rail;
     const double screenSupply = tube.screenSupply * rail;
-    const double gridSwing = drive * -tube.gridBias;
+    const double gridScale = -tube.gridBias;
+    const double commonGrid = commonDrive * gridScale;
+    const double differentialGrid = std::abs(differentialDrive) * gridScale;
+    const double gridOne = tube.gridBias + commonGrid + differentialGrid;
+    const double gridTwo = tube.gridBias + commonGrid - differentialGrid;
 
     // An ideal centre-tapped transformer reflects Raa/4 to either half of a
     // push-pull pair. The opposed grids are an ideal phase splitter. Solving
     // v = Raa/4 * (Ia+ - Ia-) against the measured tube curves supplies real
     // AB overlap, crossover and knee behaviour without a nonlinear solve on
     // the audio thread.
-    const auto residual = [&] (double swing)
+    const auto evaluate = [&] (double swing)
     {
-        const double positive = measuredPowerTubeCurrents(
-            model, plateSupply - swing, tube.gridBias + gridSwing,
-            screenSupply).plate;
-        const double negative = measuredPowerTubeCurrents(
-            model, plateSupply + swing, tube.gridBias - gridSwing,
-            screenSupply).plate;
-        return swing - 0.25 * tube.plateToPlateLoad
-            * (positive - negative);
+        const auto positive = measuredPowerTubeCurrents(
+            model, plateSupply - swing, gridOne,
+            screenSupply);
+        const auto negative = measuredPowerTubeCurrents(
+            model, plateSupply + swing, gridTwo,
+            screenSupply);
+        const double reflectedLoad = 0.25 * tube.plateToPlateLoad;
+        return std::array<double, 2> {
+            swing - reflectedLoad * (positive.plate - negative.plate),
+            1.0 + reflectedLoad
+                * (positive.plateSlope + negative.plateSlope)
+        };
     };
 
     double lower = -plateSupply;
     double upper = plateSupply;
-    for (int iteration = 0; iteration < 48; ++iteration)
+    double swing = 0.0;
+    for (int iteration = 0; iteration < 12; ++iteration)
     {
-        const double middle = 0.5 * (lower + upper);
-        if (residual(middle) > 0.0)
-            upper = middle;
+        const auto point = evaluate(swing);
+        if (point[0] > 0.0)
+            upper = swing;
         else
-            lower = middle;
+            lower = swing;
+        if (std::abs(point[0]) < 1.0e-12)
+            break;
+        const double newton = swing - point[0]
+            / std::max(point[1], 1.0e-12);
+        swing = newton > lower && newton < upper
+            ? newton : 0.5 * (lower + upper);
     }
-    const double swing = 0.5 * (lower + upper);
+    // Canonicalising the differential coordinate above makes the root and
+    // current demand independent of a numerical warm start. Reapply the tube
+    // swap only to the transformer's odd output.
+    const double signedSwing = differentialDrive < 0.0 ? -swing : swing;
     const auto positive = measuredPowerTubeCurrents(
-        model, plateSupply - swing, tube.gridBias + gridSwing,
+        model, plateSupply - swing, gridOne,
         screenSupply);
     const auto negative = measuredPowerTubeCurrents(
-        model, plateSupply + swing, tube.gridBias - gridSwing,
+        model, plateSupply + swing, gridTwo,
         screenSupply);
-    return { swing, positive.plate + positive.screen
-                   + negative.plate + negative.screen };
+    return { differentialDrive == 0.0 ? 0.0 : signedSwing,
+             positive.plate + positive.screen
+                 + negative.plate + negative.screen };
 }
 
 struct PowerTubeCalibration
@@ -491,13 +572,15 @@ const PowerTubeCalibration& powerTubeCalibration(AmpModel model) noexcept
     {
         constexpr double derivativeStep = 1.0e-5;
         const double slope =
-            (solvePowerTubePairRaw(tubeModel, derivativeStep, 1.0).plateSwing
-             - solvePowerTubePairRaw(tubeModel, -derivativeStep, 1.0).plateSwing)
+            (solvePowerTubePairRaw(
+                 tubeModel, 0.0, derivativeStep, 1.0).plateSwing
+             - solvePowerTubePairRaw(
+                 tubeModel, 0.0, -derivativeStep, 1.0).plateSwing)
             / (2.0 * derivativeStep);
         const double idle = solvePowerTubePairRaw(
-            tubeModel, 0.0, 1.0).supplyCurrent;
+            tubeModel, 0.0, 0.0, 1.0).supplyCurrent;
         const double driven = solvePowerTubePairRaw(
-            tubeModel, 1.0, 1.0).supplyCurrent;
+            tubeModel, 0.0, 1.0, 1.0).supplyCurrent;
         return PowerTubeCalibration {
             std::max(slope, 1.0e-12),
             idle,
@@ -517,12 +600,28 @@ struct PowerTubeLookupPoint
     float supplyDemand { 0.0f };
 };
 
-using PowerTubeTable = std::array<
-    PowerTubeLookupPoint, powerTubeDrivePoints * powerTubeRailPoints>;
+struct PowerTubeTable
+{
+    std::vector<PowerTubeLookupPoint> points;
+    double idleDemandError { 0.0 };
+};
+
+constexpr std::size_t powerTubeGridTrianglePoints =
+    powerTubeGridPoints * (powerTubeGridPoints + 1) / 2;
+
+std::size_t powerTubeTableIndex(std::size_t highGridIndex,
+                                std::size_t lowGridIndex,
+                                std::size_t railIndex) noexcept
+{
+    return railIndex * powerTubeGridTrianglePoints
+         + highGridIndex * (highGridIndex + 1) / 2 + lowGridIndex;
+}
 
 PowerTubeTable makePowerTubeTable(AmpModel model)
 {
-    PowerTubeTable table {};
+    PowerTubeTable table;
+    table.points.resize(
+        powerTubeGridTrianglePoints * powerTubeRailPoints);
     const auto& calibration = powerTubeCalibration(model);
     for (std::size_t railIndex = 0;
          railIndex < powerTubeRailPoints; ++railIndex)
@@ -531,40 +630,127 @@ PowerTubeTable makePowerTubeTable(AmpModel model)
             / static_cast<double>(powerTubeRailPoints - 1);
         const double rail = minimumPowerTubeRail + railFraction
             * (maximumPowerTubeRail - minimumPowerTubeRail);
-        constexpr std::size_t zeroDriveIndex = powerTubeDrivePoints / 2;
-        for (std::size_t driveIndex = zeroDriveIndex;
-             driveIndex < powerTubeDrivePoints; ++driveIndex)
+        for (std::size_t highGridIndex = 0;
+             highGridIndex < powerTubeGridPoints; ++highGridIndex)
         {
-            const double driveFraction = static_cast<double>(driveIndex)
-                / static_cast<double>(powerTubeDrivePoints - 1);
-            const double drive = minimumPowerTubeDrive + driveFraction
-                * (maximumPowerTubeDrive - minimumPowerTubeDrive);
-            const auto solved = solvePowerTubePairRaw(model, drive, rail);
-            auto& point = table[railIndex * powerTubeDrivePoints + driveIndex];
-            point.output = static_cast<float>(
-                solved.plateSwing / calibration.plateSwingPerDrive);
-            // Retain the signed nominal-idle delta in the table and clamp
-            // only after interpolation. Clamping every knot separately moves
-            // the zero-current crossing with rail interpolation.
-            point.supplyDemand = static_cast<float>(
-                (solved.supplyCurrent - calibration.nominalIdleCurrent)
-                    / calibration.demandSpan);
-            if (driveIndex == zeroDriveIndex)
+            const double highFraction =
+                static_cast<double>(highGridIndex)
+                / static_cast<double>(powerTubeGridPoints - 1);
+            const double highGrid = minimumNormalisedPowerGrid
+                * (1.0 - highFraction) * (1.0 - highFraction);
+            for (std::size_t lowGridIndex = 0;
+                 lowGridIndex <= highGridIndex; ++lowGridIndex)
             {
-                point.output = 0.0f;
-                continue;
+                const double lowFraction =
+                    static_cast<double>(lowGridIndex)
+                    / static_cast<double>(powerTubeGridPoints - 1);
+                const double lowGrid = minimumNormalisedPowerGrid
+                    * (1.0 - lowFraction) * (1.0 - lowFraction);
+                const double common = 1.0
+                    + 0.5 * (highGrid + lowGrid);
+                const double differential = 0.5
+                    * (highGrid - lowGrid);
+                const auto solved = solvePowerTubePairRaw(
+                    model, common, differential, rail);
+                auto& point = table.points[powerTubeTableIndex(
+                    highGridIndex, lowGridIndex, railIndex)];
+                point.output = highGridIndex == lowGridIndex ? 0.0f
+                    : static_cast<float>(solved.plateSwing
+                        / calibration.plateSwingPerDrive);
+                // Keep the nominal-idle delta signed at the knots; sag is
+                // clamped only after trilinear interpolation, so rail and
+                // common-mode interpolation cannot move a zero crossing.
+                point.supplyDemand = static_cast<float>(
+                    (solved.supplyCurrent
+                     - calibration.nominalIdleCurrent)
+                    / calibration.demandSpan);
             }
-            // An ideal matched pair has odd output and even current demand.
-            // Mirror the solved positive half exactly, halving cold prepare
-            // time without approximating another part of the circuit.
-            auto& mirrored = table[
-                railIndex * powerTubeDrivePoints
-                + (powerTubeDrivePoints - 1 - driveIndex)];
-            mirrored.output = -point.output;
-            mirrored.supplyDemand = point.supplyDemand;
         }
     }
+    // The exact idle grid (-1 in bias-normalised volts) is deliberately not
+    // forced into the nonlinear axis. Cache this table's own bilinear idle
+    // error and remove it after interpolation, or a tiny convexity error would
+    // create reservoir sag during digital silence.
+    const double idlePosition = (1.0 - std::sqrt(
+        -1.0 / minimumNormalisedPowerGrid))
+        * static_cast<double>(powerTubeGridPoints - 1);
+    const auto idleLower = std::min(
+        static_cast<std::size_t>(std::floor(idlePosition)),
+        powerTubeGridPoints - 2);
+    const double idleFraction = idlePosition
+        - static_cast<double>(idleLower);
+    const auto demand = [&] (std::size_t high, std::size_t low)
+    {
+        return static_cast<double>(table.points[powerTubeTableIndex(
+            high, low, powerTubeRailPoints - 1)].supplyDemand);
+    };
+    table.idleDemandError = std::lerp(
+        std::lerp(demand(idleLower, idleLower),
+                  demand(idleLower + 1, idleLower), idleFraction),
+        std::lerp(demand(idleLower + 1, idleLower),
+                  demand(idleLower + 1, idleLower + 1), idleFraction),
+        idleFraction);
     return table;
+}
+
+double solvePowerGridCurrent(double gridVoltage) noexcept
+{
+    if (! std::isfinite(gridVoltage) || gridVoltage <= 0.0)
+        return 0.0;
+    const auto residual = [gridVoltage] (double current)
+    {
+        return powerGridInternalResistance * current
+            + powerGridThermalVoltage * std::log1p(
+                current / powerGridSaturationCurrent)
+            - gridVoltage;
+    };
+    double lower = 0.0;
+    double upper = gridVoltage / powerGridInternalResistance;
+    for (int iteration = 0; iteration < 52; ++iteration)
+    {
+        const double middle = 0.5 * (lower + upper);
+        if (residual(middle) > 0.0)
+            upper = middle;
+        else
+            lower = middle;
+    }
+    return 0.5 * (lower + upper);
+}
+
+double lookupPowerGridCurrent(double gridVoltage) noexcept
+{
+    constexpr std::size_t points = 4097;
+    static const std::array<float, points> table = []
+    {
+        std::array<float, points> result {};
+        for (std::size_t index = 0; index < result.size(); ++index)
+        {
+            const double fraction = static_cast<double>(index)
+                / static_cast<double>(result.size() - 1);
+            result[index] = static_cast<float>(solvePowerGridCurrent(
+                maximumGridCurrentTableVoltage * fraction * fraction));
+        }
+        return result;
+    }();
+    if (! std::isfinite(gridVoltage) || gridVoltage <= 0.0)
+        return 0.0;
+    if (gridVoltage >= maximumGridCurrentTableVoltage)
+    {
+        const double current = static_cast<double>(table.back());
+        const double slope = 1.0 / (powerGridInternalResistance
+            + powerGridThermalVoltage
+                / (current + powerGridSaturationCurrent));
+        return current + slope
+            * (gridVoltage - maximumGridCurrentTableVoltage);
+    }
+    const double position = std::sqrt(
+        gridVoltage / maximumGridCurrentTableVoltage)
+        * static_cast<double>(points - 1);
+    const auto lower = std::min(
+        static_cast<std::size_t>(std::floor(position)), points - 2);
+    const double fraction = position - static_cast<double>(lower);
+    return std::lerp(static_cast<double>(table[lower]),
+                     static_cast<double>(table[lower + 1]), fraction);
 }
 
 double cathodeCurrent(double plateVoltage,
@@ -830,6 +1016,11 @@ void ElectryFx::AmpChannel::reset() noexcept
     interstage.reset();
     toneStack.reset();
     phaseInverterInput.reset();
+    phaseCurrentDelta = 0.0;
+    couplingHistoryOne = 0.0;
+    couplingHistoryTwo = 0.0;
+    powerGridOffsetOne = 0.0;
+    powerGridOffsetTwo = 0.0;
     bias = 0.0f;
     sag = 0.0f;
     transformerHighpass.reset();
@@ -875,18 +1066,20 @@ void ElectryFx::prepare(double sampleRate)
     oversampledRate_ = static_cast<float>(
         sampleRate_ * static_cast<double>(1 << oversamplingStages_));
 
-    // The table is generated once from the exact measured-tube load-line
-    // solve below. Prime it during prepare rather than allowing first use to
-    // perform thread-safe static initialisation on the audio thread.
+    // The measured-tube calibrations and tables are generated once from the
+    // exact circuit/load-line solves below. Prime every function static during
+    // prepare rather than allowing first use to initialise it on the audio
+    // thread.
     static_cast<void>(triodeStageLookup(0.0));
-    static_cast<void>(phaseInverterLookup(
-        AmpModel::AmericanClean, 0.0f));
-    static_cast<void>(phaseInverterLookup(
-        AmpModel::BritishCrunch, 0.0f));
+    static_cast<void>(phaseInverterDirect(
+        AmpModel::AmericanClean, 0.0));
+    static_cast<void>(phaseInverterDirect(
+        AmpModel::BritishCrunch, 0.0));
+    static_cast<void>(powerGridCurrentLookup(0.0));
     static_cast<void>(powerTubePairLookup(
-        AmpModel::AmericanClean, 0.0f, 1.0f));
+        AmpModel::AmericanClean, 0.0f, 0.0f, 1.0f));
     static_cast<void>(powerTubePairLookup(
-        AmpModel::BritishCrunch, 0.0f, 1.0f));
+        AmpModel::BritishCrunch, 0.0f, 0.0f, 1.0f));
 
     // A 15 ms exponential time constant on the five panel controls, their
     // module relays and Amp Voice weights, and 12 ms on the whole gain block's
@@ -1456,47 +1649,280 @@ ElectryFx::PhaseInverterResult ElectryFx::phaseInverterDirect(
     };
 }
 
-float ElectryFx::phaseInverterLookup(
-    AmpModel model, float drive) noexcept
+double ElectryFx::powerGridCurrentDirect(double gridVoltage) noexcept
 {
-    // The strict-AB1 LTP has no memory once its input coupling capacitor is
-    // separated. Preparation retains the two loaded plate solves in a dense
-    // table; unequal 82/100 kOhm arms mean it must not be mirrored as an odd
-    // transfer. The following coupling/grid-current checkpoint will replace
-    // the midband 220 kOhm load with two explicit dynamic branches.
-    const auto make = [] (AmpModel inverterModel)
+    return solvePowerGridCurrent(gridVoltage);
+}
+
+double ElectryFx::powerGridCurrentLookup(double gridVoltage) noexcept
+{
+    return lookupPowerGridCurrent(gridVoltage);
+}
+
+ElectryFx::CoupledPhaseInverterResult ElectryFx::phaseInverterCoupledStep(
+    AmpChannel& channel, AmpModel model, double drive,
+    double sampleRate) noexcept
+{
+    if (model == AmpModel::ModernHighGain)
+        return {};
+    if (! std::isfinite(drive))
+        drive = 0.0;
+    if (! std::isfinite(sampleRate))
+        sampleRate = 192000.0;
+
+    const auto& circuit = phaseInverterParameters(model);
+    const auto& calibration = phaseInverterCalibration(model);
+    const double rate = std::clamp(
+        sampleRate, minimumSampleRate, maximumSampleRate);
+    const double companionConductance = 2.0
+        * circuit.outputCouplingCapacitance * rate;
+    const double totalResistance = circuit.tailResistance
+                                 + circuit.cathodeResistance;
+    const double maximumCurrent = circuit.supply / totalResistance;
+    const double gridScale = std::abs(circuit.powerGridBias);
+    const double minimumGridOffset = -6.0 * gridScale;
+    const double maximumGridOffset = 2.0 * gridScale;
+    const double inputVoltage = std::clamp(
+        drive, minimumPhaseInverterDrive, maximumPhaseInverterDrive)
+        * calibration.inputVoltsPerDrive;
+    const double historyOne = std::isfinite(channel.couplingHistoryOne)
+        ? channel.couplingHistoryOne : 0.0;
+    const double historyTwo = std::isfinite(channel.couplingHistoryTwo)
+        ? channel.couplingHistoryTwo : 0.0;
+
+    struct Evaluation
     {
-        std::array<float, phaseInverterDrivePoints> result {};
-        for (std::size_t index = 0; index < result.size(); ++index)
+        double totalCurrent { 0.0 };
+        double gridOffsetOne { 0.0 };
+        double gridOffsetTwo { 0.0 };
+        double gridOne { 0.0 };
+        double gridTwo { 0.0 };
+        double plateOne { 0.0 };
+        double plateTwo { 0.0 };
+        double capacitorCurrentOne { 0.0 };
+        double capacitorCurrentTwo { 0.0 };
+        double gridCurrentOne { 0.0 };
+        double gridCurrentTwo { 0.0 };
+        double residualCurrent { 0.0 };
+        double residualPlateOne { 0.0 };
+        double residualPlateTwo { 0.0 };
+        double currentDerivative { 1.0 };
+        double currentGridDerivativeOne { 0.0 };
+        double currentGridDerivativeTwo { 0.0 };
+        double plateCurrentDerivativeOne { 0.0 };
+        double plateCurrentDerivativeTwo { 0.0 };
+        double plateGridDerivativeOne { -1.0 };
+        double plateGridDerivativeTwo { -1.0 };
+
+        [[nodiscard]] double maximumResidual() const noexcept
         {
-            const double fraction = static_cast<double>(index)
-                                  / static_cast<double>(result.size() - 1);
-            const double input = minimumPhaseInverterDrive + fraction
-                * (maximumPhaseInverterDrive - minimumPhaseInverterDrive);
-            result[index] = static_cast<float>(
-                phaseInverterDirect(inverterModel, input).output);
+            return std::max({ std::abs(residualCurrent),
+                              std::abs(residualPlateOne),
+                              std::abs(residualPlateTwo) });
         }
+    };
+
+    const auto evaluate = [&] (double totalCurrent,
+                               double gridOffsetOne,
+                               double gridOffsetTwo)
+    {
+        Evaluation result {};
+        result.totalCurrent = totalCurrent;
+        result.gridOffsetOne = gridOffsetOne;
+        result.gridOffsetTwo = gridOffsetTwo;
+        result.gridOne = circuit.powerGridBias + gridOffsetOne;
+        result.gridTwo = circuit.powerGridBias + gridOffsetTwo;
+        result.gridCurrentOne = lookupPowerGridCurrent(result.gridOne);
+        result.gridCurrentTwo = lookupPowerGridCurrent(result.gridTwo);
+        const auto gridSlope = [] (double gridVoltage, double current)
+        {
+            return gridVoltage > 0.0
+                ? 1.0 / (powerGridInternalResistance
+                    + powerGridThermalVoltage
+                        / (current + powerGridSaturationCurrent))
+                : 0.0;
+        };
+        const double gridSlopeOne = gridSlope(
+            result.gridOne, result.gridCurrentOne);
+        const double gridSlopeTwo = gridSlope(
+            result.gridTwo, result.gridCurrentTwo);
+        const auto makeBranch = [&] (double gridOffset,
+                                     double gridCurrent,
+                                     double currentSlope,
+                                     double idlePlate,
+                                     double history,
+                                     double& plate,
+                                     double& capacitorCurrent,
+                                     double& plateDerivative,
+                                     double& currentDerivative)
+        {
+            const double junctionOffset = gridOffset
+                + circuit.powerGridStopperResistance * gridCurrent;
+            capacitorCurrent = junctionOffset
+                    / circuit.outputGridLeakResistance
+                + gridCurrent;
+            const double junctionDerivative = 1.0
+                + circuit.powerGridStopperResistance * currentSlope;
+            currentDerivative = junctionDerivative
+                    / circuit.outputGridLeakResistance
+                + currentSlope;
+            plateDerivative = junctionDerivative
+                + currentDerivative / companionConductance;
+            plate = idlePlate + junctionOffset
+                + (capacitorCurrent - history) / companionConductance;
+        };
+        double branchCurrentDerivativeOne = 0.0;
+        double branchCurrentDerivativeTwo = 0.0;
+        double branchPlateDerivativeOne = 0.0;
+        double branchPlateDerivativeTwo = 0.0;
+        makeBranch(gridOffsetOne, result.gridCurrentOne, gridSlopeOne,
+                   calibration.idle.plateOne, historyOne,
+                   result.plateOne, result.capacitorCurrentOne,
+                   branchPlateDerivativeOne,
+                   branchCurrentDerivativeOne);
+        makeBranch(gridOffsetTwo, result.gridCurrentTwo, gridSlopeTwo,
+                   calibration.idle.plateTwo, historyTwo,
+                   result.plateTwo, result.capacitorCurrentTwo,
+                   branchPlateDerivativeTwo,
+                   branchCurrentDerivativeTwo);
+
+        const double cathode = totalCurrent * totalResistance;
+        const auto currentOne = phaseInverterCurrentAndSlopes(
+            model, result.plateOne - cathode,
+            calibration.idle.tail + inputVoltage - cathode);
+        const auto currentTwo = phaseInverterCurrentAndSlopes(
+            model, result.plateTwo - cathode,
+            calibration.idle.tail - cathode);
+        result.residualCurrent = totalCurrent
+            - currentOne.plate - currentTwo.plate;
+        result.residualPlateOne =
+            (circuit.supply - result.plateOne)
+                / circuit.plateResistanceOne
+            - currentOne.plate - result.capacitorCurrentOne;
+        result.residualPlateTwo =
+            (circuit.supply - result.plateTwo)
+                / circuit.plateResistanceTwo
+            - currentTwo.plate - result.capacitorCurrentTwo;
+        result.currentDerivative = 1.0 + totalResistance
+            * (currentOne.plateSlope + currentOne.gridSlope
+               + currentTwo.plateSlope + currentTwo.gridSlope);
+        result.currentGridDerivativeOne =
+            -currentOne.plateSlope * branchPlateDerivativeOne;
+        result.currentGridDerivativeTwo =
+            -currentTwo.plateSlope * branchPlateDerivativeTwo;
+        result.plateCurrentDerivativeOne = totalResistance
+            * (currentOne.plateSlope + currentOne.gridSlope);
+        result.plateCurrentDerivativeTwo = totalResistance
+            * (currentTwo.plateSlope + currentTwo.gridSlope);
+        result.plateGridDerivativeOne =
+            -branchPlateDerivativeOne / circuit.plateResistanceOne
+            -currentOne.plateSlope * branchPlateDerivativeOne
+            -branchCurrentDerivativeOne;
+        result.plateGridDerivativeTwo =
+            -branchPlateDerivativeTwo / circuit.plateResistanceTwo
+            -currentTwo.plateSlope * branchPlateDerivativeTwo
+            -branchCurrentDerivativeTwo;
         return result;
     };
-    static const auto ecc81 = make(AmpModel::AmericanClean);
-    static const auto ecc83 = make(AmpModel::BritishCrunch);
-    if (model == AmpModel::ModernHighGain)
-        return 0.0f;
-    if (! std::isfinite(drive))
-        drive = 0.0f;
-    const double clamped = std::clamp(
-        static_cast<double>(drive), minimumPhaseInverterDrive,
-        maximumPhaseInverterDrive);
-    const double position = (clamped - minimumPhaseInverterDrive)
-        / (maximumPhaseInverterDrive - minimumPhaseInverterDrive)
-        * static_cast<double>(phaseInverterDrivePoints - 1);
-    const auto lower = std::min(
-        static_cast<std::size_t>(std::floor(position)),
-        phaseInverterDrivePoints - 2);
-    const float fraction = static_cast<float>(
-        position - static_cast<double>(lower));
-    const auto& table = model == AmpModel::BritishCrunch ? ecc83 : ecc81;
-    return lerp(table[lower], table[lower + 1], fraction);
+
+    double totalCurrent = std::clamp(
+        calibration.idle.totalCurrent
+            + (std::isfinite(channel.phaseCurrentDelta)
+                ? channel.phaseCurrentDelta : 0.0),
+        0.0, maximumCurrent);
+    double gridOffsetOne = std::clamp(
+        std::isfinite(channel.powerGridOffsetOne)
+            ? channel.powerGridOffsetOne : 0.0,
+        minimumGridOffset, maximumGridOffset);
+    double gridOffsetTwo = std::clamp(
+        std::isfinite(channel.powerGridOffsetTwo)
+            ? channel.powerGridOffsetTwo : 0.0,
+        minimumGridOffset, maximumGridOffset);
+    Evaluation best = evaluate(
+        totalCurrent, gridOffsetOne, gridOffsetTwo);
+
+    constexpr double convergenceTolerance = 1.0e-10;
+    for (int iteration = 0; iteration < 12
+         && best.maximumResidual() > convergenceTolerance; ++iteration)
+    {
+        const double denominator = best.currentDerivative
+            - best.currentGridDerivativeOne
+                * best.plateCurrentDerivativeOne
+                / best.plateGridDerivativeOne
+            - best.currentGridDerivativeTwo
+                * best.plateCurrentDerivativeTwo
+                / best.plateGridDerivativeTwo;
+        if (! std::isfinite(denominator)
+            || std::abs(denominator) < 1.0e-12
+            || std::abs(best.plateGridDerivativeOne) < 1.0e-12
+            || std::abs(best.plateGridDerivativeTwo) < 1.0e-12)
+            break;
+        double currentStep = (
+            -best.residualCurrent
+            + best.currentGridDerivativeOne
+                * best.residualPlateOne
+                / best.plateGridDerivativeOne
+            + best.currentGridDerivativeTwo
+                * best.residualPlateTwo
+                / best.plateGridDerivativeTwo) / denominator;
+        double gridStepOne = (-best.residualPlateOne
+            - best.plateCurrentDerivativeOne * currentStep)
+            / best.plateGridDerivativeOne;
+        double gridStepTwo = (-best.residualPlateTwo
+            - best.plateCurrentDerivativeTwo * currentStep)
+            / best.plateGridDerivativeTwo;
+        double damping = 1.0;
+        damping = std::min(damping, 0.25 * maximumCurrent
+            / std::max(std::abs(currentStep), 1.0e-18));
+        damping = std::min(damping, 24.0
+            / std::max(std::abs(gridStepOne), 1.0e-18));
+        damping = std::min(damping, 24.0
+            / std::max(std::abs(gridStepTwo), 1.0e-18));
+        currentStep *= damping;
+        gridStepOne *= damping;
+        gridStepTwo *= damping;
+        const double candidateCurrent = std::clamp(
+            totalCurrent + currentStep, 0.0, maximumCurrent);
+        const double candidateGridOne = std::clamp(
+            gridOffsetOne + gridStepOne,
+            minimumGridOffset, maximumGridOffset);
+        const double candidateGridTwo = std::clamp(
+            gridOffsetTwo + gridStepTwo,
+            minimumGridOffset, maximumGridOffset);
+        auto candidate = evaluate(
+            candidateCurrent, candidateGridOne, candidateGridTwo);
+        if (! std::isfinite(candidate.maximumResidual()))
+            break;
+        totalCurrent = candidateCurrent;
+        gridOffsetOne = candidateGridOne;
+        gridOffsetTwo = candidateGridTwo;
+        best = candidate;
+    }
+
+    // A failed Newton step must not poison a recursive capacitor state. The
+    // bounded solve reaches much tighter residuals in normal operation; this
+    // guard exists for corrupted state and hostile non-finite hosts.
+    if (best.maximumResidual() <= 1.0e-7
+        && std::isfinite(best.plateOne)
+        && std::isfinite(best.plateTwo))
+    {
+        channel.phaseCurrentDelta = best.totalCurrent
+            - calibration.idle.totalCurrent;
+        channel.powerGridOffsetOne = best.gridOffsetOne;
+        channel.powerGridOffsetTwo = best.gridOffsetTwo;
+        channel.couplingHistoryOne = historyOne
+            - 2.0 * best.capacitorCurrentOne;
+        channel.couplingHistoryTwo = historyTwo
+            - 2.0 * best.capacitorCurrentTwo;
+    }
+
+    return {
+        best.gridOne, best.gridTwo,
+        best.plateOne, best.plateTwo,
+        best.capacitorCurrentOne, best.capacitorCurrentTwo,
+        best.gridCurrentOne, best.gridCurrentTwo,
+        best.totalCurrent, best.maximumResidual()
+    };
 }
 
 double ElectryFx::powerTubePlateCurrent(
@@ -1516,19 +1942,27 @@ double ElectryFx::powerTubeScreenCurrent(
 }
 
 ElectryFx::PowerTubeResult ElectryFx::powerTubePairDirect(
-    AmpModel model, double drive, double railScale) noexcept
+    AmpModel model, double commonDrive, double differentialDrive,
+    double railScale) noexcept
 {
     if (model == AmpModel::ModernHighGain)
         return {};
-    if (! std::isfinite(drive))
-        drive = 0.0;
+    if (! std::isfinite(commonDrive))
+        commonDrive = 0.0;
+    if (! std::isfinite(differentialDrive))
+        differentialDrive = 0.0;
     if (! std::isfinite(railScale))
         railScale = 1.0;
     const double rail = std::clamp(
         railScale, minimumPowerTubeRail, maximumPowerTubeRail);
-    const double clampedDrive = std::clamp(
-        drive, minimumPowerTubeDrive, maximumPowerTubeDrive);
-    const auto solved = solvePowerTubePairRaw(model, clampedDrive, rail);
+    const double common = std::clamp(
+        commonDrive, minimumPowerTubeCommonDrive,
+        maximumPowerTubeCommonDrive);
+    const double differential = std::clamp(
+        differentialDrive, -maximumPowerTubeDifferentialDrive,
+        maximumPowerTubeDifferentialDrive);
+    const auto solved = solvePowerTubePairRaw(
+        model, common, differential, rail);
     const auto& calibration = powerTubeCalibration(model);
     return {
         solved.plateSwing / calibration.plateSwingPerDrive,
@@ -1539,64 +1973,128 @@ ElectryFx::PowerTubeResult ElectryFx::powerTubePairDirect(
 }
 
 ElectryFx::PowerTubeResult ElectryFx::powerTubePairLookup(
-    AmpModel model, float drive, float railScale) noexcept
+    AmpModel model, float commonDrive, float differentialDrive,
+    float railScale) noexcept
 {
-    // The measured curves and transformer load line are memoryless for a
-    // fixed rail. Two preparation-time tables retain that solve over drive and
-    // supply voltage; bilinear interpolation is the only audio-thread work.
+    // The measured curves and transformer load line are memoryless for fixed
+    // terminal grids and rail. Preparation retains the solved pair over its
+    // two clamped terminal-grid voltages and supply; the audio thread performs
+    // one trilinear interpolation. A quadratic voltage axis resolves the knee,
+    // while push-pull swap symmetry packs the square grid plane as a triangle.
+    // Blocking's shared negative shift is therefore preserved instead of
+    // disappearing in a scalar opposed drive.
     static const PowerTubeTable sixL6 = makePowerTubeTable(
         AmpModel::AmericanClean);
     static const PowerTubeTable el34 = makePowerTubeTable(
         AmpModel::BritishCrunch);
     if (model == AmpModel::ModernHighGain)
         return {};
-    if (! std::isfinite(drive))
-        drive = 0.0f;
+    if (! std::isfinite(commonDrive))
+        commonDrive = 0.0f;
+    if (! std::isfinite(differentialDrive))
+        differentialDrive = 0.0f;
     if (! std::isfinite(railScale))
         railScale = 1.0f;
-    const double clampedDrive = std::clamp(
-        static_cast<double>(drive),
-        minimumPowerTubeDrive, maximumPowerTubeDrive);
+    const double common = std::clamp(
+        static_cast<double>(commonDrive), minimumPowerTubeCommonDrive,
+        maximumPowerTubeCommonDrive);
+    const double differential = std::clamp(
+        std::abs(static_cast<double>(differentialDrive)), 0.0,
+        maximumPowerTubeDifferentialDrive);
     const double clampedRail = std::clamp(
         static_cast<double>(railScale),
         minimumPowerTubeRail, maximumPowerTubeRail);
-    const double drivePosition =
-        (clampedDrive - minimumPowerTubeDrive)
-        / (maximumPowerTubeDrive - minimumPowerTubeDrive)
-        * static_cast<double>(powerTubeDrivePoints - 1);
+    const double highGrid = std::clamp(
+        -1.0 + common + differential,
+        minimumNormalisedPowerGrid, 0.0);
+    const double lowGrid = std::clamp(
+        -1.0 + common - differential,
+        minimumNormalisedPowerGrid, 0.0);
+    const auto gridPosition = [] (double grid)
+    {
+        return (1.0 - std::sqrt(
+            grid / minimumNormalisedPowerGrid))
+            * static_cast<double>(powerTubeGridPoints - 1);
+    };
+    const double highGridPosition = gridPosition(highGrid);
+    const double lowGridPosition = gridPosition(lowGrid);
     const double railPosition =
         (clampedRail - minimumPowerTubeRail)
         / (maximumPowerTubeRail - minimumPowerTubeRail)
         * static_cast<double>(powerTubeRailPoints - 1);
-    const auto driveLower = std::min(
-        static_cast<std::size_t>(std::floor(drivePosition)),
-        powerTubeDrivePoints - 2);
+    const auto highGridLower = std::min(
+        static_cast<std::size_t>(std::floor(highGridPosition)),
+        powerTubeGridPoints - 2);
+    const auto lowGridLower = std::min(
+        static_cast<std::size_t>(std::floor(lowGridPosition)),
+        powerTubeGridPoints - 2);
     const auto railLower = std::min(
         static_cast<std::size_t>(std::floor(railPosition)),
         powerTubeRailPoints - 2);
-    const float driveFraction = static_cast<float>(
-        drivePosition - static_cast<double>(driveLower));
-    const float railFraction = static_cast<float>(
-        railPosition - static_cast<double>(railLower));
+    const double highGridFraction = highGridPosition
+        - static_cast<double>(highGridLower);
+    const double lowGridFraction = lowGridPosition
+        - static_cast<double>(lowGridLower);
+    const double railFraction =
+        railPosition - static_cast<double>(railLower);
     const auto& table = model == AmpModel::BritishCrunch ? el34 : sixL6;
-    const auto& lowerLeft = table[
-        railLower * powerTubeDrivePoints + driveLower];
-    const auto& lowerRight = table[
-        railLower * powerTubeDrivePoints + driveLower + 1];
-    const auto& upperLeft = table[
-        (railLower + 1) * powerTubeDrivePoints + driveLower];
-    const auto& upperRight = table[
-        (railLower + 1) * powerTubeDrivePoints + driveLower + 1];
-    const float output = lerp(
-        lerp(lowerLeft.output, lowerRight.output, driveFraction),
-        lerp(upperLeft.output, upperRight.output, driveFraction),
+    const auto tablePoint = [&] (std::size_t highIndex,
+                                 std::size_t lowIndex,
+                                 std::size_t railIndex)
+    {
+        if (highIndex >= lowIndex)
+            return table.points[powerTubeTableIndex(
+                highIndex, lowIndex, railIndex)];
+        auto point = table.points[powerTubeTableIndex(
+            lowIndex, highIndex, railIndex)];
+        point.output = -point.output;
+        return point;
+    };
+    const auto interpolatePoint = [] (const PowerTubeLookupPoint& lower,
+                                      const PowerTubeLookupPoint& upper,
+                                      double fraction)
+    {
+        return PowerTubeResult {
+            std::lerp(static_cast<double>(lower.output),
+                      static_cast<double>(upper.output), fraction),
+            std::lerp(static_cast<double>(lower.supplyDemand),
+                      static_cast<double>(upper.supplyDemand), fraction)
+        };
+    };
+    const auto interpolateResult = [] (const PowerTubeResult& lower,
+                                       const PowerTubeResult& upper,
+                                       double fraction)
+    {
+        return PowerTubeResult {
+            std::lerp(lower.output, upper.output, fraction),
+            std::lerp(lower.supplyDemand, upper.supplyDemand, fraction)
+        };
+    };
+    const auto alongLowGrid = [&] (std::size_t highIndex,
+                                   std::size_t railIndex)
+    {
+        return interpolatePoint(
+            tablePoint(highIndex, lowGridLower, railIndex),
+            tablePoint(highIndex, lowGridLower + 1, railIndex),
+            lowGridFraction);
+    };
+    const auto alongGridPlane = [&] (std::size_t railIndex)
+    {
+        return interpolateResult(
+            alongLowGrid(highGridLower, railIndex),
+            alongLowGrid(highGridLower + 1, railIndex),
+            highGridFraction);
+    };
+    auto result = interpolateResult(
+        alongGridPlane(railLower), alongGridPlane(railLower + 1),
         railFraction);
-    const float demand = lerp(
-        lerp(lowerLeft.supplyDemand, lowerRight.supplyDemand, driveFraction),
-        lerp(upperLeft.supplyDemand, upperRight.supplyDemand, driveFraction),
-        railFraction);
-    return { static_cast<double>(output),
-             static_cast<double>(std::max(demand, 0.0f)) };
+    if (differential == 0.0)
+        result.output = 0.0;
+    else if (differentialDrive < 0.0f)
+        result.output = -result.output;
+    result.supplyDemand = std::max(
+        result.supplyDemand - table.idleDemandError, 0.0);
+    return result;
 }
 
 void ElectryFx::updateDriveConstants() noexcept
@@ -1727,9 +2225,9 @@ float ElectryFx::ampStage(AmpChannel& channel, AmpModel model,
 
     // The signal enters the phase inverter through its source-documented
     // coupling capacitor. A 12AT7/ECC81 drives the American 82/100 kOhm
-    // plates; a 12AX7/ECC83 drives the British pair. Both solves include the
-    // 470 Ohm shared cathode, finite tail and midband 220 kOhm output-grid
-    // loading, so unequal halves and nonlinear balance come from the circuit.
+    // plates; a 12AX7/ECC83 drives the British pair. The coupled solve below
+    // includes the 470 Ohm shared cathode, finite tail, both output capacitors,
+    // both 220 kOhm grid returns, the factory grid stoppers and grid current.
     const float phaseDrive = stage * ampDriveSecond_[index];
     const float coupledDrive = phaseDrive
         - channel.phaseInverterInput.process(
@@ -1743,7 +2241,19 @@ float ElectryFx::ampStage(AmpChannel& channel, AmpModel model,
     const float feedbackAmount = american ? 0.42f : 0.12f;
     const float inverterInput = coupledDrive
         - feedbackAmount * channel.negativeFeedback.state;
-    const float powerInput = phaseInverterLookup(model, inverterInput);
+    const auto phaseInverter = phaseInverterCoupledStep(
+        channel, model, inverterInput, oversampledRate_);
+    const double gridScale = std::abs(
+        phaseInverterParameters(model).powerGridBias);
+    const float powerCommon = static_cast<float>(
+        (0.5 * (phaseInverter.gridOne + phaseInverter.gridTwo)
+         - phaseInverterParameters(model).powerGridBias) / gridScale);
+    // Positive input lowers PI plate one and raises plate two. Cross-labelling
+    // the two transformer halves preserves the established output and NFB
+    // polarity while still keeping both physical grid branches independent.
+    const float powerDifferential = static_cast<float>(
+        (phaseInverter.gridTwo - phaseInverter.gridOne)
+        / (2.0 * gridScale));
 
     // Supply sag changes the plate and screen rails used by the solved load
     // line, rather than merely scaling a waveshaper. The lookup returns the
@@ -1751,14 +2261,14 @@ float ElectryFx::ampStage(AmpChannel& channel, AmpModel model,
     // tube current instead of rectified audio. American uses the measured
     // 6L6GC beam-tetrode family; British uses the measured EL34 pentode family.
     // The LTP's local differential slope is normalised to unity, then one
-    // output unit remains the fixed-bias voltage needed to bring the driven
-    // power grid to zero. Until the two coupling branches are added, their
-    // measured sub-4% common-mode component is an explicit discarded boundary.
+    // output unit remains the fixed-bias voltage needed to bring a power grid
+    // to zero. The pair lookup keeps both that differential signal and the
+    // shared bias displacement left behind by blocking distortion.
     const float sagLimit = american ? 0.20f : 0.24f;
     const float railScale = 1.0f
         - sagLimit * channel.sag / (0.30f + channel.sag);
     const auto powerTube = powerTubePairLookup(
-        model, powerInput, railScale);
+        model, powerCommon, powerDifferential, railScale);
     stage = static_cast<float>(powerTube.output);
     const float supplyDemand = static_cast<float>(powerTube.supplyDemand);
     channel.sag += (supplyDemand > channel.sag

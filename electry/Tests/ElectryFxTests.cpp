@@ -130,10 +130,39 @@ struct ElectryFxTestAccess
                  result.cathode, result.tail, result.totalCurrent };
     }
 
-    static float phaseInverterLookup(
-        AmpModel model, float drive) noexcept
+    static double powerGridCurrentDirect(double gridVoltage) noexcept
     {
-        return ElectryFx::phaseInverterLookup(model, drive);
+        return ElectryFx::powerGridCurrentDirect(gridVoltage);
+    }
+
+    static double powerGridCurrentLookup(double gridVoltage) noexcept
+    {
+        return ElectryFx::powerGridCurrentLookup(gridVoltage);
+    }
+
+    static std::array<double, 10> phaseInverterCoupledStep(
+        AmpModel model, double drive, double sampleRate,
+        std::array<double, 5>& state) noexcept
+    {
+        ElectryFx::AmpChannel channel {};
+        channel.phaseCurrentDelta = state[0];
+        channel.couplingHistoryOne = state[1];
+        channel.couplingHistoryTwo = state[2];
+        channel.powerGridOffsetOne = state[3];
+        channel.powerGridOffsetTwo = state[4];
+        const auto result = ElectryFx::phaseInverterCoupledStep(
+            channel, model, drive, sampleRate);
+        state = { channel.phaseCurrentDelta,
+                  channel.couplingHistoryOne,
+                  channel.couplingHistoryTwo,
+                  channel.powerGridOffsetOne,
+                  channel.powerGridOffsetTwo };
+        return { result.gridOne, result.gridTwo,
+                 result.plateOne, result.plateTwo,
+                 result.capacitorCurrentOne,
+                 result.capacitorCurrentTwo,
+                 result.gridCurrentOne, result.gridCurrentTwo,
+                 result.totalCurrent, result.maximumResidual };
     }
 
     static double powerTubePlateCurrent(
@@ -153,18 +182,20 @@ struct ElectryFxTestAccess
     }
 
     static std::array<double, 2> powerTubePairDirect(
-        AmpModel model, double drive, double railScale) noexcept
+        AmpModel model, double commonDrive, double differentialDrive,
+        double railScale) noexcept
     {
         const auto result = ElectryFx::powerTubePairDirect(
-            model, drive, railScale);
+            model, commonDrive, differentialDrive, railScale);
         return { result.output, result.supplyDemand };
     }
 
     static std::array<double, 2> powerTubePairLookup(
-        AmpModel model, float drive, float railScale) noexcept
+        AmpModel model, float commonDrive, float differentialDrive,
+        float railScale) noexcept
     {
         const auto result = ElectryFx::powerTubePairLookup(
-            model, drive, railScale);
+            model, commonDrive, differentialDrive, railScale);
         return { result.output, result.supplyDemand };
     }
 
@@ -196,6 +227,11 @@ struct ElectryFxTestAccess
             && amplifier.bias == 0.0f && amplifier.sag == 0.0f
             && amplifier.interstage.state == 0.0f
             && amplifier.phaseInverterInput.state == 0.0f
+            && amplifier.phaseCurrentDelta == 0.0
+            && amplifier.couplingHistoryOne == 0.0
+            && amplifier.couplingHistoryTwo == 0.0
+            && amplifier.powerGridOffsetOne == 0.0
+            && amplifier.powerGridOffsetTwo == 0.0
             && amplifier.flux.state == 0.0f
             && amplifier.negativeFeedback.state == 0.0f
             && amplifier.inputHighpass.z1 == 0.0
@@ -1180,6 +1216,7 @@ void testPhaseInverterCircuits()
         double plateResistanceTwo;
         double tailResistance;
         double gridBias;
+        double gridStopperResistance;
         double inputVoltsPerDrive;
         std::array<double, 6> idle;
         double negativeOne;
@@ -1187,20 +1224,21 @@ void testPhaseInverterCircuits()
     };
     const std::array<Expected, 2> expected {{
         { AmpModel::AmericanClean, 410.0, 82000.0, 100000.0, 22100.0,
-          -37.0, 1.994433668044982,
+          -37.0, 1500.0, 1.994433668044982,
           { 0.0, 232.249049214088, 225.525768684732,
             90.5606993644173, 88.6748540519992,
             0.00401243683493209 },
           -0.991960053849012, 0.984272776173345 },
         { AmpModel::BritishCrunch, 400.0, 82000.0, 100000.0, 14700.0,
-          -36.0, 1.258852687134334,
+          -36.0, 5600.0, 1.258852687134334,
           { 0.0, 261.464563110962, 250.946889788538,
             48.2404126435508, 46.7458184482661,
             0.00317998764954191 },
           -0.983753983104880, 0.978559763641025 },
     }};
 
-    double maximumLookupError = 0.0;
+    std::array<double, 2> recoveryAfterOneMillisecond {};
+    std::array<double, 2> recoveryAfterTwentyMilliseconds {};
     for (const auto& circuit : expected)
     {
         const auto idle = FxAccess::phaseInverterDirect(circuit.model, 0.0);
@@ -1276,58 +1314,170 @@ void testPhaseInverterCircuits()
                    "the LTP total current moves like a live-grid tail model");
         }
 
-        for (int probe = 0; probe < 61; ++probe)
-        {
-            const float drive = static_cast<float>(
-                -3.97 + 7.94 * (probe + 0.37) / 61.0);
-            const auto direct = FxAccess::phaseInverterDirect(
-                circuit.model, drive);
-            const float lookup = FxAccess::phaseInverterLookup(
-                circuit.model, drive);
-            maximumLookupError = std::max(
-                maximumLookupError,
-                std::abs(direct[0] - static_cast<double>(lookup)));
-        }
+        std::array<double, 5> idleState {};
+        const auto coupledIdle = FxAccess::phaseInverterCoupledStep(
+            circuit.model, 0.0, 192000.0, idleState);
+        expect(std::abs(coupledIdle[0] - circuit.gridBias) < 1.0e-12
+                   && std::abs(coupledIdle[1] - circuit.gridBias) < 1.0e-12
+                   && std::abs(coupledIdle[2] - idle[1]) < 2.0e-8
+                   && std::abs(coupledIdle[3] - idle[2]) < 2.0e-8
+                   && std::abs(coupledIdle[4]) < 1.0e-12
+                   && std::abs(coupledIdle[5]) < 1.0e-12
+                   && std::abs(coupledIdle[6]) < 1.0e-12
+                   && std::abs(coupledIdle[7]) < 1.0e-12
+                   && coupledIdle[9] < 1.0e-10,
+               "the coupled phase inverter is not exactly at DC rest");
 
-        float previous = -std::numeric_limits<float>::infinity();
-        for (int probe = 0; probe <= 256; ++probe)
+        std::array<double, 5> burstState {};
+        double maximumResidual = 0.0;
+        double maximumGridCurrent = 0.0;
+        double minimumCommonOffset = 0.0;
+        double maximumCommonOffset = 0.0;
+        double maximumDifferential = 0.0;
+        double maximumBranchResidual = 0.0;
+        for (int frame = 0; frame < 3840; ++frame)
         {
-            const float drive = -4.0f + 8.0f * probe / 256.0f;
-            const float output = FxAccess::phaseInverterLookup(
-                circuit.model, drive);
-            expect(std::isfinite(output) && output >= previous,
-                   "a phase-inverter table is non-finite or non-monotonic");
-            previous = output;
+            const double burst = 4.0 * std::sin(
+                2.0 * pi * 1000.0 * frame / 192000.0);
+            const auto point = FxAccess::phaseInverterCoupledStep(
+                circuit.model, burst, 192000.0, burstState);
+            maximumResidual = std::max(maximumResidual, point[9]);
+            maximumGridCurrent = std::max(
+                maximumGridCurrent, std::max(point[6], point[7]));
+            minimumCommonOffset = std::min(
+                minimumCommonOffset,
+                0.5 * (point[0] + point[1]) - circuit.gridBias);
+            maximumCommonOffset = std::max(
+                maximumCommonOffset,
+                0.5 * (point[0] + point[1]) - circuit.gridBias);
+            maximumDifferential = std::max(
+                maximumDifferential,
+                std::abs(point[1] - point[0])
+                    / (2.0 * std::abs(circuit.gridBias)));
+            const double junctionOne = point[0]
+                + circuit.gridStopperResistance * point[6];
+            const double junctionTwo = point[1]
+                + circuit.gridStopperResistance * point[7];
+            maximumBranchResidual = std::max({
+                maximumBranchResidual,
+                std::abs(point[4]
+                    - ((junctionOne - circuit.gridBias) / 220000.0
+                       + point[6])),
+                std::abs(point[5]
+                    - ((junctionTwo - circuit.gridBias) / 220000.0
+                       + point[7])) });
         }
-        for (const float sign : { -1.0f, 1.0f })
-        {
-            const auto edge = FxAccess::phaseInverterDirect(
-                circuit.model, 4.0 * sign);
-            const auto outside = FxAccess::phaseInverterDirect(
-                circuit.model, 40.0 * sign);
-            expect(edge[0] == outside[0]
-                       && FxAccess::phaseInverterLookup(
-                              circuit.model, 4.0f * sign)
-                          == FxAccess::phaseInverterLookup(
-                              circuit.model, 40.0f * sign),
-                   "a phase inverter escaped its solved drive-table domain");
-        }
-        const float zero = FxAccess::phaseInverterLookup(
-            circuit.model, 0.0f);
-        expect(FxAccess::phaseInverterLookup(
-                   circuit.model, std::numeric_limits<float>::quiet_NaN())
-                   == zero
+        std::array<double, 10> recovery {};
+        for (int frame = 0; frame < 192; ++frame)
+            recovery = FxAccess::phaseInverterCoupledStep(
+                circuit.model, 0.0, 192000.0, burstState);
+        const double commonAfterOneMillisecond =
+            0.5 * (recovery[0] + recovery[1]) - circuit.gridBias;
+        for (int frame = 192; frame < 3840; ++frame)
+            recovery = FxAccess::phaseInverterCoupledStep(
+                circuit.model, 0.0, 192000.0, burstState);
+        const double commonAfterTwentyMilliseconds =
+            0.5 * (recovery[0] + recovery[1]) - circuit.gridBias;
+        const auto modelIndex = static_cast<std::size_t>(circuit.model);
+        recoveryAfterOneMillisecond[modelIndex] =
+            commonAfterOneMillisecond;
+        recoveryAfterTwentyMilliseconds[modelIndex] =
+            commonAfterTwentyMilliseconds;
+        std::cout << (circuit.model == AmpModel::AmericanClean
+                          ? "American" : "British")
+                  << " PI grid current/residual/common 1/20 ms/diff: "
+                  << maximumGridCurrent << "/" << maximumResidual << "/"
+                  << commonAfterOneMillisecond << "/"
+                  << commonAfterTwentyMilliseconds << "/"
+                  << maximumDifferential << '\n';
+        expect(maximumGridCurrent > 1.0e-5
+                   && maximumResidual < 1.0e-7
+                   && minimumCommonOffset < -0.1
+                   && commonAfterOneMillisecond < -0.1
+                   && std::abs(commonAfterTwentyMilliseconds)
+                        < std::abs(commonAfterOneMillisecond)
+                   && minimumCommonOffset
+                        > -2.0 * std::abs(circuit.gridBias)
+                   && maximumCommonOffset
+                        < 0.5 * std::abs(circuit.gridBias)
+                   && maximumBranchResidual < 1.0e-12
+                   && maximumDifferential < 4.0,
+               "the coupled phase inverter lost grid clamp or recovery");
+
+        std::array<double, 5> edgeState {};
+        const auto edge = FxAccess::phaseInverterCoupledStep(
+            circuit.model, 4.0, 192000.0, edgeState);
+        std::array<double, 5> outsideState {};
+        const auto outside = FxAccess::phaseInverterCoupledStep(
+            circuit.model, 40.0, 192000.0, outsideState);
+        std::array<double, 5> nanState {};
+        const auto nonFinite = FxAccess::phaseInverterCoupledStep(
+            circuit.model, std::numeric_limits<double>::quiet_NaN(),
+            192000.0, nanState);
+        expect(edge == outside && std::isfinite(nonFinite[0])
                    && FxAccess::phaseInverterDirect(
                           circuit.model,
                           std::numeric_limits<double>::quiet_NaN())[0]
                       == FxAccess::phaseInverterDirect(
                           circuit.model, 0.0)[0],
-               "a non-finite phase-inverter drive escaped sanitisation");
+               "a non-finite or out-of-range phase drive escaped sanitisation");
+
+        std::array<double, 5> hostileState {};
+        for (int frame = 0; frame < 1536; ++frame)
+        {
+            const double square = (frame / 96) % 2 == 0 ? -4.0 : 4.0;
+            const auto point = FxAccess::phaseInverterCoupledStep(
+                circuit.model, square, 192000.0, hostileState);
+            expect(std::all_of(point.begin(), point.end(), [] (double value)
+                   {
+                       return std::isfinite(value);
+                   }),
+                   "a hostile phase-inverter transition became non-finite");
+        }
     }
-    std::cout << "Phase-inverter table max error: "
-              << maximumLookupError << '\n';
-    expect(maximumLookupError < 2.0e-4,
-           "the runtime phase-inverter table is too coarse");
+    expect(std::abs(recoveryAfterTwentyMilliseconds[0])
+               > 4.0 * std::abs(recoveryAfterTwentyMilliseconds[1])
+               && std::abs(recoveryAfterOneMillisecond[0]) > 1.0
+               && std::abs(recoveryAfterOneMillisecond[1]) > 1.0,
+           "the 100 nF American and 22 nF British blocking recoveries collapsed");
+
+    const std::array<std::array<double, 2>, 4> gridAnchors {{
+        { 0.5, 0.0001010041478199964 },
+        { 1.0, 0.0003353747286139267 },
+        { 2.0, 0.0008235187646659394 },
+        { 5.0, 0.0023094468173863484 }
+    }};
+    double maximumGridLookupError = 0.0;
+    for (const auto& anchor : gridAnchors)
+    {
+        const double direct = FxAccess::powerGridCurrentDirect(anchor[0]);
+        const double lookup = FxAccess::powerGridCurrentLookup(anchor[0]);
+        expect(std::abs(direct - anchor[1]) < 1.0e-14,
+               "a TubeLib power-grid current anchor changed");
+        maximumGridLookupError = std::max(
+            maximumGridLookupError, std::abs(direct - lookup));
+    }
+    double previousGridLookup = 0.0;
+    bool gridLookupMonotonic = true;
+    for (int probe = 0; probe < 1000; ++probe)
+    {
+        const double voltage = 99.9 * (probe + 0.31) / 1000.0;
+        const double lookup = FxAccess::powerGridCurrentLookup(voltage);
+        gridLookupMonotonic = gridLookupMonotonic
+            && lookup >= previousGridLookup;
+        previousGridLookup = lookup;
+        maximumGridLookupError = std::max(
+            maximumGridLookupError,
+            std::abs(FxAccess::powerGridCurrentDirect(voltage)
+                     - lookup));
+    }
+    expect(FxAccess::powerGridCurrentDirect(-1.0) == 0.0
+               && FxAccess::powerGridCurrentLookup(-1.0) == 0.0
+               && FxAccess::powerGridCurrentLookup(
+                    std::numeric_limits<double>::quiet_NaN()) == 0.0
+               && maximumGridLookupError < 2.0e-7
+               && gridLookupMonotonic,
+           "the TubeLib power-grid current lookup is inaccurate or unsafe");
 
     ElectryFx fx;
     fx.prepare(sampleRate); // 4x, so the circuit runs at 192 kHz
@@ -1384,67 +1534,90 @@ void testMeasuredPowerTubes()
     double maximumDemandError = 0.0;
     for (const auto model : models)
     {
-        const auto idle = FxAccess::powerTubePairDirect(model, 0.0, 1.0);
+        const auto idle = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.0, 1.0);
+        const auto lookupIdle = FxAccess::powerTubePairLookup(
+            model, 0.0f, 0.0f, 1.0f);
         expect(std::abs(idle[0]) < 1.0e-12 && idle[1] == 0.0,
                "a quiescent power-tube pair is not zero-centred");
+        expect(lookupIdle[0] == 0.0 && lookupIdle[1] < 1.0e-12,
+               "power-table interpolation created demand at digital silence");
         const auto smallPositive = FxAccess::powerTubePairDirect(
-            model, 1.0e-4, 1.0);
+            model, 0.0, 1.0e-4, 1.0);
         const auto smallNegative = FxAccess::powerTubePairDirect(
-            model, -1.0e-4, 1.0);
+            model, 0.0, -1.0e-4, 1.0);
         const double localSlope =
             (smallPositive[0] - smallNegative[0]) / 2.0e-4;
         expect(std::abs(localSlope - 1.0) < 2.0e-4,
                "a power-tube pair lost its unity small-signal calibration");
 
-        const auto moderate = FxAccess::powerTubePairDirect(model, 0.5, 1.0);
-        const auto opposed = FxAccess::powerTubePairDirect(model, -0.5, 1.0);
-        const auto driven = FxAccess::powerTubePairDirect(model, 1.0, 1.0);
+        const auto moderate = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.5, 1.0);
+        const auto opposed = FxAccess::powerTubePairDirect(
+            model, 0.0, -0.5, 1.0);
+        const auto driven = FxAccess::powerTubePairDirect(
+            model, 0.0, 1.0, 1.0);
         expect(std::abs(moderate[0] + opposed[0]) < 1.0e-10
                    && std::abs(moderate[1] - opposed[1]) < 1.0e-10,
                "the ideal push-pull pair is not symmetric");
         expect(moderate[1] > 0.0 && driven[1] > moderate[1],
                "plate-plus-screen supply demand does not rise with drive");
-        const auto drooped = FxAccess::powerTubePairDirect(model, 0.8, 0.8);
-        const auto charged = FxAccess::powerTubePairDirect(model, 0.8, 1.0);
+        const auto blocked = FxAccess::powerTubePairDirect(
+            model, -0.5, 0.5, 1.0);
+        const auto forwardBiased = FxAccess::powerTubePairDirect(
+            model, 0.25, 0.5, 1.0);
+        expect(std::abs(blocked[0]) < std::abs(moderate[0])
+                   && std::abs(forwardBiased[0]) > std::abs(moderate[0])
+                   && forwardBiased[1] > blocked[1],
+               "power-tube common mode does not alter transfer and demand");
+        const auto drooped = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.8, 0.8);
+        const auto charged = FxAccess::powerTubePairDirect(
+            model, 0.0, 0.8, 1.0);
         expect(std::abs(drooped[0]) < std::abs(charged[0]),
                "lower power-tube rails do not reduce available output swing");
 
-        // The current checkpoint stops at the zero-grid AB1 boundary. Prove
-        // that out-of-range drive cannot silently become an ideal AB2 source
-        // in either the reference solve or the audio-thread lookup.
+        // Terminal grid current can now cross zero, while the measured
+        // plate/screen surface remains explicitly clamped at its validated
+        // AB1 boundary. The pair domain itself is bounded independently.
+        expect(FxAccess::powerTubePlateCurrent(
+                   model, 200.0, 5.0, 400.0)
+                   == FxAccess::powerTubePlateCurrent(
+                       model, 200.0, 0.0, 400.0),
+               "the measured power-tube surface escaped its AB1 boundary");
         for (const double sign : { -1.0, 1.0 })
         {
             const auto boundary = FxAccess::powerTubePairDirect(
-                model, sign, 0.83);
+                model, 0.0, sign * 4.0, 0.83);
             const auto clamped = FxAccess::powerTubePairDirect(
-                model, sign * 2.0, 0.83);
+                model, 0.0, sign * 40.0, 0.83);
             const auto lookupBoundary = FxAccess::powerTubePairLookup(
-                model, static_cast<float>(sign), 0.83f);
+                model, 0.0f, static_cast<float>(sign * 4.0), 0.83f);
             const auto lookupClamped = FxAccess::powerTubePairLookup(
-                model, static_cast<float>(sign * 2.0), 0.83f);
+                model, 0.0f, static_cast<float>(sign * 40.0), 0.83f);
             expect(std::abs(boundary[0] - clamped[0]) < 1.0e-12
                        && std::abs(boundary[1] - clamped[1]) < 1.0e-12,
-                   "the direct power-tube solve crossed the AB1 boundary");
+                   "the direct power-tube solve escaped its solved domain");
             expect(std::abs(lookupBoundary[0] - lookupClamped[0]) < 1.0e-12
                        && std::abs(lookupBoundary[1] - lookupClamped[1])
                            < 1.0e-12,
-                   "the power-tube table crossed the AB1 boundary");
+                   "the power-tube table escaped its solved domain");
         }
 
-        // Off-grid drive and rail positions prove that the audio-thread table
-        // retains the two-dimensional circuit solve rather than merely its
-        // nominal-rail transfer. Keep every probe inside the AB1 boundary so
-        // none of this interpolation check can collapse onto a clamped edge.
+        // Off-grid common, differential and rail positions prove that the
+        // audio-thread table retains the complete three-dimensional solve.
         for (int probe = 0; probe < 47; ++probe)
         {
-            const float drive = static_cast<float>(
-                -0.97 + 1.94 * (probe + 0.37) / 47.0);
+            const float common = static_cast<float>(
+                -1.97 + 2.44 * (probe + 0.37) / 47.0);
+            const float differential = static_cast<float>(
+                -3.91 + 7.82 * ((13 * probe + 3) % 47 + 0.41) / 47.0);
             const float rail = static_cast<float>(
                 0.751 + 0.247 * ((19 * probe + 7) % 47 + 0.29) / 47.0);
             const auto direct = FxAccess::powerTubePairDirect(
-                model, drive, rail);
+                model, common, differential, rail);
             const auto lookup = FxAccess::powerTubePairLookup(
-                model, drive, rail);
+                model, common, differential, rail);
             maximumOutputError = std::max(
                 maximumOutputError, std::abs(direct[0] - lookup[0]));
             maximumDemandError = std::max(
@@ -1453,9 +1626,9 @@ void testMeasuredPowerTubes()
     }
 
     const auto american = FxAccess::powerTubePairDirect(
-        AmpModel::AmericanClean, 0.5, 1.0);
+        AmpModel::AmericanClean, 0.0, 0.5, 1.0);
     const auto british = FxAccess::powerTubePairDirect(
-        AmpModel::BritishCrunch, 0.5, 1.0);
+        AmpModel::BritishCrunch, 0.0, 0.5, 1.0);
     std::cout << "Power-tube table max output/demand error: "
               << maximumOutputError << "/" << maximumDemandError
               << ", 6L6GC/EL34 half-drive " << american[0] << "/"
@@ -1467,15 +1640,15 @@ void testMeasuredPowerTubes()
                && std::abs(british[1] - 0.328447904107082) < 1.0e-9,
            "the EL34 pair load-line anchor changed");
     const auto droopedAmerican = FxAccess::powerTubePairDirect(
-        AmpModel::AmericanClean, 1.0, 0.75);
+        AmpModel::AmericanClean, 0.0, 1.0, 0.75);
     const auto droopedBritish = FxAccess::powerTubePairDirect(
-        AmpModel::BritishCrunch, 1.0, 0.75);
+        AmpModel::BritishCrunch, 0.0, 1.0, 0.75);
     expect(std::abs(droopedAmerican[1] - 0.526148187793907) < 1.0e-9,
            "the drooped 6L6GC demand lost nominal-idle self-limiting");
     expect(std::abs(droopedBritish[1] - 0.651693561785707) < 1.0e-9,
            "the drooped EL34 demand lost nominal-idle self-limiting");
-    expect(maximumOutputError < 2.0e-4
-               && maximumDemandError < 5.0e-4,
+    expect(maximumOutputError < 3.0e-4
+               && maximumDemandError < 4.0e-4,
            "the runtime power-tube table is too coarse");
     expect(british[0] > american[0] + 0.12,
            "the measured 6L6GC and EL34 load lines collapsed to one curve");
@@ -1609,8 +1782,8 @@ void testAmpModelVoices()
     static constexpr std::array<double, 6> frequencies {
         90.0, 120.0, 470.0, 700.0, 2800.0, 8000.0 };
     static constexpr std::array<std::array<double, 6>, 3> goldenResponse {{
-        { -6.79598, -4.39915, -7.31796, -3.98989, 9.21134, -13.9765 },
-        {  1.69002,  3.52476, -1.51378, -0.69008, 2.93144, -21.1533 },
+        { -6.76776, -4.38230, -7.32158, -3.99830, 9.20223, -13.9867 },
+        {  1.44711,  3.41606, -1.52745, -0.69891, 2.92328, -21.1522 },
         {  0.36333,  0.60681, -6.52226, -2.20414, 3.17347, -22.0021 },
     }};
     std::array<std::array<double, frequencies.size()>, models.size()> response {};

@@ -39,9 +39,11 @@ use dense measured-12AX7 plate-load transfers generated from exact circuit
 solves; the American and British paths add exact third-order passive RC tone
 stacks, measured-curve-fitted 6L6GC beam-tetrode or EL34 pentode push-pull load
 lines, and source-derived nonlinear 12AT7/ECC81 or ECC83 long-tailed-pair phase
-splitters. Negative feedback, plate-plus-screen-current-driven sag, transformer
-flux and six-section speaker/cabinet voicing complete each path. The Modern
-path retains Electry's established metal circuit and output sample-for-sample.
+splitters. Two independently solved output-coupling, grid-return and stopper
+branches add power-grid conduction, blocking memory and common-bias recovery.
+Negative feedback, plate-plus-screen-current-driven sag, transformer flux and
+six-section speaker/cabinet voicing complete each path. The Modern path retains
+Electry's established metal circuit and output sample-for-sample.
 The nonlinear blocks run inside an up-to-4× oversampled domain, so a high-gain
 tone saturates instead of folding its own harmonics back into the guitar band.
 These are meticulously bounded circuit-derived families, not capture-accurate
@@ -69,7 +71,7 @@ tone contrasts, sympathetic strum, guitar-build contrasts, velocity dynamics,
 power chords, a long arrangement, the pitch-bend and feedback wheels, a focused
 dry Sustain/Mute/Dead audition, a matched high-gain Mute/Dead comparison, an
 extended all-technique solo, four original genre studies, a tremolo-picking
-study and one level-matched three-amp comparison. They are
+study and one globally normalised three-amp comparison. They are
 demonstrations, not evidence — an audible example is not a measurement, and
 none of the claims below rest on them. The reproducible ten-probe model renderer,
 real-recording boundaries and blind-study plan live in the
@@ -144,8 +146,9 @@ the stroke from the other strings. Those three anchors equal sixteenth notes at
 three fresh FX instances in order: American Clean, British Crunch and Modern
 High-Gain. Amp remains at 90%, every other performance and FX setting is held
 fixed, each segment has the same duration, and one gain is applied to the whole
-file. The phrase moves from two power chords through chugs and a ringing chord
-to a bent, vibrato lead, exposing response and nonlinear dynamics rather than a
+file. Near-legato overloaded chord turns expose each circuit's short-term grid
+recovery before the phrase moves through chugs, a ringing chord and a bent,
+vibrato lead. This compares response and nonlinear dynamics rather than a
 level-matched succession of unrelated presets. Existing amplified demos 05–22
 retain the sample-identical Modern path.
 
@@ -837,17 +840,22 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   and 4.7 kOhm presence-tail value follow [Macak and Schimmel's Fig. 11 model](https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf),
   not an annotated Marshall factory voltage. Their driven
   grids retain the documented 1 nF × 1 MOhm American and 22 nF × 1 MOhm
-  British input coupling. Both loaded plate solves include the midband 220
-  kOhm power-grid returns, a finite tail and unequal arms. The resulting idle
-  points are 4.012 mA / 232.25 V / 225.53 V for ECC81 and 3.180 mA / 261.46 V /
-  250.95 V for ECC83. A 769-point preparation-time table preserves each
-  asymmetric differential transfer within the measured interpolation bound; its local slope is
-  calibrated, not voiced. At the AB1 boundary the discarded common-mode
-  component stays below 4% and total current within 4% of idle. This checkpoint
-  treats the equal output capacitors as their midband load and
-  retains only differential drive: two dynamic output-cap/grid branches and
-  grid-current blocking memory, small AC grid-return currents and the complete
-  presence network remain the next coupled solve.
+  British input coupling. The output solve keeps the two plate branches
+  independent: American uses the drawing's 100 nF capacitors, 220 kOhm bias
+  returns and 1.5 kOhm grid stoppers; British uses 22 nF, 220 kOhm and 5.6
+  kOhm. Each terminal then conducts through TubeLib's generic 2 kOhm plus
+  `IS=1 nA`, `RS=1 Ohm` diode branch. A three-unknown analytic Newton step
+  jointly solves total LTP current and both terminal-grid voltages while each
+  capacitor is trapezoidally integrated, so grid current loads the correct
+  plate and leaves a real common negative bias displacement after overload.
+  Idle remains 4.012 mA / 232.25 V / 225.53 V for ECC81 and 3.180 mA / 261.46
+  V / 250.95 V for ECC83; the checked musical burst stays below `1e-10 A`
+  residual. One millisecond after the pinned overload the shared American and
+  British shifts are −14.84 and −18.98 V; after 20 ms their source-set 100/22
+  nF branches retain −7.98 and −1.14 V respectively. TubeLib's diode junction
+  capacitance/transit time, the Marshall 47 pF plate-to-plate capacitor, PI
+  grid conduction, bias-supply impedance and the complete presence network
+  remain explicit later circuit stages.
 - **Measured output-tube load lines.** American solves an ideal push-pull pair
   from the measured-curve-fitted uTracer/ExtractModel **6L6GC beam-tetrode**
   family; British uses its distinct **EL34 true-pentode** family. The equations,
@@ -858,18 +866,21 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   plate-to-plate load to each half: the American solve uses the
   [RCA 6L6GC 450 V plate / 400 V screen / −37 V / 5.6 kOhm AB1 pair](https://frank.pocnet.net/sheets/049/6/6L6GC.pdf),
   and British the [Mullard 400 V / −36 V / 3.5 kOhm fixed-bias pair](https://frank.pocnet.net/sheets/129/e/EL34.pdf).
-  Preparation evaluates each load line over 4,097 grid-drive points and 17
-  plate/screen-rail levels; the audio thread bilinearly interpolates output and
-  plate-plus-screen demand. Maximum checked normalized output/current-demand
-  errors are 0.000086/0.000093, and the two half-drive outputs are 0.48185 and
-  0.643711 after equal small-signal normalization. The normalized drive table
-  stops at ±1, the zero-grid AB1 boundary, so neither control grid becomes
-  positive without the missing output coupling/grid-current circuit. This is
-  no longer an opposed 12AX7 output approximation or an ideal phase splitter:
-  it receives the solved LTP's nonlinear differential output. It still omits
-  that splitter's small common-mode component and uses a resistive transformer
-  load, with fixed screen rails rather than Mullard's common screen resistor;
-  output-cap blocking memory and a reactive loudspeaker load remain open
+  The pair receives the two solved grids as common and differential drive, so
+  blocking's bias shift changes crossover, output and current demand rather
+  than being discarded. Preparation solves a 257 × 257 quadratic terminal-grid
+  plane over 13 plate/screen-rail levels, stores only its push-pull-symmetric
+  triangle and uses 6.576 MiB for both tube families. Runtime
+  trilinear interpolation stays below 0.0003 normalized output and 0.0004
+  current-demand error in the checked domain; its own interpolated idle is
+  subtracted before the sag clamp. The two half-drive outputs remain 0.48185
+  and 0.643711 after equal small-signal normalization. A terminal may cross
+  zero and load its driver through the diode, but the uTracer-fitted
+  plate/screen-current surface is conservatively clamped at `Vg=0`: this is an
+  AB1-bounded power-transfer surface with bounded overload grid conduction, not
+  an invented ideal AB2 source. The solver uses a resistive transformer load
+  and fixed screen rails rather than Mullard's common screen resistor; positive-
+  grid plate-current data and a reactive loudspeaker-reflected load remain open
   circuit stages.
 - **Feedback and supply.** A causal, bandwidth-limited copy of transformer
   output represents a secondary-side negative-feedback return, with voiced
@@ -879,8 +890,8 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   than scaling the result afterward. The American reservoir spans up to 20%
   rail loss with 55/550 ms attack/recovery, British 24% with 80/300 ms, and the
   established Modern path 30% with 70/400 ms. On the pinned loud/quiet probe
-  the three nonlinear gain reductions are −13.18, −15.43 and −18.33 dB;
-  full-chain 90% Drop-E gains are +2.88, +6.49 and +5.87 dB. Feedback amounts,
+  the three nonlinear gain reductions are −13.70, −15.73 and −18.33 dB;
+  full-chain 90% Drop-E gains are +2.86, +6.34 and +5.87 dB. Feedback amounts,
   reservoir constants and level trims are voiced and regression-pinned, not
   measured component tolerances from named products.
 - **Transformer and speaker/cabinet voice.** Each path has independent
@@ -919,8 +930,15 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   0.086x for the demonstrated 45% Distortion / 95% Amp metal chain, and 0.089x
   with all five controls at maximum. At 96 kHz the corresponding metal/all-max
   figures are 0.169x/0.178x; the all-max path remains below 0.19x through 384
-  kHz. For reference the eight-string model itself runs at roughly 0.13-0.17x
-  realtime at 96 kHz.
+  kHz. A fresh optimized amp-only matrix for the two coupled circuits measures
+  American/British at 0.217/0.221x realtime at 48 kHz, 0.421/0.434x at 96 kHz
+  and 0.429/0.440x at 384 kHz; Modern in the same harness is 0.028/0.055/0.055x.
+  A deliberately continuous A↔B crossfade is 0.430/0.842/0.845x and pathological
+  three-way switching remains below 0.90x; settled selection runs only one
+  circuit. All timed process rows make zero heap allocations. The two 3.288
+  MiB pair tables take about 0.35 s once per process to construct during the
+  first `prepare()`, while same-rate reprepare is about 0.6 ms. For reference
+  the eight-string model itself runs at roughly 0.13-0.17x realtime at 96 kHz.
 
 ### Guitar Build
 
@@ -1056,7 +1074,7 @@ High-Gain.
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
 | Output modes | Phase-coherent divided/hex pickup practice, ordinary double-tracked guitar performance, and four CC-BY HiMMP rhythm DIs | Mono is the conventional summed DI. Stereo weights one engine's modeled strings by physical lateral position and folds coherently to mono. Double runs two complete, differently seeded mono engines into left and right before one shared FX chain; the second gets one deterministic 0-6 ms causal timing offset per picked wrist stroke, shared across a chord and composed with strum travel | Stereo is a virtual divided-pickup string field and Double is two deterministic modeled performances rather than a delayed copy. Its tight timing envelope is directionally grounded in conventional Drop-C takes, not capture-fitted eight-string timing, and it does not claim to reproduce the decisions of two human performances |
 | Distortion pedal | [Yeh, Abel and Smith's antiparallel-diode RC formulation](https://dafx.de/paper-archive/2007/Papers/p197.pdf) and standard nonlinear-audio antialiasing practice | A 2.2 kOhm / 10 nF Shockley-diode node whose capacitor state is trapezoidally integrated and solved with bounded Newton iterations at every oversampled step, surrounded by Electry's eighth-string input and voice filters | A real circuit solve of the documented clipping node; not a full named pedal schematic, component-tolerance study, or SPICE validation |
-| Amplifier and speaker/cabinet | [Yeh and Smith's exact passive tone-stack derivation](https://dafx.de/paper-archive/2006/papers/p_001.pdf); [Dempwolf and Zölzer's measured 12AX7 model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf); Reefman's measured [uTracer TubeLib ECC81/ECC83/6L6GC/EL34 fits](https://www.dos4ever.com/uTracer3/TubeLib.inc) and [model derivation](https://www.dos4ever.com/uTracer3/Theory.pdf); [Fender Twin Reverb AB763](https://schematicheaven.net/fenderamps/twin_reverb_ab763_schem.pdf), [Marshall 1959](https://www.prowessamplifiers.com/schematics/Marshall/1959_superlead.pdf) and [Macak/Schimmel](https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf) phase-splitter circuits; [RCA 6L6GC](https://frank.pocnet.net/sheets/049/6/6L6GC.pdf) and [Mullard EL34](https://frank.pocnet.net/sheets/129/e/EL34.pdf) push-pull operating points; official [Fender amplifier](https://www.fmicassets.com/Damroot/Original/10001/021730_gamp_manual_all_revE.pdf), [Marshall 1959](https://www.marshall.com/us/en/product/1959-handwired-head?pid=1007086) and [Peavey 6505](https://assets.peavey.com/literature/manuals/00575680.pdf) architecture references; official [Jensen C12K](https://www.jensentone.com/vintage-ceramic/c12k), [Celestion G12M](https://celestion.com/product/g12m-greenback/) and [Vintage 30](https://celestion.com/product/vintage-30/) response boundaries | Three complete paths share a residual-checked measured-current 12AX7 preamp table. American and British add exact unloaded third-order passive RC stacks, loaded nonlinear ECC81/ECC83 long-tailed-pair tables with source-derived input coupling, distinct 6L6GC beam-tetrode/EL34 pentode push-pull load-line tables over grid drive and rail voltage, voiced negative feedback, plate-plus-screen-current-driven sag and independent transformer state; Modern preserves the established cascaded path. Six biquads per path supply distinct zero-latency speaker/cabinet response voices, and all nonlinear work stays inside the up-to-4× oversampled block | Exact passive RC transfers, translated measured-current preamp/phase-inverter/power-tube formulae, residual-bounded loaded LTP plate solves, and bounded ideal push-pull load-line solves inside three deliberately voiced paths. The LTP currently projects only differential midband output; not yet a two-grid dynamic output-coupling/grid-current blocking solve, screen-resistor supply, reactive transformer/speaker load, complete named schematic, component-tolerance or specimen fit, cabinet IR, loudspeaker mechanics, microphone or room capture, nor a capture-verified replica of any cited product |
+| Amplifier and speaker/cabinet | [Yeh and Smith's exact passive tone-stack derivation](https://dafx.de/paper-archive/2006/papers/p_001.pdf); [Dempwolf and Zölzer's measured 12AX7 model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf); Reefman's measured [uTracer TubeLib ECC81/ECC83/6L6GC/EL34 fits](https://www.dos4ever.com/uTracer3/TubeLib.inc) and [model derivation](https://www.dos4ever.com/uTracer3/Theory.pdf); [Fender Twin Reverb AB763](https://schematicheaven.net/fenderamps/twin_reverb_ab763_schem.pdf), [Marshall 1959](https://www.prowessamplifiers.com/schematics/Marshall/1959_superlead.pdf) and [Macak/Schimmel](https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf) phase-splitter and grid-coupling circuits; [RCA 6L6GC](https://frank.pocnet.net/sheets/049/6/6L6GC.pdf) and [Mullard EL34](https://frank.pocnet.net/sheets/129/e/EL34.pdf) push-pull operating points; official [Fender amplifier](https://www.fmicassets.com/Damroot/Original/10001/021730_gamp_manual_all_revE.pdf), [Marshall 1959](https://www.marshall.com/us/en/product/1959-handwired-head?pid=1007086) and [Peavey 6505](https://assets.peavey.com/literature/manuals/00575680.pdf) architecture references; official [Jensen C12K](https://www.jensentone.com/vintage-ceramic/c12k), [Celestion G12M](https://celestion.com/product/g12m-greenback/) and [Vintage 30](https://celestion.com/product/vintage-30/) response boundaries | Three complete paths share a residual-checked measured-current 12AX7 preamp table. American and British add exact unloaded third-order passive RC stacks; nonlinear ECC81/ECC83 long-tailed pairs jointly solve two source-valued output capacitors, 220 kOhm bias returns, factory grid stoppers and TubeLib overload-grid conduction; common/differential-sensitive 6L6GC or EL34 load-line tables retain the resulting blocking shift. Voiced negative feedback, plate-plus-screen-current-driven sag and independent transformer state follow; Modern preserves the established cascaded path. Six biquads per path supply distinct zero-latency speaker/cabinet response voices, and all nonlinear work stays inside the up-to-4× oversampled block | Exact passive RC transfers, translated measured-current preamp/phase-inverter/power-tube formulae, residual-bounded coupled LTP/grid solves and bounded ideal push-pull load-line solves inside three deliberately voiced paths. Terminal grid conduction and blocking recovery are modeled while positive-grid plate transfer remains explicitly AB1-bounded; not a screen-resistor supply, reactive transformer/speaker load, complete named schematic, component-tolerance or specimen fit, cabinet IR, loudspeaker mechanics, microphone or room capture, nor a capture-verified replica of any cited product |
 
 ## Known gaps
 
@@ -1198,7 +1216,7 @@ The engine suite separately pins bounded/repeatable second-player pick timing,
 one offset per chord, strum composition and pre-contact cancellation.
 
 The amplifier chain has its own suite: the shipping rapid-Mute body's current
-30-80 ms medians are 7.6947% upper-band share and 0.889306 harmonicity, above
+30-80 ms medians are 8.4092% upper-band share and 0.895602 harmonicity, above
 the 6% body floor while remaining nonperiodic; halfband unity DC gain, the -6 dB
 halfband symmetry point, passband ripple and stopband rejection; the diode
 node's independent DC points, symmetry and capacitor memory; the measured
@@ -1206,9 +1224,13 @@ node's independent DC points, symmetry and capacitor memory; the measured
 convergence, quiescent normalisation and asymmetry; a monotonic 16,385-point
 runtime circuit table whose maximum checked error is 0.00000072; uTracer
 TubeLib 6L6GC/EL34 plate- and screen-current anchors at idle and through the
-knee; ideal push-pull load-line symmetry, unity local gain, rising current
-demand and distinct half-drive curvature; two-dimensional off-grid lookup
-errors below 0.0002 for both output and supply demand; a bit-exact dry bypass with every control at zero
+knee; TubeLib power-grid-diode anchors at +0.5/+1/+2/+5 V, monotonic lookup and
+stopper/grid-return KCL; coupled two-capacitor LTP idle, sub-`1e-10 A` musical
+residuals, independent common mode, overload conduction and source-ordered
+100/22 nF recovery; ideal push-pull load-line symmetry, unity local gain,
+rising current demand, common-bias sensitivity and distinct half-drive
+curvature; three-dimensional off-grid lookup errors below 0.0003 for output and
+0.0004 for supply demand, with exact zero demand at interpolated idle; a bit-exact dry bypass with every control at zero
 and an audible effect from each amount control on its own at 100%; exact
 American and British third-order tone-stack coefficients and 1 kHz insertion
 loss; the six-point response fingerprint and pairwise spectral separation of
@@ -1340,7 +1362,40 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-27 output-grid blocking and recovery
+
+- Replaced the static midband handoff between each American/British phase
+  splitter and power pair with the two physical branches. American uses 100 nF
+  output capacitors, 220 kOhm bias returns and 1.5 kOhm grid stoppers; British
+  uses 22 nF, 220 kOhm and 5.6 kOhm. TubeLib's common 2 kOhm plus `IS=1 nA`,
+  `RS=1 Ohm` diode branch supplies bounded terminal-grid conduction while the
+  fitted power-tube plate-current surface remains clamped at its measured
+  `Vg<=0` boundary.
+- Every oversampled frame jointly solves LTP current and both terminal grids
+  against the two trapezoidal capacitor histories. Grid current therefore loads
+  the correct unequal PI plate and leaves common negative bias memory instead
+  of disappearing in a scalar differential projection. The pinned overload
+  reaches 0.787/0.801 mA American/British grid current with maximum KCL residuals
+  below `1e-10 A`; after 1/20 ms the shared shifts are −14.84/−7.98 V and
+  −18.98/−1.14 V, preserving the slower 100 nF American recovery.
+- The power pair now accepts common and differential grid drive. Its 257 × 257
+  quadratic terminal-grid plane is packed by tube-swap symmetry over 13 rail
+  levels (6.576 MiB for both models); trilinear interpolation stays below
+  0.0003 normalized output and 0.0004 demand error and subtracts its own idle
+  interpolation error before sag. The validated musical domain has headroom to
+  common `[-2, 0.5]`, differential `±4` and normalized terminal grid `[-7, 0]`.
+- American/British/Modern alias floors are −62.22/−65.06/−61.28 dB,
+  loud-versus-quiet compression is −13.70/−15.73/−18.33 dB and the same 90%
+  Drop-E fixture measures +2.86/+6.34/+5.87 dB. Modern remains
+  operation-for-operation unchanged. Demo 23 alone adds near-legato overloaded
+  chord turns so the different blocking recoveries are audible under one global
+  normalisation; demos 01–22 retain the established Modern path.
+
 ### 2026-08-27 measured ECC81 and ECC83 phase splitters
+
+*Historical checkpoint: its static midband output loads and scalar differential
+handoff are superseded by the dynamic two-grid checkpoint above; the measured
+ECC81/ECC83 models and input networks remain.*
 
 - Replaced the American/British ideal opposed-grid driver with loaded nonlinear
   long-tailed pairs. American uses TubeLib's measured-fitted ECC81/12AT7 family

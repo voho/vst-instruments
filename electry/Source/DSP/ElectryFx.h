@@ -283,6 +283,15 @@ private:
         OnePole interstage {};
         ToneStack toneStack {};
         OnePole phaseInverterInput {};
+        // Trapezoidal companion histories for the two PI-to-power-grid
+        // coupling capacitors and a warm start for the coupled LTP solve. All
+        // are deviations from the DC operating point,
+        // so an ordinary zeroed reset is the exact quiescent circuit state.
+        double phaseCurrentDelta { 0.0 };
+        double couplingHistoryOne { 0.0 };
+        double couplingHistoryTwo { 0.0 };
+        double powerGridOffsetOne { 0.0 };
+        double powerGridOffsetTwo { 0.0 };
         float bias { 0.0f };
         float sag { 0.0f };
         Biquad transformerHighpass {};
@@ -360,8 +369,26 @@ private:
         double gridToCathodeVoltage) noexcept;
     [[nodiscard]] static PhaseInverterResult phaseInverterDirect(
         AmpModel model, double drive) noexcept;
-    [[nodiscard]] static float phaseInverterLookup(
-        AmpModel model, float drive) noexcept;
+    struct CoupledPhaseInverterResult
+    {
+        double gridOne { 0.0 };
+        double gridTwo { 0.0 };
+        double plateOne { 0.0 };
+        double plateTwo { 0.0 };
+        double capacitorCurrentOne { 0.0 };
+        double capacitorCurrentTwo { 0.0 };
+        double gridCurrentOne { 0.0 };
+        double gridCurrentTwo { 0.0 };
+        double totalCurrent { 0.0 };
+        double maximumResidual { 0.0 };
+    };
+    [[nodiscard]] static double powerGridCurrentDirect(
+        double gridVoltage) noexcept;
+    [[nodiscard]] static double powerGridCurrentLookup(
+        double gridVoltage) noexcept;
+    [[nodiscard]] static CoupledPhaseInverterResult phaseInverterCoupledStep(
+        AmpChannel& channel, AmpModel model, double drive,
+        double sampleRate) noexcept;
     struct PowerTubeResult
     {
         double output { 0.0 };
@@ -374,9 +401,11 @@ private:
         AmpModel model, double plateVoltage, double gridVoltage,
         double screenVoltage) noexcept;
     [[nodiscard]] static PowerTubeResult powerTubePairDirect(
-        AmpModel model, double drive, double railScale) noexcept;
+        AmpModel model, double commonDrive, double differentialDrive,
+        double railScale) noexcept;
     [[nodiscard]] static PowerTubeResult powerTubePairLookup(
-        AmpModel model, float drive, float railScale) noexcept;
+        AmpModel model, float commonDrive, float differentialDrive,
+        float railScale) noexcept;
     [[nodiscard]] float renderGainStage(GainChannel& channel,
                                         float input) noexcept;
     [[nodiscard]] float renderGainFrame(GainChannel& channel,

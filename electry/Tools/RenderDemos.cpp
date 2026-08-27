@@ -1080,13 +1080,13 @@ void playPickedRun(Take& take, const std::array<int, Size>& notes,
 }
 
 void playPowerChordHit(Take& take, int root, float velocity, double length,
-                       PlayStyle style)
+                       PlayStyle style, double heldFraction = 0.86)
 {
     take.style(style);
     take.chord({ root, root + 7, root + 12 }, velocity);
-    take.wait(length * 0.86);
+    take.wait(length * heldFraction);
     take.releaseChord({ root, root + 7, root + 12 });
-    take.wait(length * 0.14);
+    take.wait(length * (1.0 - heldFraction));
 }
 
 // One identical compact performance through each fresh amplifier. Keeping the
@@ -1099,8 +1099,8 @@ void playAmpVoicePhrase(Take& take)
     for (const float velocity : { 0.34f, 0.58f, 0.80f, 1.0f })
         take.pluck(40, velocity, 0.16, 0.07);
 
-    playPowerChordHit(take, 28, 0.72f, 0.58, PlayStyle::Sustain);
-    playPowerChordHit(take, 31, 0.98f, 0.58, PlayStyle::Sustain);
+    playPowerChordHit(take, 28, 0.72f, 0.58, PlayStyle::Sustain, 0.98);
+    playPowerChordHit(take, 31, 0.98f, 0.58, PlayStyle::Sustain, 0.98);
 
     take.style(PlayStyle::PalmMute);
     static constexpr std::array<int, 8> chugs {{
@@ -1110,7 +1110,7 @@ void playAmpVoicePhrase(Take& take)
         take.pluck(chugs[hit], hit == 0 || hit == 6 ? 1.0f : 0.82f,
                    0.085, 0.055);
 
-    playPowerChordHit(take, 28, 1.0f, 0.52, PlayStyle::Sustain);
+    playPowerChordHit(take, 28, 1.0f, 0.52, PlayStyle::Sustain, 0.98);
     static constexpr std::array<int, 8> lead {{
         64, 67, 69, 71, 74, 71, 69, 67
     }};
@@ -1798,8 +1798,9 @@ const std::array<Demo, 23>& demos()
           "then a pre-held entrance, vibrato lead and in-flight chord slide",
           renderTremoloPickingStudy },
         { "23-amp-voices.wav",
-          "one identical dynamic phrase through fresh American clean, British "
-          "crunch and modern high-gain amplifier chains",
+          "one identical dynamic phrase with near-legato overload/recovery "
+          "turns through fresh American clean, British crunch and modern "
+          "high-gain amplifier chains",
           renderAmpVoices },
     }};
     return table;
