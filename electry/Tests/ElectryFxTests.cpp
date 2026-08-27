@@ -114,6 +114,28 @@ struct ElectryFxTestAccess
         return ElectryFx::triodeStageLookup(gridVoltage);
     }
 
+    static double phaseInverterPlateCurrent(
+        AmpModel model, double plateToCathodeVoltage,
+        double gridToCathodeVoltage) noexcept
+    {
+        return ElectryFx::phaseInverterPlateCurrent(
+            model, plateToCathodeVoltage, gridToCathodeVoltage);
+    }
+
+    static std::array<double, 6> phaseInverterDirect(
+        AmpModel model, double drive) noexcept
+    {
+        const auto result = ElectryFx::phaseInverterDirect(model, drive);
+        return { result.output, result.plateOne, result.plateTwo,
+                 result.cathode, result.tail, result.totalCurrent };
+    }
+
+    static float phaseInverterLookup(
+        AmpModel model, float drive) noexcept
+    {
+        return ElectryFx::phaseInverterLookup(model, drive);
+    }
+
     static double powerTubePlateCurrent(
         AmpModel model, double plateVoltage, double gridVoltage,
         double screenVoltage) noexcept
@@ -173,6 +195,7 @@ struct ElectryFxTestAccess
         return ! amplifier.wasActive
             && amplifier.bias == 0.0f && amplifier.sag == 0.0f
             && amplifier.interstage.state == 0.0f
+            && amplifier.phaseInverterInput.state == 0.0f
             && amplifier.flux.state == 0.0f
             && amplifier.negativeFeedback.state == 0.0f
             && amplifier.inputHighpass.z1 == 0.0
@@ -216,6 +239,13 @@ struct ElectryFxTestAccess
             static_cast<std::size_t>(model)].toneStack;
         return { stack.b0, stack.b1, stack.b2, stack.b3,
                  stack.a1, stack.a2, stack.a3 };
+    }
+
+    static float phaseInverterInputCoefficient(
+        const ElectryFx& fx, AmpModel model) noexcept
+    {
+        return fx.phaseInverterInputCoefficient_[
+            static_cast<std::size_t>(model)];
     }
 
     static std::array<float, 3> ampModelWeights(
@@ -1115,6 +1145,205 @@ void testCircuitGainStages()
            "the measured triode transfer lost its plate-load asymmetry");
 }
 
+void testPhaseInverterCircuits()
+{
+    // Independent evaluations of TubeLib's ECC81/ECC83 TriodeK macros. The
+    // Vgk=0 anchors exercise the strict no-grid-current boundary as well as
+    // the ordinary negative-grid operating region.
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::AmericanClean, 150.0, -2.0)
+                    - 0.002302091834234943) < 1.0e-14,
+           "the ECC81 phase-inverter current no longer matches TubeLib");
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::AmericanClean, 200.0, 0.0)
+                    - 0.015442047889304224) < 1.0e-14,
+           "the ECC81 zero-grid current no longer matches TubeLib");
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::BritishCrunch, 200.0, -1.5)
+                    - 0.0014299974745466363) < 1.0e-14,
+           "the ECC83 phase-inverter current no longer matches TubeLib");
+    expect(std::abs(FxAccess::phaseInverterPlateCurrent(
+                        AmpModel::BritishCrunch, 200.0, 0.0)
+                    - 0.0046774689092718754) < 1.0e-14,
+           "the ECC83 zero-grid current no longer matches TubeLib");
+    expect(FxAccess::phaseInverterPlateCurrent(
+               AmpModel::AmericanClean, 200.0, 1.0)
+               == FxAccess::phaseInverterPlateCurrent(
+                   AmpModel::AmericanClean, 200.0, 0.0),
+           "the phase-inverter plate model crossed its grid-current boundary");
+
+    struct Expected
+    {
+        AmpModel model;
+        double supply;
+        double plateResistanceOne;
+        double plateResistanceTwo;
+        double tailResistance;
+        double gridBias;
+        double inputVoltsPerDrive;
+        std::array<double, 6> idle;
+        double negativeOne;
+        double positiveOne;
+    };
+    const std::array<Expected, 2> expected {{
+        { AmpModel::AmericanClean, 410.0, 82000.0, 100000.0, 22100.0,
+          -37.0, 1.994433668044982,
+          { 0.0, 232.249049214088, 225.525768684732,
+            90.5606993644173, 88.6748540519992,
+            0.00401243683493209 },
+          -0.991960053849012, 0.984272776173345 },
+        { AmpModel::BritishCrunch, 400.0, 82000.0, 100000.0, 14700.0,
+          -36.0, 1.258852687134334,
+          { 0.0, 261.464563110962, 250.946889788538,
+            48.2404126435508, 46.7458184482661,
+            0.00317998764954191 },
+          -0.983753983104880, 0.978559763641025 },
+    }};
+
+    double maximumLookupError = 0.0;
+    for (const auto& circuit : expected)
+    {
+        const auto idle = FxAccess::phaseInverterDirect(circuit.model, 0.0);
+        for (std::size_t index = 0; index < idle.size(); ++index)
+            expect(std::abs(idle[index] - circuit.idle[index]) < 2.0e-7,
+                   "a phase-inverter DC operating point changed");
+
+        const double currentOne = FxAccess::phaseInverterPlateCurrent(
+            circuit.model, idle[1] - idle[3], idle[4] - idle[3]);
+        const double currentTwo = FxAccess::phaseInverterPlateCurrent(
+            circuit.model, idle[2] - idle[3], idle[4] - idle[3]);
+        expect(std::abs((circuit.supply - idle[1])
+                            / circuit.plateResistanceOne - currentOne)
+                       < 2.0e-12
+                   && std::abs((circuit.supply - idle[2])
+                                   / circuit.plateResistanceTwo - currentTwo)
+                       < 2.0e-12
+                   && std::abs(currentOne + currentTwo - idle[5]) < 2.0e-12,
+               "the phase-inverter idle point does not satisfy KCL");
+
+        const auto negative = FxAccess::phaseInverterDirect(
+            circuit.model, -1.0);
+        const auto positive = FxAccess::phaseInverterDirect(
+            circuit.model, 1.0);
+        expect(std::abs(negative[0] - circuit.negativeOne) < 2.0e-7
+                   && std::abs(positive[0] - circuit.positiveOne) < 2.0e-7,
+               "a loaded phase-inverter transfer anchor changed");
+        const auto smallNegative = FxAccess::phaseInverterDirect(
+            circuit.model, -1.0e-4);
+        const auto smallPositive = FxAccess::phaseInverterDirect(
+            circuit.model, 1.0e-4);
+        const double localSlope =
+            (smallPositive[0] - smallNegative[0]) / 2.0e-4;
+        expect(std::abs(localSlope - 1.0) < 2.0e-6,
+               "a phase inverter lost its unity small-signal calibration");
+
+        const auto expectLoadedKcl = [&] (
+            const std::array<double, 6>& driven, double drive)
+        {
+            const double currentDriven = FxAccess::phaseInverterPlateCurrent(
+                circuit.model, driven[1] - driven[3],
+                idle[4] + drive * circuit.inputVoltsPerDrive - driven[3]);
+            const double currentReference = FxAccess::phaseInverterPlateCurrent(
+                circuit.model, driven[2] - driven[3],
+                idle[4] - driven[3]);
+            const double residualOne = (circuit.supply - driven[1])
+                    / circuit.plateResistanceOne
+                + (idle[1] - driven[1]) / 220000.0 - currentDriven;
+            const double residualTwo = (circuit.supply - driven[2])
+                    / circuit.plateResistanceTwo
+                + (idle[2] - driven[2]) / 220000.0 - currentReference;
+            expect(std::abs(residualOne) < 2.0e-10
+                       && std::abs(residualTwo) < 2.0e-10
+                       && std::abs(currentDriven + currentReference
+                                       - driven[5]) < 2.0e-10,
+                   "a loaded phase-inverter point does not satisfy KCL");
+        };
+        expectLoadedKcl(negative, -1.0);
+        expectLoadedKcl(positive, 1.0);
+
+        // This catches the tempting but wrong formulation that lets both
+        // grids follow the instantaneous tail. With their coupling/bypass
+        // capacitors holding the idle reference, total current barely moves
+        // and the differential projection discards less than 4% common mode.
+        for (const auto& driven : { negative, positive })
+        {
+            const double common = ((driven[1] - idle[1])
+                                   + (driven[2] - idle[2]))
+                                / (2.0 * std::abs(circuit.gridBias));
+            expect(std::abs(common / driven[0]) < 0.04,
+                   "the LTP lost its finite-tail common-mode rejection");
+            expect(std::abs(driven[5] / idle[5] - 1.0) < 0.04,
+                   "the LTP total current moves like a live-grid tail model");
+        }
+
+        for (int probe = 0; probe < 61; ++probe)
+        {
+            const float drive = static_cast<float>(
+                -3.97 + 7.94 * (probe + 0.37) / 61.0);
+            const auto direct = FxAccess::phaseInverterDirect(
+                circuit.model, drive);
+            const float lookup = FxAccess::phaseInverterLookup(
+                circuit.model, drive);
+            maximumLookupError = std::max(
+                maximumLookupError,
+                std::abs(direct[0] - static_cast<double>(lookup)));
+        }
+
+        float previous = -std::numeric_limits<float>::infinity();
+        for (int probe = 0; probe <= 256; ++probe)
+        {
+            const float drive = -4.0f + 8.0f * probe / 256.0f;
+            const float output = FxAccess::phaseInverterLookup(
+                circuit.model, drive);
+            expect(std::isfinite(output) && output >= previous,
+                   "a phase-inverter table is non-finite or non-monotonic");
+            previous = output;
+        }
+        for (const float sign : { -1.0f, 1.0f })
+        {
+            const auto edge = FxAccess::phaseInverterDirect(
+                circuit.model, 4.0 * sign);
+            const auto outside = FxAccess::phaseInverterDirect(
+                circuit.model, 40.0 * sign);
+            expect(edge[0] == outside[0]
+                       && FxAccess::phaseInverterLookup(
+                              circuit.model, 4.0f * sign)
+                          == FxAccess::phaseInverterLookup(
+                              circuit.model, 40.0f * sign),
+                   "a phase inverter escaped its solved drive-table domain");
+        }
+        const float zero = FxAccess::phaseInverterLookup(
+            circuit.model, 0.0f);
+        expect(FxAccess::phaseInverterLookup(
+                   circuit.model, std::numeric_limits<float>::quiet_NaN())
+                   == zero
+                   && FxAccess::phaseInverterDirect(
+                          circuit.model,
+                          std::numeric_limits<double>::quiet_NaN())[0]
+                      == FxAccess::phaseInverterDirect(
+                          circuit.model, 0.0)[0],
+               "a non-finite phase-inverter drive escaped sanitisation");
+    }
+    std::cout << "Phase-inverter table max error: "
+              << maximumLookupError << '\n';
+    expect(maximumLookupError < 2.0e-4,
+           "the runtime phase-inverter table is too coarse");
+
+    ElectryFx fx;
+    fx.prepare(sampleRate); // 4x, so the circuit runs at 192 kHz
+    const float americanCoefficient = FxAccess::phaseInverterInputCoefficient(
+        fx, AmpModel::AmericanClean);
+    const float britishCoefficient = FxAccess::phaseInverterInputCoefficient(
+        fx, AmpModel::BritishCrunch);
+    expect(std::abs(americanCoefficient
+                    - std::exp(-1.0 / (1.0e-9 * 1.0e6 * 192000.0)))
+               < 1.0e-7
+               && std::abs(britishCoefficient
+                    - std::exp(-1.0 / (22.0e-9 * 1.0e6 * 192000.0)))
+               < 1.0e-7,
+           "a phase-inverter input no longer follows its capacitor/grid return");
+}
+
 void testMeasuredPowerTubes()
 {
     // Independent numerical anchors from the distributed uTracer TubeLib
@@ -1380,8 +1609,8 @@ void testAmpModelVoices()
     static constexpr std::array<double, 6> frequencies {
         90.0, 120.0, 470.0, 700.0, 2800.0, 8000.0 };
     static constexpr std::array<std::array<double, 6>, 3> goldenResponse {{
-        { -0.60845, -0.17510, -6.95864, -3.88443, 9.13335, -14.0654 },
-        {  1.73019,  3.53850, -1.51333, -0.69068, 2.93125, -21.1634 },
+        { -6.79598, -4.39915, -7.31796, -3.98989, 9.21134, -13.9765 },
+        {  1.69002,  3.52476, -1.51378, -0.69008, 2.93144, -21.1533 },
         {  0.36333,  0.60681, -6.52226, -2.20414, 3.17347, -22.0021 },
     }};
     std::array<std::array<double, frequencies.size()>, models.size()> response {};
@@ -2364,6 +2593,7 @@ int main()
     testHalfbandKernel();
     testExactDryBypass();
     testCircuitGainStages();
+    testPhaseInverterCircuits();
     testMeasuredPowerTubes();
     testGainStageAliasing();
     testCabinetVoicing();

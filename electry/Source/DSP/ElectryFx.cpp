@@ -87,6 +87,217 @@ constexpr double triodePlateGain = 56.87748350866928;
 // the hard plate rails while the drive control can still reach them.
 constexpr float ampGridVolts = 0.875f;
 
+// The phase splitters follow the component families in the Fender Twin
+// Reverb AB763 and Marshall 1959 Super Lead drawings. Electry keeps its own
+// documented power-tube operating points, so these are family circuits rather
+// than claims of specimen-accurate named amplifiers:
+// https://schematicheaven.net/fenderamps/twin_reverb_ab763_schem.pdf
+// https://www.prowessamplifiers.com/schematics/Marshall/1959_superlead.pdf
+// The British 400 V rail and 4.7 kOhm presence-tail value follow Fig. 11 of
+// Macak and Schimmel's complete amplifier model; the Marshall drawing does not
+// annotate that phase-inverter rail:
+// https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf
+// Their ECC81/ECC83 plate equations are the measured-curve fits distributed
+// in TubeLib's TriodeK macros, not the EHX 12AX7 preamp fit above:
+// https://www.dos4ever.com/uTracer3/TubeLib.inc
+struct PhaseInverterParameters
+{
+    double mu;
+    double exponent;
+    double plateScale;
+    double kneeSoftness;
+    double kneeVoltage;
+    double supply;
+    double plateResistanceOne;
+    double plateResistanceTwo;
+    double cathodeResistance;
+    double tailResistance;
+    double outputGridLeakResistance;
+    double inputCapacitance;
+    double inputGridResistance;
+    double powerGridBias;
+};
+
+constexpr PhaseInverterParameters ecc81PhaseInverter {
+    63.24, 1.338, 306.7, 208.5, 2363.0,
+    410.0, 82000.0, 100000.0, 470.0, 22100.0,
+    220000.0, 1.0e-9, 1.0e6, -37.0
+};
+
+constexpr PhaseInverterParameters ecc83PhaseInverter {
+    108.93, 0.988, 389.8, 677.7, 10751.0,
+    400.0, 82000.0, 100000.0, 470.0, 14700.0,
+    220000.0, 22.0e-9, 1.0e6, -36.0
+};
+
+constexpr std::size_t phaseInverterDrivePoints = 769;
+constexpr double minimumPhaseInverterDrive = -4.0;
+constexpr double maximumPhaseInverterDrive = 4.0;
+
+double softplus(double value) noexcept;
+
+const PhaseInverterParameters& phaseInverterParameters(
+    AmpModel model) noexcept
+{
+    return model == AmpModel::BritishCrunch
+        ? ecc83PhaseInverter : ecc81PhaseInverter;
+}
+
+double measuredPhaseInverterPlateCurrent(
+    AmpModel model, double plateToCathodeVoltage,
+    double gridToCathodeVoltage) noexcept
+{
+    const auto& tube = phaseInverterParameters(model);
+    const double plate = std::max(plateToCathodeVoltage, 0.0);
+    // This checkpoint remains strictly non-grid-conducting. TubeLib's generic
+    // 2 kOhm/diode grid branch needs the two output coupling-cap states to be
+    // meaningful, so no TriodeK curve is extrapolated past Vgk = 0 here.
+    const double grid = std::min(gridToCathodeVoltage, 0.0);
+    const double drive = tube.kneeSoftness
+        * (1.0 / tube.mu
+           + grid / std::sqrt(tube.kneeVoltage + plate * plate));
+    const double e1 = plate / tube.kneeSoftness * softplus(drive);
+    return std::pow(std::max(e1, 0.0), tube.exponent) / tube.plateScale;
+}
+
+struct RawPhaseInverter
+{
+    double plateOne { 0.0 };
+    double plateTwo { 0.0 };
+    double cathode { 0.0 };
+    double tail { 0.0 };
+    double totalCurrent { 0.0 };
+};
+
+double solvePhaseInverterPlate(
+    AmpModel model, double plateResistance, double cathodeVoltage,
+    double gridToCathodeVoltage, double idlePlateVoltage,
+    bool applyMidbandLoad) noexcept
+{
+    const auto& circuit = phaseInverterParameters(model);
+    const auto residual = [&] (double plateVoltage)
+    {
+        double supplied = (circuit.supply - plateVoltage) / plateResistance;
+        if (applyMidbandLoad)
+            supplied += (idlePlateVoltage - plateVoltage)
+                      / circuit.outputGridLeakResistance;
+        return supplied - measuredPhaseInverterPlateCurrent(
+            model, plateVoltage - cathodeVoltage,
+            gridToCathodeVoltage);
+    };
+
+    double lower = std::clamp(cathodeVoltage, 0.0, circuit.supply);
+    double upper = circuit.supply;
+    for (int iteration = 0; iteration < 40; ++iteration)
+    {
+        const double middle = 0.5 * (lower + upper);
+        if (residual(middle) > 0.0)
+            lower = middle;
+        else
+            upper = middle;
+    }
+    return 0.5 * (lower + upper);
+}
+
+RawPhaseInverter solvePhaseInverterRaw(
+    AmpModel model, double inputVoltage,
+    const RawPhaseInverter* idlePoint) noexcept
+{
+    const auto& circuit = phaseInverterParameters(model);
+    const double totalResistance = circuit.tailResistance
+                                 + circuit.cathodeResistance;
+    const auto evaluate = [&] (double totalCurrent)
+    {
+        const double cathode = totalCurrent * totalResistance;
+        // The 1 MOhm grid returns establish the DC tail reference. At audio
+        // frequencies the input/reference capacitors hold both grids around
+        // that *idle* voltage while the cathode moves. Letting them follow the
+        // live tail would destroy the defining common-mode rejection of an
+        // LTP and is explicitly regression-tested below. The small AC currents
+        // through the two 1 MOhm returns, and the frequency-dependent presence
+        // branch, remain part of the later full coupling-network nodal solve.
+        const double gridReference = idlePoint != nullptr
+            ? idlePoint->tail : totalCurrent * circuit.tailResistance;
+        const double gridOne = gridReference + inputVoltage;
+        const double gridTwo = gridReference;
+        const double idlePlateOne = idlePoint != nullptr
+            ? idlePoint->plateOne : 0.0;
+        const double idlePlateTwo = idlePoint != nullptr
+            ? idlePoint->plateTwo : 0.0;
+        const double plateOne = solvePhaseInverterPlate(
+            model, circuit.plateResistanceOne, cathode,
+            gridOne - cathode, idlePlateOne, idlePoint != nullptr);
+        const double plateTwo = solvePhaseInverterPlate(
+            model, circuit.plateResistanceTwo, cathode,
+            gridTwo - cathode, idlePlateTwo, idlePoint != nullptr);
+        const double currentOne = measuredPhaseInverterPlateCurrent(
+            model, plateOne - cathode, gridOne - cathode);
+        const double currentTwo = measuredPhaseInverterPlateCurrent(
+            model, plateTwo - cathode, gridTwo - cathode);
+        return RawPhaseInverter {
+            plateOne, plateTwo, cathode,
+            totalCurrent * circuit.tailResistance,
+            currentOne + currentTwo
+        };
+    };
+
+    double lower = 0.0;
+    double upper = circuit.supply / totalResistance;
+    RawPhaseInverter point {};
+    for (int iteration = 0; iteration < 40; ++iteration)
+    {
+        const double middle = 0.5 * (lower + upper);
+        point = evaluate(middle);
+        if (middle > point.totalCurrent)
+            upper = middle;
+        else
+            lower = middle;
+    }
+    const double solvedCurrent = 0.5 * (lower + upper);
+    point = evaluate(solvedCurrent);
+    point.totalCurrent = solvedCurrent;
+    return point;
+}
+
+struct PhaseInverterCalibration
+{
+    RawPhaseInverter idle {};
+    double inputVoltsPerDrive { 1.0 };
+};
+
+const PhaseInverterCalibration& phaseInverterCalibration(
+    AmpModel model) noexcept
+{
+    const auto make = [] (AmpModel inverterModel)
+    {
+        const auto idle = solvePhaseInverterRaw(
+            inverterModel, 0.0, nullptr);
+        constexpr double derivativeStep = 1.0e-4;
+        const auto positive = solvePhaseInverterRaw(
+            inverterModel, derivativeStep, &idle);
+        const auto negative = solvePhaseInverterRaw(
+            inverterModel, -derivativeStep, &idle);
+        const double powerGridSwing = 2.0 * std::abs(
+            phaseInverterParameters(inverterModel).powerGridBias);
+        const auto output = [&] (const RawPhaseInverter& point)
+        {
+            return ((point.plateTwo - idle.plateTwo)
+                    - (point.plateOne - idle.plateOne))
+                 / powerGridSwing;
+        };
+        const double slope = (output(positive) - output(negative))
+                           / (2.0 * derivativeStep);
+        return PhaseInverterCalibration {
+            idle, 1.0 / std::max(slope, 1.0e-12)
+        };
+    };
+    static const PhaseInverterCalibration ecc81 = make(
+        AmpModel::AmericanClean);
+    static const PhaseInverterCalibration ecc83 = make(
+        AmpModel::BritishCrunch);
+    return model == AmpModel::BritishCrunch ? ecc83 : ecc81;
+}
+
 // Derk Reefman's uTracer measurements, fitted by ExtractModel and distributed
 // in the 2016 TubeLib SPICE library:
 // https://www.dos4ever.com/uTracer3/TubeLib.inc
@@ -98,10 +309,10 @@ constexpr float ampGridVolts = 0.875f;
 // https://frank.pocnet.net/sheets/049/6/6L6GC.pdf
 // The British one is Mullard's 400 V, -36 V, 3.5 kOhm fixed-bias pair:
 // https://frank.pocnet.net/sheets/129/e/EL34.pdf
-// We retain an ideal fixed screen rail in this first output-stage solve; the
-// Mullard circuit's common screen resistor, coupling-cap/grid-current memory,
-// phase splitter and reactive speaker load remain explicit boundaries rather
-// than invented component fits.
+// This isolated pair solve retains an ideal fixed screen rail and resistive
+// transformer load. The nonlinear LTP above now supplies its differential
+// drive; the Mullard common screen resistor, two output coupling/grid-current
+// branches and reactive speaker load remain explicit boundaries.
 struct PowerTubeParameters
 {
     double mu;
@@ -618,6 +829,7 @@ void ElectryFx::AmpChannel::reset() noexcept
     inputVoice.reset();
     interstage.reset();
     toneStack.reset();
+    phaseInverterInput.reset();
     bias = 0.0f;
     sag = 0.0f;
     transformerHighpass.reset();
@@ -667,6 +879,10 @@ void ElectryFx::prepare(double sampleRate)
     // solve below. Prime it during prepare rather than allowing first use to
     // perform thread-safe static initialisation on the audio thread.
     static_cast<void>(triodeStageLookup(0.0));
+    static_cast<void>(phaseInverterLookup(
+        AmpModel::AmericanClean, 0.0f));
+    static_cast<void>(phaseInverterLookup(
+        AmpModel::BritishCrunch, 0.0f));
     static_cast<void>(powerTubePairLookup(
         AmpModel::AmericanClean, 0.0f, 1.0f));
     static_cast<void>(powerTubePairLookup(
@@ -704,6 +920,22 @@ void ElectryFx::prepare(double sampleRate)
     // Keep the original modern circuit's exact coefficient expression.
     interstageCoefficient_[ampModelIndex(AmpModel::ModernHighGain)] = std::exp(
         -twoPi * std::min(6800.0f, 0.40f * oversampledRate_) / oversampledRate_);
+    // The driven phase-inverter grids are coupled through the documented
+    // 1 nF / 22 nF capacitors into their 1 MOhm returns. The feedback return
+    // enters the other grid/tail equivalent after this signal capacitor, so
+    // it is deliberately not high-passed with the preamplifier output.
+    phaseInverterInputCoefficient_[ampModelIndex(AmpModel::AmericanClean)] =
+        std::exp(-1.0f / static_cast<float>(
+            ecc81PhaseInverter.inputCapacitance
+            * ecc81PhaseInverter.inputGridResistance
+            * oversampledRate_));
+    phaseInverterInputCoefficient_[ampModelIndex(AmpModel::BritishCrunch)] =
+        std::exp(-1.0f / static_cast<float>(
+            ecc83PhaseInverter.inputCapacitance
+            * ecc83PhaseInverter.inputGridResistance
+            * oversampledRate_));
+    phaseInverterInputCoefficient_[ampModelIndex(AmpModel::ModernHighGain)] =
+        0.0f;
     // 45 ms on the grid-bias follower: long enough that a held chord shifts the
     // operating point, short enough to recover between chugs.
     biasCoefficient_ = 1.0f - std::exp(-1.0f / (0.045f * oversampledRate_));
@@ -1188,6 +1420,85 @@ float ElectryFx::triodeStageLookup(double gridVoltage) noexcept
     return lerp(transfer[lower], transfer[lower + 1], fraction);
 }
 
+double ElectryFx::phaseInverterPlateCurrent(
+    AmpModel model, double plateToCathodeVoltage,
+    double gridToCathodeVoltage) noexcept
+{
+    if (model == AmpModel::ModernHighGain)
+        return 0.0;
+    return measuredPhaseInverterPlateCurrent(
+        model, plateToCathodeVoltage, gridToCathodeVoltage);
+}
+
+ElectryFx::PhaseInverterResult ElectryFx::phaseInverterDirect(
+    AmpModel model, double drive) noexcept
+{
+    if (model == AmpModel::ModernHighGain)
+        return {};
+    if (! std::isfinite(drive))
+        drive = 0.0;
+    const double clampedDrive = std::clamp(
+        drive, minimumPhaseInverterDrive, maximumPhaseInverterDrive);
+    const auto& calibration = phaseInverterCalibration(model);
+    const auto point = solvePhaseInverterRaw(
+        model, clampedDrive * calibration.inputVoltsPerDrive,
+        &calibration.idle);
+    const double powerGridSwing = 2.0 * std::abs(
+        phaseInverterParameters(model).powerGridBias);
+    return {
+        ((point.plateTwo - calibration.idle.plateTwo)
+         - (point.plateOne - calibration.idle.plateOne)) / powerGridSwing,
+        point.plateOne,
+        point.plateTwo,
+        point.cathode,
+        point.tail,
+        point.totalCurrent
+    };
+}
+
+float ElectryFx::phaseInverterLookup(
+    AmpModel model, float drive) noexcept
+{
+    // The strict-AB1 LTP has no memory once its input coupling capacitor is
+    // separated. Preparation retains the two loaded plate solves in a dense
+    // table; unequal 82/100 kOhm arms mean it must not be mirrored as an odd
+    // transfer. The following coupling/grid-current checkpoint will replace
+    // the midband 220 kOhm load with two explicit dynamic branches.
+    const auto make = [] (AmpModel inverterModel)
+    {
+        std::array<float, phaseInverterDrivePoints> result {};
+        for (std::size_t index = 0; index < result.size(); ++index)
+        {
+            const double fraction = static_cast<double>(index)
+                                  / static_cast<double>(result.size() - 1);
+            const double input = minimumPhaseInverterDrive + fraction
+                * (maximumPhaseInverterDrive - minimumPhaseInverterDrive);
+            result[index] = static_cast<float>(
+                phaseInverterDirect(inverterModel, input).output);
+        }
+        return result;
+    };
+    static const auto ecc81 = make(AmpModel::AmericanClean);
+    static const auto ecc83 = make(AmpModel::BritishCrunch);
+    if (model == AmpModel::ModernHighGain)
+        return 0.0f;
+    if (! std::isfinite(drive))
+        drive = 0.0f;
+    const double clamped = std::clamp(
+        static_cast<double>(drive), minimumPhaseInverterDrive,
+        maximumPhaseInverterDrive);
+    const double position = (clamped - minimumPhaseInverterDrive)
+        / (maximumPhaseInverterDrive - minimumPhaseInverterDrive)
+        * static_cast<double>(phaseInverterDrivePoints - 1);
+    const auto lower = std::min(
+        static_cast<std::size_t>(std::floor(position)),
+        phaseInverterDrivePoints - 2);
+    const float fraction = static_cast<float>(
+        position - static_cast<double>(lower));
+    const auto& table = model == AmpModel::BritishCrunch ? ecc83 : ecc81;
+    return lerp(table[lower], table[lower + 1], fraction);
+}
+
 double ElectryFx::powerTubePlateCurrent(
     AmpModel model, double plateVoltage, double gridVoltage,
     double screenVoltage) noexcept
@@ -1315,7 +1626,11 @@ void ElectryFx::updateDriveConstants() noexcept
     // raises its average, but not by the tens of decibels raw cascaded gain
     // would otherwise add.
     pedalMakeup_ = pedalTrim / pedalDrive_;
-    ampMakeup_[ampModelIndex(AmpModel::AmericanClean)] = 3.80f
+    // The American 1 nF PI input capacitor removes real Drop-E energy. Its
+    // post-circuit trim retains the already-pinned 90%-drive riff level, so a
+    // source-set topology correction does not turn voice selection into a
+    // volume control; it does not compensate the capacitor's frequency shape.
+    ampMakeup_[ampModelIndex(AmpModel::AmericanClean)] = 4.53153f
         / (ampDriveFirst_[ampModelIndex(AmpModel::AmericanClean)]
            * ampDriveSecond_[ampModelIndex(AmpModel::AmericanClean)]);
     ampMakeup_[ampModelIndex(AmpModel::BritishCrunch)] = 1.80f
@@ -1410,21 +1725,35 @@ float ElectryFx::ampStage(AmpChannel& channel, AmpModel model,
     stage = channel.toneStack.process(stage)
         * (american ? 4.35f : 1.95f);
 
-    // Output-derived negative feedback is returned around the tube pair. Its
-    // one-pole bandwidth represents the transformer/loop phase limit: the
-    // American circuit returns more low/mid output for cleaner, tighter
-    // behaviour, while the British circuit opens up earlier.
+    // The signal enters the phase inverter through its source-documented
+    // coupling capacitor. A 12AT7/ECC81 drives the American 82/100 kOhm
+    // plates; a 12AX7/ECC83 drives the British pair. Both solves include the
+    // 470 Ohm shared cathode, finite tail and midband 220 kOhm output-grid
+    // loading, so unequal halves and nonlinear balance come from the circuit.
+    const float phaseDrive = stage * ampDriveSecond_[index];
+    const float coupledDrive = phaseDrive
+        - channel.phaseInverterInput.process(
+            phaseDrive, phaseInverterInputCoefficient_[index]);
+
+    // Output-derived negative feedback is returned around the tube pair and
+    // phase splitter. Its one-pole bandwidth represents the transformer/loop
+    // phase limit. The return enters after the signal coupling capacitor,
+    // matching the reference-grid/tail summing approximation rather than
+    // incorrectly passing feedback through the driven-grid capacitor.
     const float feedbackAmount = american ? 0.42f : 0.12f;
-    const float powerInput = stage * ampDriveSecond_[index]
+    const float inverterInput = coupledDrive
         - feedbackAmount * channel.negativeFeedback.state;
+    const float powerInput = phaseInverterLookup(model, inverterInput);
 
     // Supply sag changes the plate and screen rails used by the solved load
     // line, rather than merely scaling a waveshaper. The lookup returns the
     // pair's incremental plate-plus-screen demand, so the reservoir follows
     // tube current instead of rectified audio. American uses the measured
     // 6L6GC beam-tetrode family; British uses the measured EL34 pentode family.
-    // Their grid inputs are independently calibrated: one normalised unit is
-    // the fixed-bias voltage needed to bring the driven grid to zero volts.
+    // The LTP's local differential slope is normalised to unity, then one
+    // output unit remains the fixed-bias voltage needed to bring the driven
+    // power grid to zero. Until the two coupling branches are added, their
+    // measured sub-4% common-mode component is an explicit discarded boundary.
     const float sagLimit = american ? 0.20f : 0.24f;
     const float railScale = 1.0f
         - sagLimit * channel.sag / (0.30f + channel.sag);

@@ -282,6 +282,7 @@ private:
         Biquad inputVoice {};
         OnePole interstage {};
         ToneStack toneStack {};
+        OnePole phaseInverterInput {};
         float bias { 0.0f };
         float sag { 0.0f };
         Biquad transformerHighpass {};
@@ -345,6 +346,22 @@ private:
     [[nodiscard]] static float triodeStage(double gridVoltage,
                                            double& plateVoltage) noexcept;
     [[nodiscard]] static float triodeStageLookup(double gridVoltage) noexcept;
+    struct PhaseInverterResult
+    {
+        double output { 0.0 };
+        double plateOne { 0.0 };
+        double plateTwo { 0.0 };
+        double cathode { 0.0 };
+        double tail { 0.0 };
+        double totalCurrent { 0.0 };
+    };
+    [[nodiscard]] static double phaseInverterPlateCurrent(
+        AmpModel model, double plateToCathodeVoltage,
+        double gridToCathodeVoltage) noexcept;
+    [[nodiscard]] static PhaseInverterResult phaseInverterDirect(
+        AmpModel model, double drive) noexcept;
+    [[nodiscard]] static float phaseInverterLookup(
+        AmpModel model, float drive) noexcept;
     struct PowerTubeResult
     {
         double output { 0.0 };
@@ -399,6 +416,8 @@ private:
     float parameterCoefficient_ { 0.01f };
     float engagementCoefficient_ { 0.02f };
     std::array<float, 3> interstageCoefficient_ { 0.5f, 0.5f, 0.5f };
+    std::array<float, 3> phaseInverterInputCoefficient_ {
+        0.5f, 0.5f, 0.5f };
     float biasCoefficient_ { 0.001f };
     std::array<float, 3> sagAttack_ { 0.001f, 0.001f, 0.001f };
     std::array<float, 3> sagRelease_ { 0.0001f, 0.0001f, 0.0001f };

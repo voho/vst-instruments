@@ -14,6 +14,10 @@ than literature-derived it is labelled as voicing in the
 
 ## 2026-08-27 — solve measured output-tube families, not opposed preamp curves
 
+*Historical boundary note: the ideal phase splitter recorded at this
+checkpoint has since been replaced by the measured ECC81/ECC83 loaded-LTP
+checkpoint in the README; the output-tube decision below remains in force.*
+
 The first American/British checkpoint openly used opposed evaluations of the
 measured 12AX7 preamp transfer to approximate a balanced output pair. That
 closed the three-path product surface but left the output stage's actual tube
