@@ -426,6 +426,68 @@ implementation fidelity and boundedness, not perceptual superiority. Promotion
 still requires identical-render, whole-file-level-matched blind listening
 across material-focused, metal, rock and blues renders.
 
+### Default-off force-decoupled pick-release candidate
+
+The release shaper implemented by `OnePole::process` is
+
+`H(z) = (1 - a) / (1 - a z^-1)`.
+
+Its exact magnitude at angular frequency `omega` is
+
+`(1 - a) / sqrt((1 - a)^2 + 4 a sin^2(omega / 2))`.
+
+The shipping makeup instead uses `sqrt(1 + (2 f0 / fc)^2)`. That is neither
+the discrete response above nor the corresponding first-order analogue
+response: the extra factor of two over-restores the modal fundamental while
+the separate broadband plectrum edge receives no matching gain. Direct
+production-filter probes found `+0.470`, `+0.858`, `+2.446` and `+4.714 dB` of
+over-restoration for representative Palm E1, Palm E2, soft A2 and cutoff-floor
+cases.
+
+Velocity is already the player-force axis: the model derives displacement from
+force, tension, speaking length and pick position, while Pick Hardness changes
+contact width, stiffness and slip/release time. The additional shipping
+`lerp(0.98, 1.26, hardness)` amplitude therefore counts plectrum material as
+player force a second time. The candidate removes only that unsupported motion
+and retains the established default calibration exactly at
+`lerp(0.98, 1.26, 0.58) = 1.1424`; it then divides by the exact live one-pole
+magnitude at the string fundamental. It adds no control, dependency or newly
+fitted scalar and is enabled only for controlled comparison:
+
+```bash
+cmake -S . -B build-pick-release -DCMAKE_BUILD_TYPE=Release \
+  -DELECTRY_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON \
+  -DELECTRY_DECOUPLED_PICK_RELEASE=ON
+cmake --build build-pick-release --parallel
+ctest --test-dir build-pick-release --output-on-failure
+```
+
+Three broader alternatives were rejected before listening. Exact pole makeup
+without force/contact decoupling raised the hard/soft Pick Hardness RMS ratio
+to `2.1255`, beyond the existing `1.70` material-versus-level rail. Normalising
+the complete release cascade double-counted the established modal projection
+and failed 29 engine checks. Replacing the nominal gain with unity broke 12
+level and golden-response checks. The default-anchored candidate passes the
+complete engine and FX suites; hard/soft centroid/RMS ratios move from
+`1.12858 / 1.61146` to `1.13424 / 1.65424`, and its regression removes the
+actual live release pole from both snapshots before proving equal displacement
+at equal MIDI force for unbent attacks, the legacy wheel's +/-2-semitone range
+and per-note-expression bends at +/-24 semitones.
+
+Through the unchanged high-gain path, the rapid-Palm 30-80 ms share above
+500 Hz rises from `8.4686%` to `8.8260%` and harmonicity moves from `0.891966`
+to `0.882806`. Demo 12's muted progression attack shifts from `533.9` to
+`561.3 Hz` centroid, from `17.05%` to `18.28%` in 1-5 kHz and from `71.98%`
+to `70.22%` in 80-300 Hz. These are small, directionally consistent
+articulation changes, not evidence that the reported muddiness is solved.
+
+A sealed external A/B uses the complete dry power-chord, syncopated-metal,
+odd-meter rock and blues-rock renders with identical scores and chains. Each
+pair has equal frame count and is matched to within `0.000002 dB` whole-file
+RMS; its mapping remains outside the public pack until the listening verdict.
+The shipping build remains the default unless that verdict selects the
+candidate.
+
 ### Historical CC0 Modern-cabinet audit
 
 [Jester Dyne's Brutal IR Pack](https://www.jester-dyne-productions.com/brutal-ir-pack/)

@@ -33,6 +33,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ELECTRY_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
 option(ELECTRY_MEASURED_BODY_RESPONSE
     "Use the shipping matched-material modal body response" ON)
+option(ELECTRY_DECOUPLED_PICK_RELEASE
+    "Build the default-off force-decoupled plectrum release candidate" OFF)
 option(ELECTRY_MEASURED_MODERN_CABINET
     "Build the default-off measured-IR Modern cabinet candidate" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH
@@ -68,6 +70,11 @@ endif()
 if(ELECTRY_MEASURED_BODY_RESPONSE)
     target_compile_definitions(ElectryDSP PUBLIC
         ELECTRY_MEASURED_BODY_RESPONSE=1)
+endif()
+
+if(ELECTRY_DECOUPLED_PICK_RELEASE)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_DECOUPLED_PICK_RELEASE=1)
 endif()
 
 if(MSVC)

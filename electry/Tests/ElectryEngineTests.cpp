@@ -58,6 +58,7 @@ struct ElectryEngineTestAccess
         float loopGain { 0.0f };
         float baseFrequency { 0.0f };
         float lastCompensatedSemitones { 0.0f };
+        float lastCompensatedPeriod { 0.0f };
         std::uint64_t startOrder { 0 };
         std::uint64_t strumChordId { 0 };
         std::uint64_t ageSamples { 0 };
@@ -75,6 +76,7 @@ struct ElectryEngineTestAccess
         // The two the picking hand's force and contact patch reach.
         float excitationAmplitude { 0.0f };
         float excitationTransientAmplitude { 0.0f };
+        float excitationReleaseCoefficient { 0.0f };
 #if ELECTRY_ANALYTIC_RELEASE_IC
         float analyticReleaseAmplitude { 0.0f };
         float analyticReleasePluckFraction { 0.0f };
@@ -143,6 +145,7 @@ struct ElectryEngineTestAccess
         result.loopGain = voice.vertical.loopGain;
         result.baseFrequency = voice.baseFrequency;
         result.lastCompensatedSemitones = voice.lastCompensatedSemitones;
+        result.lastCompensatedPeriod = voice.lastCompensatedPeriod;
         result.startOrder = voice.startOrder;
         result.strumChordId = voice.strumChordId;
         result.ageSamples = voice.ageSamples;
@@ -161,6 +164,8 @@ struct ElectryEngineTestAccess
         result.excitationAmplitude = voice.excitationAmplitude;
         result.excitationTransientAmplitude =
             voice.excitationTransientAmplitude;
+        result.excitationReleaseCoefficient =
+            voice.excitationReleaseCoefficient;
 #if ELECTRY_ANALYTIC_RELEASE_IC
         result.analyticReleaseAmplitude = voice.analyticReleaseAmplitude;
         result.analyticReleasePluckFraction =
@@ -498,6 +503,11 @@ struct ElectryEngineTestAccess
     static double internalSampleRate(const ElectryEngine& engine) noexcept
     {
         return engine.sampleRate_;
+    }
+
+    static float onePoleMagnitude(float coefficient, float omega) noexcept
+    {
+        return ElectryEngine::onePoleMagnitude(coefficient, omega);
     }
 
     static int chordPerformanceDelaySamples(
@@ -6623,11 +6633,19 @@ void testMaterialAndControlAudibility()
     engine.setParameters(soft);
     const auto softPick = renderNote(engine, sampleRate, 45, 0.8f,
                                      PlayStyle::Sustain, 0.5);
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    const auto softVoice = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 45));
+#endif
     auto hard = fresh;
     hard.pickHardness = 1.0f;
     engine.setParameters(hard);
     const auto hardPick = renderNote(engine, sampleRate, 45, 0.8f,
                                      PlayStyle::Sustain, 0.5);
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    const auto hardVoice = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 45));
+#endif
     const int attackStart = static_cast<int>(0.004 * sampleRate);
     const int attackLength = static_cast<int>(0.10 * sampleRate);
     const double softCentroid = spectralCentroid(
@@ -6638,6 +6656,83 @@ void testMaterialAndControlAudibility()
                                       attackStart + attackLength);
     const double hardRms = rmsInRange(hardPick.left, attackStart,
                                       attackStart + attackLength);
+    std::cout << "PROBE Pick Hardness centroid/RMS ratios: "
+              << hardCentroid / std::max(softCentroid, 1.0e-12) << "/"
+              << hardRms / std::max(softRms, 1.0e-12) << '\n';
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    // Remove each live release pole's exact response at f0. What remains must
+    // be the same displacement for the same MIDI force: Pick Hardness changes
+    // the plectrum's contact spectrum, not the player's force axis.
+    constexpr float twoPi = 6.28318530717958647692f;
+    const auto unfilteredDisplacement = [&] (const auto& voice)
+    {
+        const float omega = twoPi
+            / std::max(voice.lastCompensatedPeriod, 1.0f);
+        return voice.excitationAmplitude * TestAccess::onePoleMagnitude(
+            voice.excitationReleaseCoefficient, omega);
+    };
+    const float softDisplacement = unfilteredDisplacement(softVoice);
+    const float hardDisplacement = unfilteredDisplacement(hardVoice);
+    expect(softVoice.valid && hardVoice.valid
+               && softDisplacement > 0.0f
+               && std::abs(hardDisplacement / softDisplacement - 1.0f)
+                      < 2.0e-5f,
+           "Pick Hardness still changes force-normalised displacement (ratio "
+               + std::to_string(hardDisplacement
+                                / std::max(softDisplacement, 1.0e-12f)) + ")");
+
+    const auto bentDisplacement = [&] (float hardness, float bend)
+    {
+        auto bent = fresh;
+        bent.pickHardness = hardness;
+        engine.setParameters(bent);
+        engine.setPitchBend(bend);
+        engine.reset();
+        engine.noteOn(45, 0.8f);
+        const auto voice = TestAccess::snapshot(
+            engine, TestAccess::stringForNote(engine, 45));
+        return std::pair { voice, unfilteredDisplacement(voice) };
+    };
+    for (const float bend : { -1.0f, 1.0f })
+    {
+        const auto [bentSoftVoice, bentSoft] = bentDisplacement(0.0f, bend);
+        const auto [bentHardVoice, bentHard] = bentDisplacement(1.0f, bend);
+        expect(bentSoftVoice.valid && bentHardVoice.valid && bentSoft > 0.0f
+                   && std::abs(bentHard / bentSoft - 1.0f) < 2.0e-5f,
+               "bent Pick Hardness changes force-normalised displacement (ratio "
+                   + std::to_string(bentHard / std::max(bentSoft, 1.0e-12f))
+                   + ")");
+    }
+    engine.setPitchBend(0.0f);
+
+    constexpr ElectryEngine::ExpressionId expressionId = 2;
+    const auto expressionDisplacement = [&] (float hardness, float semitones)
+    {
+        auto bent = fresh;
+        bent.pickHardness = hardness;
+        engine.setParameters(bent);
+        engine.setExpressionPitchBend(expressionId, semitones);
+        engine.reset();
+        engine.noteOn(45, 0.8f, expressionId);
+        const auto voice = TestAccess::snapshot(
+            engine, TestAccess::stringForNote(engine, 45));
+        return std::pair { voice, unfilteredDisplacement(voice) };
+    };
+    for (const float semitones : { -24.0f, 24.0f })
+    {
+        const auto [bentSoftVoice, bentSoft] =
+            expressionDisplacement(0.0f, semitones);
+        const auto [bentHardVoice, bentHard] =
+            expressionDisplacement(1.0f, semitones);
+        expect(bentSoftVoice.valid && bentHardVoice.valid && bentSoft > 0.0f
+                   && std::abs(bentHard / bentSoft - 1.0f) < 2.0e-5f,
+               "MPE-bent Pick Hardness changes force-normalised displacement "
+               "(ratio "
+                   + std::to_string(bentHard / std::max(bentSoft, 1.0e-12f))
+                   + ")");
+    }
+    engine.setExpressionPitchBend(expressionId, 0.0f);
+#endif
     // As above, the picked attack's reference-calibrated spectrum compresses
     // the absolute centroid range this control spans. It remains clearly
     // audible - the position, level and material bounds around it are

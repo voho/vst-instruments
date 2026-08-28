@@ -3862,10 +3862,17 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                           + 0.16f * profile.amplitude * bridgeHandDepth);
         }
     }
-    // A stiffer pick is a little louder, but most of what it changes is the
-    // spectrum: the release corner below carries that, and leaving a wide
-    // amplitude range here as well turned Pick Hardness into a level control.
+    // Velocity is the player's force axis; Pick Hardness is the plectrum's
+    // contact/release axis. The candidate keeps those independent instead of
+    // adding a second, unsupported displacement gain for a stiffer pick.
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    // Keep the established nominal displacement at the documented default;
+    // only its unsupported motion with the contact control is removed.
+    constexpr float hardnessGain = lerp(
+        0.98f, 1.26f, EngineParameters {}.pickHardness);
+#else
     const float hardnessGain = lerp(0.98f, 1.26f, effectivePickHardness);
+#endif
 
     if (plectrumContact && voice.strumChordId == chordSequence_)
     {
@@ -4355,9 +4362,31 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // fundamental is divided back out. Without this, reaching for Pick
     // Hardness or playing harder would change the loudness as much as the
     // timbre.
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    // H(z) is the actual discrete one-pole below, not the former analogue
+    // approximation with an extra factor of two in f/fc. Together with the
+    // independent force/contact axes above, this keeps the pole from supplying
+    // a second hardness-dependent displacement gain while leaving the separate
+    // broad plectrum edge alone.
+    // configureVoicePitch() has already stored the live period, including a
+    // wheel/MPE bend present when the pick arrives. Normalising a plectrum at
+    // the MIDI note instead would reintroduce a level change for bent attacks.
+    // Finger contacts retain their established base-note reference so a
+    // legato glide does not turn the hammer/pull velocity law into a level
+    // modulation.
+    const float releaseOmega = plectrumContact
+        ? twoPi / std::max(voice.lastCompensatedPeriod, 1.0f)
+        : twoPi * voice.baseFrequency * inverseSampleRate_;
+    const float releaseMagnitude = onePoleMagnitude(
+        voice.excitationReleaseCoefficient, releaseOmega);
+    voice.excitationAmplitude *= clampf(
+        1.0f / std::max(releaseMagnitude, 1.0e-6f),
+        1.0f, 6.0f);
+#else
     const float releaseRatio = 2.0f * voice.baseFrequency / releaseCutoff;
     voice.excitationAmplitude *= clampf(
         std::sqrt(1.0f + releaseRatio * releaseRatio), 1.0f, 6.0f);
+#endif
 
     voice.excitationTailLength = std::clamp(
         static_cast<int>(8.0f * sampleRate

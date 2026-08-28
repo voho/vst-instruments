@@ -411,7 +411,12 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   root of the string's own open frequency, so the treble register keeps its
   brightness while the wound low strings lose the upper-partial surplus the
   ideal law gives them, and the pole's own attenuation at the fundamental is
-  divided back out so the release governs timbre rather than level.
+  divided back out so the release governs timbre rather than level. A
+  controlled, default-off `ELECTRY_DECOUPLED_PICK_RELEASE=ON` build replaces
+  the shipping analogue approximation with the implemented digital pole's
+  exact magnitude and keeps Pick Hardness on the contact/stiffness axis rather
+  than multiplying the player's displacement a second time. Its listening
+  verdict remains pending, so the default build is unchanged.
 - **Pick contact:** the plectrum is neither a point nor symmetric. It touches
   the string over a patch — half a millimetre for a stiff sharp pick, around a
   millimetre and a half for a soft rounded one — so the reflected image of the
