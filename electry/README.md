@@ -1527,6 +1527,21 @@ upper partials ring too long and too smoothly. It is not a calibration target:
 there is one MP3 stroke per fret, with unknown gauge, pick, pickup and player,
 and the instruments use different actual frets.
 
+The irregularity should not automatically be smoothed away. [Le Carrou, Pate
+and Chomette's operational-modal study of a played electric
+guitar](https://doi.org/10.1121/1.5130894) finds that string-modal damping is
+driven mainly by the real part of the neck driving-point admittance: a string
+partial near a structural mode can be selectively shortened, while the
+player's grip damps the structure, lowers that conductance and can lengthen the
+string decay near a dead spot. Contact point and structural mode interact, so
+this supplies a physical explanation for local fret/partial departures but no
+coefficient that transfers to Electry's eight-string. A later low-CPU
+experiment should measure complex neck admittance with the commissioned guitar
+held in playing position, evaluate its sparse modal loss offline, and compress
+that response into the same minimum-phase loop filter. The public F# previews
+contain neither the impedance measurement nor repeated held/free conditions,
+so no player-conditioned loss is added here.
+
 Most importantly, fret and frequency are confounded. A robust fit of loss to
 log partial frequency plus fret gives a direct fret coefficient of +0.1348
 dB/s/fret for the real files and +0.0207 for Electry; their difference is
