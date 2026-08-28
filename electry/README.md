@@ -1156,6 +1156,28 @@ High-Gain.
 
 ### What the automated tests do and do not establish
 
+Ordinary tests deliberately do not assert callback deadlines on unknown
+hardware. An opt-in native-processor benchmark now times `processBlock()` after
+warmup at 48, 96 and 384 kHz with 64- and 512-frame callbacks. It covers the
+default Bridge/Mono path, Both/Stereo, Double, eight-string Palm, Modern with
+all five FX amounts at maximum, and continuous American/British amp switching.
+Every row uses the same repeatedly struck eight-open-string chord and reports
+nearest-rank p50/p95/p99/max callback times plus deadline misses. Preparation,
+host parameter writes and output validation are outside the timed interval.
+Palm uses Both/Stereo; Modern/all-max and amp switching use Bridge/Mono, with
+the latter holding Amp at 100% and changing American/British before every block.
+Only silence, non-finite output and a deliberately loose one-second-per-block
+runaway guard fail the test; realtime results remain machine- and load-specific.
+
+One Release run on an Apple M1 Max under macOS 26.5.1 on 2026-08-29 recorded
+zero misses in all 30 steady rows. The tightest steady p99 was Double at 384
+kHz/64 frames: 0.0760 ms of its 0.1667 ms deadline; the largest individual
+steady callback was a Palm outlier at 0.1541 ms. The deliberately hostile
+per-block American/British switch missed 147/375 and 174/256 callbacks at 48
+kHz, 598/750 and 256/256 at 96 kHz, and 2,987/3,000 and 375/375 at 384 kHz for
+64 and 512 frames respectively. That row identifies an automation boundary,
+not the cost of a selected, settled amplifier.
+
 Current automated tests establish: finite, bounded, non-silent output for
 all twenty-one pick-stroke/play-style combinations at 44.1-384 kHz; the 2x/1x
 internal-rate policy, exact
@@ -2151,6 +2173,16 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
+
+Run the opt-in full-chain callback benchmark directly from that Release build:
+
+```bash
+ELECTRY_BENCHMARK_REALTIME=1 ./build/ElectryPluginProcessorTests
+```
+
+Its `BENCH` rows include rate, frame count, scenario, measured-block count,
+deadline, p50/p95/p99/max milliseconds and `misses=N/blocks`. The benchmark is
+diagnostic rather than a portable pass/fail performance claim.
 
 On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
 universal VST3, Audio Unit and Standalone app and renders the committed editor

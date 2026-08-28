@@ -3,9 +3,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <set>
 #include <span>
@@ -4755,6 +4757,200 @@ void testPrepareReleaseCycles()
                 "engine still ready after releaseResources");
     }
 }
+
+void runRealtimeDeadlineBenchmarkIfRequested()
+{
+    const auto* requested = std::getenv ("ELECTRY_BENCHMARK_REALTIME");
+    if (requested == nullptr || std::strcmp (requested, "1") != 0)
+        return;
+
+    struct Scenario
+    {
+        const char* name;
+        float pickupSelector;
+        float outputMode;
+        electry::PlayStyle playStyle;
+        bool allEffectsMaximum;
+        bool switchAmplifiers;
+    };
+
+    constexpr std::array scenarios {
+        Scenario { "default-bridge-mono", 2.0f, 0.0f,
+                   electry::PlayStyle::Sustain, false, false },
+        Scenario { "both-stereo", 1.0f, 1.0f,
+                   electry::PlayStyle::Sustain, false, false },
+        Scenario { "double", 2.0f, 2.0f,
+                   electry::PlayStyle::Sustain, false, false },
+        Scenario { "eight-palm", 1.0f, 1.0f,
+                   electry::PlayStyle::PalmMute, false, false },
+        Scenario { "modern-all-max", 2.0f, 0.0f,
+                   electry::PlayStyle::Sustain, true, false },
+        Scenario { "amp-ab-switch", 2.0f, 0.0f,
+                   electry::PlayStyle::Sustain, false, true },
+    };
+    constexpr std::array rates { 48000.0, 96000.0, 384000.0 };
+    constexpr std::array frameCounts { 64, 512 };
+    constexpr std::array chord { 28, 35, 40, 45, 50, 55, 59, 64 };
+
+    const auto percentile = [] (const std::vector<double>& sorted,
+                                double probability)
+    {
+        const auto rank = static_cast<std::size_t> (
+            std::ceil (probability * static_cast<double> (sorted.size())));
+        return sorted[std::min (sorted.size() - 1,
+                                std::max<std::size_t> (1, rank) - 1)];
+    };
+    const auto finite = [] (const juce::AudioBuffer<float>& audio)
+    {
+        for (int channel = 0; channel < audio.getNumChannels(); ++channel)
+        {
+            const auto* samples = audio.getReadPointer (channel);
+            for (int sample = 0; sample < audio.getNumSamples(); ++sample)
+                if (! std::isfinite (samples[sample]))
+                    return false;
+        }
+        return true;
+    };
+
+    std::cout << "BENCH realtime-deadline begin (nearest-rank percentiles; "
+                 "host parameter writes excluded)\n";
+    const auto benchmarkStart = std::chrono::steady_clock::now();
+    for (const double rate : rates)
+    {
+        for (const int frames : frameCounts)
+        {
+            ElectryAudioProcessor processor;
+            for (const auto& scenario : scenarios)
+            {
+                if (processor.isEngineReady())
+                    processor.releaseResources();
+                for (const auto& parameter : expectedParameters)
+                    setParameterValue (processor, parameter.id,
+                                       parameter.defaultValue);
+                setParameterValue (processor, electry::parameters::pickupSelector,
+                                   scenario.pickupSelector);
+                setParameterValue (processor, electry::parameters::outputMode,
+                                   scenario.outputMode);
+                if (scenario.allEffectsMaximum)
+                {
+                    for (const auto* id : { electry::parameters::distortion,
+                                            electry::parameters::amp,
+                                            electry::parameters::compressor,
+                                            electry::parameters::delay,
+                                            electry::parameters::room })
+                        setParameterValue (processor, id, 1.0f);
+                    setParameterValue (processor, electry::parameters::ampModel,
+                                       2.0f);
+                }
+                if (scenario.switchAmplifiers)
+                {
+                    setParameterValue (processor, electry::parameters::amp, 1.0f);
+                    setParameterValue (processor, electry::parameters::ampModel,
+                                       0.0f);
+                }
+
+                processor.prepareToPlay (rate, frames);
+                juce::AudioBuffer<float> audio (2, frames);
+                juce::MidiBuffer midi;
+                const int warmupBlocks = std::max (
+                    32, static_cast<int> (std::ceil (0.1 * rate / frames)));
+                const int measuredBlocks = std::max (
+                    256, static_cast<int> (std::ceil (0.5 * rate / frames)));
+                const int repickBlocks = std::max (
+                    1, static_cast<int> (std::lround (0.1 * rate / frames)));
+                const auto fillEvents = [&] (int block, bool includeStyle)
+                {
+                    midi.clear();
+                    if (includeStyle)
+                    {
+                        midi.addEvent (juce::MidiMessage::noteOn (
+                            1, electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                                   + static_cast<int> (scenario.playStyle),
+                            (juce::uint8) 127), 0);
+                    }
+                    if (block % repickBlocks == 0)
+                        for (const int note : chord)
+                            midi.addEvent (juce::MidiMessage::noteOn (
+                                1, note, (juce::uint8) 115), 0);
+                };
+
+                bool outputFinite = true;
+                float peak = 0.0f;
+                for (int block = 0; block < warmupBlocks; ++block)
+                {
+                    if (scenario.switchAmplifiers)
+                        setParameterValue (processor,
+                                           electry::parameters::ampModel,
+                                           static_cast<float> (block & 1));
+                    fillEvents (block, block == 0);
+                    processor.processBlock (audio, midi);
+                    outputFinite = outputFinite && finite (audio);
+                    peak = std::max (peak, audio.getMagnitude (0, frames));
+                }
+
+                std::vector<double> timings;
+                timings.reserve (static_cast<std::size_t> (measuredBlocks));
+                const double deadline = static_cast<double> (frames) / rate;
+                int misses = 0;
+                for (int block = 0; block < measuredBlocks; ++block)
+                {
+                    if (scenario.switchAmplifiers)
+                        setParameterValue (processor,
+                                           electry::parameters::ampModel,
+                                           static_cast<float> (block & 1));
+                    fillEvents (block, false);
+                    const auto begin = std::chrono::steady_clock::now();
+                    processor.processBlock (audio, midi);
+                    const double elapsed = std::chrono::duration<double> (
+                        std::chrono::steady_clock::now() - begin).count();
+                    timings.push_back (elapsed);
+                    misses += elapsed > deadline ? 1 : 0;
+                    outputFinite = outputFinite && std::isfinite (elapsed)
+                                 && finite (audio);
+                    peak = std::max (peak, audio.getMagnitude (0, frames));
+                }
+
+                std::sort (timings.begin(), timings.end());
+                const double maximum = timings.back();
+                expect (outputFinite,
+                        std::string ("realtime benchmark produced non-finite ")
+                            + scenario.name + " output");
+                expect (peak > 1.0e-7f,
+                        std::string ("realtime benchmark rendered silence for ")
+                            + scenario.name);
+                expect (maximum < 1.0,
+                        std::string ("realtime benchmark exceeded its loose ")
+                            + "one-second runaway guard for " + scenario.name);
+
+                const auto milliseconds = [] (double seconds)
+                {
+                    return 1000.0 * seconds;
+                };
+                std::cout << std::fixed << std::setprecision (4)
+                          << "BENCH rate=" << static_cast<int> (rate)
+                          << " frames=" << frames
+                          << " scenario=" << scenario.name
+                          << " blocks=" << measuredBlocks
+                          << " deadline_ms=" << milliseconds (deadline)
+                          << " p50_ms=" << milliseconds (
+                                 percentile (timings, 0.50))
+                          << " p95_ms=" << milliseconds (
+                                 percentile (timings, 0.95))
+                          << " p99_ms=" << milliseconds (
+                                 percentile (timings, 0.99))
+                          << " max_ms=" << milliseconds (maximum)
+                          << " misses=" << misses << '/' << measuredBlocks
+                          << '\n';
+            }
+            processor.releaseResources();
+        }
+    }
+    std::cout << std::fixed << std::setprecision (3)
+              << "BENCH realtime-deadline end wall_s="
+              << std::chrono::duration<double> (
+                     std::chrono::steady_clock::now() - benchmarkStart).count()
+              << '\n';
+}
 } // namespace
 
 int main()
@@ -4795,6 +4991,7 @@ int main()
     testOutputModeAudioField();
     testEditorRendering();
     testPrepareReleaseCycles();
+    runRealtimeDeadlineBenchmarkIfRequested();
 
     if (failureCount != 0)
     {
