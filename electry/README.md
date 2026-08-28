@@ -1549,16 +1549,50 @@ dB/s/fret for the real files and +0.0207 for Electry; their difference is
 identify a shipping fret coefficient, and the bass paper's opposite E-string
 direction reinforces that boundary.
 
-The CPU-bounded next experiment is therefore a capture-fitted, small
-higher-order minimum-phase loop-loss filter using the decay-time-weighted
-method of
-[Bank and Välimäki](https://research.aalto.fi/en/publications/robust-loss-filter-design-for-digital-waveguide-synthesis-of-stri/).
-It would be designed offline from repeated, licensed exact-eight partial
-decays, phase-compensated at the fundamental, then run as a fixed low-order IIR
-inside the existing waveguide. Order 1 remains A; orders 2 and 4 are candidates
-and must beat it on held-out partial-decay error, tuning, stability, blind
-listening and full-chain CPU deadlines. No harmonic bank, neural network or
-FDTD solver is added to the realtime path.
+The CPU-bounded experiment now exists behind the default-off
+`ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2` build flag. It follows the
+low-order, decay-time-weighted direction of
+[Bank and Välimäki](https://research.aalto.fi/en/publications/robust-loss-filter-design-for-digital-waveguide-synthesis-of-stri/),
+but makes only the narrow claim this public series supports: one fixed-Hz,
+second-order RBJ loss dip is added to both played polarisations of physical
+string 8 for F#1-F#2 (MIDI 30-42). It is minimum phase, never exceeds unity
+magnitude, and its phase is included in the fundamental delay compensation.
+Open E1, every other string, notes outside that range and all sympathetic opens
+are exact bypasses.
+
+The fit used every retained H1-H12 row, not the H2-H8 median headline above.
+At 48 kHz, SciPy soft-L1 (`f_scale=1`) minimised
+`(shipping + correction - real) / sqrt(rows in fret)` on even frets. The
+frozen result is a 441.418112 Hz centre, Q 0.40618486 and 22.9327503 dB/s peak;
+the loop depth is `22.9327503 / f0` dB per round trip. Coefficients were frozen
+before any odd-fret result was read. The local 149-row JSON and CSV measurement
+receipts have SHA-256
+`e9b790b503221bdb23b575a491046683057d09b972cf278f242016df2ba2e4aa`
+and `a010206ac1effd4461d55d514d65182e88e0790d1315f37bc361c52896cf8696`.
+An order-four target's small, uncertain holdout advantage did not justify a
+second realtime section.
+
+The candidate was then rendered through the real mixed-polarisation engine,
+not its fitting equation. A frozen real-track mask kept all 149 comparisons
+fixed so changing decay could not change which model partials were admitted.
+On the six untouched odd frets, equal-fret MAE fell from 16.292 to 8.533 dB/s
+and row RMSE from 19.314 to 11.200 dB/s. A 5,000-resample whole-fret bootstrap
+put the median MAE change at -7.97 dB/s, 95% interval -12.70..-0.74 and
+`P(change >= 0) = 0.008`. Five of six frets improved; fret 7 worsened from
+4.962 to 13.836 dB/s, so this is an aggregate result, not universal parity.
+With the flag off, all thirteen rendered WAVs remain byte-identical to the
+frozen shipping baseline.
+
+The active-F# cost is one double biquad per polarisation on one voice. In 24
+alternating 96 kHz, 512-frame, eight-note runs, OFF and ON used 0.12325x and
+0.12239x realtime at their independent medians; paired overhead averaged 0.69%
+inside a -5.05..+3.77% clock-noise range, and the worst ON run was 0.12634x.
+CPU is not the promotion blocker. A legato retarget changes its loss topology
+immediately when it crosses MIDI 29/30 or 42/43; regression tests bound gross
+steps and pitch error, but do not make that law continuous. The flag therefore
+remains off pending a smoothed boundary, repeated licensed exact-eight
+captures and phrase-level blind listening. No harmonic bank, neural network or
+FDTD solver enters the realtime path.
 
 ### Remaining realism gates
 
