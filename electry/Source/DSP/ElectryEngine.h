@@ -1551,9 +1551,9 @@ private:
     float appliedPalmMute_ { 0.0f };
 
     // Sympathetic bridge bus. `sympatheticBus_` accumulates the current
-    // sample's plucked-string bridge force; the coupled strings read the
-    // previous sample's total, which removes any ordering dependence and any
-    // algebraic loop.
+    // sample's bounded displacement-domain bridge-motion proxies; the coupled
+    // strings read the previous sample's total, which removes any ordering
+    // dependence and any algebraic loop.
     float sympatheticBus_ { 0.0f };
     float sympatheticBusDelayed_ { 0.0f };
     float sympatheticGain_ { 0.0f };

@@ -139,9 +139,10 @@ constexpr float polarisationCouplingPerRoundTrip = 0.04f;
 //
 // Every string terminates on the same saddle, whose mechanical admittance is
 // finite, so the saddle velocity driven by the summed string forces drives
-// every *other* string back. The engine already sums those forces into
-// `sympatheticBus_` and already publishes them one sample late; this is the
-// gain at which a played string reads that bus. It is a separate number from
+// every *other* string back. The engine approximates that shared motion by
+// summing a bounded displacement-domain proxy into `sympatheticBus_` and
+// publishing it one sample late; this is the gain at which a played string
+// reads that bus. It is a separate number from
 // the `0.0045 * effectiveSympathetic` the *unfingered* strings read it at.
 // That path is acyclic - only played voices write it, only idle voices read
 // it - so it is stable at any gain. This one closes the loop, and its gain is
