@@ -4221,6 +4221,9 @@ void testEditorRendering()
                 "factory-rig selector is too small to operate clearly");
         expect (factoryProgramControl->getTitle() == "Factory rig",
                 "factory-rig selector has no accessible title");
+        expect (factoryProgramControl->getWantsKeyboardFocus()
+                    && factoryProgramControl->hasFocusOutline(),
+                "factory-rig selector is not visibly keyboard-focusable");
         const auto rigTooltip = factoryProgramControl->getTooltip();
         expect (rigTooltip.contains ("Mute Tightness")
                     && rigTooltip.contains ("Mute Pressure")
@@ -4252,6 +4255,21 @@ void testEditorRendering()
         expect (factoryProgramControl->getSelectedId() == 3,
                 "host-side program change did not reach the editor selector");
         factoryProgramControl->setSelectedId (1, juce::sendNotificationSync);
+    }
+
+    auto* panicControl = dynamic_cast<juce::TextButton*> (
+        findControl ("panic"));
+    expect (panicControl != nullptr,
+            "editor is missing the PANIC action");
+    if (panicControl != nullptr)
+    {
+        expect (panicControl->getWantsKeyboardFocus()
+                    && panicControl->hasFocusOutline(),
+                "PANIC is not visibly keyboard-focusable");
+        expect (panicControl->getButtonText() == "PANIC"
+                    && panicControl->getTooltip()
+                           == "Immediately silence all strings",
+                "PANIC lost its accessible label or help text");
     }
 
     auto* outputModeControl = findControl (electry::parameters::outputMode);

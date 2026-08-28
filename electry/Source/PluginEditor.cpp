@@ -1230,6 +1230,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     factoryProgramSelector.setName ("Factory rig");
     factoryProgramSelector.setTitle ("Factory rig");
     factoryProgramSelector.setComponentID ("factoryProgram");
+    factoryProgramSelector.setHasFocusOutline (true);
     factoryProgramSelector.onChange = [this]
     {
         const int index = factoryProgramSelector.getSelectedId() - 1;
@@ -1250,6 +1251,8 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
 
     addAndMakeVisible (statusDisplay);
 
+    panicButton.setComponentID ("panic");
+    panicButton.setHasFocusOutline (true);
     panicButton.setTooltip ("Immediately silence all strings");
     panicButton.onClick = [this] { electryProcessor.requestPanic(); };
     addAndMakeVisible (panicButton);
