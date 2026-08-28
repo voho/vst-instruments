@@ -4346,6 +4346,11 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         // makeVelocityProfile()'s documented low-E deflection example. Remove
         // the legacy modal path's 0.48 projection scalar before applying it;
         // the complete triangular state needs no period-dependent projection.
+        // A 2026-08-29 sweep from 2.4 to 10.8 N proved this is not a bass trim:
+        // the measured-body E1 low-band rail first passes near 9.6 N, while the
+        // full-velocity level ceiling is crossed near 7.6 N and the partial-
+        // shape failures remain. Keep the physical anchor; the default-off
+        // candidate needs a better pick/string shape, not a larger force.
         constexpr float fullStrokeForceNewtons = 4.8f;
         constexpr float legacyAmplitudeScale = 0.48f;
         constexpr float sustainDisplacementGain = 1.55f;
