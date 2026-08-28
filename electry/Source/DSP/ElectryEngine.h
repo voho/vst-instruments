@@ -120,6 +120,10 @@
 #define ELECTRY_MEASURED_BODY_RESPONSE 0
 #endif
 
+#ifndef ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+#define ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2 0
+#endif
+
 namespace electry
 {
 
@@ -545,7 +549,8 @@ private:
     // feedback loop - where the only DC blocker in this engine, being on the
     // output, cannot reach it - an error in that direction is a mode that grows
     // by 0.03% per round trip and never decays. Double makes the residual around
-    // 1e-16 instead, and it is only ever run while a hand is on the string.
+    // 1e-16 instead. It runs only for hand contact or the default-off fitted
+    // lowest-string correction.
     struct DipBiquad
     {
         double b0 { 1.0 }, b1 { 0.0 }, b2 { 0.0 }, a1 { 0.0 }, a2 { 0.0 };
@@ -770,6 +775,16 @@ private:
         float dispersionLowCoefficient { 0.0f };
         float dispersionHighCoefficient { 0.0f };
         OnePole damping {};
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+        // Default-off empirical correction for the lowest physical string. It
+        // reuses the same passive, minimum-phase section as the bridge hand,
+        // but its fixed-Hz shape and dB/s depth law come from lowest-string
+        // fret/partial decays rather than contact damping.
+        DipBiquad fittedLossDip {};
+        HandLossShape fittedLossShape {};
+        float fittedLossDepth { 0.0f };
+        bool fittedLossDipActive { false };
+#endif
         // The bridge hand's loss slope, as a second pole in the loop.
         //
         // One pole fitted between f0 and 3.6 kHz has one slope, so the decay

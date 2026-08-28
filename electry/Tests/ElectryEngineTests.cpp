@@ -390,6 +390,33 @@ struct ElectryEngineTestAccess
         active = loop.handDipActive;
     }
 
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    static void fittedLossDip(const ElectryEngine& engine, int stringIndex,
+                              double& b0, double& b1, double& b2,
+                              double& a1, double& a2,
+                              bool& active,
+                              bool horizontal = false) noexcept
+    {
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& loop = horizontal ? voice.horizontal : voice.vertical;
+        b0 = loop.fittedLossDip.b0;
+        b1 = loop.fittedLossDip.b1;
+        b2 = loop.fittedLossDip.b2;
+        a1 = loop.fittedLossDip.a1;
+        a2 = loop.fittedLossDip.a2;
+        active = loop.fittedLossDipActive;
+    }
+
+    static void legatoRetargetVoice(ElectryEngine& engine, int stringIndex,
+                                    int midiNote) noexcept
+    {
+        engine.legatoRetarget(
+            engine.voices_[static_cast<std::size_t>(stringIndex)], midiNote,
+            0.85f, PlayStyle::Slide);
+    }
+#endif
+
     static float handLossDepth(const ElectryEngine& engine,
                                int stringIndex) noexcept
     {
@@ -914,9 +941,19 @@ struct ElectryEngineTestAccess
                 dipMagnitude, dipPhase);
             const float dipDelay = omega > 1.0e-9f
                 ? -dipPhase / omega : 0.0f;
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+            float fittedMagnitude = 1.0f, fittedPhase = 0.0f;
+            ElectryEngine::handLossResponse(
+                loop.fittedLossDepth, loop.fittedLossShape, omega,
+                fittedMagnitude, fittedPhase);
+            const float fittedDelay = omega > 1.0e-9f
+                ? -fittedPhase / omega : 0.0f;
+#else
+            constexpr float fittedDelay = 0.0f;
+#endif
             const float phaseDelay = ElectryEngine::onePolePhaseDelay(
                     loop.loopDampingCoefficient, omega)
-                + dipDelay
+                + fittedDelay + dipDelay
                 + 4.0f * ElectryEngine::allpassPhaseDelay(
                     loop.dispersionLowCoefficient, omega)
                 + 4.0f * ElectryEngine::allpassPhaseDelay(
@@ -14703,6 +14740,212 @@ void testPalmMuteDoesNotShiftPitch()
                + std::to_string(variedAsserted));
 }
 
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+void testLowestStringLossCorrection()
+{
+    const auto responseMagnitude = [] (double b0, double b1, double b2,
+                                       double a1, double a2, double omega)
+    {
+        const double cosine = std::cos(omega);
+        const double sine = std::sin(omega);
+        const double cosine2 = 2.0 * cosine * cosine - 1.0;
+        const double sine2 = 2.0 * sine * cosine;
+        const double nr = b0 + b1 * cosine + b2 * cosine2;
+        const double ni = -(b1 * sine + b2 * sine2);
+        const double dr = 1.0 + a1 * cosine + a2 * cosine2;
+        const double di = -(a1 * sine + a2 * sine2);
+        return std::sqrt((nr * nr + ni * ni)
+                         / std::max(dr * dr + di * di, 1.0e-30));
+    };
+
+    for (const double hostRate : { 44100.0, 48000.0, 96000.0,
+                                   192000.0, 384000.0 })
+    {
+        for (const int note : { 30, 36, 42 })
+        {
+            ElectryEngine engine;
+            engine.prepare(hostRate, 512);
+            EngineParameters parameters;
+            parameters.sympatheticAmount = 0.0f;
+            engine.setParameters(parameters);
+            engine.reset();
+            TestAccess::retriggerVoice(engine, 0, note, 0.9f);
+
+            double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+            bool active = false;
+            TestAccess::fittedLossDip(
+                engine, 0, b0, b1, b2, a1, a2, active);
+            expect(active,
+                   "the fitted lowest-string correction was not active at note "
+                       + std::to_string(note));
+            bool horizontalActive = false;
+            double hb0 = 1.0, hb1 = 0.0, hb2 = 0.0;
+            double ha1 = 0.0, ha2 = 0.0;
+            TestAccess::fittedLossDip(
+                engine, 0, hb0, hb1, hb2, ha1, ha2,
+                horizontalActive, true);
+            expect(horizontalActive,
+                   "the horizontal polarisation omitted the loss correction");
+            expect(hb0 == b0 && hb1 == b1 && hb2 == b2
+                       && ha1 == a1 && ha2 == a2,
+                   "the two polarisations received different loss filters");
+
+            // Both poles and both zeros remain inside the unit circle. These
+            // are the real-coefficient Jury conditions for z^2+c1*z+c2.
+            const double z1 = b1 / b0;
+            const double z2 = b2 / b0;
+            expect(std::abs(a2) < 1.0 && 1.0 + a1 + a2 > 0.0
+                       && 1.0 - a1 + a2 > 0.0,
+                   "the fitted loss correction is not stable");
+            expect(std::abs(z2) < 1.0 && 1.0 + z1 + z2 > 0.0
+                       && 1.0 - z1 + z2 > 0.0,
+                   "the fitted loss correction is not minimum phase");
+
+            double peakMagnitude = 0.0;
+            for (int bin = 0; bin <= 4096; ++bin)
+            {
+                const double omega = 3.14159265358979323846
+                                   * static_cast<double>(bin) / 4096.0;
+                peakMagnitude = std::max(
+                    peakMagnitude,
+                    responseMagnitude(b0, b1, b2, a1, a2, omega));
+            }
+            expect(peakMagnitude <= 1.0 + 2.0e-10,
+                   "the fitted loss correction can add loop energy (peak "
+                       + std::to_string(peakMagnitude) + ")");
+
+            const double f0 = midiHz(note);
+            const double internalRate = TestAccess::internalSampleRate(engine);
+            std::array<double, 7> upperLoss {};
+            const double fundamentalLoss = -20.0 * std::log10(
+                std::max(responseMagnitude(
+                    b0, b1, b2, a1, a2,
+                    2.0 * 3.14159265358979323846 * f0 / internalRate),
+                         1.0e-30)) * f0;
+            for (int partial = 2; partial <= 8; ++partial)
+            {
+                const double magnitude = responseMagnitude(
+                    b0, b1, b2, a1, a2,
+                    2.0 * 3.14159265358979323846 * f0 * partial
+                        / internalRate);
+                upperLoss[static_cast<std::size_t>(partial - 2)] =
+                    -20.0 * std::log10(std::max(magnitude, 1.0e-30)) * f0;
+            }
+            std::sort(upperLoss.begin(), upperLoss.end());
+            const double medianUpperLoss = upperLoss[3];
+            expect(fundamentalLoss > 1.0 && fundamentalLoss < 5.6,
+                   "the fitted loss correction escaped its observed H1 range");
+            expect(medianUpperLoss > 14.0 && medianUpperLoss < 24.0,
+                   "the fitted loss correction missed the H2-H8 direction");
+
+            for (const bool horizontal : { false, true })
+            {
+                const float effective = TestAccess::effectiveLoopFrequency(
+                    engine, 0, horizontal);
+                expect(std::abs(centsBetween(effective, f0)) < 1.0,
+                       "the loss correction phase compensation detuned note "
+                           + std::to_string(note));
+            }
+        }
+    }
+
+    // Scope is evidence, not convenience: the fit is one physical F# string
+    // over F#1--F#2. Electry's unsupported open Drop-E, the next fret above the
+    // range and every other string remain exact bypasses.
+    for (const auto [stringIndex, note] :
+         { std::pair { 0, 28 }, std::pair { 0, 43 }, std::pair { 1, 36 } })
+    {
+        ElectryEngine engine;
+        engine.prepare(48000.0, 512);
+        engine.reset();
+        TestAccess::retriggerVoice(engine, stringIndex, note, 0.9f);
+        double b0 = 0.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+        bool active = true;
+        TestAccess::fittedLossDip(
+            engine, stringIndex, b0, b1, b2, a1, a2, active);
+        expect(! active,
+               "the F#-string fit leaked outside its evidence domain");
+    }
+
+    // The hard evidence gate changes topology at its two note boundaries.
+    // Legato keeps the old sounding period when that happens, and the passive
+    // feedback insertion/removal must not create a hard output discontinuity.
+    struct BoundaryMove { int from, to; bool fromActive, toActive; };
+    for (const auto move : {
+             BoundaryMove { 29, 30, false, true },
+             BoundaryMove { 30, 29, true, false },
+             BoundaryMove { 42, 43, true, false },
+             BoundaryMove { 43, 42, false, true } })
+    {
+        ElectryEngine engine;
+        engine.prepare(48000.0, 512);
+        EngineParameters quiet;
+        quiet.sympatheticAmount = 0.0f;
+        quiet.artifactAmount = 0.0f;
+        quiet.pickNoise = 0.0f;
+        quiet.fingerNoise = 0.0f;
+        quiet.releaseNoise = 0.0f;
+        engine.setParameters(quiet);
+        engine.reset();
+        TestAccess::retriggerVoice(engine, 0, move.from, 0.85f);
+        StereoBuffer before(5760);
+        renderInto(engine, before);
+
+        const auto isActive = [&] ()
+        {
+            double b0 = 0.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+            bool active = false;
+            TestAccess::fittedLossDip(
+                engine, 0, b0, b1, b2, a1, a2, active);
+            return active;
+        };
+        expect(isActive() == move.fromActive,
+               "invalid fitted-loss legato boundary fixture");
+        const float frequencyBefore = TestAccess::effectiveLoopFrequency(
+            engine, 0);
+
+        TestAccess::legatoRetargetVoice(engine, 0, move.to);
+        expect(isActive() == move.toActive,
+               "legato missed a fitted-loss evidence boundary");
+        const float frequencyAfter = TestAccess::effectiveLoopFrequency(
+            engine, 0);
+        expect(std::abs(centsBetween(frequencyAfter, frequencyBefore)) < 2.0,
+               "fitted-loss topology changed pitch at a legato boundary");
+
+        StereoBuffer after(960);
+        renderInto(engine, after);
+        float maximumStep = std::abs(after.left.front() - before.left.back());
+        for (std::size_t i = 1; i < after.left.size(); ++i)
+            maximumStep = std::max(
+                maximumStep, std::abs(after.left[i] - after.left[i - 1]));
+        const float scale = peakAbs(before.left);
+        expect(allFinite(after)
+                   && maximumStep < std::max(0.05f, 1.2f * scale),
+               "fitted-loss legato boundary produced a hard discontinuity");
+    }
+
+    // Idle strings are open and therefore outside this fretted-data candidate.
+    // Bending unsupported open E1 across F#1 must not carry the played filter
+    // into the sympathetic loop or switch topology during the wheel gesture.
+    ElectryEngine sympathetic;
+    sympathetic.prepare(48000.0, 512);
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.8f;
+    sympathetic.setParameters(parameters);
+    sympathetic.reset();
+    sympathetic.setPitchBend(1.0f);
+    sympathetic.noteOn(45, 0.9f);
+    StereoBuffer settle(24000);
+    renderInto(sympathetic, settle);
+    double b0 = 0.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    bool active = false;
+    TestAccess::fittedLossDip(
+        sympathetic, 0, b0, b1, b2, a1, a2, active);
+    expect(TestAccess::snapshot(sympathetic, 0).sympatheticReady && ! active,
+           "pitch bend switched the unsupported sympathetic E1 correction on");
+}
+#endif
+
 void testHandDipNeverExpands()
 {
     constexpr double sampleRate = 48000.0;
@@ -16645,6 +16888,9 @@ int main()
     testPickGeometryFollowsFret();
     testPickContactGeometry();
     testPalmMuteDoesNotShiftPitch();
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    testLowestStringLossCorrection();
+#endif
     testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();

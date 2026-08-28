@@ -37,6 +37,8 @@ option(ELECTRY_DECOUPLED_PICK_RELEASE
     "Use the shipping force-decoupled plectrum release response" ON)
 option(ELECTRY_MEASURED_MODERN_CABINET
     "Build the default-off measured-IR Modern cabinet candidate" OFF)
+option(ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    "Build the default-off fitted order-2 lowest-string loss correction" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -61,6 +63,11 @@ target_include_directories(ElectryDSP
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
 target_compile_features(ElectryDSP PUBLIC cxx_std_20)
 set_target_properties(ElectryDSP PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2=1)
+endif()
 
 if(ELECTRY_MEASURED_MODERN_CABINET)
     target_compile_definitions(ElectryDSP PUBLIC

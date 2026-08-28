@@ -103,6 +103,25 @@ constexpr float handDipFullDepthDb = 10.0f;
 constexpr float handDipCentreRatio = 5.0f;
 constexpr float handDipQ = 0.70f;
 
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+// Offline receipt: a 48 kHz RBJ dip response was fitted with SciPy soft-L1
+// (f_scale=1) on the even-fret rows. Each row residual was
+// (shipping loss + correction - real loss) / sqrt(rows in that fret). The
+// coefficients were frozen before the odd-fret holdout was scored. The fixed
+// centre and Q define one absolute-frequency law; dividing its fitted dB/s peak
+// by f0 converts it to loss per round trip. This is deliberately limited to the
+// lowest physical string and the captured F#1--F#2 range: one F# series does not
+// identify a law for every wound string or justify extrapolation to open E1.
+// The corpus contains independent sustained notes, not legato transitions; the
+// hard range gate is experimental and must not be promoted without listening
+// validation at both boundary moves.
+constexpr float fittedLossDipCentreHz = 441.418112f;
+constexpr float fittedLossDipQ = 0.40618486f;
+constexpr float fittedLossPeakDbPerSecond = 22.9327503f;
+constexpr float fittedLossMinimumFundamentalHz = 46.0f;
+constexpr float fittedLossMaximumFundamentalHz = 93.0f;
+#endif
+
 // The fretting hand's calibrated Dead-note contact. The played string and the
 // idle strings share that hand, so both loss paths use one physical decay
 // target instead of letting the coupled strings ring as though the hand were
@@ -362,6 +381,12 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     line.fill(0.0f);
     writeIndex = 0;
     damping.reset();
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    fittedLossDip.reset();
+    fittedLossShape = {};
+    fittedLossDepth = 0.0f;
+    fittedLossDipActive = false;
+#endif
     handDip.reset();
     handEnvelope = 0.0f;
     handEnvelopePeak = 0.0f;
@@ -2879,6 +2904,24 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     shape.dipQ = handDipQ;
     shape.dipFullDepthDb = handDipFullDepthDb;
 
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    HandLossShape fittedLossShape {};
+    const bool fittedLossInFitDomain =
+        voice.stringIndex == 0
+        && f0 >= fittedLossMinimumFundamentalHz
+        && f0 <= fittedLossMaximumFundamentalHz;
+    const float fittedLossDepth = fittedLossInFitDomain ? 1.0f : 0.0f;
+    if (fittedLossDepth > 0.0f)
+    {
+        fittedLossShape.dipOmega = twoPi * clampf(
+            fittedLossDipCentreHz, 40.0f, 0.40f * sampleRate)
+            * inverseSampleRate_;
+        fittedLossShape.dipQ = fittedLossDipQ;
+        fittedLossShape.dipFullDepthDb =
+            fittedLossPeakDbPerSecond / std::max(f0, 20.0f);
+    }
+#endif
+
     const auto configureLoop = [&] (PolarisationLoop& loop, float t60Scale)
     {
         const float t60Fundamental = std::max(0.02f, t60 * t60Scale);
@@ -3006,6 +3049,23 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
 
         loop.handLossSolvedDepth = depth;
         applyDipDepth(loop, depth);
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+        loop.fittedLossShape = fittedLossShape;
+        loop.fittedLossDepth = fittedLossDepth;
+        double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+        handDipCoefficients(fittedLossDepth, fittedLossShape,
+                            b0, b1, b2, a1, a2);
+        loop.fittedLossDip.b0 = b0;
+        loop.fittedLossDip.b1 = b1;
+        loop.fittedLossDip.b2 = b2;
+        loop.fittedLossDip.a1 = a1;
+        loop.fittedLossDip.a2 = a2;
+        const bool fittedActive = b1 != 0.0 || b2 != 0.0
+                               || a1 != 0.0 || a2 != 0.0;
+        if (! fittedActive)
+            loop.fittedLossDip.reset();
+        loop.fittedLossDipActive = fittedActive;
+#endif
         loop.loopDampingCoefficient = coefficient;
         loop.loopGain = clampf(gain, 0.0f, 0.99999f);
     };
@@ -3087,8 +3147,20 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                          dipMagnitude, dipPhase);
         const float dipDelay = phaseOmega > 1.0e-9f
             ? -dipPhase / phaseOmega : 0.0f;
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+        float fittedMagnitude = 1.0f;
+        float fittedPhase = 0.0f;
+        handLossResponse(loop.fittedLossDepth,
+                         loop.fittedLossShape, phaseOmega,
+                         fittedMagnitude, fittedPhase);
+        const float fittedDelay = phaseOmega > 1.0e-9f
+            ? -fittedPhase / phaseOmega : 0.0f;
+        return onePolePhaseDelay(loop.loopDampingCoefficient, phaseOmega)
+             + fittedDelay + dipDelay;
+#else
         return onePolePhaseDelay(loop.loopDampingCoefficient, phaseOmega)
              + dipDelay;
+#endif
     };
 
     // A damping refit has already replaced the one-pole and/or bridge-hand
@@ -3560,6 +3632,15 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     loop.loopDampingCoefficient = coefficient;
     loop.loopGain = clampf(gain, 0.0f, coupledGainCeiling);
 
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    // The fit covers fretted F#1--F#2 takes. Every sympathetic string is open,
+    // so none is inside that evidence domain. Clear any state retained from a
+    // previously played F# instead of carrying an unsupported filter into E1.
+    loop.fittedLossDip.reset();
+    loop.fittedLossShape = {};
+    loop.fittedLossDepth = 0.0f;
+    loop.fittedLossDipActive = false;
+#endif
     const float compensatedPeriod = clampf(
         period - onePolePhaseDelay(loop.loopDampingCoefficient, omega),
         4.0f, static_cast<float>(delayLineSize - 8));
@@ -5623,6 +5704,10 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         sample = loop.dispersion7.process(sample, loop.dispersionHighCoefficient);
         sample = loop.dispersion8.process(sample, loop.dispersionHighCoefficient);
         sample = loop.damping.process(sample, loop.loopDampingCoefficient);
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+        if (loop.fittedLossDipActive)
+            sample = loop.fittedLossDip.process(sample);
+#endif
         // A peaking section with sub-unity gain: its magnitude never exceeds one
         // anywhere, so it cannot destabilise the loop at any depth, and because
         // it returns to unity above its band it costs almost nothing at the high
