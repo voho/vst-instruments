@@ -4466,14 +4466,25 @@ void testEditorRendering()
         bool interceptsChildren = true;
         fretboard->getInterceptsMouseClicks (interceptsSelf, interceptsChildren);
         expect (interceptsSelf && ! interceptsChildren
+                    && fretboard->getWantsKeyboardFocus()
+                    && fretboard->getMouseClickGrabsKeyboardFocus()
+                    && fretboard->hasFocusOutline()
                     && fretboard->onRepick != nullptr,
-                "the live fretboard does not expose its held-string repick gesture");
-        expect (fretboard->getTitle().containsIgnoreCase ("click")
+                "the live fretboard is not mouse- and keyboard-operable");
+        expect (fretboard->getTitle().contains ("physical string 8")
+                    && fretboard->getTitle().contains ("Up and Down")
+                    && fretboard->getTitle().contains ("1 through 8")
+                    && fretboard->getTitle().contains ("Space or Return")
                     && fretboard->getTitle().containsIgnoreCase ("repick")
+                    && fretboard->getHelpText().contains ("Up and Down")
+                    && fretboard->getHelpText().contains ("1 through 8")
+                    && fretboard->getHelpText().contains ("Space")
+                    && fretboard->getHelpText().contains ("Return")
+                    && fretboard->getTooltip().containsIgnoreCase ("click")
                     && fretboard->getTooltip().contains ("E6")
                     && fretboard->getTooltip().contains ("B6")
                     && fretboard->getTooltip().containsIgnoreCase ("velocity"),
-                "the live fretboard does not explain mouse and MIDI repicking");
+                "the live fretboard does not explain its selection and repick controls");
 
         const auto processorRepick = std::move (fretboard->onRepick);
         int clickedString = -1;
@@ -4497,16 +4508,57 @@ void testEditorRendering()
                 fretboard, fretboard, now, position, now, 1, false));
         };
         clickString (0, juce::ModifierKeys::leftButtonModifier);
-        expect (clickedString == 0,
+        expect (clickedString == 0
+                    && fretboard->getTitle().contains ("physical string 8"),
                 "the fretboard's low E1 row did not select physical string 8");
         clickString (electry::ElectryEngine::stringCount - 1,
                      juce::ModifierKeys::leftButtonModifier);
-        expect (clickedString == electry::ElectryEngine::stringCount - 1,
+        expect (clickedString == electry::ElectryEngine::stringCount - 1
+                    && fretboard->getTitle().contains ("physical string 1"),
                 "the fretboard's high E4 row did not select physical string 1");
         clickedString = -1;
         clickString (3, juce::ModifierKeys::rightButtonModifier);
         expect (clickedString < 0,
                 "a non-primary fretboard click triggered a string repick");
+
+        expect (fretboard->keyPressed (
+                    juce::KeyPress { juce::KeyPress::upKey })
+                    && fretboard->keyPressed (
+                           juce::KeyPress { juce::KeyPress::returnKey })
+                    && clickedString == 6
+                    && fretboard->getTitle().contains ("physical string 2"),
+                "Up and Return did not select and repick the row above");
+        expect (fretboard->keyPressed (
+                    juce::KeyPress { juce::KeyPress::downKey })
+                    && fretboard->keyPressed (
+                           juce::KeyPress { juce::KeyPress::spaceKey })
+                    && clickedString == 7
+                    && fretboard->getTitle().contains ("physical string 1"),
+                "Down and Space did not select and repick the row below");
+
+        clickedString = -1;
+        expect (fretboard->keyPressed (juce::KeyPress { '8' })
+                    && clickedString < 0
+                    && fretboard->getTitle().contains ("physical string 8")
+                    && fretboard->keyPressed (
+                           juce::KeyPress { juce::KeyPress::spaceKey })
+                    && clickedString == 0,
+                "number key 8 did not select and repick the lowest string");
+        clickedString = -1;
+        expect (fretboard->keyPressed (juce::KeyPress { '1' })
+                    && clickedString < 0
+                    && fretboard->getTitle().contains ("physical string 1")
+                    && fretboard->keyPressed (
+                           juce::KeyPress { juce::KeyPress::returnKey })
+                    && clickedString == 7,
+                "number key 1 did not select and repick the highest string");
+        clickedString = -1;
+        expect (! fretboard->keyPressed (juce::KeyPress { '9' })
+                    && clickedString < 0,
+                "an unrelated key changed or repicked the fretboard selection");
+        expect (fretboard->keyPressed (juce::KeyPress { '8' })
+                    && fretboard->getTitle().contains ("physical string 8"),
+                "the fretboard did not restore its default selected row");
         fretboard->onRepick = processorRepick;
 
         for (const auto* knob : knobs)

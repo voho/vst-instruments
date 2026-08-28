@@ -817,10 +817,31 @@ ElectryFretboardDisplay::ElectryFretboardDisplay()
 {
     setInterceptsMouseClicks (true, false);
     setName ("Fretboard display");
-    setTitle ("Live fretboard: click a held string to repick it");
-    setTooltip ("Click any held string row for one hard repick. Host MIDI "
+    setWantsKeyboardFocus (true);
+    setMouseClickGrabsKeyboardFocus (true);
+    setHasFocusOutline (true);
+    setHelpText ("Use Up and Down or number keys 1 through 8 to select a "
+                 "physical string, then press Space or Return to repick it.");
+    setTooltip ("Click any held string row, or use Up/Down or 1-8 then "
+                "Space/Return, for one hard repick. Host MIDI "
                 "E6 through B6 provides the same eight-string trigger lane "
                 "with velocity control.");
+    selectString (0);
+}
+
+void ElectryFretboardDisplay::selectString (int stringIndex)
+{
+    const int next = juce::jlimit (
+        0, electry::ElectryEngine::stringCount - 1, stringIndex);
+    if (next == selectedString)
+        return;
+
+    selectedString = next;
+    setTitle (juce::String ("Live fretboard: physical string ")
+              + juce::String (electry::ElectryEngine::stringCount - selectedString)
+              + " selected. Use Up and Down or number keys 1 through 8 to "
+                "select; Space or Return repicks");
+    repaint();
 }
 
 int ElectryFretboardDisplay::stringAtY (float y) const noexcept
@@ -874,8 +895,36 @@ void ElectryFretboardDisplay::mouseDown (const juce::MouseEvent& event)
         return;
 
     const int stringIndex = stringAtY (event.position.y);
-    if (stringIndex >= 0 && onRepick)
-        onRepick (stringIndex);
+    if (stringIndex >= 0)
+    {
+        selectString (stringIndex);
+        if (onRepick)
+            onRepick (stringIndex);
+    }
+}
+
+bool ElectryFretboardDisplay::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::upKey)
+        selectString (selectedString - 1);
+    else if (key == juce::KeyPress::downKey)
+        selectString (selectedString + 1);
+    else if (key.getKeyCode() >= '1' && key.getKeyCode() <= '8')
+        selectString (electry::ElectryEngine::stringCount
+                      - (key.getKeyCode() - '0'));
+    else if (key == juce::KeyPress::spaceKey
+             || key == juce::KeyPress::returnKey)
+    {
+        if (onRepick)
+            onRepick (selectedString);
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    return true;
 }
 
 bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
@@ -941,22 +990,38 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
     graphics.setColour (colours::panelOutline.withAlpha (0.55f));
     graphics.drawRoundedRectangle (neck.reduced (0.5f), 3.0f, 0.8f);
 
-    if (hoveredString >= 0)
+    const auto firstRow = electry::visuals::stringRowFraction (
+        0, electry::ElectryEngine::stringCount, 0.085f);
+    const auto secondRow = electry::visuals::stringRowFraction (
+        1, electry::ElectryEngine::stringCount, 0.085f);
+    const auto rowSpacing = neck.getHeight() * (secondRow - firstRow);
+    const auto rowBounds = [&] (int stringIndex)
     {
-        const auto firstRow = electry::visuals::stringRowFraction (
-            0, electry::ElectryEngine::stringCount, 0.085f);
-        const auto secondRow = electry::visuals::stringRowFraction (
-            1, electry::ElectryEngine::stringCount, 0.085f);
-        const auto rowSpacing = neck.getHeight() * (secondRow - firstRow);
         const auto rowY = neck.getY() + neck.getHeight()
             * electry::visuals::stringRowFraction (
-                  hoveredString, electry::ElectryEngine::stringCount, 0.085f);
+                  stringIndex, electry::ElectryEngine::stringCount, 0.085f);
+        return juce::Rectangle<float> (0.0f, rowY - rowSpacing * 0.46f,
+                                       static_cast<float> (getWidth()),
+                                       rowSpacing * 0.92f);
+    };
+
+    if (selectedString >= 0)
+    {
+        const auto selectedBounds = rowBounds (selectedString);
+        const bool focused = hasKeyboardFocus (true);
+        graphics.setColour (colours::accentBright.withAlpha (
+            focused ? 0.14f : 0.06f));
+        graphics.fillRoundedRectangle (selectedBounds, 2.0f);
+        graphics.setColour (colours::accentBright.withAlpha (
+            focused ? 0.78f : 0.34f));
+        graphics.drawRoundedRectangle (selectedBounds.reduced (0.5f), 2.0f,
+                                       focused ? 1.2f : 0.7f);
+    }
+
+    if (hoveredString >= 0 && hoveredString != selectedString)
+    {
         graphics.setColour (colours::accentBright.withAlpha (0.10f));
-        graphics.fillRoundedRectangle (
-            juce::Rectangle<float> (0.0f, rowY - rowSpacing * 0.46f,
-                                    static_cast<float> (getWidth()),
-                                    rowSpacing * 0.92f),
-            2.0f);
+        graphics.fillRoundedRectangle (rowBounds (hoveredString), 2.0f);
     }
 
     const auto neckX = neck.getX();
@@ -1493,7 +1558,8 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
                        56.0f, 0.8f);
 
     const std::array<const char*, sectionCount> titles {
-        "", "FRETBOARD  (CLICK HELD STRING TO REPICK)", "PERFORMANCE",
+        "", "FRETBOARD  (CLICK OR UP/DOWN / 1-8, SPACE/RETURN REPICKS)",
+        "PERFORMANCE",
         "CORE TONE & RESPONSE", "MASTER", "GUITAR BUILD", "PLAY DETAIL", "FX"
     };
 

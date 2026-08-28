@@ -133,6 +133,7 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
 
 private:
     struct StringRow
@@ -143,8 +144,10 @@ private:
     };
 
     std::array<StringRow, electry::ElectryEngine::stringCount> rows {};
+    int selectedString = -1;
     int hoveredString = -1;
 
+    void selectString (int stringIndex);
     int stringAtY (float y) const noexcept;
 };
 
