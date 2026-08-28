@@ -694,6 +694,9 @@ ElectryKnob::ElectryKnob (juce::String name)
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 78, 16);
     slider.setName (name);
+    slider.setTitle (name);
+    slider.setWantsKeyboardFocus (true);
+    slider.setHasFocusOutline (true);
     addAndMakeVisible (slider);
 
     label.setText (name, juce::dontSendNotification);

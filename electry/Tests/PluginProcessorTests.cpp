@@ -4103,6 +4103,13 @@ void testEditorRendering()
         expect (knobs[first]->getWidth() >= 44 && knobs[first]->getHeight() >= 110,
                 "knob fell below the compact control size: "
                     + knobs[first]->getName().toStdString());
+        expect (knobs[first]->slider.getTitle()
+                    == knobs[first]->slider.getName()
+                    && knobs[first]->slider.getTitle().isNotEmpty()
+                    && knobs[first]->slider.getWantsKeyboardFocus()
+                    && knobs[first]->slider.hasFocusOutline(),
+                "knob is not named and visibly keyboard-focusable: "
+                    + knobs[first]->getName().toStdString());
         for (auto* child : knobs[first]->getChildren())
             expect (knobs[first]->getLocalBounds().contains (child->getBounds()),
                     "knob child escaped its control bounds: "
