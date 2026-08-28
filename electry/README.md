@@ -1425,6 +1425,104 @@ for demo 04 and
 `20c612d85fd0b81ef4ae24885a7314afbdd47af92586b80c03aa2380ec3065e5`
 for demo 16. These demos remain demonstrations, not validation recordings.
 
+### Exact-eight fret-decay direction check
+
+The strongest new low-cost realism lead is measured, per-partial loop loss.
+[Vodka, Shapovalova, Ovcharenko and Avdieieva (2026)](https://doi.org/10.3390/vibration9030046)
+estimate frequency- and fret-dependent damping from three electric basses and
+show why a single two-point loss tilt cannot represent every string and fret.
+Their E strings trend toward less damping higher up the fretboard, their G and
+D strings trend toward more, and their A-string direction depends on the
+instrument. The paper is CC BY 4.0, but its linked
+[data/code repository](https://github.com/a-vodka/stingsoundgenerator) has no
+licence; neither its code nor recordings enter Electry. Bass coefficients are
+not transferred to an eight-string guitar.
+
+The lawful exact-eight direction check uses the thirteen public high-quality
+previews in
+[cabled_mess's CC0 F#-string pack](https://freesound.org/people/cabled_mess/packs/29585/).
+The author identifies one clean/dry lowest-string stroke at each fret 0-12,
+recorded through an RME Babyface into Cubase 10.5. Each page identifies its
+login-only original as a mono 96 kHz, 24-bit WAV. The unauthenticated previews
+fetched on 2026-08-29 are mono 48 kHz MP3s; no third-party audio is committed.
+Their IDs, in fret order, and SHA-256 receipts are:
+
+```text
+fret  0  525010  bba14e50cf747a9e17426db0d9e378f5f24f8ddae8ed1f9772dd1fb830d8ac09
+fret  1  525013  c9f182f15d005ee0590e74db66d71be1edc7b4ff0657b2b4e63011092e3c972d
+fret  2  525011  d1e7638e2462014f4e0ad927c2a1f64f878b4238f0a7db5a4543b97325cacd6b
+fret  3  525003  8211ea474dd8db1bf537234dc4fafae51b1c291f67ba19b31073f485979c5953
+fret  4  525004  4f2227ed70bf3208f29285ebf2b3ce04a705ed3a4937545c1e69e253320d6ebc
+fret  5  525002  41999dea30b450c737131c1e6b22c00d40da69907678d5db414fc7e7d2659cd2
+fret  6  525008  2cc521f211871371a75bcc17030ff8e9bbf9c134dae7cd6b14c04c154bd5f346
+fret  7  525001  18cd049b1b9e0b6f3693d808094bdb8e469c750018c123b53c2bfbe012fed773
+fret  8  525006  ec558d3830448600157d8214ca90f193f8c1b9cf31a64ad548b3d1f5987ba472
+fret  9  525007  f92ea2b0ec9d4830ead8010a324654f7f0a3da968453a520a12fe40197afc7fe
+fret 10  525005  7fad5b916ab291fcaa25499b67d21b84d269b780c7c455bc19aed244e0508ad6
+fret 11  525012  a1d947ab03d148d64cedaea7a3b41796d1a6dbacca454c5bb6d70f30a205e6a7
+fret 12  525009  541754d503d91831e6ba0fdd739a0452566374605b1c32eaca48f6b69029f34c
+```
+
+Every preview URL follows
+`https://cdn.freesound.org/previews/525/<ID>_5450487-hq.mp3`; the individual
+sound page is `https://freesound.org/people/cabled_mess/sounds/<ID>/`.
+Receipts used FFmpeg/ffprobe 8.1.1. Analysis used Python 3.11.0, NumPy 1.26.4
+and SciPy 1.14.1. A centred 2 ms RMS envelope sets onset at 25% of its own
+first-second maximum. An 8,192-sample Hann STFT with a 512-sample hop and
+32,768-point FFT tracks each expected partial inside +/-0.28 fundamental.
+Theil-Sen lines fit 0.20-1.20 seconds; tracks need at least 8 dB of tail
+headroom, a median residual under 4 dB and a positive loss under 120 dB/s.
+The comparison below is the median amplitude loss of retained H2-H8 tracks.
+
+Shipping Electry at commit `d74a03761fe10070d6470dcff3f4859a1253bd92`
+was rendered dry at 48 kHz/256 frames, Bridge/Mono, Sustain/Down, velocity
+0.95, with sympathetic coupling, bridge-hand pressure and acoustic return off.
+The regression seam forced physical string 8, so F#1-F#2 are model frets 2-14;
+the real F# string uses frets 0-12.
+
+| step / note | real loss | Electry loss | Electry - real |
+| ---: | ---: | ---: | ---: |
+| 0 / F#1 | 23.74 dB/s | 5.15 dB/s | -18.59 dB/s |
+| 1 / G1 | 23.51 dB/s | 4.89 dB/s | -18.62 dB/s |
+| 2 / G#1 | 19.07 dB/s | 5.30 dB/s | -13.77 dB/s |
+| 3 / A1 | 21.29 dB/s | 5.66 dB/s | -15.64 dB/s |
+| 4 / A#1 | 26.50 dB/s | 6.09 dB/s | -20.40 dB/s |
+| 5 / B1 | 20.04 dB/s | 5.93 dB/s | -14.11 dB/s |
+| 6 / C2 | 24.92 dB/s | 6.36 dB/s | -18.55 dB/s |
+| 7 / C#2 | 11.58 dB/s | 6.68 dB/s | -4.90 dB/s |
+| 8 / D2 | 33.15 dB/s | 7.11 dB/s | -26.04 dB/s |
+| 9 / D#2 | 27.52 dB/s | 7.60 dB/s | -19.92 dB/s |
+| 10 / E2 | 31.43 dB/s | 7.94 dB/s | -23.50 dB/s |
+| 11 / F2 | 38.13 dB/s | 7.65 dB/s | -30.49 dB/s |
+| 12 / F#2 | 27.32 dB/s | 8.50 dB/s | -18.82 dB/s |
+
+The real median is 24.92 dB/s and Electry's is 6.36 dB/s. The paired model
+minus real median is -18.625 dB/s, with a 5,000-resample whole-fret bootstrap
+95% interval of -20.402..-15.639 dB/s. Electry also rises almost perfectly
+with pitch (`rho = 0.9835`) where the take series is irregular (`rho =
+0.6484`). That is strong directional evidence that this slice of Electry's
+upper partials ring too long and too smoothly. It is not a calibration target:
+there is one MP3 stroke per fret, with unknown gauge, pick, pickup and player,
+and the instruments use different actual frets.
+
+Most importantly, fret and frequency are confounded. A robust fit of loss to
+log partial frequency plus fret gives a direct fret coefficient of +0.1348
+dB/s/fret for the real files and +0.0207 for Electry; their difference is
+-0.1141 with a paired bootstrap interval of -0.8026..+0.6117. The data do not
+identify a shipping fret coefficient, and the bass paper's opposite E-string
+direction reinforces that boundary.
+
+The CPU-bounded next experiment is therefore a capture-fitted, small
+higher-order minimum-phase loop-loss filter using the decay-time-weighted
+method of
+[Bank and Välimäki](https://research.aalto.fi/en/publications/robust-loss-filter-design-for-digital-waveguide-synthesis-of-stri/).
+It would be designed offline from repeated, licensed exact-eight partial
+decays, phase-compensated at the fundamental, then run as a fixed low-order IIR
+inside the existing waveguide. Order 1 remains A; orders 2 and 4 are candidates
+and must beat it on held-out partial-decay error, tuning, stability, blind
+listening and full-chain CPU deadlines. No harmonic bank, neural network or
+FDTD solver is added to the realtime path.
+
 ### Remaining realism gates
 
 Engineering tests and public datasets do not replace licensed Drop-E hardware
