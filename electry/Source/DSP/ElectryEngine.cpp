@@ -3863,8 +3863,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         }
     }
     // Velocity is the player's force axis; Pick Hardness is the plectrum's
-    // contact/release axis. The candidate keeps those independent instead of
-    // adding a second, unsupported displacement gain for a stiffer pick.
+    // contact/release axis. The shipping path keeps those independent instead
+    // of adding a second, unsupported displacement gain for a stiffer pick.
 #if ELECTRY_DECOUPLED_PICK_RELEASE
     // Keep the established nominal displacement at the documented default;
     // only its unsupported motion with the contact control is removed.

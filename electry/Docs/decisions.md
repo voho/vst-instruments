@@ -4,6 +4,21 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-08-28 — promote force-decoupled exact pick release
+
+In the sealed, whole-file-RMS-matched comparison the hidden mapping was A =
+the former shipping force-coupled approximate release makeup and B = the
+force-decoupled exact-digital-pole path. The user reported: “B is better.” This
+is listening feedback, not a physical measurement.
+
+Decision: promote B as the shipping default. MIDI velocity remains the player
+force axis; Pick Hardness changes plectrum contact and release spectrum without
+also multiplying displacement, and the implemented one-pole is normalised by
+its exact digital magnitude at the live picked fundamental. Keep
+`ELECTRY_DECOUPLED_PICK_RELEASE=OFF` only as the explicit legacy comparator.
+The preference selects this correction but does not establish that every
+reported metal/rock articulation or muddiness defect is solved.
+
 ## 2026-08-28 — promote the measured body path
 
 In the sealed, whole-file-RMS-matched follow-up the hidden mapping was A = the
