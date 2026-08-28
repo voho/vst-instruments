@@ -666,6 +666,61 @@ struct ElectryEngineTestAccess
         return result;
     }
 
+    struct AnalyticPickupTrajectory
+    {
+        std::array<float, 32> displacement {};
+        std::array<float, 32> faradayDifference {};
+    };
+
+    static AnalyticPickupTrajectory analyticReleasePickupTrajectory(
+        float period, float peak, float pluckFraction, float tapDelay,
+        float apertureLength, float coilSpacing)
+    {
+        ElectryEngine::Voice voice;
+        voice.vertical.clear();
+        voice.horizontal.clear();
+        voice.vertical.writeIndex = 317;
+        voice.horizontal.writeIndex = 317;
+        voice.vertical.currentDelay = period;
+        voice.horizontal.currentDelay = period;
+        voice.analyticReleaseAmplitude = peak;
+        voice.analyticReleasePluckFraction = pluckFraction;
+        voice.analyticReleaseHalfWidthFraction = 0.0f;
+        voice.excitationPolarity = 1.0f;
+        voice.verticalWeight = 1.0f;
+        voice.horizontalWeight = 0.0f;
+        ElectryEngine::seedReleasedDisplacement(
+            voice.vertical, peak, pluckFraction, 0.0f, 1.0f);
+        voice.pickupTapNeck.setDelay(tapDelay);
+        voice.apertureNeck.setWindow(apertureLength);
+        voice.coilPairNeck.setSpacing(coilSpacing, 0.60f);
+        ElectryEngine::primeReleasedPickupHistory(
+            voice, voice.pickupTapNeck,
+            voice.apertureNeck, voice.coilPairNeck);
+
+        AnalyticPickupTrajectory result;
+        float previous = 0.0f;
+        constexpr int mask = ElectryEngine::delayLineSize - 1;
+        for (std::size_t sample = 0; sample < result.displacement.size();
+             ++sample)
+        {
+            const float direct = voice.vertical.readFractional(period);
+            voice.vertical.line[static_cast<std::size_t>(
+                voice.vertical.writeIndex & mask)] = direct;
+            const float tapInput = 0.85f * (direct - 0.60f
+                * voice.vertical.readTap(voice.pickupTapNeck));
+            const float displacement = voice.apertureNeck.process(
+                voice.coilPairNeck.process(tapInput));
+            if (sample == 0)
+                previous = displacement;
+            result.displacement[sample] = displacement;
+            result.faradayDifference[sample] = displacement - previous;
+            previous = displacement;
+            voice.vertical.writeIndex = (voice.vertical.writeIndex + 1) & mask;
+        }
+        return result;
+    }
+
     static double playedLoopSquaredSum(const ElectryEngine& engine,
                                        int stringIndex) noexcept
     {
@@ -1582,6 +1637,130 @@ void testPassiveContactFoldedRingReference()
 }
 
 #if ELECTRY_ANALYTIC_RELEASE_IC
+void testAnalyticReleasePickupSpatialHistory()
+{
+    struct Case
+    {
+        double period;
+        double tapDelay;
+    };
+    // Default-Build open G3 at the 96 kHz internal rate: P=489.80162, bridge
+    // tap=26.66537, coil spacing=6.63144 and aperture=1.67531 samples. Its
+    // pickup lands beside the default pluck kink, so the first samples exercise
+    // cubic interpolation instead of remaining on one linear triangle segment.
+    // The rounded-period companion covers both delay classes.
+    constexpr std::array<Case, 2> cases {{
+        { 490.0, 26.6762 },
+        { 489.80162, 26.66537 }
+    }};
+    constexpr double peak = 0.08;
+    constexpr double pluck = 0.1069;
+    constexpr double perpendicularPickupWeight = 0.85;
+    constexpr double combDepth = 0.60;
+    constexpr double coilBalance = 0.60;
+    constexpr double coilSpacing = 6.63144;
+    constexpr double apertureLength = 1.67531;
+
+    for (const auto& test : cases)
+    {
+        // Independent d'Alembert reference: the held triangle is extended as
+        // one odd, periodic travelling rail, then sampled directly at the
+        // pickup positions. It deliberately shares no delay-line or pickup
+        // implementation with the engine path below.
+        const auto railAt = [&] (double cell)
+        {
+            double phase = (cell + 0.5) / test.period;
+            phase -= std::floor(phase);
+            const double position = 2.0 * std::min(phase, 1.0 - phase);
+            const double triangle = position <= pluck
+                ? position / pluck
+                : (1.0 - position) / (1.0 - pluck);
+            return 0.5 * peak * (phase < 0.5 ? 1.0 : -1.0) * triangle;
+        };
+        const auto cubicRailAt = [&] (double delay, double sample)
+        {
+            const double ceiling = std::ceil(delay);
+            const double t = ceiling - delay;
+            const double tMinus1 = t - 1.0;
+            const double tMinus2 = t - 2.0;
+            const double tPlus1 = t + 1.0;
+            const double y0 = railAt(ceiling - sample);
+            const double y1 = railAt(ceiling - 1.0 - sample);
+            const double y2 = railAt(ceiling - 2.0 - sample);
+            const double y3 = railAt(ceiling - 3.0 - sample);
+            return (y0 * (-t * tMinus1 * tMinus2)
+                    + y3 * (tPlus1 * t * tMinus1)) / 6.0
+                 + (y1 * (tPlus1 * tMinus1 * tMinus2)
+                    - y2 * (tPlus1 * t * tMinus2)) * 0.5;
+        };
+        const auto rawPickupAt = [&] (double sample)
+        {
+            return perpendicularPickupWeight
+                 * (cubicRailAt(test.period, sample)
+                    - combDepth * cubicRailAt(test.tapDelay, sample));
+        };
+        const auto coilPairAt = [&] (double sample)
+        {
+            const int whole = static_cast<int>(coilSpacing);
+            const double fraction = coilSpacing - whole;
+            const double recent = rawPickupAt(sample - whole);
+            const double older = rawPickupAt(sample - whole - 1);
+            const double secondCoil = recent + fraction * (older - recent);
+            return (rawPickupAt(sample) + coilBalance * secondCoil)
+                 / (1.0 + coilBalance);
+        };
+        const auto apertureAt = [&] (int sample)
+        {
+            const int whole = static_cast<int>(apertureLength);
+            const double fraction = apertureLength - whole;
+            double sum = 0.0;
+            for (int offset = 0; offset < whole; ++offset)
+                sum += coilPairAt(sample - offset);
+            sum += fraction * coilPairAt(sample - whole);
+            return sum / apertureLength;
+        };
+
+        const auto actual = TestAccess::analyticReleasePickupTrajectory(
+            static_cast<float>(test.period), static_cast<float>(peak),
+            static_cast<float>(pluck), static_cast<float>(test.tapDelay),
+            static_cast<float>(apertureLength),
+            static_cast<float>(coilSpacing));
+        double maximumDisplacementError = 0.0;
+        double squaredDisplacementError = 0.0;
+        double maximumFaradayError = 0.0;
+        for (std::size_t sample = 0; sample < actual.displacement.size();
+             ++sample)
+        {
+            const double expected = apertureAt(static_cast<int>(sample));
+            const double displacementError =
+                static_cast<double>(actual.displacement[sample]) - expected;
+            maximumDisplacementError = std::max(
+                maximumDisplacementError, std::abs(displacementError));
+            squaredDisplacementError += displacementError * displacementError;
+            const double expectedDifference = sample == 0
+                ? 0.0
+                : expected - apertureAt(static_cast<int>(sample) - 1);
+            maximumFaradayError = std::max(
+                maximumFaradayError,
+                std::abs(static_cast<double>(
+                             actual.faradayDifference[sample])
+                         - expectedDifference));
+        }
+        const double rmsDisplacementError = std::sqrt(
+            squaredDisplacementError / actual.displacement.size());
+        std::cout << "PROBE analytic pickup history period " << test.period
+                  << ": max " << maximumDisplacementError
+                  << ", RMS " << rmsDisplacementError
+                  << ", Faraday max " << maximumFaradayError << '\n';
+        expect(maximumDisplacementError < 2.0e-6,
+               "analytic release pickup history missed its spatial trajectory");
+        expect(maximumFaradayError < 2.0e-6,
+               "analytic release pickup history made a false Faraday edge");
+        expect(std::abs(actual.faradayDifference[0]) < 1.0e-9f,
+               "static analytic release made a sample-zero Faraday impulse");
+    }
+}
+
 void testAnalyticReleasedStringInitialCondition()
 {
     constexpr double pi = 3.14159265358979323846;
@@ -16308,6 +16487,7 @@ int main()
 {
     testPassiveContactFoldedRingReference();
 #if ELECTRY_ANALYTIC_RELEASE_IC
+    testAnalyticReleasePickupSpatialHistory();
     testAnalyticReleasedStringInitialCondition();
     testAnalyticReleaseMaximumRateAttackCost();
 #endif

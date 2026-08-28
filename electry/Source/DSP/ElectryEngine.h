@@ -638,15 +638,6 @@ private:
             cumulative = 0.0;
             writeIndex = 0;
         }
-#if ELECTRY_ANALYTIC_RELEASE_IC
-        void prime(float input) noexcept
-        {
-            reset();
-            for (int sample = 0; sample < apertureHistorySize; ++sample)
-                (void) process(input);
-        }
-#endif
-
         void setWindow(float lengthSamples) noexcept
         {
             lengthSamples = lengthSamples < 1.0f
@@ -710,14 +701,6 @@ private:
             history.fill(0.0f);
             writeIndex = 0;
         }
-#if ELECTRY_ANALYTIC_RELEASE_IC
-        void prime(float input) noexcept
-        {
-            history.fill(input);
-            writeIndex = 0;
-        }
-#endif
-
         void setSpacing(float delaySamples, float secondCoil) noexcept
         {
             balance = secondCoil;
@@ -1337,11 +1320,17 @@ private:
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
 #if ELECTRY_ANALYTIC_RELEASE_IC
+    static float releasedRailAtCell(
+        float cell, float delay, float peakAmplitude, float pluckFraction,
+        float halfWidthFraction, float polarityAndWeight) noexcept;
     static void seedReleasedDisplacement(PolarisationLoop& loop,
                                          float peakAmplitude,
                                          float pluckFraction,
                                          float halfWidthFraction,
                                          float polarityAndWeight) noexcept;
+    static void primeReleasedPickupHistory(
+        Voice& voice, const DelayTap& tap,
+        FractionalMovingAverage& aperture, CoilPairSum& coilPair) noexcept;
 #endif
     [[nodiscard]] static bool plectrumContacts(PlayStyle style, bool legato) noexcept;
     void drawStrokeVariation(Voice& voice, std::uint32_t state) noexcept;

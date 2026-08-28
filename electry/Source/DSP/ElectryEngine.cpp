@@ -407,12 +407,11 @@ void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value)
 }
 
 #if ELECTRY_ANALYTIC_RELEASE_IC
-void ElectryEngine::seedReleasedDisplacement(
-    PolarisationLoop& loop, float peakAmplitude, float pluckFraction,
+float ElectryEngine::releasedRailAtCell(
+    float cell, float delay, float peakAmplitude, float pluckFraction,
     float halfWidthFraction, float polarityAndWeight) noexcept
 {
-    const float delay = clampf(loop.currentDelay, 4.0f,
-                               static_cast<float>(delayLineSize - 8));
+    delay = clampf(delay, 4.0f, static_cast<float>(delayLineSize - 8));
     const float centre = clampf(pluckFraction, 0.001f, 0.999f);
     const float width = clampf(halfWidthFraction, 0.0f, 0.49f);
     const std::array<float, 3> positions {
@@ -422,6 +421,31 @@ void ElectryEngine::seedReleasedDisplacement(
     };
     constexpr std::array<float, 3> contactWeights { 0.25f, 0.5f, 0.25f };
     const float centreCompliance = centre * (1.0f - centre);
+    float phase = (cell + 0.5f) / delay;
+    phase -= std::floor(phase);
+    const float position = 2.0f * std::min(phase, 1.0f - phase);
+    float triangle = 0.0f;
+    for (std::size_t point = 0; point < positions.size(); ++point)
+    {
+        const float pick = positions[point];
+        const float displacement = position <= pick
+            ? position / pick
+            : (1.0f - position) / (1.0f - pick);
+        const float relativeCompliance = pick * (1.0f - pick)
+                                       / centreCompliance;
+        triangle += contactWeights[point] * relativeCompliance * displacement;
+    }
+    const float foldedSign = phase < 0.5f ? 1.0f : -1.0f;
+    return 0.5f * peakAmplitude * polarityAndWeight
+         * foldedSign * triangle;
+}
+
+void ElectryEngine::seedReleasedDisplacement(
+    PolarisationLoop& loop, float peakAmplitude, float pluckFraction,
+    float halfWidthFraction, float polarityAndWeight) noexcept
+{
+    const float delay = clampf(loop.currentDelay, 4.0f,
+                               static_cast<float>(delayLineSize - 8));
     const int mask = delayLineSize - 1;
     const int lastCell = static_cast<int>(std::ceil(delay));
 
@@ -431,26 +455,67 @@ void ElectryEngine::seedReleasedDisplacement(
     // rail magnitudes are the exact zero-initial-velocity condition.
     for (int cell = 0; cell <= lastCell; ++cell)
     {
-        float phase = (static_cast<float>(cell) + 0.5f) / delay;
-        phase -= std::floor(phase);
-        const float position = 2.0f * std::min(phase, 1.0f - phase);
-        float triangle = 0.0f;
-        for (std::size_t point = 0; point < positions.size(); ++point)
-        {
-            const float pick = positions[point];
-            const float displacement = position <= pick
-                ? position / pick
-                : (1.0f - position) / (1.0f - pick);
-            const float relativeCompliance = pick * (1.0f - pick)
-                                           / centreCompliance;
-            triangle += contactWeights[point] * relativeCompliance
-                      * displacement;
-        }
-        const float foldedSign = phase < 0.5f ? 1.0f : -1.0f;
         loop.line[static_cast<std::size_t>(
             (loop.writeIndex - 1 - cell) & mask)] +=
-                0.5f * peakAmplitude * polarityAndWeight
-                * foldedSign * triangle;
+            releasedRailAtCell(static_cast<float>(cell), delay, peakAmplitude,
+                               pluckFraction, halfWidthFraction,
+                               polarityAndWeight);
+    }
+}
+
+void ElectryEngine::primeReleasedPickupHistory(
+    Voice& voice, const DelayTap& tap, FractionalMovingAverage& aperture,
+    CoilPairSum& coilPair) noexcept
+{
+    // Coil spacing and aperture are spatial filters factored into causal time
+    // delays using x = c t. A non-uniform released triangle therefore cannot
+    // start from one constant history value: each delayed cell must contain
+    // the matching point on the odd-periodic travelling rail. Pre-rolling the
+    // existing cascade for its combined memory establishes exactly that state.
+    // Use the same four-point cubic sampling as the real ring so a kink or a
+    // fractional-period wrap is represented by the same discrete trajectory.
+    DelayTap verticalLoopTap;
+    verticalLoopTap.setDelay(voice.vertical.currentDelay);
+    DelayTap horizontalLoopTap;
+    horizontalLoopTap.setDelay(voice.horizontal.currentDelay);
+    coilPair.reset();
+    aperture.reset();
+    const int historySamples = coilPair.spacingWhole
+                             + aperture.windowWhole + 4;
+    for (int sample = -historySamples; sample < 0; ++sample)
+    {
+        const auto component = [&] (const DelayTap& loopTap, float period,
+                                    float weight)
+        {
+            const auto read = [&] (const DelayTap& spatialTap)
+            {
+                const float cell = static_cast<float>(spatialTap.offset
+                                                      - sample);
+                const auto rail = [&] (float offset)
+                {
+                    return releasedRailAtCell(
+                        cell + offset, period,
+                        voice.analyticReleaseAmplitude,
+                        voice.analyticReleasePluckFraction,
+                        voice.analyticReleaseHalfWidthFraction,
+                        voice.excitationPolarity * weight);
+                };
+                return spatialTap.c0 * rail(0.0f)
+                     + spatialTap.c1 * rail(-1.0f)
+                     + spatialTap.c2 * rail(-2.0f)
+                     + spatialTap.c3 * rail(-3.0f);
+            };
+            return read(loopTap) - pickupCombDepth * read(tap);
+        };
+        const float tapInput = 0.85f * component(
+                                       verticalLoopTap,
+                                       voice.vertical.currentDelay,
+                                       voice.verticalWeight)
+                             + 0.35f * component(
+                                       horizontalLoopTap,
+                                       voice.horizontal.currentDelay,
+                                       voice.horizontalWeight);
+        (void) aperture.process(coilPair.process(tapInput));
     }
 }
 #endif
@@ -5505,6 +5570,14 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
             voice.analyticReleasePluckFraction,
             voice.analyticReleaseHalfWidthFraction,
             voice.excitationPolarity * voice.horizontalWeight);
+        if (neckPathActive_)
+            primeReleasedPickupHistory(
+                voice, voice.pickupTapNeck,
+                voice.apertureNeck, voice.coilPairNeck);
+        if (bridgePathActive_)
+            primeReleasedPickupHistory(
+                voice, voice.pickupTapBridge,
+                voice.apertureBridge, voice.coilPairBridge);
         voice.analyticReleaseAmplitude = 0.0f;
         analyticReleaseSeeded = true;
     }
@@ -5606,23 +5679,6 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                            + coupling * (horizontalSample - verticalSample);
     const float horizontalIn = horizontalSample
                              + coupling * (verticalSample - horizontalSample);
-
-#if ELECTRY_ANALYTIC_RELEASE_IC
-    float analyticReleasePrimeNeck = 0.0f;
-    float analyticReleasePrimeBridge = 0.0f;
-    if (analyticReleaseSeeded)
-    {
-        const auto seedOnlyTap = [&] (const DelayTap& tap)
-        {
-            return 0.85f * (verticalIn
-                            - pickupCombDepth * vertical.readTap(tap))
-                 + 0.35f * (horizontalIn
-                            - pickupCombDepth * horizontal.readTap(tap));
-        };
-        analyticReleasePrimeNeck = seedOnlyTap(voice.pickupTapNeck);
-        analyticReleasePrimeBridge = seedOnlyTap(voice.pickupTapBridge);
-    }
-#endif
 
     // Excitation: contact noise, then the pick-release pulse, then the tail.
     float excitation = 0.0f;
@@ -5832,33 +5888,6 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         return (x + x * x * (0.55f + 0.30f * x)) * inverseDrive;
     };
 
-#if ELECTRY_ANALYTIC_RELEASE_IC
-    if (analyticReleaseSeeded)
-    {
-        const auto primePickup = [&] (float staticTap,
-                                      FractionalMovingAverage& aperture,
-                                      CoilPairSum& coilPair,
-                                      float drive, float driveInverse,
-                                      float& previousFlux)
-        {
-            // Before release the held triangle is static. Prime both temporal
-            // equivalents of the pickup's spatial aperture to that DC value,
-            // then prime Faraday's difference to the matching magnetic flux;
-            // only motion and the retained edge/noise can make voltage.
-            coilPair.prime(staticTap);
-            aperture.prime(staticTap);
-            previousFlux = voice.fluxScale
-                * magneticTransfer(staticTap, drive, driveInverse);
-        };
-        primePickup(analyticReleasePrimeNeck, voice.apertureNeck,
-                    voice.coilPairNeck, magneticDriveNeck_,
-                    magneticDriveNeckInverse_, voice.previousFluxNeck);
-        primePickup(analyticReleasePrimeBridge, voice.apertureBridge,
-                    voice.coilPairBridge, magneticDriveBridge_,
-                    magneticDriveBridgeInverse_, voice.previousFluxBridge);
-    }
-#endif
-
     // A pickup whose selector mix has faded to silence contributes nothing, so
     // its two fractional reads, spatial aperture, flux polynomial, induced-EMF
     // difference and guard are skipped outright. At the default Bridge setting
@@ -5890,6 +5919,10 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         tap = aperture.process(coilPair.process(tap));
         const float flux = voice.fluxScale
             * magneticTransfer(tap, drive, driveInverse);
+#if ELECTRY_ANALYTIC_RELEASE_IC
+        if (analyticReleaseSeeded)
+            previousFlux = flux;
+#endif
         // Faraday's law: a magnetic pickup outputs induced voltage,
         // proportional to d(Phi)/dt, rather than displacement itself.
         // Normalising the finite difference at 220 Hz preserves practical
