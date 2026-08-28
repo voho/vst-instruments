@@ -4128,6 +4128,52 @@ void testEditorRendering()
                 return child;
         return nullptr;
     };
+    const auto expectAccessibleChoiceStrip = [&] (const char* componentId)
+    {
+        auto* strip = findControl (componentId);
+        expect (strip != nullptr,
+                std::string ("missing choice strip ") + componentId);
+        if (strip == nullptr)
+            return;
+
+        expect (strip->getTitle().isNotEmpty(),
+                std::string (componentId) + " has no accessibility context");
+        int buttonCount = 0;
+        int selectedCount = 0;
+        for (auto* child : strip->getChildren())
+        {
+            auto* button = dynamic_cast<juce::TextButton*> (child);
+            if (button == nullptr)
+                continue;
+
+            ++buttonCount;
+            selectedCount += button->getToggleState() ? 1 : 0;
+            const auto expectedTitle = strip->getTitle() + ": "
+                                     + button->getButtonText();
+            expect (button->isToggleable()
+                        && button->getClickingTogglesState()
+                        && button->getRadioGroupId() != 0,
+                    std::string (componentId)
+                        + " choice is not an exclusive toggle button");
+            expect (button->getWantsKeyboardFocus()
+                        && button->hasFocusOutline(),
+                    std::string (componentId)
+                        + " choice is not visibly keyboard-focusable");
+            expect (button->getTitle() == expectedTitle,
+                    std::string (componentId)
+                        + " choice has no contextual accessibility title");
+        }
+        expect (buttonCount > 0 && selectedCount == 1,
+                std::string (componentId)
+                    + " does not expose exactly one selected choice");
+    };
+    for (const auto* componentId : {
+             "pickStyleStrip", "playStyleStrip", "playStyleKeyMode",
+             electry::parameters::pickupSelector,
+             electry::parameters::outputMode,
+             electry::parameters::ampModel })
+        expectAccessibleChoiceStrip (componentId);
+
     const auto effectiveDialSize = [&] (const char* componentId)
     {
         const auto* control = findControl (componentId);
@@ -4253,18 +4299,32 @@ void testEditorRendering()
         if (monoButton != nullptr && stereoButton != nullptr
             && twoXButton != nullptr)
         {
+            setParameterValue (processor, electry::parameters::outputMode, 1.0f);
+            expect (! monoButton->getToggleState()
+                        && stereoButton->getToggleState()
+                        && ! twoXButton->getToggleState(),
+                    "host output-mode change did not update its radio choice");
             twoXButton->onClick();
             expect (parameterValue (processor, electry::parameters::outputMode)
-                        > 1.5f,
+                        > 1.5f
+                        && ! monoButton->getToggleState()
+                        && ! stereoButton->getToggleState()
+                        && twoXButton->getToggleState(),
                     "2X editor button did not enable the second engine");
             stereoButton->onClick();
             expect (std::abs (parameterValue (
                                processor, electry::parameters::outputMode) - 1.0f)
-                        < 1.0e-5f,
+                        < 1.0e-5f
+                        && ! monoButton->getToggleState()
+                        && stereoButton->getToggleState()
+                        && ! twoXButton->getToggleState(),
                     "STEREO editor button did not select the stereo field");
             monoButton->onClick();
             expect (parameterValue (
-                        processor, electry::parameters::outputMode) < 0.5f,
+                        processor, electry::parameters::outputMode) < 0.5f
+                        && monoButton->getToggleState()
+                        && ! stereoButton->getToggleState()
+                        && ! twoXButton->getToggleState(),
                     "MONO editor button did not restore the summed DI");
         }
     }

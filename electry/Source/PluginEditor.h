@@ -62,7 +62,8 @@ class ElectryChoiceStrip final : public juce::Component
 {
 public:
     ElectryChoiceStrip (juce::String title, juce::StringArray choices,
-                        int maximumColumns = 8);
+                        int maximumColumns = 8,
+                        juce::String accessibilityTitle = {});
 
     std::function<void (int)> onChoice;
     void setSelectedIndex (int newIndex);
@@ -206,7 +207,9 @@ private:
     ElectryChoiceStrip pickupStrip {
         "PICKUP", { "NECK", "BOTH", "BRIDGE" }, 1
     };
-    ElectryChoiceStrip outputModeStrip { {}, { "MONO", "STEREO", "2X" } };
+    ElectryChoiceStrip outputModeStrip {
+        {}, { "MONO", "STEREO", "2X" }, 8, "OUTPUT MODE"
+    };
     ElectryChoiceStrip ampModelStrip {
         "AMP VOICE",
         { "AMERICAN CLEAN", "BRITISH CRUNCH", "MODERN HIGH-GAIN" }

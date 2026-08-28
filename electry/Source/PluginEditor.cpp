@@ -608,15 +608,24 @@ void ElectryKeyboardComponent::drawBlackNote (
 
 ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
                                         juce::StringArray choices,
-                                        int maximumColumns)
+                                        int maximumColumns,
+                                        juce::String accessibilityTitle)
     : titleText (std::move (title)),
       maxColumns (juce::jmax (1, maximumColumns))
 {
+    const auto choiceContext = accessibilityTitle.isNotEmpty()
+        ? std::move (accessibilityTitle)
+        : titleText;
+    setTitle (choiceContext);
+
     for (int index = 0; index < choices.size(); ++index)
     {
         auto button = std::make_unique<juce::TextButton> (choices[index]);
-        button->setClickingTogglesState (false);
-        button->setRadioGroupId (0);
+        button->setTitle (choiceContext + ": " + choices[index]);
+        button->setClickingTogglesState (true);
+        button->setRadioGroupId (1, juce::dontSendNotification);
+        button->setWantsKeyboardFocus (true);
+        button->setHasFocusOutline (true);
         button->onClick = [this, index]
         {
             setSelectedIndex (index);
