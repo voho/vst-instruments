@@ -1771,6 +1771,50 @@ void testAnalyticReleasedStringInitialCondition()
     const auto seeded = TestAccess::analyticReleaseSeed(
         static_cast<float>(period), peak, pluck);
 
+    // Keep the CPU-only geometry hoist sample-identical to the former helper,
+    // which prepared these invariants again for every delay-line cell.
+    const auto legacyRailAtCell = [] (float cell, float delay,
+                                      float peakAmplitude,
+                                      float pluckFraction,
+                                      float halfWidthFraction,
+                                      float polarityAndWeight)
+    {
+        delay = electry::clampf(
+            delay, 4.0f,
+            static_cast<float>(TestAccess::delayLineCapacity() - 8));
+        const float centre = electry::clampf(
+            pluckFraction, 0.001f, 0.999f);
+        const float width = electry::clampf(
+            halfWidthFraction, 0.0f, 0.49f);
+        const std::array<float, 3> positions {
+            electry::clampf(centre - width, 0.001f, 0.999f),
+            centre,
+            electry::clampf(centre + width, 0.001f, 0.999f)
+        };
+        constexpr std::array<float, 3> contactWeights {
+            0.25f, 0.5f, 0.25f
+        };
+        const float centreCompliance = centre * (1.0f - centre);
+        float phase = (cell + 0.5f) / delay;
+        phase -= std::floor(phase);
+        const float position = 2.0f * std::min(phase, 1.0f - phase);
+        float triangle = 0.0f;
+        for (std::size_t point = 0; point < positions.size(); ++point)
+        {
+            const float pick = positions[point];
+            const float displacement = position <= pick
+                ? position / pick
+                : (1.0f - position) / (1.0f - pick);
+            const float relativeCompliance = pick * (1.0f - pick)
+                                           / centreCompliance;
+            triangle += contactWeights[point] * relativeCompliance
+                      * displacement;
+        }
+        const float foldedSign = phase < 0.5f ? 1.0f : -1.0f;
+        return 0.5f * peakAmplitude * polarityAndWeight
+             * foldedSign * triangle;
+    };
+
     expect(seeded.cells.size() == static_cast<std::size_t>(period + 1),
            "analytic release did not initialise one cubic wrap guard");
     double mean = 0.0;
@@ -1805,10 +1849,30 @@ void testAnalyticReleasedStringInitialCondition()
            "folded analytic release did not reconstruct its triangular shape");
     expect(std::abs(mean) < 1.0e-9,
            "folded analytic release introduced delay-line DC");
+    bool pointSeedBitExact = true;
+    for (std::size_t cell = 0; cell < seeded.cells.size(); ++cell)
+    {
+        pointSeedBitExact = pointSeedBitExact
+            && seeded.cells[cell] == legacyRailAtCell(
+                   static_cast<float>(cell), static_cast<float>(period),
+                   peak, pluck, 0.0f, 1.0f);
+    }
+    expect(pointSeedBitExact,
+           "prepared analytic point release changed a delay-line sample");
 
     constexpr float contactHalfWidth = 0.012f;
     const auto patchSeed = TestAccess::analyticReleaseSeed(
         static_cast<float>(period), peak, pluck, contactHalfWidth);
+    bool patchSeedBitExact = true;
+    for (std::size_t cell = 0; cell < patchSeed.cells.size(); ++cell)
+    {
+        patchSeedBitExact = patchSeedBitExact
+            && patchSeed.cells[cell] == legacyRailAtCell(
+                   static_cast<float>(cell), static_cast<float>(period),
+                   peak, pluck, contactHalfWidth, 1.0f);
+    }
+    expect(patchSeedBitExact,
+           "prepared finite-width release changed a delay-line sample");
     double maximumPatchDifference = 0.0;
     const std::array<double, 3> patchPositions {
         pluck - contactHalfWidth, pluck, pluck + contactHalfWidth

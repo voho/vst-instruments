@@ -1320,9 +1320,18 @@ private:
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
 #if ELECTRY_ANALYTIC_RELEASE_IC
-    static float releasedRailAtCell(
-        float cell, float delay, float peakAmplitude, float pluckFraction,
+    struct ReleasedRail
+    {
+        float delay { 4.0f };
+        float scale { 0.0f };
+        std::array<float, 3> positions {};
+        std::array<float, 3> relativeCompliance {};
+    };
+    static ReleasedRail prepareReleasedRail(
+        float delay, float peakAmplitude, float pluckFraction,
         float halfWidthFraction, float polarityAndWeight) noexcept;
+    static float releasedRailAtCell(float cell,
+                                    const ReleasedRail& rail) noexcept;
     static void seedReleasedDisplacement(PolarisationLoop& loop,
                                          float peakAmplitude,
                                          float pluckFraction,

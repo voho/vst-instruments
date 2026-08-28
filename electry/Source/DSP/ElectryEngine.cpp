@@ -407,37 +407,50 @@ void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value)
 }
 
 #if ELECTRY_ANALYTIC_RELEASE_IC
-float ElectryEngine::releasedRailAtCell(
-    float cell, float delay, float peakAmplitude, float pluckFraction,
+ElectryEngine::ReleasedRail ElectryEngine::prepareReleasedRail(
+    float delay, float peakAmplitude, float pluckFraction,
     float halfWidthFraction, float polarityAndWeight) noexcept
 {
-    delay = clampf(delay, 4.0f, static_cast<float>(delayLineSize - 8));
+    ReleasedRail rail;
+    rail.delay = clampf(delay, 4.0f,
+                        static_cast<float>(delayLineSize - 8));
     const float centre = clampf(pluckFraction, 0.001f, 0.999f);
     const float width = clampf(halfWidthFraction, 0.0f, 0.49f);
-    const std::array<float, 3> positions {
+    rail.positions = {
         clampf(centre - width, 0.001f, 0.999f),
         centre,
         clampf(centre + width, 0.001f, 0.999f)
     };
-    constexpr std::array<float, 3> contactWeights { 0.25f, 0.5f, 0.25f };
+    rail.scale = 0.5f * peakAmplitude * polarityAndWeight;
     const float centreCompliance = centre * (1.0f - centre);
-    float phase = (cell + 0.5f) / delay;
+    for (std::size_t point = 0; point < rail.positions.size(); ++point)
+    {
+        const float pick = rail.positions[point];
+        rail.relativeCompliance[point] =
+            pick * (1.0f - pick) / centreCompliance;
+    }
+    return rail;
+}
+
+float ElectryEngine::releasedRailAtCell(float cell,
+                                        const ReleasedRail& rail) noexcept
+{
+    float phase = (cell + 0.5f) / rail.delay;
     phase -= std::floor(phase);
     const float position = 2.0f * std::min(phase, 1.0f - phase);
     float triangle = 0.0f;
-    for (std::size_t point = 0; point < positions.size(); ++point)
+    constexpr std::array<float, 3> contactWeights { 0.25f, 0.5f, 0.25f };
+    for (std::size_t point = 0; point < rail.positions.size(); ++point)
     {
-        const float pick = positions[point];
+        const float pick = rail.positions[point];
         const float displacement = position <= pick
             ? position / pick
             : (1.0f - position) / (1.0f - pick);
-        const float relativeCompliance = pick * (1.0f - pick)
-                                       / centreCompliance;
-        triangle += contactWeights[point] * relativeCompliance * displacement;
+        triangle += contactWeights[point]
+                  * rail.relativeCompliance[point] * displacement;
     }
     const float foldedSign = phase < 0.5f ? 1.0f : -1.0f;
-    return 0.5f * peakAmplitude * polarityAndWeight
-         * foldedSign * triangle;
+    return rail.scale * foldedSign * triangle;
 }
 
 void ElectryEngine::seedReleasedDisplacement(
@@ -446,6 +459,9 @@ void ElectryEngine::seedReleasedDisplacement(
 {
     const float delay = clampf(loop.currentDelay, 4.0f,
                                static_cast<float>(delayLineSize - 8));
+    const auto rail = prepareReleasedRail(
+        delay, peakAmplitude, pluckFraction, halfWidthFraction,
+        polarityAndWeight);
     const int mask = delayLineSize - 1;
     const int lastCell = static_cast<int>(std::ceil(delay));
 
@@ -457,9 +473,7 @@ void ElectryEngine::seedReleasedDisplacement(
     {
         loop.line[static_cast<std::size_t>(
             (loop.writeIndex - 1 - cell) & mask)] +=
-            releasedRailAtCell(static_cast<float>(cell), delay, peakAmplitude,
-                               pluckFraction, halfWidthFraction,
-                               polarityAndWeight);
+            releasedRailAtCell(static_cast<float>(cell), rail);
     }
 }
 
@@ -478,43 +492,44 @@ void ElectryEngine::primeReleasedPickupHistory(
     verticalLoopTap.setDelay(voice.vertical.currentDelay);
     DelayTap horizontalLoopTap;
     horizontalLoopTap.setDelay(voice.horizontal.currentDelay);
+    const auto verticalRail = prepareReleasedRail(
+        voice.vertical.currentDelay, voice.analyticReleaseAmplitude,
+        voice.analyticReleasePluckFraction,
+        voice.analyticReleaseHalfWidthFraction,
+        voice.excitationPolarity * voice.verticalWeight);
+    const auto horizontalRail = prepareReleasedRail(
+        voice.horizontal.currentDelay, voice.analyticReleaseAmplitude,
+        voice.analyticReleasePluckFraction,
+        voice.analyticReleaseHalfWidthFraction,
+        voice.excitationPolarity * voice.horizontalWeight);
     coilPair.reset();
     aperture.reset();
     const int historySamples = coilPair.spacingWhole
                              + aperture.windowWhole + 4;
     for (int sample = -historySamples; sample < 0; ++sample)
     {
-        const auto component = [&] (const DelayTap& loopTap, float period,
-                                    float weight)
+        const auto component = [&] (const DelayTap& loopTap,
+                                    const ReleasedRail& shape)
         {
             const auto read = [&] (const DelayTap& spatialTap)
             {
                 const float cell = static_cast<float>(spatialTap.offset
                                                       - sample);
-                const auto rail = [&] (float offset)
+                const auto sampleRail = [&] (float offset)
                 {
-                    return releasedRailAtCell(
-                        cell + offset, period,
-                        voice.analyticReleaseAmplitude,
-                        voice.analyticReleasePluckFraction,
-                        voice.analyticReleaseHalfWidthFraction,
-                        voice.excitationPolarity * weight);
+                    return releasedRailAtCell(cell + offset, shape);
                 };
-                return spatialTap.c0 * rail(0.0f)
-                     + spatialTap.c1 * rail(-1.0f)
-                     + spatialTap.c2 * rail(-2.0f)
-                     + spatialTap.c3 * rail(-3.0f);
+                return spatialTap.c0 * sampleRail(0.0f)
+                     + spatialTap.c1 * sampleRail(-1.0f)
+                     + spatialTap.c2 * sampleRail(-2.0f)
+                     + spatialTap.c3 * sampleRail(-3.0f);
             };
             return read(loopTap) - pickupCombDepth * read(tap);
         };
         const float tapInput = 0.85f * component(
-                                       verticalLoopTap,
-                                       voice.vertical.currentDelay,
-                                       voice.verticalWeight)
+                                       verticalLoopTap, verticalRail)
                              + 0.35f * component(
-                                       horizontalLoopTap,
-                                       voice.horizontal.currentDelay,
-                                       voice.horizontalWeight);
+                                       horizontalLoopTap, horizontalRail);
         (void) aperture.process(coilPair.process(tapInput));
     }
 }
