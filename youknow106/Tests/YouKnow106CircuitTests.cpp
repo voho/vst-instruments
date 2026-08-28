@@ -1504,18 +1504,18 @@ void testResonanceLeavesTheCornerAloneBelowOscillation()
            "gain the service trim sets");
 }
 
-void testCircuitDerivedResonanceCandidate()
+void testCircuitDerivedResonanceProfile()
 {
     using Voiced = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
     using Derived = YouKnow106Engine::CircuitDerivedResonanceProfile;
 
-    // The candidate shape is linear in the stored byte above one
+    // The shipping shape is linear in the stored byte above one
     // emitter-junction drop of the drawn 0..+10 V control chain, sharing the
-    // voiced profile's amplitude-anchored endpoint. It is selectable, never
-    // the default: OQ-09's measured family owns the shape and the A-Z rules
-    // own the choice between these two defensible candidates.
-    expect(!EngineParameters {}.useCircuitDerivedResonanceShape,
-           "the circuit-derived resonance shape became a silent default");
+    // voiced profile's amplitude-anchored endpoint. OQ-09's measured family
+    // still owns the final calibration, but this traced topology is the
+    // stronger default prior than the retained compatibility voicing.
+    expect(EngineParameters {}.useCircuitDerivedResonanceShape,
+           "the default left the circuit-derived resonance shape");
 
     expectNear(Derived::controlFullScaleVolts, 10.0 * 4064.0 / 4096.0, 0.0,
                "the derived profile's full-scale voltage left the p. 8 "
@@ -3421,6 +3421,10 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
     constexpr double target = 0.200e-3;
     constexpr double upperBound = 0.200e-3 * 1.0057900;  // +0.05 dB
     constexpr double lowerBound = 0.200e-3 * 0.8912509;  // -1.00 dB
+    const double inferredDefault = 1.5 / std::pow(10.0, 88.0 / 20.0);
+    expectNear(static_cast<double>(Chorus::defaultNoiseScale) * target,
+               inferredDefault, 1.0e-9,
+               "the default HISS scale left its declared 1.5 Vrms / 88 dB policy");
     std::array<double, 4> recoveredByRateAndMode {};
     std::size_t resultIndex = 0;
 
@@ -4054,8 +4058,10 @@ void testChorusRateChangePreservesPhysicalState()
 void testBucketBrigadeDatasheetAnchors()
 {
     // Measure the static line transfer independently of the delay and support
-    // filters. The two amplitudes are the MN3009 datasheet's own distortion
-    // conditions, converted through the model's 2.6 V-per-unit node scale.
+    // filters. The first amplitude is the MN3009 datasheet table's typical
+    // distortion condition; the second is read from its typical THD-Vi curve.
+    // The 1.5 Vrms row is a guaranteed minimum input swing at the 2.5% THD
+    // criterion, so it remains an upper bound rather than a fitted point.
     const auto thdAt = [](double rmsVolts) {
         constexpr int samples = 32768;
         constexpr int cycles = 37;
@@ -4095,8 +4101,10 @@ void testBucketBrigadeDatasheetAnchors()
 
     expectNear(thdAt(0.78), 0.003, 2.0e-4,
                "BBD distortion at the 0.78 Vrms datasheet condition");
-    expectNear(thdAt(1.5), 0.025, 1.0e-3,
-               "BBD distortion at the 1.5 Vrms input-swing condition");
+    expectNear(thdAt(2.0), 0.020, 1.0e-3,
+               "BBD distortion at the typical curve's 2.0 Vrms point");
+    expect(thdAt(1.5) <= 0.025,
+           "BBD distortion exceeded the 1.5 Vrms guaranteed input-swing bound");
 
     // The datasheet's -3 dB response at 12 kHz / 40 kHz describes the complete
     // held-output device. The rendered line already supplies the rectangular
@@ -4198,14 +4206,18 @@ void testBbdTransferApproximationTracksItsReference()
     // part of the regression rather than relying on a uniform scan to land on
     // them by chance.
     constexpr float level = 1.1246614f;
-    constexpr float exponent = 3.4541951f;
+    constexpr float curvature = 1.2044546f;
+    constexpr float exponent = 12.9395323f;
     constexpr int intervals = 512;
     const auto reference = [](float input) {
         const double magnitude = std::abs(static_cast<double>(input));
         const double normalised = magnitude / level;
-        return static_cast<float>(
-            static_cast<double>(input)
-            / algebraicSoftClipDenominator(normalised, exponent));
+        const double base = 1.0
+            + static_cast<double>(curvature) * normalised * normalised
+            + std::pow(normalised, static_cast<double>(exponent));
+        const double denominator = std::pow(
+            base, 1.0 / static_cast<double>(exponent));
+        return static_cast<float>(static_cast<double>(input) / denominator);
     };
     expect(!std::signbit(YouKnow106TestAccess::bbdTransfer(0.0f))
                && std::signbit(YouKnow106TestAccess::bbdTransfer(-0.0f)),
@@ -5957,7 +5969,7 @@ int main()
     testStoredControlDigitalVectors();
     testResonanceLeavesTheCornerAloneBelowOscillation();
     testVoicedResonanceCompatibilityProfile();
-    testCircuitDerivedResonanceCandidate();
+    testCircuitDerivedResonanceProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
     testPwmDutyCycleDefensiveGuard();

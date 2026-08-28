@@ -498,14 +498,19 @@ struct YouKnow106TestAccess
         constexpr std::array<double, 5> lowerRateHostRates {
             8000.0, 44100.0, 48000.0, 88200.0, 96000.0
         };
+        constexpr std::array resonanceShapes { false, true };
         constexpr float twoPi = 6.28318530717958647692f;
         ShippingWiringContract result;
-        result.expectedProbes = hqEnabled
+        const std::size_t rateCount = hqEnabled
             ? hqHostRates.size() : lowerRateHostRates.size();
+        result.expectedProbes = resonanceShapes.size() * rateCount;
         for (std::size_t probe = 0; probe < result.expectedProbes; ++probe)
         {
+            const bool circuitDerivedShape =
+                resonanceShapes[probe / rateCount];
+            const std::size_t rateIndex = probe % rateCount;
             const double hostRate = hqEnabled
-                ? hqHostRates[probe] : lowerRateHostRates[probe];
+                ? hqHostRates[rateIndex] : lowerRateHostRates[rateIndex];
             YouKnow106Engine engine;
             engine.prepare(hostRate, 1, hqEnabled);
             EngineParameters parameters;
@@ -516,6 +521,7 @@ struct YouKnow106TestAccess
             parameters.noiseLevel = 0.0f;
             parameters.enableVcfStageOffsets = false;
             parameters.enableSpatialThermalGradient = false;
+            parameters.useCircuitDerivedResonanceShape = circuitDerivedShape;
             engine.setParameters(parameters);
 
             const int card = static_cast<int>(
@@ -569,10 +575,13 @@ struct YouKnow106TestAccess
             };
             const auto mapHeld = [&](double cutoffCounts,
                                      double resonanceCv) {
-                const float feedback =
-                    YouKnow106Engine::VoicedResonanceCompatibilityProfile::
-                        loopGain(std::clamp(
-                            static_cast<float>(resonanceCv), 0.0f, 1.0f));
+                const float panel = std::clamp(
+                    static_cast<float>(resonanceCv), 0.0f, 1.0f);
+                const float feedback = circuitDerivedShape
+                    ? YouKnow106Engine::CircuitDerivedResonanceProfile::
+                        loopGain(panel)
+                    : YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+                        loopGain(panel);
                 const float cutoffHz = YouKnow106Engine::vcfEffectiveCutoffHz(
                     static_cast<float>(cutoffCounts), feedback);
                 const float limited = std::min(

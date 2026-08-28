@@ -8,12 +8,12 @@ namespace youknow106
 {
 
 // Generalized algebraic soft clip: exactly linear as the normalised magnitude
-// approaches zero and bending only as it approaches 1. Three independent
-// sites fit this same shape. The engine's VCF saturation uses this generalized
-// denominator directly; the BBD write tabulates the same reference through
-// four rails and falls back to this helper beyond them. The output summer's
-// fixed exponent-eight specialization uses equivalent multiplies and roots.
-// This file already builds standalone, so the shared primitive sits here.
+// approaches zero and bending only as it approaches 1. The engine's VCF
+// saturation uses this denominator directly, and the output summer's fixed
+// exponent-eight specialization uses equivalent multiplies and roots. The BBD
+// write uses the constrained quadratic variant documented in Chorus.cpp.
+// This file already builds standalone, so the shared two-term primitive sits
+// here.
 // Evaluated in double so an extreme finite float still approaches the bound
 // instead of overflowing an intermediate power and folding back to zero.
 [[nodiscard]] inline double algebraicSoftClipDenominator(
@@ -124,19 +124,18 @@ public:
     //
     // This is the same datasheet the model already treats as anchored for
     // bandwidth (-3 dB at 12 kHz, see `transferSmear`) and for distortion
-    // (0.3% at 0.78 Vrms and 2.5% at 1.5 Vrms, see `bbdTransfer`). Its noise
-    // row reads **0.2 mVrms max, A-weighted**, and that is the figure below.
+    // (0.3% typical at 0.78 Vrms, see `bbdTransfer`). Its noise row reads
+    // **0.2 mVrms max, A-weighted**, and that is the full-scale figure below.
     //
     // The datasheet's own two noise figures disagree by 10.5 dB: the 0.2 mVrms
     // A-weighted *maximum* against the ~59.7 uVrms implied by its S/N 88 dB
-    // *typical* at the 1.5 Vrms maximum input. The target is therefore a
-    // bracket, and landing on its conservative end is a choice inside that
-    // bracket rather than a derivation from it. The guaranteed maximum is
-    // chosen because it is the guaranteed figure, and because any lower value
-    // is close to indistinguishable from the bit-exact zero the same fixture
-    // renders with the chorus switched out. The 10.5 dB bracket is recorded in
-    // the research contract so a later pass inherits it rather than
-    // rediscovering it as a contradiction.
+    // *typical* at the 1.5 Vrms guaranteed input swing. The target is therefore
+    // a bracket rather than one specified typical noise voltage. Keep the
+    // maximum as Chorus Noise 1.0, but ship the inferred quieter end as the
+    // control default: 1.5 Vrms / 88 dB = 59.716 uVrms, or 0.29858 of the
+    // maximum. This combines a minimum swing with typical S/N, so it is a
+    // representative new-part policy rather than a claim that Panasonic
+    // specified a typical noise row.
     //
     // What this replaces is not a hardware measurement. The previous 1.0e-3
     // was a declared compatibility level carried forward from before OQ-03,
@@ -145,6 +144,7 @@ public:
     // agreement with an undocumented chain is not a fidelity claim in either
     // direction, so neither recording is used here.
     static constexpr float mn3009OutputNoiseAWeightedVrms = 0.200e-3f;
+    static constexpr float defaultNoiseScale = 0.29858038f;
 
     // The datasheet figure is a noise *voltage at the part's output*, so the
     // amplitude the line writes at each clock edge is not that number: what

@@ -3678,7 +3678,7 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     // Clamping to fix01's 0-1 would still silently discard the top half.
     result.calibration = std::isfinite(result.calibration)
         ? std::clamp(result.calibration, 0.0f, EngineParameters::calibrationCeiling) : 1.0f;
-    fix01(result.chorusNoise, 1.0f);
+    fix01(result.chorusNoise, Chorus::defaultNoiseScale);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
                            ? std::clamp(result.masterTuneCents, -50.0f, 50.0f)

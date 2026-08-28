@@ -147,10 +147,10 @@ struct EngineParameters
 
     // --- Controls the modelled hardware does not have ----------------------
     // Velocity zero and six voices are structurally hardware-aligned. Chorus
-    // Noise 1 preserves the MN3009-derived mode-I line floor and the reported
-    // approximate II-I lift; its absolute installed-unit PSD, stereo
-    // correlation and parasitic layers remain OQ-03 rather than a fully
-    // calibrated level.
+    // Chorus Noise defaults to the MN3009's inferred typical-S/N end; 1 keeps
+    // the datasheet maximum available. The reported approximate II-I lift is
+    // preserved; installed-unit PSD, stereo correlation and parasitic layers
+    // remain OQ-03 rather than a fully calibrated level.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
     // Exposed to the host as Unit Character: one master over every modelled
     // component tolerance, trimmer residual, thermal wander and optional
@@ -179,7 +179,7 @@ struct EngineParameters
     float calibration { 1.0f };
     // Bound for the affine blends above; see the note on `calibration`.
     static constexpr float calibrationCeiling = 2.0f;
-    float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
+    float chorusNoise { Chorus::defaultNoiseScale };
     int polyphony { 6 };           // 6 is the hardware voice count.
     // Numerical kernel only: Exact preserves the established sound and state;
     // ZonedHermite trades a bounded interpolation error for lower VCF CPU use.
@@ -214,14 +214,15 @@ struct EngineParameters
     // multiply the two profiles. OQ-03 still owns absolute level and causality.
     bool useChorusRateNoiseHypothesis { false };
     bool enableElectrolyticC14Nonlinearity { true };
-    // Off by default: substitutes CircuitDerivedResonanceProfile's
+    // On by default: uses CircuitDerivedResonanceProfile's
     // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
-    // BA662-family linear gm, 2026-08-20) for the voiced quadratic-then-linear
-    // panel curve. Same anchored endpoint, same compensation and frequency
-    // correction; only the shape between the ends changes. A listening-test
-    // switch under this repository's A-Z rules -- OQ-09's measured family
-    // still owns the shape, so neither candidate is promoted by it.
-    bool useCircuitDerivedResonanceShape { false };
+    // BA662-family linear gm, 2026-08-20) instead of the voiced quadratic-then-
+    // linear panel curve. Same anchored endpoint, same compensation and
+    // frequency correction; only the shape between the ends changes. False
+    // retains the legacy voiced curve for comparisons. OQ-09's measured
+    // family still owns the final calibration; the physical topology is the
+    // stronger prior in its absence.
+    bool useCircuitDerivedResonanceShape { true };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
@@ -459,8 +460,8 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
-    // OQ-09 shape candidate, selectable through
-    // `useCircuitDerivedResonanceShape` and never the silent default. The
+    // OQ-09 shipping shape, selectable through
+    // `useCircuitDerivedResonanceShape`. The
     // 2026-08-20 junction-level read of the module board's control chain --
     // shared 0..+10 V RESO CV hold, per-card series trimmer plus 27 kOhm into
     // a grounded-base 2SA1015-class stage, collector straight into the
@@ -472,9 +473,9 @@ public:
     // only the slope, which is exactly what the 4.8 Vp-p service adjustment
     // calibrates away, so the anchored endpoint is the voiced profile's own
     // `maximumFeedback` and the onset is the one new constant. Between those
-    // ends nothing here is measured: this is a derivable shape beside a
-    // voiced one, and OQ-09's measured response-versus-resonance family owns
-    // the decision.
+    // ends nothing here is measured: this is a derivable shape beside the
+    // retained voiced compatibility curve, and OQ-09's measured
+    // response-versus-resonance family can still supersede it.
     struct CircuitDerivedResonanceProfile
     {
         // Byte 127 -> aligned word 0x3F80 -> physical code 4064 on the
@@ -494,11 +495,11 @@ public:
         // profile shares the voiced profile's functions for both.
     };
 
-    // The generalized algebraic soft clip used by VCF saturation, and as the
-    // reference/fallback for the BBD write, is
+    // The two-term generalized algebraic soft clip used by VCF saturation is
     // `algebraicSoftClipDenominator` in YouKnow106Chorus.h. The output summer
     // fits the same curve with a fixed exponent of eight; its hot path spells
-    // that case as multiplies and square roots instead of general pow.
+    // that case as multiplies and square roots instead of general pow. The
+    // BBD's constrained quadratic variant and table live in Chorus.cpp.
 
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control

@@ -572,7 +572,8 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { calibration, 1 }, "Unit Character",
         calibrationRange, 1.0f, percentAttributes()));
-    layout.add (travel (chorusNoise, "Chorus Noise", 1.0f, percentAttributes()));
+    layout.add (travel (chorusNoise, "Chorus Noise",
+                        Chorus::defaultNoiseScale, percentAttributes()));
     // Taken from the engine rather than written out, so the host can never be
     // offered a voice count the engine would clamp away. The default is the
     // hardware's own six.

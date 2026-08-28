@@ -1,10 +1,43 @@
 # YouKnow106 — decision log
 
-Directions chosen by ear, recorded per the A–Z listening-test convention in
-the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
-never written up as though a measurement had settled it, and none of these
-closes an open question — the captures named under
+Model directions and listening verdicts. A choice made by ear is recorded as
+made by ear, never written up as though a measurement had settled it, and none
+of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
+
+## 2026-08-28 — Resonance control law
+
+The circuit-derived linear-above-junction profile is now the default. The
+module drawing traces the resonance CV through a grounded-base stage directly
+into the BA662 control input, whose transconductance is linear in control
+current; that is stronger physical evidence than the legacy quadratic-then-
+linear compatibility voicing. Both retain the same service-calibrated maximum,
+input compensation and self-oscillation correction, so this changes only the
+intermediate slider response and adds no DSP work.
+
+This is an evidence-priority decision under the realism/CPU goal, not a
+listening verdict and not a closure of OQ-09: the 0.6 V junction onset and
+0.2296 compensation coefficient still await a measured response family. The
+legacy voiced curve remains available behind the internal comparison switch.
+
+## 2026-08-28 — MN3009 transfer and default floor
+
+The chorus write transfer now distinguishes the MN3009's guaranteed input-swing
+limit from its typical distortion curve. It retains the existing 2.924 V rail,
+fits 0.3% THD at 0.78 Vrms and approximately 2% at 2.0 Vrms, and remains below
+the 2.5% guarantee at 1.5 Vrms. The prepared curve and slope changed, but the
+realtime path is still the same 512-interval Hermite lookup with the same cost.
+
+The datasheet specifies 0.2 mVrms A-weighted noise as a maximum and 88 dB S/N
+as typical, not a typical noise voltage. HISS 100% therefore remains the maximum
+endpoint, while new instances and factory controls default to 29.858%, the
+59.716 uVrms inference from 1.5 Vrms / 88 dB. This makes the uncertainty visible
+without changing saved values or tying noise to Unit Character. OQ-03 remains
+open for an identified, calibrated instrument's absolute PSD.
+
+A native Release benchmark against the pre-change tree measured the worst 1x
+scenario at +0.4% CPU (the others ranged from -0.04% to +0.2%), comfortably
+inside the goal's +20% ceiling.
 
 ## 2026-08-23 — VCF solver ladder
 
@@ -40,11 +73,6 @@ new defaults stand. Chosen by ear, not settled by a measurement.
 
 ## Pending
 
-- **Resonance shape (OQ-09).** An A/B was delivered 2026-08-20 and
-  re-verified byte-identical on the current engine 2026-08-21: A is the
-  shipping voiced curve, B the `CircuitDerivedResonanceProfile`. Selecting B
-  would make the circuit-derived shape the default. No verdict yet; either
-  way it is recorded here as chosen by ear.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.

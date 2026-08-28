@@ -48,13 +48,24 @@ constexpr float transferSmear = 0.8654743f;
 // Static transfer of the delay line, referred to the model's signal scale
 // (1.0 = 2.6 V at the node). A plain tanh with a 2.9 V asymptote already bends
 // too far below the rails: it gives about 1.2% THD at the part's 0.78 Vrms
-// test point instead of the specified typical 0.3%. This generalized algebraic
-// soft clip has the same approximately 2.9 V asymptote, while its exponent is
-// fitted jointly to 0.3% at 0.78 Vrms and 2.5% at the 1.5 Vrms input-swing
-// point. It stays linear through ordinary wet levels and bends rapidly near
-// the measured window rather than colouring every signal like a tanh.
+// test point instead of the specified typical 0.3%. The datasheet's 1.5 Vrms
+// input-swing row is a guaranteed minimum measured at the 2.5% THD criterion,
+// not a second typical-distortion anchor. This constrained algebraic clip keeps
+// the approximately 2.9 V asymptote while fitting 0.3% at 0.78 Vrms and the
+// typical curve's approximately 2% at 2.0 Vrms. Its quadratic term supplies
+// the gentle low-level bend independently of the steep near-rail closure.
 constexpr float bbdSaturationLevel = 1.1246614f; // 2.924 V at the node
-constexpr float bbdSaturationExponent = 3.4541951f;
+constexpr float bbdSaturationCurvature = 1.2044546f;
+constexpr float bbdSaturationExponent = 12.9395323f;
+
+double bbdTransferBase(double normalised) noexcept
+{
+    return 1.0
+         + static_cast<double>(bbdSaturationCurvature)
+               * normalised * normalised
+         + std::pow(normalised,
+                    static_cast<double>(bbdSaturationExponent));
+}
 
 // The fitted exponent is non-integral, so there is no multiply/root identity
 // analogous to the output summer's fixed eighth power. Sample the reference
@@ -81,11 +92,14 @@ const std::array<BbdTransferHermiteNode,
         const double normalised = bbdTransferHermiteLimit
             * static_cast<double>(index)
             / static_cast<double>(bbdTransferHermiteIntervals);
-        const double powered = std::pow(normalised, exponent);
-        const double base = 1.0 + powered;
+        const double squared = normalised * normalised;
+        const double base = bbdTransferBase(normalised);
         const double denominator = std::pow(base, 1.0 / exponent);
         result[index].value = normalised / denominator;
-        result[index].slope = 1.0 / (base * denominator);
+        result[index].slope =
+            (1.0 + static_cast<double>(bbdSaturationCurvature)
+                         * (1.0 - 2.0 / exponent) * squared)
+            / (base * denominator);
     }
     return result;
 }();
@@ -621,9 +635,16 @@ float Chorus::bbdTransfer(float input) noexcept
         return std::copysign(static_cast<float>(
             static_cast<double>(bbdSaturationLevel)
                 * interpolatedBbdTransfer(normalised)), input);
-    const double denominator = algebraicSoftClipDenominator(
-        normalised, static_cast<double>(bbdSaturationExponent));
-    return static_cast<float>(static_cast<double>(input) / denominator);
+    const double inverse = 1.0 / normalised;
+    const double exponent = static_cast<double>(bbdSaturationExponent);
+    const double correction = std::pow(
+        1.0
+            + static_cast<double>(bbdSaturationCurvature)
+                  * std::pow(inverse, exponent - 2.0)
+            + std::pow(inverse, exponent),
+        1.0 / exponent);
+    return std::copysign(static_cast<float>(
+        static_cast<double>(bbdSaturationLevel) / correction), input);
 }
 
 float Chorus::transferLossStep(float& state, float input) noexcept

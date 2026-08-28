@@ -126,7 +126,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::masterTune,  0.0f,   1.0e-5f },
     { parameters::velocity,    0.0f,   1.0e-5f },
     { parameters::calibration, 1.0f,   1.0e-5f },
-    { parameters::chorusNoise, 1.0f,   1.0e-5f },
+    { parameters::chorusNoise, Chorus::defaultNoiseScale, 1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
     { parameters::quality,

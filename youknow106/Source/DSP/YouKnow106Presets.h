@@ -46,7 +46,7 @@ struct Preset
         float masterTune { 0.0f };
         float velocity { 0.0f };
         float calibration { 1.0f };
-        float chorusNoise { 1.0f };
+        float chorusNoise { Chorus::defaultNoiseScale };
         int polyphony { 6 };
         // Deliberately no quality/oversampling entry. The internal rate is a
         // property of the machine the plug-in is running on, not of the sound,

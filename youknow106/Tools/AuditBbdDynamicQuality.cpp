@@ -158,7 +158,8 @@ constexpr double centreDelay = 0.0039;
 constexpr double sweepDelay = 0.0025;
 constexpr double transferSmear = 0.8654743;
 constexpr double saturationLevel = 1.1246614;
-constexpr double saturationExponent = 3.4541951;
+constexpr double saturationCurvature = 1.2044546;
+constexpr double saturationExponent = 12.9395323;
 constexpr double inputCouplingHz = 15.9155;
 constexpr double inputPassiveHz = 7234.0;
 constexpr double firstHz = 9688.0;
@@ -371,8 +372,10 @@ double randomFrom(std::uint32_t state)
 double saturate(double input)
 {
     const double normalised = std::abs(input) / saturationLevel;
-    return input / std::pow(1.0 + std::pow(normalised, saturationExponent),
-                            1.0 / saturationExponent);
+    const double base = 1.0
+        + saturationCurvature * normalised * normalised
+        + std::pow(normalised, saturationExponent);
+    return input / std::pow(base, 1.0 / saturationExponent);
 }
 
 struct Event
@@ -1620,24 +1623,24 @@ bool within(double actual, double expected, double tolerance) noexcept
 bool metricGoldensExact(const std::array<CellResult, 10>& cells)
 {
     constexpr std::array<double, 10> whole {
-        -63.093, -62.505, -61.445, -62.120, -61.457,
-        -62.129, -24.199, -25.715, -36.419, -37.891
+        -62.929, -62.373, -61.307, -61.982, -61.319,
+        -61.991, -24.140, -25.656, -36.362, -37.834
     };
     constexpr std::array<double, 10> modeOne {
-        -71.132, -65.847, -75.771, -76.386, -75.784,
-        -76.458, -24.203, -25.720, -36.462, -37.946
+        -70.915, -65.857, -75.649, -76.262, -75.663,
+        -76.336, -24.144, -25.662, -36.406, -37.890
     };
     constexpr std::array<double, 10> mute {
-        -69.614, -73.162, -75.391, -76.361, -75.889,
-        -76.575, -24.135, -25.644, -36.401, -37.889
+        -69.205, -72.829, -75.240, -76.242, -75.774,
+        -76.457, -24.083, -25.592, -36.350, -37.839
     };
     constexpr std::array<double, 10> modeTwo {
-        -60.819, -60.545, -58.597, -59.272, -58.608,
-        -59.280, -24.197, -25.712, -36.381, -37.842
+        -60.648, -60.380, -58.460, -59.135, -58.471,
+        -59.143, -24.138, -25.653, -36.322, -37.783
     };
     constexpr std::array<double, 10> residual {
-        -75.664, -76.378, -75.549, -76.229, -75.454,
-        -76.123, -24.841, -26.346, -36.993, -38.458
+        -75.668, -76.381, -75.555, -76.233, -75.461,
+        -76.128, -24.839, -26.344, -36.991, -38.457
     };
     constexpr std::array<double, 10> noiseLevel {
         0.072, 0.071, 0.072, 0.071, 0.072,

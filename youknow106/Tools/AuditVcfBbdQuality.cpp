@@ -178,7 +178,7 @@ constexpr double vcfHotReferenceConvergenceGate = 1.0e-4; // -80 dB
 constexpr double vcfHotResidualOffMaskGateDb = -60.0;
 constexpr double vcfHotOracleOffMaskGateDb = -85.0;
 constexpr double bbdAnalyticRelativeRmsGate = 0.01; // -40 dB
-constexpr double bbdLinearizationRelativeGate = 1.0e-6;
+constexpr double bbdLinearizationRelativeGate = 3.0e-5;
 constexpr double bbdOracleProjectionGainGateDb = 0.025;
 constexpr double bbdOracleOffMaskGateDb = -85.0;
 constexpr double bbdOracleImageTailGateDb = -120.0;
@@ -990,11 +990,12 @@ VcfMetrics auditVcf(double hostRate, int factor, const VcfOracle& oracle)
 // The BBD oracle is closed form and contains no numerical support grid.  Its
 // constants are an independent transcription of the documented component
 // values and fitted per-transfer pole.  At this deliberately low drive, the
-// production soft clip differs from its linear tangent by less than 1e-6.
+// production soft clip differs from its linear tangent by less than 3e-5.
 constexpr float bbdAmplitude = 0.02f;
 constexpr double bbdTransferSmear = 0.8654743;
 constexpr double bbdSaturationLevel = 1.1246614;
-constexpr double bbdSaturationExponent = 3.4541951;
+constexpr double bbdSaturationCurvature = 1.2044546;
+constexpr double bbdSaturationExponent = 12.9395323;
 constexpr double bbdInputCouplingHz = 15.9155;
 constexpr double bbdInputPassiveHz = 7234.316;
 constexpr double bbdFirstSallenKeyHz = 9688.043;
@@ -1232,9 +1233,11 @@ std::complex<double> bbdObservedImagePhasor(
 double bbdLinearizationRelativeBound(double driveAmplitude)
 {
     const double normalised = driveAmplitude / bbdSaturationLevel;
+    const double base = 1.0
+        + bbdSaturationCurvature * normalised * normalised
+        + std::pow(normalised, bbdSaturationExponent);
     const double gain = 1.0 / std::pow(
-        1.0 + std::pow(normalised, bbdSaturationExponent),
-        1.0 / bbdSaturationExponent);
+        base, 1.0 / bbdSaturationExponent);
     return 1.0 - gain;
 }
 
@@ -2504,7 +2507,7 @@ void selfTest(const AuditResult& audit)
             throw std::runtime_error(
                 "common-host BBD oracle capture length changed");
         constexpr std::array expectedLinearization {
-            2.423593e-7, 2.391281e-7
+            2.818738e-5, 2.796921e-5
         };
         constexpr std::array expectedProjectionDb {
             0.016142, 0.000012
