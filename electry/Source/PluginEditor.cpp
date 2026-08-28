@@ -1083,8 +1083,8 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
 
         // Tuning label.
         graphics.setColour (ringing ? colours::binding
-                                    : colours::dimText.withAlpha (0.65f));
-        graphics.setFont (juce::FontOptions (9.6f, juce::Font::bold));
+                                    : colours::dimText.withAlpha (0.72f));
+        graphics.setFont (juce::FontOptions (10.2f, juce::Font::bold));
         graphics.drawText (tuningNames[static_cast<std::size_t> (stringIndex)],
                            juce::Rectangle<float> (tuningArea.getX(), y - 6.0f,
                                                    tuningArea.getWidth(), 12.0f),
