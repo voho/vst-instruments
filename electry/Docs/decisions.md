@@ -4,6 +4,42 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-08-28 — retain the body-candidate direction, but widen its range
+
+In the body/build listening pass the user found little meaningful difference
+on Blues or the Guitar Build comparison, preferred B slightly on Metal and
+Rock, and then preferred the openly labelled candidate folder overall. Both
+versions were still described as muddy and insufficiently concrete,
+pronounced and well articulated; the Guitar Build range was explicitly too
+narrow. This is listening feedback, not a material measurement.
+
+Decision: retain the candidate's preferred sonic direction, but do not promote
+the superseded candidate formulation. Its transfer of three Ray mode ratios to
+unrelated Paté poles and its inferred termination loss fail the physical-evidence
+gate. Rebuild the experiment from Ray's three paired pickup-observed modes,
+keep unsupported Shape/Construction/Size laws inactive, and return a new
+level-matched comparison whose Build span and metal/rock articulation answer
+the reported weaknesses.
+
+## 2026-08-27 — prefer the analytic release direction, after bass correction
+
+In the sealed analytic-release comparison the user reported: “A has more bass
+but apart from that B sounds a bit better.” The hidden mapping was A = the
+shipping release initial condition and B = the analytic release candidate.
+Decision: keep B as the preferred direction, but do not enable that candidate
+as-is. First restore the missing low-frequency weight and re-run the objective
+stability, tuning and level rails; any remaining audible calibration must be
+returned as a new level-matched blind comparison. This is a by-ear selection,
+not a measurement-derived claim.
+
+## 2026-08-27 — retain the shipping parametric cabinet
+
+In the sealed measured-cabinet comparison the user reported: “prefer A.” The
+hidden mapping was A = the shipping six-biquad cabinet and B = the measured-IR
+candidate. Decision: retain the shipping cabinet and leave the measured-IR
+candidate disabled. Do not spend the next sound-design pass recalibrating or
+promoting the rejected candidate. This is a by-ear selection.
+
 One informal by-ear observation is now recorded: the user described the
 finite-contact Palm renders as “squishy” and short of body. It is product
 feedback, not a blinded A–Z result. The correction below was selected with

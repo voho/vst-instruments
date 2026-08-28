@@ -1800,19 +1800,25 @@ def _sample_index(seed: str, replicate: int, stratum: str, slot: int) -> int:
         retry += 1
 
 
-def _bootstrap(listener_rows: dict[str, dict[str, float]], seed: str) -> dict[str, Any]:
+def _bootstrap(listener_rows: dict[str, dict[str, int]], seed: str) -> dict[str, Any]:
     identification: list[float] = []
     preference: list[float] = []
     for replicate in range(BOOTSTRAP_REPLICATES):
-        replicate_values = {"identification": [], "preference": []}
+        identification_units = 0
+        preference_units = 0
         for stratum, participants in STRATA.items():
             sampled = [participants[_sample_index(seed, replicate, stratum, slot)]
                        for slot in range(15)]
-            for metric in replicate_values:
-                replicate_values[metric].append(
-                    sum(listener_rows[item][metric] for item in sampled) / 15.0)
-        identification.append(sum(replicate_values["identification"]) / 2.0)
-        preference.append(sum(replicate_values["preference"]) / 2.0)
+            identification_units += sum(
+                listener_rows[item]["identification"] for item in sampled)
+            preference_units += sum(
+                listener_rows[item]["preference"] for item in sampled)
+        # Each identification unit is one correct answer out of ten; each
+        # preference unit is half a point out of ten. Divide the complete
+        # two-stratum integer total once so Python's version-dependent float
+        # summation cannot change a frozen endpoint by one ulp.
+        identification.append(identification_units / 300.0)
+        preference.append(preference_units / 600.0)
     return {
         "identification_90_percentile_interval": [
             _percentile(identification, 0.05),
@@ -1835,7 +1841,7 @@ def score(answer_key_path: Path, response_directory: Path,
     core_rows: list[dict[str, Any]] = []
     repeat_agreement: list[int] = []
     scored_a_choices: list[int] = []
-    listener_rows: dict[str, dict[str, float]] = {}
+    listener_rows: dict[str, dict[str, int]] = {}
     for participant_key in key["participants"]:
         participant = participant_key["participant_id"]
         answers = {item["trial_id"]: item for item in responses[participant]["responses"]}
@@ -1870,8 +1876,11 @@ def score(answer_key_path: Path, response_directory: Path,
             repeat_source = repeat[f"{repeat_answer['physical_choice']}_source"]
             repeat_agreement.append(int(original_source == repeat_source))
         listener_rows[participant] = {
-            "identification": sum(row["identification"] for row in participant_core) / 10.0,
-            "preference": sum(row["electry_preference"] for row in participant_core) / 10.0,
+            "identification": sum(
+                int(row["identification"]) for row in participant_core),
+            "preference": sum(
+                int(2.0 * row["electry_preference"])
+                for row in participant_core),
         }
 
     identification_cells = {}

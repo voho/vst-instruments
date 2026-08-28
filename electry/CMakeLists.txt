@@ -31,6 +31,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ELECTRY_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
+option(ELECTRY_MEASURED_BODY_RESPONSE
+    "Build the default-off matched-material modal candidate" OFF)
+option(ELECTRY_MEASURED_MODERN_CABINET
+    "Build the default-off measured-IR Modern cabinet candidate" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -44,6 +48,7 @@ set(ELECTRY_DSP_HEADERS
     Source/DSP/DspMath.h
     Source/DSP/ElectryEngine.h
     Source/DSP/ElectryFx.h
+    Source/DSP/ModernCabinetIR.h
     Source/DSP/ElectryVisuals.h)
 
 add_library(ElectryDSP STATIC
@@ -54,6 +59,16 @@ target_include_directories(ElectryDSP
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
 target_compile_features(ElectryDSP PUBLIC cxx_std_20)
 set_target_properties(ElectryDSP PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(ELECTRY_MEASURED_MODERN_CABINET)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_MEASURED_MODERN_CABINET=1)
+endif()
+
+if(ELECTRY_MEASURED_BODY_RESPONSE)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_MEASURED_BODY_RESPONSE=1)
+endif()
 
 if(MSVC)
     target_compile_options(ElectryDSP PRIVATE /W4 /permissive-)
@@ -205,10 +220,16 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Electry.ElectryFx COMMAND ElectryFxTests)
-    if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+    # This suite renders about 140 seconds of stereo audio across the normal
+    # rate matrix and every nonlinear oversampling boundary. Debug and
+    # instrumented builds need the wider guard; optimised builds still retain
+    # a three-minute runaway bound.
+    if(CMAKE_CXX_FLAGS MATCHES "fsanitize"
+       OR CMAKE_BUILD_TYPE STREQUAL "Debug"
+       OR NOT CMAKE_BUILD_TYPE)
         set(ELECTRY_FX_TEST_TIMEOUT 600)
     else()
-        set(ELECTRY_FX_TEST_TIMEOUT 120)
+        set(ELECTRY_FX_TEST_TIMEOUT 300)
     endif()
     set_tests_properties(Electry.ElectryFx PROPERTIES
         TIMEOUT ${ELECTRY_FX_TEST_TIMEOUT})
@@ -222,9 +243,9 @@ if(BUILD_TESTING)
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(Electry.RenderDemos PROPERTIES TIMEOUT 60)
 
-        # Render, parse the JSON manifest with CMake's own JSON reader, and
-        # inspect every WAV header and payload size. This catches a writer
-        # that exits successfully after emitting a malformed comparison set.
+        # Render, exercise mutation-tested signal oracles, read every written
+        # float payload back, parse the JSON manifest with CMake's own reader,
+        # and inspect every WAV header and length.
         add_test(NAME Electry.RenderEvaluation
                  COMMAND ${CMAKE_COMMAND}
                          -DELECTRY_EVALUATION_RENDERER=$<TARGET_FILE:ElectryRenderEvaluation>
@@ -241,6 +262,10 @@ if(BUILD_TESTING)
             "$<TARGET_PROPERTY:Electry,JUCE_GENERATED_SOURCES_DIRECTORY>"
             "$<TARGET_PROPERTY:Electry,INCLUDE_DIRECTORIES>")
         target_compile_features(ElectryPluginProcessorTests PRIVATE cxx_std_20)
+        if(ELECTRY_MEASURED_BODY_RESPONSE)
+            target_compile_definitions(ElectryPluginProcessorTests PRIVATE
+                ELECTRY_MEASURED_BODY_RESPONSE=1)
+        endif()
 
         if(MSVC)
             target_compile_options(ElectryPluginProcessorTests PRIVATE /W4 /permissive-)
@@ -251,5 +276,65 @@ if(BUILD_TESTING)
 
         add_test(NAME Electry.PluginProcessor COMMAND ElectryPluginProcessorTests)
         set_tests_properties(Electry.PluginProcessor PROPERTIES TIMEOUT 60)
+
+        # Black-box the built product rather than linking the processor class:
+        # this catches a broken VST3 bundle, wrapper or exported host contract.
+        add_executable(ElectryVST3ArtifactSmokeTests
+            Tests/VST3ArtifactSmokeTests.cpp)
+        target_link_libraries(ElectryVST3ArtifactSmokeTests PRIVATE
+            juce::juce_audio_processors_headless)
+        target_compile_definitions(ElectryVST3ArtifactSmokeTests PRIVATE
+            JUCE_PLUGINHOST_VST3=1
+            ELECTRY_EXPECTED_VERSION="${PROJECT_VERSION}")
+        target_compile_features(ElectryVST3ArtifactSmokeTests PRIVATE cxx_std_20)
+        add_dependencies(ElectryVST3ArtifactSmokeTests Electry_VST3)
+
+        if(MSVC)
+            target_compile_options(ElectryVST3ArtifactSmokeTests PRIVATE
+                /W4 /permissive-)
+        else()
+            target_compile_options(ElectryVST3ArtifactSmokeTests PRIVATE
+                -Wall -Wextra -Wpedantic)
+        endif()
+
+        add_test(NAME Electry.VST3Artifact
+                 COMMAND ElectryVST3ArtifactSmokeTests
+                    "$<TARGET_GENEX_EVAL:Electry_VST3,$<TARGET_PROPERTY:Electry_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+        set_tests_properties(Electry.VST3Artifact PROPERTIES
+            TIMEOUT 60)
+
+        if(APPLE)
+            # Load the exact AU binary through its exported factory and Core
+            # Audio's process-local registration API. This avoids validating a
+            # stale component discovered in the user's global AU directories.
+            add_executable(ElectryAUArtifactSmokeTests
+                Tests/ValidateAUArtifact.cpp)
+            target_link_libraries(ElectryAUArtifactSmokeTests PRIVATE
+                "-framework AudioToolbox"
+                "-framework CoreFoundation")
+            target_compile_features(ElectryAUArtifactSmokeTests PRIVATE cxx_std_20)
+            target_compile_options(ElectryAUArtifactSmokeTests PRIVATE
+                -Wall -Wextra -Wpedantic)
+            add_dependencies(ElectryAUArtifactSmokeTests Electry_AU)
+
+            add_test(NAME Electry.AUArtifact
+                     COMMAND ElectryAUArtifactSmokeTests
+                        "$<TARGET_FILE:Electry_AU>")
+            set_tests_properties(Electry.AUArtifact PROPERTIES
+                TIMEOUT 60)
+        endif()
+    endif()
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME Electry.PrepareBlindListening
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Tests/PrepareBlindListeningTests.py")
+        add_test(NAME Electry.ScoreBlindListening
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ScoreBlindListeningTests.py")
+        set_tests_properties(
+            Electry.PrepareBlindListening Electry.ScoreBlindListening
+            PROPERTIES TIMEOUT 60)
     endif()
 endif()

@@ -15,6 +15,10 @@ Neck-through anchors. Internally that path co-moves wood damping, body mass,
 modal shape, joint/bridge construction, scale and Drop-E gauge; the fitted
 Drop-E build at 0.8 is the default. Pickup selector and type, Tone, Body
 Resonance amount, string age and all player/contact controls remain independent.
+The default-off measured-body comparison keeps the same one-control surface but
+moves Body Wood through its separately documented walnut-to-ash pair while
+visiting six curated scale/gauge setups. Size, Shape and Construction stay
+neutral.
 **Output Mode** is one three-choice Mono/Stereo/Double parameter; Double means
 two separately seeded complete engines, one mono performance per channel. The
 second player's picked wrist strokes also carry a deterministic 0-6 ms causal
@@ -237,6 +241,180 @@ a physically held note, while All Notes Off, Panic, prepare and release clear
 it. Channel and polyphonic pressure remain discarded. Exact eight-string lead
 captures are still required before rate, depth and onset can be called frozen.
 
+### Default-off matched-material modal experiment
+
+`ELECTRY_MEASURED_BODY_RESPONSE` defaults to `OFF`, so the shipping four-mode
+body path is unchanged. An `ON` build is an experiment, not a product claim:
+
+```bash
+cmake -S . -B build-measured-body -DCMAKE_BUILD_TYPE=Release \
+  -DELECTRY_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON \
+  -DELECTRY_MEASURED_BODY_RESPONSE=ON
+cmake --build build-measured-body --parallel
+ctest --test-dir build-measured-body --output-on-failure
+```
+
+[Ray, Kaljun and Straže](https://pmc.ncbi.nlm.nih.gov/articles/PMC8465587/)
+measured matched instruments under laboratory support conditions. Table 3 and
+the pickup-domain damping results
+give three paired body-pickup (`BP`) poles:
+
+| mode identity | walnut frequency / tan-delta | ash frequency / tan-delta |
+| --- | --- | --- |
+| 1 | 108.2 Hz / 0.119 | 119.0 Hz / 0.114 |
+| 2 | 200.5 Hz / 0.073 | 204.7 Hz / 0.072 |
+| 3 | 420.6 Hz / 0.046 | 440.4 Hz / 0.026 |
+
+The candidate pairs each pole only with its measured mate. For `w = Body Wood`
+it uses positive-domain interpolation
+
+`f = exp(lerp(log(f_walnut), log(f_ash), w))`
+
+and the same equation for tan-delta, with `Q = 1 / tan-delta`. The three direct
+resonator levels `[1.00, 0.68, 0.46]` are quiet voicing because Ray did not
+publish signed or absolute residues. The old candidate incorrectly converted
+the three paired-mode ratios into a smooth frequency law and applied it to six
+unrelated Paté poles. That transfer is removed.
+
+Ray found no significant material difference in open-string fundamental decay;
+differences began at E2 harmonic 2 and A2 harmonic 3. It also supplies no
+complex fret-specific mobility. The experiment therefore adds no termination
+loss: `bodyConductance = 0` and `bodyLossFactor = 1` exactly. Body Size, Shape
+and Construction are exact no-ops in this modal experiment. The candidate-only
+Guitar Build keeps `Wood` monotonic at its six `0.0, 0.2, ..., 1.0` anchors and
+holds the three inactive axes at `0.5`. Its Scale anchors are
+`[0, .2, .4, .6, .85, 1]`; Gauge is `[1, .8, .6, .4, 1, 0]`. These are curated
+short/heavy through extended/light instrument setups, not a material law. The
+0.8 default exactly preserves the fitted 27.63-inch heavy-set string setup,
+while the wider path does not relabel an invented shape or joint response.
+
+Across the six sampled Build positions, every adjacent E1/A2 step has a
+normalised residual of at least `0.0223`/`0.0276`, and the endpoint residuals
+are `0.8291` on E1 and `0.1443` on A2. Whole-render level spread stays below
+`0.49 dB`, so the new contrast is not a loudness shortcut. Direct-path levels
+are pinned separately rather than inferred from these phase-sensitive Build
+residuals: at 48 kHz the A2 direct-body/complete-pickup ratio is `-32.15 dB`,
+and modal-neighbourhood sweep maxima are `-34.68 dB` during attack and
+`-27.99 dB` settled.
+The previous candidate path measured only `0.0678` end to end on A2 and began
+with adjacent changes of `0.0095-0.0188`, matching the user's report that the
+range was insufficient.
+One body per species, unequal body mass, elastic support, mode-dependent sensor
+results and unavailable raw data prevent a universal tonewood claim.
+
+#### Shape evidence boundary and identification gate
+
+No reviewed source supplies a transferable law for Electry's carved
+single-cut-to-flat-slab Shape coordinate:
+
+- Paté's Appendix F is the strongest controlled outline comparison found. Its
+  four intentionally simplified finite-element guitars keep mahogany material
+  constants, neck, fingerboard, joint, total mass, volume and thickness fixed
+  while changing body and headstock symmetry. With the headstock held fixed,
+  body asymmetry shifts paired modes mostly about 0-4%, with one about 6-7%
+  and some higher modes moving downward. The study explicitly uses the simple
+  models to exaggerate trends and draw qualitative conclusions; it predicts a
+  modest, mode-dependent *symmetry* effect, not this carved/slab axis, and
+  supplies no measured damping or complex residues.
+- [Ray's dissertation](https://dk.um.si/IzpisGradiva.php?id=80688), sections
+  7.2.1 and 8.9.3, compares an ash laboratory block with an ash classical-body
+  finite-element model. It changes dimensions as well as outline, models the
+  body alone fixed at the neck interface, and does not validate the classical
+  model on an assembled instrument. Its ordered modal-frequency ratios of
+  `0.350114-0.640572` therefore combine size, mass distribution, outline and
+  possible mode crossings; importing them would be a large false Shape law.
+- [Russell's production-guitar comparison](https://www.acs.psu.edu/drussell/guitars/guitars-ASA.pdf)
+  contrasts a Coronet, Explorer and semi-hollow ES-335. Their materials,
+  construction and hardware co-vary, so the result cannot isolate outline.
+  Paté's more controlled neck-joint population likewise found within-group
+  variation comparable to between-group variation rather than a deterministic
+  Construction shift.
+
+An independent law therefore needs matched physical capture, not another
+scalar retune. The first study should identify exactly the current Shape axis,
+conditional on one material and joint:
+
+1. CNC two independent matched trios at `s = 0, 0.5, 1`: carved single-cut,
+   half-carved and flat single-cut. Randomise shape assignment within each
+   conditioned, grain-matched material lot. Keep the silhouette,
+   bridge-to-neck geometry, cavities, total wood volume, centre of mass and
+   principal inertias matched by CAD; measure the final 3-D geometry, mass,
+   moisture, density and dynamic-modulus coupons rather than correcting a poor
+   match with resonant ballast. Trio one is fit data and trio two stays blind as
+   a physical holdout.
+2. Transfer one neck, bridge, nut, tuners, pickup/harness, cable and electrical
+   load between bodies. Use locating features, threaded inserts, a fixed bolt
+   sequence, torque-controlled fasteners and preconditioned matched strings.
+   Fully disassemble and reassemble every body twice in random order, giving 12
+   assembly sessions that expose joint reseating variance.
+3. Suspend the assembled instrument on elastic straps with support modes below
+   20 Hz and damp the tuned strings for structural tests. With a calibrated
+   force hammer, scan 24 permanently indexed bridge, pocket, body, nut,
+   fret-line and headstock points while recording a bridge-reference
+   accelerometer or laser vibrometer and the pickup through a measured 1 MOhm
+   input. Retain complex force-normalised response from 20-1000 Hz, not just
+   peak frequencies.
+4. At representative bass-open, middle-fret-12 and treble-fret-12 string paths,
+   impact bridge and neck terminations in turn. From the signed two-port
+   mobility matrix, calculate the conductance actually seen by a string:
+
+   `Y_string = Y_bb + Y_nn - Y_bn - Y_nb`.
+
+   Simultaneous `V_DI/F_bridge` and `V_DI/F_neck` measurements supply the
+   complex vibro-electric residues that the current candidate lacks and
+   therefore replaces with voicing.
+   If the three termination curves do not collapse to a frequency-only law,
+   add a position map rather than averaging away the disagreement.
+5. Remove the damping and use a fixed-displacement wire-break plucker at
+   `x/L = 0.18`. Capture five untouched high-impedance DI and bridge-motion
+   takes for MIDI 35, 45, 55, 68, 71 and 77; these span the candidate's six
+   structural neighbourhoods. Extract partial decay as a held-out check on the
+   force-response identification.
+6. Fit stable common poles and complex residues jointly across the force
+   responses, then track modes between bodies with the 24-point modal assurance
+   criterion rather than sorted frequency. Fit endpoints on trio one only;
+   require the withheld midpoint and all of trio two to validate the proposed
+   one-dimensional interpolation. Archive raw channels, calibration, CAD and
+   sensor-position hashes, force signs, torque, environment and event timing.
+
+Minimum analysis gates are coherence at least 0.95 and response SNR at least
+30 dB across every retained modal band, reciprocal mobility within 1 dB and 10
+degrees, mode-shape MAC at least 0.90, and a held-out shape effect larger than
+three times pooled blank/reassembly deviation. The synthesised mobility must
+remain passive. A frequency, Q or residue that misses those gates remains
+shape-independent; passing poles must also predict the sign of decay-rate
+change on all six validation notes before blind listening.
+
+That study does not create a universal material-by-shape law. Such a claim
+requires repeating the complete trio design across multiple independent lots
+of each material and withholding entire bodies while fitting main effects and
+interactions. The shipping overall Guitar Build co-moves material, shape,
+construction, scale and gauge and therefore cannot identify Shape
+independently. The candidate path holds Shape exactly neutral, so its A/B says
+nothing about that axis either.
+
+Until that gate is met, Body Wood remains only the narrow three-mode Ray
+specimen morph above. Shape, Construction and Size remain inactive in the
+default-off experiment, and shipping remains unchanged.
+
+[Paté, Le Carrou and Fabre](https://www.lam.jussieu.fr/Membres/LeCarrou/Articles/A8_Pate_PredictingDecayTime.pdf)
+confirm why loading is excluded: their decay equation needs the conductance at
+each string partial and fret. They measured bridge conductance only up to
+`0.00176` m/(N s), selected fret/neck resonances around `0.018` m/(N s), and a
+full neck maximum of `0.102` m/(N s), but did not publish transferable complex
+spatial residues. A two-anchor or broadband scalar would not reproduce that
+partial- and position-dependent termination.
+
+[Elliott, Magill and Kendrick](https://salford-repository.worktribe.com/OutputFile/1490211)
+found the direct body-borne pickup contribution generally 30-50 dB below the
+complete voltage, apart from a local feature near 700 Hz. The regression keeps
+the Ray bank in that quiet end-to-end region through Electry's coils and output
+path, sweeps all three modal neighbourhoods through every pickup selector and
+both material endpoints, and pins exact zero bypass. These checks establish
+implementation fidelity and boundedness, not perceptual superiority. Promotion
+still requires identical-render, whole-file-level-matched blind listening
+across material-focused, metal, rock and blues renders.
+
 ### Historical CC0 Modern-cabinet audit
 
 [Jester Dyne's Brutal IR Pack](https://www.jester-dyne-productions.com/brutal-ir-pack/)
@@ -247,7 +425,10 @@ capture. Its SHA-256 is
 `420280d44a6cb969d0599aa88f7bc733e13d39cdd051acf8b0eda1d82286ba5f`;
 the source ZIP's is
 `299dc053f01ebd1e980459adc48f9c6b8a8c7af91917b4f946512eefdbb311ea`.
-Neither file is committed.
+Neither full file nor the handbook PDF is committed. Only the exact packed
+1,024-sample causal prefix is vendored in `Source/DSP/ModernCabinetIR.h`; its
+signed-24-bit little-endian PCM SHA-256 is
+`a9b7e39f38c38d820ff9b758577293b6d4cb5de03bb89090ef0763a7eb357d45`.
 
 At that checkpoint, the then-sole six-section cabinet—now the Modern
 High-Gain voice—and the IR were normalized over an equal-log
@@ -261,11 +442,12 @@ cabinet lost the integrated chain's low-mid-thump and presence rails, and the
 muted amp-plus-compressor level rose to +12.69 dB. A closer isolated magnitude
 curve is therefore not evidence of a better amplifier.
 
-The measured IR reaches its first peak at sample 7 (0.146 ms), contains 99% of
-its energy by 12.3 ms, and an onset-aligned 1,024-sample trim retains 99.636%
-of its energy with 0.495 dB smoothed response error against the full file over
-80 Hz-8 kHz. That makes one fixed, phase-preserved cabinet a defensible future
-upgrade without another user control.
+The measured IR reaches its first peak at sample 7 (0.146 ms), first crosses
+99% cumulative energy at sample 451 inclusive (452 samples, 9.42 ms), and its
+causal first 1,024 samples retain 99.636% of its energy with 0.495 dB smoothed
+response error against the full file over 80 Hz-8 kHz. That makes one fixed,
+phase-preserved cabinet a defensible future upgrade without another user
+control.
 
 The CC-BY-4.0 [EG-IPT archive](https://zenodo.org/records/15205644) is the
 strongest lawful held-out downstream check found for that candidate. Its
@@ -278,12 +460,16 @@ must not be deconvolved into another IR: the amplifier is nonlinear, its gain
 settings are not fully identified for that use, and the released guitar is a
 six-string whose range cannot validate Electry's E1 string mechanics.
 
-A direct stereo FIR would cost about
-98.3 million multiply-accumulates per second at 48 kHz, while a one-block
-1,024-sample convolver would add an unacceptable 21.3 ms. The production path
-therefore requires zero-added-latency partitioned convolution, prepare-time
-resampling, identical pre-cab level-matched renders and listener verification.
-Until then the shipping zero-latency filters stay unchanged.
+The cabinet remains inside the 8x nonlinear domain. At a 48 kHz host the
+1,024 source coefficients therefore prepare to 8,192 coefficients at 384 kHz;
+a correct direct stereo FIR would cost about 6.29 billion multiply-accumulates
+per second, while one 8,192-sample FFT block would add 21.3 ms. The default-off
+`ELECTRY_MEASURED_MODERN_CABINET` candidate instead evaluates taps 0-63
+directly, taps 64-511 in seven FFT-128 partitions and the rest in up to fifteen
+FFT-1024 partitions. The tier offsets pay their own block schedules, so it adds
+no algorithmic latency. The shipping zero-latency filters stay unchanged until
+identical pre-cab, whole-file-level-matched renders and listener verification
+select that direction.
 
 ## Reproducible model probes
 
@@ -1330,8 +1516,9 @@ The literature points toward player/contact detail before more resonators:
 3. Measured electric-guitar neck admittance varies by more than 40 dB across
    frequency and position
    ([ISMRA 2025](https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Ayudasaka_ismra2025.pdf)).
-   That supports capture-fitted dead spots and decay maps once a suitable set
-   exists; it does not justify inventing more modes now.
+   That supports measured-modal experiments and capture-fitted dead spots once
+   suitable data exist; it does not justify arbitrary extra modes, residues or
+   position maps.
 4. Magnetic pickups are usefully represented as a linear dynamic system around
    a static nonlinearity
    ([DAFx-18](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_39.pdf)).
@@ -2049,7 +2236,7 @@ study/seed/listener agreement, two non-overlapping holdout clusters, at least
 three mutually disconnected engineering-train clusters, two distinct practice
 sessions drawn from train, balanced cell-to-cluster assignments, every
 stimulus hash and exact selection/render/chain/analysis settings. The settings
-include the numerical listener gates and the current 4x common-chain effect
+include the numerical listener gates and the current 8x common-chain effect
 oversampling at 44.1 kHz, so an internally rehashed alternative setting is not
 accepted. Every core cell also freezes content, processing, frames, source
 cluster/session, capture take, slot/run and stroke, event/score record, and a

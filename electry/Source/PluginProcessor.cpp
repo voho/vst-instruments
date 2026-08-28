@@ -10,8 +10,8 @@
 
 namespace
 {
-constexpr std::array<const char*, 3> factoryProgramNames {
-    "Factory Default", "Drop-E Metal", "Mute / Dead DI"
+constexpr std::array<const char*, 4> factoryProgramNames {
+    "Factory Default", "Drop-E Metal", "Mute / Dead DI", "Blues Rock Lead"
 };
 
 struct FactoryParameterValue
@@ -48,12 +48,38 @@ constexpr std::array<FactoryParameterValue, 6> muteDeadDiValues {{
     { electry::parameters::sympathetic,   0.00f },
 }};
 
+// The host-representable version of 21-blues-rock-lead-study.wav's voicing.
+// The renderer writes gain directly, while the host control is quantised to
+// 0.1 dB; +3.2 dB is the nearest representable value to its 1.45 linear gain.
+constexpr std::array<FactoryParameterValue, 18> bluesRockLeadValues {{
+    { electry::parameters::pickupSelector, 0.00f },
+    { electry::parameters::pickupType,     0.56f },
+    { electry::parameters::tone,           0.78f },
+    { electry::parameters::bodyResonance,  0.62f },
+    { electry::parameters::stringAge,      0.20f },
+    { electry::parameters::pickPosition,   0.38f },
+    { electry::parameters::pickHardness,   0.52f },
+    { electry::parameters::fingerNoise,    0.48f },
+    { electry::parameters::bendTime,       0.15f },
+    { electry::parameters::velocity,       0.90f },
+    { electry::parameters::output,         3.20f },
+    { electry::parameters::outputMode,     1.00f },
+    { electry::parameters::distortion,     0.14f },
+    { electry::parameters::amp,            0.62f },
+    { electry::parameters::compressor,     0.28f },
+    { electry::parameters::delay,          0.18f },
+    { electry::parameters::room,           0.28f },
+    { electry::parameters::sympathetic,    0.35f },
+}};
+
 std::span<const FactoryParameterValue> valuesForProgram (int index) noexcept
 {
     if (index == 1)
         return dropEMetalValues;
     if (index == 2)
         return muteDeadDiValues;
+    if (index == 3)
+        return bluesRockLeadValues;
     return {};
 }
 
@@ -67,6 +93,17 @@ bool isAttackConditioningNote (int note) noexcept
     return electry::ElectryEngine::isKeyswitchNote (note)
         || electry::ElectryEngine::isVibratoGestureNote (note)
         || electry::ElectryEngine::isTremoloGestureNote (note);
+}
+
+bool isRpnStateMidiEvent (const juce::MidiMessageMetadata& metadata) noexcept
+{
+    if (metadata.data == nullptr || metadata.numBytes < 3
+        || (metadata.data[0] & 0xf0u) != 0xb0u)
+        return false;
+
+    const auto controller = metadata.data[1] & 0x7fu;
+    return controller == 6u || controller == 38u || controller == 98u
+        || controller == 99u || controller == 100u || controller == 101u;
 }
 
 bool isAttackConditioningMidiEvent (
@@ -93,9 +130,11 @@ bool isAttackConditioningMidiEvent (
 
     const auto controller = metadata.data[1] & 0x7fu;
     // CC121 is the matching reset for CC2, and CC123 releases temporary HOLD
-    // keys. Keeping every attack-state change in one stable pass preserves
-    // their source order before the attack.
-    return controller == 2u || controller == 121u || controller == 123u;
+    // keys. RPN/NRPN selectors and data entry must also retain source order
+    // while completing before same-sample attacks, so MPE setup cannot race a
+    // member-channel Note On.
+    return controller == 2u || controller == 121u || controller == 123u
+        || isRpnStateMidiEvent (metadata);
 }
 
 float valueOf (const std::atomic<float>* value) noexcept
@@ -171,10 +210,17 @@ juce::AudioParameterFloatAttributes morphAttributes (const char* lowName,
 
 juce::AudioParameterFloatAttributes guitarBuildAttributes()
 {
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    static constexpr std::array<const char*, 6> names {
+        "Walnut short/heavy", "Short medium-heavy", "Medium balanced",
+        "Long light", "Extended heavy", "Ash extended/light"
+    };
+#else
     static constexpr std::array<const char*, 6> names {
         "Slab fixed", "Contoured", "Angular set", "Modern bolt",
         "Dense extended", "Neck-through"
     };
+#endif
 
     return juce::AudioParameterFloatAttributes()
         .withStringFromValueFunction (
@@ -461,10 +507,11 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     resetEngineWithArticulations (
         pickStyleIndex.load (std::memory_order_relaxed),
         appliedBasePlayStyleIndex);
+    mpeRpnDetector.reset();
+    clearMpeNoteOwnership();
     clearVibratoGesture();
     clearTremoloGesture();
-    engine.setPitchBend (0.0f);
-    doubleEngine->setPitchBend (0.0f);
+    resetPitchBends();
     engine.setResonance (0.0f);
     doubleEngine->setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
@@ -483,8 +530,9 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
 void ElectryAudioProcessor::releaseResources()
 {
     engineReady.store (false, std::memory_order_release);
-    engine.setPitchBend (0.0f);
-    doubleEngine->setPitchBend (0.0f);
+    mpeRpnDetector.reset();
+    resetPitchBends();
+    clearMpeNoteOwnership();
     sustainPedalDown = false;
     engine.setSustainPedal (false);
     doubleEngine->setSustainPedal (false);
@@ -549,6 +597,7 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         resetEngineWithArticulations (
             pickStyleIndex.load (std::memory_order_relaxed),
             appliedBasePlayStyleIndex);
+        clearMpeNoteOwnership();
         effects.reset();
     }
 
@@ -624,6 +673,7 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             ++groupEnd;
 
         NoteOnBatch groupBatch;
+        bool acceptedMpeRpn = false;
 
         // Hosts are free to store simultaneous MIDI in either insertion order.
         // A keyswitch or CC2 therefore conditions every attack at its timestamp,
@@ -634,7 +684,14 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         {
             const auto metadata = *current;
             if (isAttackConditioningMidiEvent (metadata))
-                dispatchMidiData (metadata.data, metadata.numBytes);
+            {
+                if (isRpnStateMidiEvent (metadata))
+                    acceptedMpeRpn = processMpeController (
+                                          metadata.data, metadata.numBytes)
+                                      || acceptedMpeRpn;
+                else
+                    dispatchMidiData (metadata.data, metadata.numBytes);
+            }
         }
 
         // Stable partition across event sources at the block boundary:
@@ -651,7 +708,16 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         {
             const auto metadata = *current;
             if (isAttackConditioningMidiEvent (metadata))
+            {
+                // RPN state has already been consumed by the conditioning
+                // pass, but an ignored controller historically split the two
+                // surrounding note batches. Retain that boundary whenever no
+                // zone (or an unrelated RPN) leaves ordinary MIDI in charge.
+                if (isRpnStateMidiEvent (metadata)
+                    && ! (acceptedMpeRpn && mpeZoneLayout.isActive()))
+                    flushNoteOnBatch (groupBatch);
                 continue;
+            }
 
             const auto* data = metadata.data;
             const bool ordinaryPositiveNoteOn =
@@ -660,10 +726,12 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 && data[2] != 0u;
             if (ordinaryPositiveNoteOn)
             {
+                const int midiChannel = static_cast<int> (data[0] & 0x0fu) + 1;
                 batchOrDispatchNoteOn (
                     static_cast<int> (data[1] & 0x7fu),
                     static_cast<float> (data[2] & 0x7fu) / 127.0f,
-                    false, groupBatch);
+                    expressionIdForNoteOn (midiChannel), midiChannel, false,
+                    groupBatch);
                 continue;
             }
 
@@ -673,6 +741,15 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 ? static_cast<unsigned> (data[0]) & 0xf0u : 0u;
             if (kind == 0xa0u || kind == 0xd0u)
                 continue;
+            if (kind == 0xb0u && metadata.numBytes >= 3
+                && (data[1] & 0x7fu) == 74u)
+            {
+                const int midiChannel =
+                    static_cast<int> (data[0] & 0x0fu) + 1;
+                if (mpeZoneLayout.getLowerZone().isUsing (midiChannel)
+                    || mpeZoneLayout.getUpperZone().isUsing (midiChannel))
+                    continue;
+            }
 
             // Anything that can change ownership or performance state splits
             // the chord. Dispatch it in source order between the two batches.
@@ -700,6 +777,7 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
 
     const auto status = static_cast<unsigned> (data[0]);
     const auto kind = status & 0xf0u;
+    const int midiChannel = static_cast<int> (status & 0x0fu) + 1;
 
     if (kind == 0x90u && numBytes >= 3)
     {
@@ -708,14 +786,16 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
                             static_cast<float> (data[2] & 0x7fu) / 127.0f,
                             false);
         else
-            dispatchNoteOff (static_cast<int> (data[1] & 0x7fu));
+            dispatchHostNoteOff (static_cast<int> (data[1] & 0x7fu),
+                                 midiChannel);
     }
     else if (kind == 0x80u && numBytes >= 3)
     {
-        dispatchNoteOff (static_cast<int> (data[1] & 0x7fu));
+        dispatchHostNoteOff (static_cast<int> (data[1] & 0x7fu), midiChannel);
     }
     else if (kind == 0xb0u && numBytes >= 3)
     {
+        static_cast<void> (processMpeController (data, numBytes));
         const auto controller = data[1] & 0x7fu;
         const auto controllerValue = data[2] & 0x7fu;
         if (controller == 64u)
@@ -747,8 +827,8 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         else if (controller == 121u)
         {
             sustainPedalDown = false;
-            engine.setPitchBend (0.0f);
-            doubleEngine->setPitchBend (0.0f);
+            mpeRpnDetector.reset();
+            resetPitchBends();
             engine.setResonance (0.0f);
             doubleEngine->setResonance (0.0f);
             engine.setPalmMutePressure (0.0f);
@@ -771,6 +851,8 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             const int appliedPlayStyle = static_cast<int> (
                 engine.getCurrentPlayStyle());
             resetEngineWithArticulations (appliedPickStyle, appliedPlayStyle);
+            clearMpeNoteOwnership();
+            refreshMpePitchBends();
             engine.setSustainPedal (sustainPedalDown);
             doubleEngine->setSustainPedal (sustainPedalDown);
             effects.reset();
@@ -786,6 +868,7 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             applyPlayStyle (appliedBasePlayStyleIndex);
             engine.allNotesOff();
             doubleEngine->allNotesOff();
+            clearMpeNoteOwnership();
         }
     }
     // Pressure is deliberately unassigned: mapping either channel pressure or
@@ -794,9 +877,333 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
     else if (kind == 0xe0u && numBytes >= 3)
     {
         const auto bend = decodePitchBend14 (data[1], data[2]);
-        engine.setPitchBend (bend);
-        doubleEngine->setPitchBend (bend);
+        dispatchPitchWheel (midiChannel, bend);
     }
+}
+
+electry::ElectryEngine::ExpressionId
+ElectryAudioProcessor::expressionIdForNoteOn (int midiChannel) const noexcept
+{
+    const auto lower = mpeZoneLayout.getLowerZone();
+    const auto upper = mpeZoneLayout.getUpperZone();
+    if ((lower.isActive() && lower.isUsingChannelAsMemberChannel (midiChannel))
+        || (upper.isActive()
+            && upper.isUsingChannelAsMemberChannel (midiChannel)))
+        return static_cast<electry::ElectryEngine::ExpressionId> (midiChannel);
+    return electry::ElectryEngine::legacyExpressionId;
+}
+
+void ElectryAudioProcessor::dispatchHostNoteOff (int note,
+                                                  int midiChannel) noexcept
+{
+    // Keyswitches, gestures and repick commands are global performance
+    // controls, even when a controller sends them on an MPE member channel.
+    // Only playable notes participate in per-channel string ownership.
+    if (! electry::ElectryEngine::isPlayableNote (note))
+    {
+        dispatchNoteOff (note);
+        return;
+    }
+
+    const auto currentExpressionId = expressionIdForNoteOn (midiChannel);
+    const int recordedOwner = takeNoteOwnership (
+        note, midiChannel,
+        currentExpressionId == electry::ElectryEngine::legacyExpressionId);
+    const auto expressionId = recordedOwner >= 0
+        ? static_cast<electry::ElectryEngine::ExpressionId> (recordedOwner)
+        : currentExpressionId;
+    if (expressionId != electry::ElectryEngine::legacyExpressionId)
+    {
+        engine.noteOff (note, expressionId);
+        doubleEngine->noteOff (note, expressionId);
+        if (expressionId <= electry::ElectryEngine::maximumExpressionId)
+        {
+            auto& total = outstandingMpeChannelNotes[
+                static_cast<std::size_t> (expressionId - 1)];
+            if (total != 0 && --total == 0)
+                midiPitchBends[static_cast<std::size_t> (expressionId - 1)] =
+                    0.0f;
+        }
+        return;
+    }
+    engine.noteOff (note, electry::ElectryEngine::legacyExpressionId);
+    doubleEngine->noteOff (note, electry::ElectryEngine::legacyExpressionId);
+}
+
+bool ElectryAudioProcessor::processMpeController (const juce::uint8* data,
+                                                  int numBytes) noexcept
+{
+    if (data == nullptr || numBytes < 3)
+        return false;
+
+    const auto oldLower = mpeZoneLayout.getLowerZone();
+    const auto oldUpper = mpeZoneLayout.getUpperZone();
+    const int midiChannel = static_cast<int> (data[0] & 0x0fu) + 1;
+    const int controller = static_cast<int> (data[1] & 0x7fu);
+    const int value = static_cast<int> (data[2] & 0x7fu);
+    const auto parsed = mpeRpnDetector.tryParse (midiChannel, controller, value);
+    bool accepted = false;
+    bool exactRangeChanged = false;
+    if (parsed.has_value() && ! parsed->isNRPN)
+    {
+        if (parsed->parameterNumber
+            == juce::MPEMessages::zoneLayoutMessagesRpnNumber)
+        {
+            if (parsed->value < 16)
+            {
+                if (parsed->channel == 1)
+                {
+                    mpeZoneLayout.setLowerZone (parsed->value);
+                    exactRangeChanged = ! juce::approximatelyEqual (
+                                            lowerPerNotePitchBendRange, 48.0f)
+                                     || ! juce::approximatelyEqual (
+                                            lowerMasterPitchBendRange, 2.0f);
+                    lowerPerNotePitchBendRange = 48.0f;
+                    lowerMasterPitchBendRange = 2.0f;
+                    accepted = true;
+                }
+                else if (parsed->channel == 16)
+                {
+                    mpeZoneLayout.setUpperZone (parsed->value);
+                    exactRangeChanged = ! juce::approximatelyEqual (
+                                            upperPerNotePitchBendRange, 48.0f)
+                                     || ! juce::approximatelyEqual (
+                                            upperMasterPitchBendRange, 2.0f);
+                    upperPerNotePitchBendRange = 48.0f;
+                    upperMasterPitchBendRange = 2.0f;
+                    accepted = true;
+                }
+            }
+        }
+        else if (parsed->parameterNumber == 0)
+        {
+            // JUCE's public zone model stores only the whole-semitone MSB.
+            // Keep that integer for routing and retain RPN 0's cents LSB in
+            // the performed range used below.
+            const int range = juce::jlimit (
+                0, 96, parsed->is14BitValue ? parsed->value / 128
+                                            : parsed->value);
+            const float exactRange = juce::jlimit (
+                0.0f, 96.0f,
+                static_cast<float> (range)
+                    + (parsed->is14BitValue
+                           ? 0.01f * static_cast<float> (parsed->value % 128)
+                           : 0.0f));
+            if (parsed->channel == 1)
+            {
+                const auto zone = mpeZoneLayout.getLowerZone();
+                mpeZoneLayout.setLowerZone (zone.numMemberChannels,
+                                            zone.perNotePitchbendRange, range);
+                exactRangeChanged = ! juce::approximatelyEqual (
+                    lowerMasterPitchBendRange, exactRange);
+                lowerMasterPitchBendRange = exactRange;
+                accepted = true;
+            }
+            else if (parsed->channel == 16)
+            {
+                const auto zone = mpeZoneLayout.getUpperZone();
+                mpeZoneLayout.setUpperZone (zone.numMemberChannels,
+                                            zone.perNotePitchbendRange, range);
+                exactRangeChanged = ! juce::approximatelyEqual (
+                    upperMasterPitchBendRange, exactRange);
+                upperMasterPitchBendRange = exactRange;
+                accepted = true;
+            }
+            else
+            {
+                const auto lower = mpeZoneLayout.getLowerZone();
+                const auto upper = mpeZoneLayout.getUpperZone();
+                if (lower.isUsingChannelAsMemberChannel (parsed->channel))
+                {
+                    mpeZoneLayout.setLowerZone (lower.numMemberChannels, range,
+                                                lower.masterPitchbendRange);
+                    exactRangeChanged = ! juce::approximatelyEqual (
+                        lowerPerNotePitchBendRange, exactRange);
+                    lowerPerNotePitchBendRange = exactRange;
+                    accepted = true;
+                }
+                else if (upper.isUsingChannelAsMemberChannel (parsed->channel))
+                {
+                    mpeZoneLayout.setUpperZone (upper.numMemberChannels, range,
+                                                upper.masterPitchbendRange);
+                    exactRangeChanged = ! juce::approximatelyEqual (
+                        upperPerNotePitchBendRange, exactRange);
+                    upperPerNotePitchBendRange = exactRange;
+                    accepted = true;
+                }
+            }
+        }
+    }
+    if (oldLower != mpeZoneLayout.getLowerZone()
+        || oldUpper != mpeZoneLayout.getUpperZone() || exactRangeChanged)
+        refreshMpePitchBends();
+    return accepted;
+}
+
+void ElectryAudioProcessor::dispatchPitchWheel (int midiChannel,
+                                                 float bend) noexcept
+{
+    if (midiChannel < 1 || midiChannel > 16)
+        return;
+
+    midiPitchBends[static_cast<std::size_t> (midiChannel - 1)] = bend;
+    const std::array zones { mpeZoneLayout.getLowerZone(),
+                             mpeZoneLayout.getUpperZone() };
+    for (const auto& zone : zones)
+    {
+        if (! zone.isActive())
+            continue;
+
+        if (zone.isUsingChannelAsMemberChannel (midiChannel))
+        {
+            refreshMpePitchBend (midiChannel);
+            return;
+        }
+
+        if (midiChannel == zone.getMasterChannel())
+        {
+            refreshMpePitchBends();
+            return;
+        }
+    }
+
+    engine.setPitchBend (bend);
+    doubleEngine->setPitchBend (bend);
+}
+
+void ElectryAudioProcessor::refreshMpePitchBend (int midiChannel) noexcept
+{
+    if (midiChannel < 1 || midiChannel > 16)
+        return;
+
+    float memberTarget = 0.0f;
+    float masterTarget = 0.0f;
+    const std::array zones { mpeZoneLayout.getLowerZone(),
+                             mpeZoneLayout.getUpperZone() };
+    for (const auto& zone : zones)
+    {
+        if (! zone.isActive()
+            || ! zone.isUsingChannelAsMemberChannel (midiChannel))
+            continue;
+        const bool lower = zone.getMasterChannel() == 1;
+        memberTarget = midiPitchBends[static_cast<std::size_t> (
+                           midiChannel - 1)]
+                     * (lower ? lowerPerNotePitchBendRange
+                              : upperPerNotePitchBendRange);
+        masterTarget = midiPitchBends[static_cast<std::size_t> (
+                           zone.getMasterChannel() - 1)]
+                     * (lower ? lowerMasterPitchBendRange
+                              : upperMasterPitchBendRange);
+        break;
+    }
+    const auto expressionId =
+        static_cast<electry::ElectryEngine::ExpressionId> (midiChannel);
+    engine.setExpressionPitchBend (expressionId, memberTarget);
+    engine.setExpressionMasterPitchBend (expressionId, masterTarget);
+    doubleEngine->setExpressionPitchBend (expressionId, memberTarget);
+    doubleEngine->setExpressionMasterPitchBend (expressionId, masterTarget);
+}
+
+void ElectryAudioProcessor::refreshMpePitchBends() noexcept
+{
+    for (int midiChannel = 1; midiChannel <= 16; ++midiChannel)
+        refreshMpePitchBend (midiChannel);
+}
+
+void ElectryAudioProcessor::clearMpeNoteOwnership() noexcept
+{
+    for (std::size_t channel = 0; channel < outstandingMpeChannelNotes.size();
+         ++channel)
+    {
+        if (outstandingMpeChannelNotes[channel] == 0)
+            continue;
+        midiPitchBends[channel] = 0.0f;
+    }
+    outstandingMpeChannelNotes.fill (0);
+    for (auto& note : outstandingNoteOwners)
+        note.size = 0;
+}
+
+bool ElectryAudioProcessor::recordNoteOwnership (
+    int note, int midiChannel,
+    electry::ElectryEngine::ExpressionId expressionId) noexcept
+{
+    if (note < 0 || note >= 128 || midiChannel < 0 || midiChannel > 16)
+        return false;
+
+    auto& queue = outstandingNoteOwners[static_cast<std::size_t> (note)];
+    if (queue.size == queue.owners.size())
+        return false;
+    queue.owners[queue.size++] = {
+        static_cast<std::uint8_t> (midiChannel), expressionId
+    };
+    if (expressionId != electry::ElectryEngine::legacyExpressionId
+        && midiChannel >= 1)
+    {
+        auto& total = outstandingMpeChannelNotes[
+            static_cast<std::size_t> (midiChannel - 1)];
+        if (total == 0)
+        {
+            // MPE member dimensions return to their defaults after the last
+            // owner. Keep a released tail at its performed pitch, then snap
+            // the shared channel state only when a new finger claims it.
+            refreshMpePitchBend (midiChannel);
+            engine.snapExpressionPitchBendToTarget (expressionId);
+            doubleEngine->snapExpressionPitchBendToTarget (expressionId);
+        }
+        if (total < std::numeric_limits<std::uint16_t>::max())
+            ++total;
+    }
+    return true;
+}
+
+int ElectryAudioProcessor::takeNoteOwnership (int note, int midiChannel,
+                                               bool allowAnyLegacy) noexcept
+{
+    if (note < 0 || note >= 128)
+        return -1;
+    auto& queue = outstandingNoteOwners[static_cast<std::size_t> (note)];
+    int selected = -1;
+    for (int index = 0; index < static_cast<int> (queue.size); ++index)
+    {
+        const auto& owner = queue.owners[static_cast<std::size_t> (index)];
+        if (owner.midiChannel == midiChannel)
+        {
+            selected = index;
+            break;
+        }
+    }
+    if (selected < 0 && allowAnyLegacy)
+    {
+        for (int index = 0; index < static_cast<int> (queue.size); ++index)
+        {
+            if (queue.owners[static_cast<std::size_t> (index)].expressionId
+                == electry::ElectryEngine::legacyExpressionId)
+            {
+                selected = index;
+                break;
+            }
+        }
+    }
+    if (selected < 0)
+        return -1;
+
+    const int expressionId = queue.owners[static_cast<std::size_t> (selected)]
+                                 .expressionId;
+    for (int index = selected + 1; index < static_cast<int> (queue.size);
+         ++index)
+        queue.owners[static_cast<std::size_t> (index - 1)] =
+            queue.owners[static_cast<std::size_t> (index)];
+    --queue.size;
+    return expressionId;
+}
+
+void ElectryAudioProcessor::resetPitchBends() noexcept
+{
+    midiPitchBends.fill (0.0f);
+    engine.setPitchBend (0.0f);
+    doubleEngine->setPitchBend (0.0f);
+    refreshMpePitchBends();
 }
 
 void ElectryAudioProcessor::dispatchNoteOn (
@@ -891,6 +1298,9 @@ void ElectryAudioProcessor::dispatchNoteOff (int note) noexcept
             applyTremoloGesture (0.0f);
         return;
     }
+
+    if (electry::ElectryEngine::isPlayableNote (note))
+        static_cast<void> (takeNoteOwnership (note, 0, true));
 
     const int style = note - electry::ElectryEngine::firstPlayStyleKeyswitchNote;
     if (! appliedPlayStyleKeysHold || style < 0
@@ -1226,6 +1636,8 @@ void ElectryAudioProcessor::dispatchUiMidiEventPass (unsigned begin,
             else if (event.noteOn)
             {
                 batchOrDispatchNoteOn (event.note, event.velocity,
+                                       electry::ElectryEngine::legacyExpressionId,
+                                       0,
                                        event.selectsBaseArticulation, batch);
             }
             else
@@ -1239,7 +1651,10 @@ void ElectryAudioProcessor::dispatchUiMidiEventPass (unsigned begin,
 }
 
 void ElectryAudioProcessor::batchOrDispatchNoteOn (
-    int note, float velocity, bool selectsBaseArticulation,
+    int note, float velocity,
+    electry::ElectryEngine::ExpressionId expressionId,
+    int midiChannel,
+    bool selectsBaseArticulation,
     NoteOnBatch& batch) noexcept
 {
     if (selectsBaseArticulation || velocity <= 0.0f
@@ -1254,7 +1669,12 @@ void ElectryAudioProcessor::batchOrDispatchNoteOn (
     // chord or overlap that fits in one complete 128-note MIDI key range.
     if (batch.size == batch.events.size())
         flushNoteOnBatch (batch);
-    batch.events[batch.size++] = { note, velocity };
+    // A sounded Note On must always have a matching fixed ownership entry.
+    // Once the per-pitch FIFO is full, drop the hostile excess attack rather
+    // than create an owner that no later Note Off can address.
+    if (! recordNoteOwnership (note, midiChannel, expressionId))
+        return;
+    batch.events[batch.size++] = { note, velocity, expressionId };
 }
 
 void ElectryAudioProcessor::flushNoteOnBatch (NoteOnBatch& batch) noexcept

@@ -250,7 +250,7 @@ class PrepareBlindListeningTests(unittest.TestCase):
             wrong_oversampling_path.write_text(
                 json.dumps(wrong_oversampling_manifest), encoding="utf-8")
             with self.assertRaisesRegex(TOOL.StudyError,
-                                        "oversampling must be 4"):
+                                        "oversampling must be 8"):
                 TOOL._validate_study(wrong_oversampling_path)
 
             wrong_gate = root / "wrong-gate-comparison.json"

@@ -1309,12 +1309,28 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
         attachSlider (knob.slider, parameterId);
     };
 
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    setup (guitarBuildKnob, guitarBuild,
+           "Comparison model using three pickup-observed modes from one "
+           "matched walnut/ash body pair. Only each measured material pole is "
+           "morphed to its mate; modal levels are quiet voicing. Shape, joint "
+           "and body size remain neutral until matched captures exist. Guitar "
+           "Build visits six distinct short, balanced, light and heavy "
+           "extended scale length and string-gauge setups while material moves "
+           "from walnut "
+           "toward ash. The setup path is voicing, not a material law. "
+           "Pickups and playing controls remain independent.");
+    setup (bodyResonanceKnob, bodyResonance,
+           "Amount of quiet material-dependent structural pickup colour; zero "
+           "is an exact bypass");
+#else
     setup (guitarBuildKnob, guitarBuild,
            "Morphs material damping, body mass and modes, neck and bridge "
            "coupling, scale length, and Drop-E string gauge. Pickups and "
            "playing controls remain independent.");
     setup (bodyResonanceKnob, bodyResonance,
            "How much solid-body structural colour reaches the pickups");
+#endif
     setup (pickupTypeKnob, pickupType,
            "Pickup construction: wide humbucker toward narrow single coil");
     setup (toneKnob, tone, "Passive tone control loading the pickup resonance");

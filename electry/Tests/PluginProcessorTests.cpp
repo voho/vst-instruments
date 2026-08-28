@@ -199,8 +199,19 @@ double dftMagnitude (const std::vector<float>& data, int start, int length,
 // fundamental dominance: a magnetic pickup's output is an induced EMF, so its
 // fundamental can be weaker than its first few partials.
 double measureFundamentalHz (const std::vector<float>& data, int start, int length,
-                             double localSampleRate, double expectedHz)
+                             double localSampleRate, double searchCentreHz,
+                             double searchSpanCents = 120.0)
 {
+    const int first = std::max (0, start);
+    const int last = std::min<int> (first + length,
+                                    static_cast<int> (data.size()));
+    float peak = 0.0f;
+    for (int index = first; index < last; ++index)
+        peak = std::max (peak,
+                         std::abs (data[static_cast<std::size_t> (index)]));
+    expect (peak > 1.0e-7f,
+            "pitch estimator received a silent or negligible capture");
+
     const auto scan = [&] (double centre, double spanCents, double stepCents)
     {
         double bestFrequency = centre;
@@ -227,7 +238,7 @@ double measureFundamentalHz (const std::vector<float>& data, int start, int leng
         return bestFrequency;
     };
 
-    const double coarse = scan (expectedHz, 120.0, 6.0);
+    const double coarse = scan (searchCentreHz, searchSpanCents, 6.0);
     return scan (coarse, 6.0, 0.5);
 }
 
@@ -293,13 +304,13 @@ void testFactoryPrograms()
     } listener;
 
     ElectryAudioProcessor processor;
-    expect (processor.getNumPrograms() == 3,
-            "processor does not expose exactly three factory rigs");
+    expect (processor.getNumPrograms() == 4,
+            "processor does not expose exactly four factory rigs");
     expect (processor.getCurrentProgram() == 0,
             "new processor did not select Factory Default");
 
-    const std::array<const char*, 3> expectedNames {
-        "Factory Default", "Drop-E Metal", "Mute / Dead DI"
+    const std::array<const char*, 4> expectedNames {
+        "Factory Default", "Drop-E Metal", "Mute / Dead DI", "Blues Rock Lead"
     };
     std::set<std::string> uniqueNames;
     for (int index = 0; index < processor.getNumPrograms(); ++index)
@@ -347,6 +358,27 @@ void testFactoryPrograms()
             overrideValue (electry::parameters::output, 6.00f);
             overrideValue (electry::parameters::artifacts, 0.15f);
             overrideValue (electry::parameters::sympathetic, 0.00f);
+        }
+        else if (program == 3)
+        {
+            overrideValue (electry::parameters::pickupSelector, 0.00f);
+            overrideValue (electry::parameters::pickupType, 0.56f);
+            overrideValue (electry::parameters::tone, 0.78f);
+            overrideValue (electry::parameters::bodyResonance, 0.62f);
+            overrideValue (electry::parameters::stringAge, 0.20f);
+            overrideValue (electry::parameters::pickPosition, 0.38f);
+            overrideValue (electry::parameters::pickHardness, 0.52f);
+            overrideValue (electry::parameters::fingerNoise, 0.48f);
+            overrideValue (electry::parameters::bendTime, 0.15f);
+            overrideValue (electry::parameters::velocity, 0.90f);
+            overrideValue (electry::parameters::output, 3.20f);
+            overrideValue (electry::parameters::outputMode, 1.00f);
+            overrideValue (electry::parameters::distortion, 0.14f);
+            overrideValue (electry::parameters::amp, 0.62f);
+            overrideValue (electry::parameters::compressor, 0.28f);
+            overrideValue (electry::parameters::delay, 0.18f);
+            overrideValue (electry::parameters::room, 0.28f);
+            overrideValue (electry::parameters::sympathetic, 0.35f);
         }
         return result;
     };
@@ -418,6 +450,17 @@ void testFactoryPrograms()
 void testParameterTextFormatting()
 {
     ElectryAudioProcessor processor;
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.0f,
+                         "Walnut short/heavy");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.4f,
+                         "Medium balanced");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.5f, "50%");
+    expectParameterText (processor, electry::parameters::guitarBuild, 0.8f,
+                         "Extended heavy");
+    expectParameterText (processor, electry::parameters::guitarBuild, 1.0f,
+                         "Ash extended/light");
+#else
     expectParameterText (processor, electry::parameters::guitarBuild, 0.0f,
                          "Slab fixed");
     expectParameterText (processor, electry::parameters::guitarBuild, 0.4f,
@@ -427,6 +470,7 @@ void testParameterTextFormatting()
                          "Dense extended");
     expectParameterText (processor, electry::parameters::guitarBuild, 1.0f,
                          "Neck-through");
+#endif
     expectParameterText (processor, electry::parameters::output, -6.0f, "-6.0dB");
     expectParameterText (processor, electry::parameters::output, 3.0f, "+3.0dB");
     expectParameterText (processor, electry::parameters::tone, 0.8f, "80%");
@@ -535,9 +579,15 @@ void testParameterTextParsing()
     expectParameterValueForText (processor, electry::parameters::bendTime, "1500ms", 1.50f,
                                  1.0e-3f, "bendTime \"1500ms\" (\"ms\" suffix)");
 
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    expectParameterValueForText (processor, electry::parameters::guitarBuild,
+                                 "Medium balanced", 0.4f, 1.0e-3f,
+                                 "candidate guitarBuild named anchor");
+#else
     expectParameterValueForText (processor, electry::parameters::guitarBuild,
                                  "Angular set", 0.4f, 1.0e-3f,
                                  "guitarBuild named anchor");
+#endif
     expectParameterValueForText (processor, electry::parameters::guitarBuild,
                                  "50%", 0.5f, 1.0e-3f,
                                  "guitarBuild percentage");
@@ -546,7 +596,7 @@ void testParameterTextParsing()
 void testStateRoundTrip()
 {
     ElectryAudioProcessor source;
-    source.setCurrentProgram (2);
+    source.setCurrentProgram (3);
     source.setPlayStyleKeysHold (true);
     setParameterValue (source, electry::parameters::pickupType, 0.9f);
     setParameterValue (source, electry::parameters::guitarBuild, 0.15f);
@@ -572,7 +622,7 @@ void testStateRoundTrip()
     ElectryAudioProcessor restored;
     restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
 
-    expect (restored.getCurrentProgram() == 2,
+    expect (restored.getCurrentProgram() == 3,
             "factory-rig index did not survive a state round trip");
 
     expect (std::abs (parameterValue (restored, electry::parameters::pickupType) - 0.9f)
@@ -656,6 +706,7 @@ void testBusAndPluginContract()
     expect (processor.acceptsMidi(), "instrument does not accept MIDI");
     expect (! processor.producesMidi(), "instrument unexpectedly produces MIDI");
     expect (! processor.isMidiEffect(), "instrument reports being a MIDI effect");
+    expect (processor.supportsMPE(), "instrument does not advertise MPE support");
     expect (processor.hasEditor(), "instrument does not advertise its editor");
     expect (std::abs (processor.getTailLengthSeconds()
                           - ElectryAudioProcessor::maximumTailLengthSeconds) < 1.0e-9,
@@ -1149,6 +1200,10 @@ void testPlayStyleHoldContract()
 
     ElectryAudioProcessor processor;
     processor.setPlayStyleKeysHold (true);
+    setParameterValue (processor, electry::parameters::bendTime, 0.04f);
+    setParameterValue (processor, electry::parameters::bodyResonance, 0.0f);
+    setParameterValue (processor, electry::parameters::artifacts, 0.0f);
+    setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
     processor.prepareToPlay (sampleRate, blockSize);
     juce::AudioBuffer<float> audio;
     juce::MidiBuffer midi;
@@ -1977,18 +2032,8 @@ void testPitchWheelMidiDispatch()
     constexpr int openD3Note = 50;
     constexpr double openD3Hz = 146.83238;
 
-    // measureFundamentalHz() only scans +/-120 cents around its seed, so each
-    // case is seeded near the pitch its string should produce.
-    const auto nominalHz = [] (double openHz, int wheelPosition14) -> double
-    {
-        const double excursion = wheelPosition14 < 8192
-            ? static_cast<double> (wheelPosition14 - 8192) / 8192.0
-            : static_cast<double> (wheelPosition14 - 8192) / 8191.0;
-        return openHz * std::pow (2.0, 2.0 * excursion / 12.0);
-    };
-
     const auto measuredHz = [] (int midiNote, int wheelPosition14,
-                                double expectedHz) -> double
+                                double openHz) -> double
     {
         ElectryAudioProcessor processor;
         processor.prepareToPlay (sampleRate, blockSize);
@@ -2006,19 +2051,21 @@ void testPitchWheelMidiDispatch()
         renderSeconds (processor, audio, 0.5);
         const auto settled = renderCapture (processor, audio, 0.4);
         processor.releaseResources();
+        // One fixed +/-260-cent search covers centre and both +/-2-semitone
+        // endpoints, so moving the expected seed cannot manufacture a pass.
         return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
-                                     sampleRate, expectedHz);
+                                     sampleRate, openHz, 260.0);
     };
 
     const auto centre = measuredHz (
         electry::ElectryEngine::lowestPlayableNote, 8192,
-        nominalHz (openLowStringHz, 8192));
+        openLowStringHz);
     const auto bentUp = measuredHz (
         electry::ElectryEngine::lowestPlayableNote, 16383,
-        nominalHz (openLowStringHz, 16383));
+        openLowStringHz);
     const auto bentDown = measuredHz (
         electry::ElectryEngine::lowestPlayableNote, 0,
-        nominalHz (openLowStringHz, 0));
+        openLowStringHz);
 
     const auto centsUp = 1200.0 * std::log2 (bentUp / centre);
     const auto centsDown = 1200.0 * std::log2 (bentDown / centre);
@@ -2056,7 +2103,7 @@ void testPitchWheelMidiDispatch()
         processor.releaseResources();
         const double midpointHz = openLowStringHz * std::pow (2.0, 1.0 / 12.0);
         return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
-                                     sampleRate, midpointHz);
+                                     sampleRate, midpointHz, 160.0);
     };
 
     const auto centredReference = afterCentreHz (8192);
@@ -2073,9 +2120,9 @@ void testPitchWheelMidiDispatch()
     // A standard pitch-wheel interval is uniform across strings: D3 must
     // travel the same two semitones as E1, preserving chord tuning.
     const auto d3Centre = measuredHz (
-        openD3Note, 8192, nominalHz (openD3Hz, 8192));
+        openD3Note, 8192, openD3Hz);
     const auto d3BentUp = measuredHz (
-        openD3Note, 16383, nominalHz (openD3Hz, 16383));
+        openD3Note, 16383, openD3Hz);
     const auto d3TravelCents = 1200.0 * std::log2 (d3BentUp / d3Centre);
     expect (d3TravelCents > 170.0 && d3TravelCents < 230.0
                 && std::abs (d3TravelCents - centsUp) < 15.0,
@@ -2083,6 +2130,816 @@ void testPitchWheelMidiDispatch()
             "D3 by the same two semitones (measured "
                 + std::to_string (centsUp) + " and "
                 + std::to_string (d3TravelCents) + " cents)");
+}
+
+void testMpeRouting()
+{
+    // Until a valid zone RPN arrives, MIDI channels remain the historical
+    // channel-agnostic path, including the global +/-2-semitone wheel.
+    const auto renderLegacy = [] (bool spreadAcrossChannels)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::pitchWheel (
+            spreadAcrossChannels ? 9 : 1, 12288), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            spreadAcrossChannels ? 2 : 1, 28, (juce::uint8) 105), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            spreadAcrossChannels ? 15 : 1, 52, (juce::uint8) 99), 0);
+        renderBlock (processor, audio, midi);
+        std::vector<float> rendered (audio.getReadPointer (0),
+                                     audio.getReadPointer (0) + blockSize);
+        auto tail = renderCapture (processor, audio, 0.35);
+        rendered.insert (rendered.end(), tail.begin(), tail.end());
+        midi.addEvent (juce::MidiMessage::noteOff (
+            spreadAcrossChannels ? 2 : 1, 28), 0);
+        midi.addEvent (juce::MidiMessage::noteOff (
+            spreadAcrossChannels ? 15 : 1, 52), 0);
+        renderBlock (processor, audio, midi);
+        tail = renderCapture (processor, audio, 0.35);
+        rendered.insert (rendered.end(), tail.begin(), tail.end());
+        processor.releaseResources();
+        return rendered;
+    };
+    expect (renderLegacy (true) == renderLegacy (false),
+            "MIDI channels changed legacy audio before an MPE zone was enabled");
+
+    // Pulling RPN state ahead of same-sample attacks must not erase the batch
+    // boundary that any ignored controller had before MPE support. This RPN is
+    // complete but unrelated to zone layout or pitch-bend sensitivity.
+    const auto renderLegacyInterruptedChord = [] (int rpnParameter)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (
+            4, 40, (juce::uint8) 105), 0);
+        if (rpnParameter >= 0)
+        {
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 101, 0), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (
+                1, 100, rpnParameter), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (
+                1, 6, rpnParameter == 6 ? 0 : 12), 0);
+        }
+        else
+        {
+            midi.addEvent (juce::MidiMessage::controllerEvent (4, 7, 12), 0);
+        }
+        midi.addEvent (juce::MidiMessage::noteOn (
+            4, 52, (juce::uint8) 99), 0);
+        renderBlock (processor, audio, midi);
+        std::vector<float> rendered (audio.getReadPointer (0),
+                                     audio.getReadPointer (0) + blockSize);
+        const auto tail = renderCapture (processor, audio, 0.25);
+        rendered.insert (rendered.end(), tail.begin(), tail.end());
+        processor.releaseResources();
+        return rendered;
+    };
+    const auto interruptedReference = renderLegacyInterruptedChord (-1);
+    expect (renderLegacyInterruptedChord (1) == interruptedReference,
+            "an unrelated RPN changed legacy same-sample note batching");
+    expect (renderLegacyInterruptedChord (0) == interruptedReference,
+            "an inactive-zone pitch-range RPN changed legacy note batching");
+    expect (renderLegacyInterruptedChord (6) == interruptedReference,
+            "a redundant clear-zone RPN changed legacy note batching");
+
+    // JUCE's zone layout parser accepts the same numeric parameter from an
+    // NRPN unless the caller filters it. Parameter 6 sent as an NRPN must stay
+    // an ignored legacy controller sequence, not silently enable a zone.
+    const auto renderAfterZoneLikeNrpn = [] (bool useNrpn)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        if (useNrpn)
+        {
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 98, 6), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 99, 0), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 6, 2), 0);
+        }
+        else
+        {
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 7, 6), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 8, 0), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 9, 2), 0);
+        }
+        midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            2, 28, (juce::uint8) 105), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            3, 52, (juce::uint8) 99), 0);
+        renderBlock (processor, audio, midi);
+        std::vector<float> rendered (audio.getReadPointer (0),
+                                     audio.getReadPointer (0) + blockSize);
+        const auto tail = renderCapture (processor, audio, 0.3);
+        rendered.insert (rendered.end(), tail.begin(), tail.end());
+        processor.releaseResources();
+        return rendered;
+    };
+    expect (renderAfterZoneLikeNrpn (true)
+                == renderAfterZoneLikeNrpn (false),
+            "NRPN 6 was incorrectly accepted as an MPE zone RPN");
+
+    const auto renderConfiguredChord = [] (int setupPosition,
+                                            bool interleaveTimbre)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        const auto addSetup = [&]
+        {
+            const auto setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+            midi.addEvents (setup, 0, -1, 0);
+        };
+        if (setupPosition == 0)
+            addSetup();
+        midi.addEvent (juce::MidiMessage::noteOn (
+            2, 40, (juce::uint8) 105), 0);
+        if (setupPosition == 1)
+            addSetup();
+        if (interleaveTimbre)
+            midi.addEvent (juce::MidiMessage::controllerEvent (2, 74, 96), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            3, 50, (juce::uint8) 99), 0);
+        if (setupPosition == 2)
+            addSetup();
+        renderBlock (processor, audio, midi);
+        std::vector<float> rendered (audio.getReadPointer (0),
+                                     audio.getReadPointer (0) + blockSize);
+        const auto tail = renderCapture (processor, audio, 0.25);
+        rendered.insert (rendered.end(), tail.begin(), tail.end());
+        processor.releaseResources();
+        return rendered;
+    };
+    const auto setupFirst = renderConfiguredChord (0, false);
+    expect (renderConfiguredChord (1, false) == setupFirst
+                && renderConfiguredChord (2, false) == setupFirst,
+            "same-sample MPE setup order changed chord allocation or audio");
+    expect (renderConfiguredChord (0, true) == setupFirst,
+            "unassigned MPE CC74 split a same-sample member chord");
+
+    // With only channel 3 sounding, a channel-2 member wheel must be
+    // bit-identical to no event. This proves selective routing without asking
+    // a spectral estimator to separate overlapping guitar harmonics.
+    const auto renderForeignMemberBend = [] (bool sendForeignBend)
+    {
+        ElectryAudioProcessor memberProcessor;
+        setParameterValue (memberProcessor,
+                           electry::parameters::bodyResonance, 0.0f);
+        setParameterValue (memberProcessor, electry::parameters::artifacts,
+                           0.0f);
+        setParameterValue (memberProcessor, electry::parameters::sympathetic,
+                           0.0f);
+        memberProcessor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> memberAudio;
+        juce::MidiBuffer memberMidi;
+        const auto memberSetup = juce::MPEMessages::setLowerZone (2, 5, 1);
+        memberMidi.addEvents (memberSetup, 0, -1, 0);
+        memberMidi.addEvent (juce::MidiMessage::noteOn (
+            3, 50, (juce::uint8) 105), 0);
+        renderBlock (memberProcessor, memberAudio, memberMidi);
+        if (sendForeignBend)
+            memberMidi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+        renderBlock (memberProcessor, memberAudio, memberMidi);
+        std::vector<float> result (memberAudio.getReadPointer (0),
+                                   memberAudio.getReadPointer (0) + blockSize);
+        const auto tail = renderCapture (memberProcessor, memberAudio, 0.3);
+        result.insert (result.end(), tail.begin(), tail.end());
+        memberProcessor.releaseResources();
+        return result;
+    };
+    expect (renderForeignMemberBend (true)
+                == renderForeignMemberBend (false),
+            "one MPE member wheel changed another member's sounding string");
+
+    constexpr double lowOpenHz = 41.2034;
+    ElectryAudioProcessor processor;
+    setParameterValue (processor, electry::parameters::bodyResonance, 0.0f);
+    setParameterValue (processor, electry::parameters::artifacts, 0.0f);
+    setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+    setParameterValue (processor, electry::parameters::bendTime, 0.04f);
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+
+    // Insert notes before the complete same-sample RPN sequence. The
+    // processor's conditioning pass must still activate the zone first.
+    midi.addEvent (juce::MidiMessage::noteOn (2, 28, (juce::uint8) 110), 0);
+    auto setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+    midi.addEvents (setup, 0, -1, 0);
+    renderBlock (processor, audio, midi);
+
+    const auto measureLow = [&]
+    {
+        renderSeconds (processor, audio, 0.55);
+        const auto capture = renderCapture (processor, audio, 0.35);
+        // One fixed window covers every state below: -5..+6 semitones.
+        return measureFundamentalHz (
+            capture, 0, static_cast<int> (capture.size()), sampleRate,
+            lowOpenHz * std::pow (2.0, 0.5 / 12.0), 580.0);
+    };
+    const auto cents = [] (double value, double reference)
+    {
+        return 1200.0 * std::log2 (value / reference);
+    };
+
+    const auto baseline = measureLow();
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+    renderBlock (processor, audio, midi);
+    const auto memberBent = measureLow();
+    const auto memberCents = cents (memberBent, baseline);
+    expect (memberCents > 470.0 && memberCents < 530.0,
+            "an MPE member wheel did not use its declared five-semitone "
+            "range (measured " + std::to_string (memberCents) + " cents)");
+
+    midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+    renderBlock (processor, audio, midi);
+    const auto masterBent = measureLow();
+    const auto masterCents = cents (masterBent, baseline);
+    expect (masterCents > 570.0 && masterCents < 630.0,
+            "the MPE master wheel did not add its declared semitone to the "
+            "member interval (measured " + std::to_string (masterCents)
+                + " cents)");
+
+    // Reset All Controllers centres every expression wheel without deleting
+    // the zone: a subsequent channel-2 wheel must remain per-note.
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+    renderBlock (processor, audio, midi);
+    const auto reset = measureLow();
+    expect (std::abs (cents (reset, baseline)) < 20.0,
+            "CC121 did not centre all MPE expression bends");
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 0), 0);
+    renderBlock (processor, audio, midi);
+    const auto afterReset = measureLow();
+    expect (cents (afterReset, baseline) < -470.0,
+            "CC121 discarded the MPE zone instead of retaining its routing");
+
+    // Reusing an idle member channel starts from centre unless a new member
+    // wheel arrives. The zone-master bend remains live across that handoff.
+    midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+    renderBlock (processor, audio, midi);
+    midi.addEvent (juce::MidiMessage::noteOff (2, 28), 0);
+    renderBlock (processor, audio, midi);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 28, (juce::uint8) 110), 0);
+    renderBlock (processor, audio, midi);
+    const auto reusedMember = measureLow();
+    const auto reusedCents = cents (reusedMember, baseline);
+    expect (reusedCents > 70.0 && reusedCents < 130.0,
+            "an idle MPE member retained its old bend or lost the master "
+            "bend (measured " + std::to_string (reusedCents) + " cents)");
+    processor.releaseResources();
+
+    // The upper zone has a different master channel and reverse member range.
+    // Exercise those indices and the mirrored Double engine independently of
+    // the lower-zone path above.
+    ElectryAudioProcessor upperProcessor;
+    setParameterValue (upperProcessor, electry::parameters::outputMode, 2.0f);
+    setParameterValue (upperProcessor, electry::parameters::bodyResonance, 0.0f);
+    setParameterValue (upperProcessor, electry::parameters::artifacts, 0.0f);
+    setParameterValue (upperProcessor, electry::parameters::sympathetic, 0.0f);
+    setParameterValue (upperProcessor, electry::parameters::bendTime, 0.04f);
+    upperProcessor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> upperAudio;
+    juce::MidiBuffer upperMidi;
+    auto upperSetup = juce::MPEMessages::setUpperZone (1, 3, 1);
+    upperMidi.addEvents (upperSetup, 0, -1, 0);
+    upperMidi.addEvent (juce::MidiMessage::noteOn (
+        15, 45, (juce::uint8) 108), 0);
+    renderBlock (upperProcessor, upperAudio, upperMidi);
+    renderSeconds (upperProcessor, upperAudio, 0.55);
+    const auto captureUpperStereo = [&]
+    {
+        juce::MidiBuffer emptyMidi;
+        std::pair<std::vector<float>, std::vector<float>> captured;
+        int remaining = static_cast<int> (0.35 * sampleRate);
+        captured.first.reserve (static_cast<std::size_t> (remaining));
+        captured.second.reserve (static_cast<std::size_t> (remaining));
+        while (remaining > 0)
+        {
+            const int samples = std::min (blockSize, remaining);
+            renderBlock (upperProcessor, upperAudio, emptyMidi, samples);
+            const auto* left = upperAudio.getReadPointer (0);
+            const auto* right = upperAudio.getReadPointer (1);
+            captured.first.insert (captured.first.end(), left, left + samples);
+            captured.second.insert (captured.second.end(), right,
+                                    right + samples);
+            remaining -= samples;
+        }
+        return captured;
+    };
+    const auto upperBaselineCapture = captureUpperStereo();
+    const double upperSearchCentre = 110.0 * std::pow (2.0, 2.0 / 12.0);
+    const double upperBaselineLeft = measureFundamentalHz (
+        upperBaselineCapture.first, 0,
+        static_cast<int> (upperBaselineCapture.first.size()), sampleRate,
+        upperSearchCentre, 260.0);
+    const double upperBaselineRight = measureFundamentalHz (
+        upperBaselineCapture.second, 0,
+        static_cast<int> (upperBaselineCapture.second.size()), sampleRate,
+        upperSearchCentre, 260.0);
+    upperMidi.addEvent (juce::MidiMessage::pitchWheel (15, 16383), 0);
+    renderBlock (upperProcessor, upperAudio, upperMidi);
+    renderSeconds (upperProcessor, upperAudio, 0.55);
+    const auto upperMemberCapture = captureUpperStereo();
+    const double upperMemberLeft = measureFundamentalHz (
+        upperMemberCapture.first, 0,
+        static_cast<int> (upperMemberCapture.first.size()), sampleRate,
+        upperSearchCentre, 260.0);
+    const double upperMemberRight = measureFundamentalHz (
+        upperMemberCapture.second, 0,
+        static_cast<int> (upperMemberCapture.second.size()), sampleRate,
+        upperSearchCentre, 260.0);
+    const double upperMemberLeftCents = cents (
+        upperMemberLeft, upperBaselineLeft);
+    const double upperMemberRightCents = cents (
+        upperMemberRight, upperBaselineRight);
+    expect (upperMemberLeftCents > 270.0 && upperMemberLeftCents < 330.0
+                && upperMemberRightCents > 270.0
+                && upperMemberRightCents < 330.0,
+            "upper-zone member pitch did not reach both Double engines "
+            "selectively (measured "
+                + std::to_string (upperMemberLeftCents) + " and "
+                + std::to_string (upperMemberRightCents) + " cents)");
+
+    upperMidi.addEvent (juce::MidiMessage::pitchWheel (16, 16383), 0);
+    renderBlock (upperProcessor, upperAudio, upperMidi);
+    renderSeconds (upperProcessor, upperAudio, 0.55);
+    const auto upperBentCapture = captureUpperStereo();
+    const double upperBentLeft = measureFundamentalHz (
+        upperBentCapture.first, 0,
+        static_cast<int> (upperBentCapture.first.size()), sampleRate,
+        upperSearchCentre, 260.0);
+    const double upperBentRight = measureFundamentalHz (
+        upperBentCapture.second, 0,
+        static_cast<int> (upperBentCapture.second.size()), sampleRate,
+        upperSearchCentre, 260.0);
+    const double upperLeftCents = cents (upperBentLeft, upperBaselineLeft);
+    const double upperRightCents = cents (upperBentRight, upperBaselineRight);
+    expect (upperLeftCents > 370.0 && upperLeftCents < 430.0
+                && upperRightCents > 370.0 && upperRightCents < 430.0,
+            "upper-zone member/master pitch did not reach both Double "
+            "engines (measured " + std::to_string (upperLeftCents) + " and "
+                + std::to_string (upperRightCents) + " cents)");
+    upperProcessor.releaseResources();
+}
+
+void testMpeIdlePitchPreservesReleaseTail()
+{
+    constexpr int note = 50;
+    constexpr double openHz = 146.83238;
+    ElectryAudioProcessor reference;
+    ElectryAudioProcessor idleBent;
+    for (auto* processor : { &reference, &idleBent })
+    {
+        setParameterValue (*processor, electry::parameters::bodyResonance, 0.0f);
+        setParameterValue (*processor, electry::parameters::artifacts, 0.0f);
+        setParameterValue (*processor, electry::parameters::sympathetic, 0.0f);
+        setParameterValue (*processor, electry::parameters::bendTime, 0.04f);
+        processor->prepareToPlay (sampleRate, blockSize);
+    }
+
+    juce::AudioBuffer<float> referenceAudio;
+    juce::AudioBuffer<float> idleBentAudio;
+    juce::MidiBuffer referenceMidi;
+    juce::MidiBuffer idleBentMidi;
+    const auto startBentNote = [] (juce::MidiBuffer& midi)
+    {
+        const auto setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+        midi.addEvents (setup, 0, -1, 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            2, note, (juce::uint8) 108), 0);
+        midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+    };
+    startBentNote (referenceMidi);
+    startBentNote (idleBentMidi);
+    renderBlock (reference, referenceAudio, referenceMidi);
+    renderBlock (idleBent, idleBentAudio, idleBentMidi);
+    renderSeconds (reference, referenceAudio, 0.55);
+    renderSeconds (idleBent, idleBentAudio, 0.55);
+
+    referenceMidi.addEvent (juce::MidiMessage::noteOff (2, note), 0);
+    idleBentMidi.addEvent (juce::MidiMessage::noteOff (2, note), 0);
+    renderBlock (reference, referenceAudio, referenceMidi);
+    renderBlock (idleBent, idleBentAudio, idleBentMidi);
+
+    // A wheel message received while the channel is idle belongs to its next
+    // MPE finger. It must be cached without retuning the still-audible string
+    // tail left by the preceding finger.
+    idleBentMidi.addEvent (juce::MidiMessage::pitchWheel (2, 0), 0);
+    renderBlock (reference, referenceAudio, referenceMidi);
+    renderBlock (idleBent, idleBentAudio, idleBentMidi);
+    expect (referenceAudio.getMagnitude (0, blockSize) > 1.0e-7f,
+            "MPE release-tail fixture decayed to silence before its check");
+    expect (std::equal (referenceAudio.getReadPointer (0),
+                        referenceAudio.getReadPointer (0) + blockSize,
+                        idleBentAudio.getReadPointer (0))
+                && std::equal (referenceAudio.getReadPointer (1),
+                               referenceAudio.getReadPointer (1) + blockSize,
+                               idleBentAudio.getReadPointer (1)),
+            "idle member pitch-wheel traffic retuned a released string tail");
+
+    referenceMidi.addEvent (juce::MidiMessage::noteOn (
+        2, note, (juce::uint8) 108), 0);
+    idleBentMidi.addEvent (juce::MidiMessage::noteOn (
+        2, note, (juce::uint8) 108), 0);
+    renderBlock (reference, referenceAudio, referenceMidi);
+    renderBlock (idleBent, idleBentAudio, idleBentMidi);
+    renderSeconds (reference, referenceAudio, 0.55);
+    renderSeconds (idleBent, idleBentAudio, 0.55);
+    const auto referenceCapture = renderCapture (reference, referenceAudio, 0.35);
+    const auto idleBentCapture = renderCapture (idleBent, idleBentAudio, 0.35);
+    const double searchCentre = openHz * std::pow (2.0, -2.5 / 12.0);
+    const double referenceHz = measureFundamentalHz (
+        referenceCapture, 0, static_cast<int> (referenceCapture.size()),
+        sampleRate, searchCentre, 280.0);
+    const double idleBentHz = measureFundamentalHz (
+        idleBentCapture, 0, static_cast<int> (idleBentCapture.size()),
+        sampleRate, searchCentre, 280.0);
+    const double cachedBendCents =
+        1200.0 * std::log2 (idleBentHz / referenceHz);
+    expect (cachedBendCents < -470.0 && cachedBendCents > -530.0,
+            "a pre-note MPE member wheel was not applied to the next finger "
+            "(measured " + std::to_string (cachedBendCents) + " cents)");
+
+    reference.releaseResources();
+    idleBent.releaseResources();
+}
+
+void testMpeFractionalRangeAndLiveMasterTail()
+{
+    constexpr int note = 50;
+    constexpr double openHz = 146.83238;
+    ElectryAudioProcessor processor;
+    setParameterValue (processor, electry::parameters::bodyResonance, 0.0f);
+    setParameterValue (processor, electry::parameters::artifacts, 0.0f);
+    setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+    setParameterValue (processor, electry::parameters::bendTime, 0.04f);
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    const auto setup = juce::MPEMessages::setLowerZone (2, 2, 1);
+    midi.addEvents (setup, 0, -1, 0);
+    // Raw RPN 0 Data Entry MSB/LSB: two semitones plus 50 cents. JUCE's
+    // MPEZoneLayout retains the integer two for routing, while Electry must
+    // perform the full 2.50-semitone interval.
+    const auto exactMemberRange = juce::MidiRPNGenerator::generate (
+        2, 0, 2 * 128 + 50, false, true);
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, note, (juce::uint8) 108), 0);
+    renderBlock (processor, audio, midi);
+
+    const auto measureAt = [&] (double cents)
+    {
+        renderSeconds (processor, audio, 0.5);
+        const auto capture = renderCapture (processor, audio, 0.35);
+        return measureFundamentalHz (
+            capture, 0, static_cast<int> (capture.size()), sampleRate,
+            openHz * std::pow (2.0, cents / 1200.0), 90.0);
+    };
+    const auto centsFromOpen = [] (double frequency)
+    {
+        return 1200.0 * std::log2 (frequency / openHz);
+    };
+
+    // Refine the range while the already-bent note is sounding. Its whole
+    // semitone value remains two, so only the CC38 cents update can trigger
+    // the retune; JUCE's integer MPEZoneLayout is unchanged.
+    midi.addEvents (exactMemberRange, 0, -1, 0);
+    renderBlock (processor, audio, midi);
+    const double memberCents = centsFromOpen (measureAt (250.0));
+    expect (memberCents > 232.0 && memberCents < 268.0,
+            "RPN 0 lost its 50-cent Data Entry LSB (measured "
+                + std::to_string (memberCents) + " cents)");
+
+    midi.addEvent (juce::MidiMessage::noteOff (2, note), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 1,
+            "CC64 did not retain the fractional-range MPE note tail");
+
+    // Per-note control ends at Note Off, but Zone Master pitch remains live
+    // for the still-sounding pedal tail. The member's full-down wheel must be
+    // ignored by that tail, then the one-semitone master must add to its
+    // frozen +2.50-semitone performed interval.
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 0), 0);
+    midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+    renderBlock (processor, audio, midi);
+    const double tailCents = centsFromOpen (measureAt (350.0));
+    expect (tailCents > 332.0 && tailCents < 368.0,
+            "MPE master did not remain live independently of the frozen "
+            "member bend on a CC64-held tail (measured "
+                + std::to_string (tailCents) + " cents)");
+
+    // Reset All Controllers centres the wheels and releases the pedal. It
+    // nulls the RPN/NRPN selection transaction, so a later bare Data Entry LSB
+    // cannot refine the old RPN 0, but it must retain the already-declared
+    // exact range and active zone for the next member finger.
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+    renderBlock (processor, audio, midi);
+    midi.addEvent (juce::MidiMessage::controllerEvent (2, 38, 99), 0);
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, note, (juce::uint8) 108), 0);
+    renderBlock (processor, audio, midi);
+    const double retainedCents = centsFromOpen (measureAt (250.0));
+    expect (retainedCents > 232.0 && retainedCents < 268.0,
+            "CC121 did not null Data Entry or preserve the exact MPE range "
+            "(measured "
+                + std::to_string (retainedCents) + " cents)");
+
+    // A host re-prepare is another parser boundary, not a new MPE
+    // configuration. Keep the exact range and zone, but discard this selected
+    // RPN 0 so the first bare Data Entry in the new run cannot alter it.
+    midi.addEvent (juce::MidiMessage::controllerEvent (2, 101, 0), 0);
+    midi.addEvent (juce::MidiMessage::controllerEvent (2, 100, 0), 0);
+    renderBlock (processor, audio, midi);
+    processor.prepareToPlay (sampleRate, blockSize);
+    midi.addEvent (juce::MidiMessage::controllerEvent (2, 6, 3), 0);
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, note, (juce::uint8) 108), 0);
+    renderBlock (processor, audio, midi);
+    const double preparedCents = centsFromOpen (measureAt (250.0));
+    expect (preparedCents > 232.0 && preparedCents < 268.0,
+            "prepare retained an RPN selector or discarded the exact MPE "
+            "range (measured " + std::to_string (preparedCents) + " cents)");
+
+    processor.releaseResources();
+}
+
+void testMpeSamePitchOwnershipAcrossLayoutChange()
+{
+    ElectryAudioProcessor processor;
+    processor.setPlayStyleKeysHold (true);
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    auto setup = juce::MPEMessages::setLowerZone (2, 2, 2);
+    midi.addEvents (setup, 0, -1, 0);
+    midi.addEvent (juce::MidiMessage::noteOn (2, 52, (juce::uint8) 110), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (3, 52, (juce::uint8) 105), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 2,
+            "same-pitch MPE owners did not allocate two independent strings");
+
+    // Articulation and momentary-gesture notes remain global controls when a
+    // controller happens to send them on a member channel.
+    constexpr int palm = static_cast<int> (electry::PlayStyle::PalmMute);
+    constexpr int palmKey =
+        electry::ElectryEngine::firstPlayStyleKeyswitchNote + palm;
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, palmKey, (juce::uint8) 100), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getEffectivePlayStyleIndex() == palm,
+            "an MPE member-channel HOLD key did not engage globally");
+    midi.addEvent (juce::MidiMessage::noteOff (2, palmKey), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getEffectivePlayStyleIndex()
+                == static_cast<int> (electry::PlayStyle::Sustain),
+            "an MPE member-channel HOLD release remained latched");
+
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, electry::ElectryEngine::vibratoGestureNote,
+        (juce::uint8) 80), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 80,
+            "an MPE member-channel vibrato gesture did not engage globally");
+    midi.addEvent (juce::MidiMessage::noteOff (
+        2, electry::ElectryEngine::vibratoGestureNote), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getVibratoGestureForDisplay() == 0,
+            "an MPE member-channel vibrato release remained latched");
+
+    // The layout change is deliberately inserted after the release at the
+    // same timestamp. RPN conditioning runs first, while the fixed ownership
+    // table must still route the old channel-2 release to expression ID 2.
+    midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    auto clear = juce::MPEMessages::clearLowerZone();
+    midi.addEvents (clear, 0, -1, 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 1,
+            "a zone change lost same-pitch channel ownership on Note Off");
+
+    midi.addEvent (juce::MidiMessage::noteOff (3, 52), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 0,
+            "the second same-pitch MPE owner did not release independently");
+
+    // Check the opposite transition too: an ID-0 note that began before zone
+    // activation must not be released as a newly assigned member-channel ID.
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 52, (juce::uint8) 105), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 1,
+            "legacy-to-MPE ownership fixture did not start its legacy note");
+    midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+    midi.addEvents (setup, 0, -1, 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 0,
+            "zone activation misrouted a preceding legacy Note Off");
+
+    // Overlap both identities on one channel/note across a layout change.
+    // Note Off is FIFO for that MIDI identity: the older legacy owner must go
+    // first, leaving the newer member owner available for per-note bend.
+    clear = juce::MPEMessages::clearLowerZone();
+    midi.addEvents (clear, 0, -1, 0);
+    renderBlock (processor, audio, midi);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 52, (juce::uint8) 105), 0);
+    renderBlock (processor, audio, midi);
+    setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+    midi.addEvents (setup, 0, -1, 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 52, (juce::uint8) 108), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 2,
+            "mixed legacy/MPE overlap did not retain both string owners");
+    midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 1,
+            "the first mixed-identity Note Off did not leave one owner");
+    const auto mixedBaselineCapture = renderCapture (processor, audio, 0.35);
+    const double mixedSearchCentre =
+        164.81378 * std::pow (2.0, 2.5 / 12.0);
+    const double mixedBaseline = measureFundamentalHz (
+        mixedBaselineCapture, 0,
+        static_cast<int> (mixedBaselineCapture.size()), sampleRate,
+        mixedSearchCentre, 280.0);
+    midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 0.55);
+    const auto mixedBentCapture = renderCapture (processor, audio, 0.35);
+    const double mixedBent = measureFundamentalHz (
+        mixedBentCapture, 0, static_cast<int> (mixedBentCapture.size()),
+        sampleRate, mixedSearchCentre, 280.0);
+    const double mixedCents = 1200.0 * std::log2 (mixedBent / mixedBaseline);
+    expect (mixedCents > 470.0 && mixedCents < 530.0,
+            "an older legacy Note Off released the newer MPE owner (measured "
+                + std::to_string (mixedCents) + " cents)");
+    midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 0,
+            "the second mixed-identity Note Off did not release its MPE owner");
+
+    // Mirror the overlap: older member owner, then a newer legacy owner after
+    // the zone is cleared. FIFO must release the member first even though the
+    // current layout says channel 2 is ordinary MIDI.
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 52, (juce::uint8) 108), 0);
+    renderBlock (processor, audio, midi);
+    clear = juce::MPEMessages::clearLowerZone();
+    midi.addEvents (clear, 0, -1, 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 52, (juce::uint8) 105), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 2,
+            "mixed MPE/legacy overlap did not retain both string owners");
+    midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 1,
+            "reverse mixed-identity Note Off did not leave one owner");
+    const auto reverseBaselineCapture = renderCapture (processor, audio, 0.35);
+    const double reverseSearchCentre =
+        164.81378 * std::pow (2.0, 1.0 / 12.0);
+    const double reverseBaseline = measureFundamentalHz (
+        reverseBaselineCapture, 0,
+        static_cast<int> (reverseBaselineCapture.size()), sampleRate,
+        reverseSearchCentre, 160.0);
+    midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 0.55);
+    const auto reverseBentCapture = renderCapture (processor, audio, 0.35);
+    const double reverseBent = measureFundamentalHz (
+        reverseBentCapture, 0, static_cast<int> (reverseBentCapture.size()),
+        sampleRate, reverseSearchCentre, 160.0);
+    const double reverseCents =
+        1200.0 * std::log2 (reverseBent / reverseBaseline);
+    expect (reverseCents > 170.0 && reverseCents < 230.0,
+            "an older MPE Note Off released the newer legacy owner (measured "
+                + std::to_string (reverseCents) + " cents)");
+    setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+    midi.addEvents (setup, 0, -1, 0);
+    midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 0,
+            "the second reverse mixed-identity Note Off did not release its "
+            "legacy owner");
+    processor.releaseResources();
+}
+
+void testMpeOwnershipCapacityIsClosed()
+{
+    ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    auto setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+    midi.addEvents (setup, 0, -1, 0);
+    for (int owner = 0; owner < 128; ++owner)
+        midi.addEvent (juce::MidiMessage::noteOn (
+            2, 52, (juce::uint8) 100), 0);
+    renderBlock (processor, audio, midi);
+
+    // The fixed per-pitch FIFO is full. This next attack arrives in another
+    // callback and must be rejected rather than sounded without a releasable
+    // ownership record.
+    midi.addEvent (juce::MidiMessage::noteOn (
+        2, 52, (juce::uint8) 100), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 1,
+            "MPE ownership-capacity fixture did not retain its repeated note");
+
+    auto clear = juce::MPEMessages::clearLowerZone();
+    midi.addEvents (clear, 0, -1, 0);
+    for (int owner = 0; owner < 129; ++owner)
+        midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+    renderBlock (processor, audio, midi);
+    renderSeconds (processor, audio, 3.0);
+    expect (processor.getActiveVoiceCount() == 0,
+            "a Note On beyond the fixed MPE ownership capacity left an "
+            "unreleasable string owner");
+    processor.releaseResources();
+}
+
+void testMpeOwnershipLifecycleBoundaries()
+{
+    enum class Boundary { Panic, AllSoundOff, AllNotesOff, Prepare };
+    const auto nameOf = [] (Boundary boundary)
+    {
+        switch (boundary)
+        {
+            case Boundary::Panic: return "Panic";
+            case Boundary::AllSoundOff: return "CC120";
+            case Boundary::AllNotesOff: return "CC123";
+            case Boundary::Prepare: return "prepareToPlay";
+        }
+        return "unknown";
+    };
+
+    for (const auto boundary : { Boundary::Panic, Boundary::AllSoundOff,
+                                 Boundary::AllNotesOff, Boundary::Prepare })
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        auto setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+        midi.addEvents (setup, 0, -1, 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            2, 52, (juce::uint8) 105), 0);
+        renderBlock (processor, audio, midi);
+
+        if (boundary == Boundary::Panic)
+        {
+            processor.requestPanic();
+            renderBlock (processor, audio, midi);
+        }
+        else if (boundary == Boundary::Prepare)
+        {
+            processor.prepareToPlay (sampleRate, blockSize);
+        }
+        else
+        {
+            midi.addEvent (juce::MidiMessage::controllerEvent (
+                1, boundary == Boundary::AllSoundOff ? 120 : 123, 0), 0);
+            renderBlock (processor, audio, midi);
+        }
+
+        // Start the same channel/note as legacy MIDI, then reactivate MPE
+        // before Note Off. Any stale pre-boundary ID-2 FIFO entry would be
+        // consumed first and leave the new ID-0 string held forever.
+        auto clear = juce::MPEMessages::clearLowerZone();
+        midi.addEvents (clear, 0, -1, 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            2, 52, (juce::uint8) 105), 0);
+        renderBlock (processor, audio, midi);
+        setup = juce::MPEMessages::setLowerZone (2, 5, 1);
+        midi.addEvents (setup, 0, -1, 0);
+        midi.addEvent (juce::MidiMessage::noteOff (2, 52), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 1.0);
+        expect (processor.getActiveVoiceCount() == 0,
+                std::string (nameOf (boundary))
+                    + " left stale MPE ownership across its lifecycle boundary");
+        processor.releaseResources();
+    }
 }
 
 // The CC1 resonance and the acoustic-return wiring live in the shell: the
@@ -2308,9 +3165,11 @@ void testResetAllControllersDispatch()
         renderSeconds (processor, audio, 0.5);
 
         const auto bentSettled = renderCapture (processor, audio, 0.4);
+        const double resetSearchCentre =
+            openLowStringHz * std::pow (2.0, 1.0 / 12.0);
         const auto bentHz = measureFundamentalHz (
             bentSettled, 0, static_cast<int> (bentSettled.size()), sampleRate,
-            openLowStringHz * std::pow (2.0, 2.0 / 12.0));
+            resetSearchCentre, 160.0);
         const auto centsBent = 1200.0 * std::log2 (bentHz / openLowStringHz);
         expect (centsBent > 170.0,
                 "setup: a full-up pitch wheel did not bend the open low "
@@ -2324,7 +3183,7 @@ void testResetAllControllersDispatch()
         const auto resetSettled = renderCapture (processor, audio, 0.4);
         const auto resetHz = measureFundamentalHz (
             resetSettled, 0, static_cast<int> (resetSettled.size()), sampleRate,
-            openLowStringHz);
+            resetSearchCentre, 160.0);
         const auto centsAfterReset = 1200.0 * std::log2 (resetHz / openLowStringHz);
         expect (std::abs (centsAfterReset) < 10.0,
                 "Reset All Controllers (CC121) did not clear a pending pitch "
@@ -3275,10 +4134,19 @@ void testEditorRendering()
     auto* buildControl = dynamic_cast<ElectryKnob*> (
         findControl (electry::parameters::guitarBuild));
     expect (buildControl != nullptr
+#if ELECTRY_MEASURED_BODY_RESPONSE
+                && buildControl->slider.getTooltip().contains ("matched walnut/ash")
+                && buildControl->slider.getTooltip().contains ("pole")
+                && buildControl->slider.getTooltip().contains ("remain neutral")
+#else
                 && buildControl->slider.getTooltip().contains ("material damping")
+#endif
                 && buildControl->slider.getTooltip().contains ("scale length")
                 && buildControl->slider.getTooltip().contains ("remain independent"),
-            "Guitar Build does not explain its coupled path and independent controls");
+            "Guitar Build does not explain its coupled path and independent controls: "
+                + (buildControl == nullptr
+                       ? std::string ("<missing>")
+                       : buildControl->slider.getTooltip().toStdString()));
     for (const char* removed : { "bodyWood", "bodySize", "bodyShape",
                                  "construction", "scaleLength", "stringGauge" })
         expect (findControl (removed) == nullptr,
@@ -3789,6 +4657,12 @@ int main()
     testRepickMidiContract();
     testPitchWheelByteReconstruction();
     testPitchWheelMidiDispatch();
+    testMpeRouting();
+    testMpeIdlePitchPreservesReleaseTail();
+    testMpeFractionalRangeAndLiveMasterTail();
+    testMpeSamePitchOwnershipAcrossLayoutChange();
+    testMpeOwnershipCapacityIsClosed();
+    testMpeOwnershipLifecycleBoundaries();
     testResonanceWheelFeedback();
     testResonanceFeedbackIsBlockSizeInvariant();
     testMidiPressureLeavesChordUnchanged();

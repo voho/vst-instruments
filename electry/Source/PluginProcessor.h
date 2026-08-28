@@ -62,6 +62,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
+    bool supportsMPE() const override { return true; }
     // The longest open-string decay reaches -60 dB in about 9 s; the engine
     // retires a voice near -100 dB, and the release stage adds a bounded
     // damped tail. 18 s covers the complete audible ring-out.
@@ -201,6 +202,21 @@ private:
         std::size_t size = 0;
     };
 
+    struct OutstandingNoteOwner
+    {
+        std::uint8_t midiChannel = 0;
+        electry::ElectryEngine::ExpressionId expressionId =
+            electry::ElectryEngine::legacyExpressionId;
+    };
+
+    static constexpr std::size_t maximumOutstandingOwnersPerNote = 128;
+    struct OutstandingNoteQueue
+    {
+        std::array<OutstandingNoteOwner, maximumOutstandingOwnersPerNote>
+            owners {};
+        std::uint8_t size = 0;
+    };
+
     static constexpr unsigned uiQueueCapacity = 128;
     std::array<UiMidiEvent, uiQueueCapacity> uiMidiQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };
@@ -218,6 +234,8 @@ private:
                                   bool conditioning,
                                   NoteOnBatch& batch) noexcept;
     void batchOrDispatchNoteOn (int note, float velocity,
+                                electry::ElectryEngine::ExpressionId expressionId,
+                                int midiChannel,
                                 bool selectsBaseArticulation,
                                 NoteOnBatch& batch) noexcept;
     void flushNoteOnBatch (NoteOnBatch& batch) noexcept;
@@ -228,6 +246,20 @@ private:
     void dispatchNoteOn (int note, float velocity,
                          bool selectsBaseArticulation) noexcept;
     void dispatchNoteOff (int note) noexcept;
+    electry::ElectryEngine::ExpressionId expressionIdForNoteOn (
+        int midiChannel) const noexcept;
+    void dispatchHostNoteOff (int note, int midiChannel) noexcept;
+    bool processMpeController (const juce::uint8* data, int numBytes) noexcept;
+    void dispatchPitchWheel (int midiChannel, float bend) noexcept;
+    void refreshMpePitchBend (int midiChannel) noexcept;
+    void refreshMpePitchBends() noexcept;
+    bool recordNoteOwnership (
+        int note, int midiChannel,
+        electry::ElectryEngine::ExpressionId expressionId) noexcept;
+    int takeNoteOwnership (int note, int midiChannel,
+                           bool allowAnyLegacy) noexcept;
+    void clearMpeNoteOwnership() noexcept;
+    void resetPitchBends() noexcept;
     void applyPlayStyle (int styleIndex) noexcept;
     int latestHeldPlayStyle() const noexcept;
     void clearHeldPlayStyles() noexcept;
@@ -276,6 +308,18 @@ private:
     std::uint16_t vibratoGestureOwners = 0;
     std::uint16_t tremoloGestureOwners = 0;
     bool sustainPedalDown = false;
+    juce::MPEZoneLayout mpeZoneLayout;
+    juce::MidiRPNDetector mpeRpnDetector;
+    // JUCE keeps these four routing ranges as integers. RPN 0's Data Entry
+    // LSB is cents, so retain the performed range separately for tuning while
+    // leaving JUCE's layout as the authority for zone/channel membership.
+    float lowerPerNotePitchBendRange { 48.0f };
+    float lowerMasterPitchBendRange { 2.0f };
+    float upperPerNotePitchBendRange { 48.0f };
+    float upperMasterPitchBendRange { 2.0f };
+    std::array<float, 16> midiPitchBends {};
+    std::array<OutstandingNoteQueue, 128> outstandingNoteOwners {};
+    std::array<std::uint16_t, 16> outstandingMpeChannelNotes {};
     // Raw CC2 is kept beside the other display-only atomics. The Mute Pressure
     // knob shows the host parameter; this value makes its live MIDI addition
     // visible without feeding UI state back into the engine.

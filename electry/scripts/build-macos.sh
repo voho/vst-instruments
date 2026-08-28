@@ -71,6 +71,10 @@ for artifact in "${artifacts[@]}"; do
     codesign --verify --deep --strict --verbose=2 "${artifact}"
 done
 
+"${SCRIPT_DIR}/validate-macos-artifacts.sh" "${ARTIFACT_DIR}"
+ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" \
+    --output-on-failure -R '^Electry\.VST3Artifact$'
+
 echo
 echo "Build complete. Artifacts:"
 for artifact in "${artifacts[@]}"; do

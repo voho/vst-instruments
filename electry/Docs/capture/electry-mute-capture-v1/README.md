@@ -208,7 +208,7 @@ the generated receipt. The packer independently regenerates it.
 
 The v1 selection, render, chain and analysis settings have exact keys and
 values; they are not arbitrary self-hashed notes. The common chain freezes the
-current 4x effect oversampling at 44.1 kHz, and the analysis settings include
+current 8x effect oversampling at 44.1 kHz, and the analysis settings include
 every numerical listener gate. For each `settings_sha256`,
 hash the UTF-8 JSON serialization of the adjacent `settings` object with keys
 sorted, ASCII escaping and compact `,`/`:` separators. `assets` may be empty

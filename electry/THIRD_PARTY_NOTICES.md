@@ -3,7 +3,8 @@
 Electry's original source code is covered by the `LICENSE` file included with
 each source or binary distribution. Electry builds against one separately
 licensed framework, which is not relicensed by Electry. The research
-attribution below does not identify bundled third-party source code.
+attribution below does not identify bundled third-party source code. The CC0
+cabinet impulse data included by Electry is identified separately below.
 
 ## Physical-modeling research attribution
 
@@ -45,6 +46,32 @@ respective owners. Electry uses these names solely to identify the reference
 styles between which its modeling axes interpolate; no affiliation,
 endorsement, or capture-accurate reproduction is claimed.
 
+## Jester Dyne Brutal IR Pack #14
+
+Creator/publisher: Jester Dyne Productions
+
+Source pack: <https://www.jester-dyne-productions.com/brutal-ir-pack/>
+
+License: the source pack's handbook dedicates the impulse responses under
+[CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/).
+
+`Source/DSP/ModernCabinetIR.h` contains the exact first 1,024 causal samples
+of the 48 kHz, 24-bit mono `14_Cathode_Ray_Fleshburn.wav` SM57/Vintage 30
+capture. The original ZIP member is
+`Jesters_Brutal_Pack_1.0/Impulses/48kHz/14_Cathode_Ray_Fleshburn.wav`.
+Only those 1,024 sample values are included; the full ZIP, complete WAV, and
+handbook PDF are not included. The prefix hash below is calculated over the
+source values' original signed-24-bit little-endian PCM encoding.
+
+- Source ZIP SHA-256:
+  `299dc053f01ebd1e980459adc48f9c6b8a8c7af91917b4f946512eefdbb311ea`
+- Complete source WAV SHA-256:
+  `420280d44a6cb969d0599aa88f7bc733e13d39cdd051acf8b0eda1d82286ba5f`
+- Source PCM bytes corresponding to the included 1,024-sample prefix SHA-256:
+  `a9b7e39f38c38d820ff9b758577293b6d4cb5de03bb89090ef0763a7eb357d45`
+- Source handbook PDF SHA-256:
+  `265e887fc747a154916bf56408e9c4a371c9d9036aaf1b22997ad4d161cd079e`
+
 ## JUCE 8.0.14
 
 JUCE is Copyright (c) Raw Material Software Limited.
@@ -64,5 +91,5 @@ in the JUCE source tree. The VST3 SDK portions used through JUCE are identified
 there as MIT-licensed; Apple's Audio Unit frameworks are supplied by the macOS
 SDK and remain subject to Apple's terms.
 
-No neural-network weights, guitar recordings, sample libraries, or impulse
-responses are included in this repository or its build products.
+No neural-network weights, guitar recordings, or sample libraries are included
+in this repository or its build products.

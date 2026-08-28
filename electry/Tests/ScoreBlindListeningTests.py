@@ -13,11 +13,11 @@ import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 from BlindListeningTestSupport import build_valid_study
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.dont_write_bytecode = True
 
 
 def load_tool(name):
@@ -174,7 +174,7 @@ class ScoreBlindListeningTests(unittest.TestCase):
             self.assertEqual(
                 result["endpoints"]["physical_source_identification"][
                     "bootstrap_90_percentile_interval"],
-                [0.4733333333333333, 0.5266666666666666])
+                [0.47333333333333333, 0.5266666666666666])
             self.assertAlmostEqual(
                 result["endpoints"]["electry_preference"][
                     "bootstrap_one_sided_95_lower_bound"], 0.6)

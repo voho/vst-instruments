@@ -2001,7 +2001,7 @@ def _comparison_descriptor(manifest_path: Path, value: Any) -> dict[str, Any]:
         "comparison manifest freezes.chain.settings")
     _require_exact(chain_settings["sample_rate_hz"], 44100,
                    "comparison manifest freezes.chain.settings.sample_rate_hz")
-    _require_exact(chain_settings["oversampling"], 4,
+    _require_exact(chain_settings["oversampling"], 8,
                    "comparison manifest freezes.chain.settings.oversampling")
     _require_exact(chain_settings["parameters"], CHAIN_PARAMETERS,
                    "comparison manifest freezes.chain.settings.parameters")

@@ -70,6 +70,21 @@
 //     Sound by Digital Waveguides",
 //     https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Amaestre_jointmodeling_ieeeaslp_2017.pdf
 //
+//   Solid-body response, decay and direct vibro-electric transfer
+//     Paté, "Lutherie de la guitare électrique solid body : aspects
+//     mécaniques et perceptifs", doctoral thesis, Tables 10.1-10.2,
+//     https://www.lam.jussieu.fr/Publications/Theses/these-arthur-pate.pdf
+//     Paté, Le Carrou and Fabre, "Predicting the decay time of solid body
+//     electric guitar tones", JASA 135(5), 3045-3055,
+//     https://www.lam.jussieu.fr/Membres/LeCarrou/Articles/A8_Pate_PredictingDecayTime.pdf
+//     Ray, Kaljun and Straže, "Comparison of the Vibration Damping of the Wood
+//     Species Used for the Body of an Electric Guitar on the Vibration
+//     Response of Open-Strings", Materials 14(18),
+//     https://pmc.ncbi.nlm.nih.gov/articles/PMC8465587/
+//     Elliott, Magill and Kendrick, "Vibro-Electric Transfer Path Analysis of
+//     a Solid Body Electric Guitar",
+//     https://salford-repository.worktribe.com/OutputFile/1490211
+//
 //   Amplifier and cabinet
 //     Pakarinen and Yeh, "A Review of Digital Techniques for Modeling
 //     Vacuum-Tube Guitar Amplifiers", CMJ 2009,
@@ -92,6 +107,14 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+
+#ifndef ELECTRY_ANALYTIC_RELEASE_IC
+#define ELECTRY_ANALYTIC_RELEASE_IC 0
+#endif
+
+#ifndef ELECTRY_MEASURED_BODY_RESPONSE
+#define ELECTRY_MEASURED_BODY_RESPONSE 0
+#endif
 
 namespace electry
 {
@@ -130,17 +153,21 @@ enum class PlayStyle
 enum class PickupSelector { Neck, Both, Bridge };
 enum class OutputMode { Mono, Stereo };
 
-// Material and construction axes morph between classic solid-body anchors.
-// Scale length spans a conventional electric into a modern baritone/8-string
-// build, while the remaining performance controls use their full 0..1 range.
-// The defaults describe a specific instrument rather than the midpoint of every
-// axis, because the midpoint of every axis is not a guitar anyone owns. They are
-// a thick carved set-neck blank strung with the heaviest set on a 27.6-inch
-// scale, a humbucker-leaning bridge pickup, the tone control a little back, and a
-// softer pick close to the bridge - the Drop-E rhythm instrument this model
-// exists to be. Fitted against nine dry muted power-chord references at five
-// pitches: the joint tilt-and-contour error is 5.03 dB here against 6.31 for the
-// former all-midpoints defaults.
+inline constexpr float defaultGuitarBuild = 0.8f;
+
+// Shipping material and construction axes morph between classic solid-body
+// anchors. Scale length spans a conventional electric into a modern
+// baritone/8-string build, while the remaining performance controls use their
+// full 0..1 range. The default-off comparison path is documented on the fields
+// below.
+// The shipping defaults describe a specific instrument rather than the midpoint
+// of every axis, because the midpoint of every axis is not a guitar anyone owns.
+// They are a thick carved set-neck blank strung with the heaviest set on a
+// 27.6-inch scale, a humbucker-leaning bridge pickup, the tone control a little
+// back, and a softer pick close to the bridge - the Drop-E rhythm instrument
+// this model exists to be. Fitted against nine dry muted power-chord references
+// at five pitches: the joint tilt-and-contour error is 5.03 dB here against
+// 6.31 for the former all-midpoints defaults.
 //
 // The four "weight" fields on their own do not get there. Moved without the
 // scale length, pickup type and pick position below, the same body, gauge, age,
@@ -150,10 +177,41 @@ enum class OutputMode { Mono, Stereo };
 struct EngineParameters
 {
     PickupSelector pickupSelector { PickupSelector::Bridge };
-    float bodyWood { 0.0f };        // 0 mahogany/maple set blank, 1 swamp-ash slab
-    float bodySize { 0.0f };        // 0 thick heavy blank, 1 thin light slab
-    float bodyShape { 0.0f };       // 0 carved single-cut, 1 flat single-cut slab
-    float construction { 0.0f };    // 0 set neck + stopbar, 1 bolt-on + through-body
+    // Shipping: mahogany/maple-like to swamp-ash-like. The default-off
+    // measured-modal experiment can support only a walnut-like to ash-like
+    // material contrast from its controlled source.
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    float bodyWood { defaultGuitarBuild };
+#else
+    float bodyWood { 0.0f };
+#endif
+    // Shipping: thick/heavy to thin/light. The measured-modal experiment has
+    // no physical dimension behind this coordinate and deliberately ignores it.
+    float bodySize {
+#if ELECTRY_MEASURED_BODY_RESPONSE
+        0.5f
+#else
+        0.0f
+#endif
+    };
+    // Shipping: carved single-cut to flat single-cut slab. The measured-modal
+    // experiment has no independently measured shape law and ignores it.
+    float bodyShape {
+#if ELECTRY_MEASURED_BODY_RESPONSE
+        0.5f
+#else
+        0.0f
+#endif
+    };
+    // Shipping: set-neck/stopbar to bolt-on/through-body. The experiment has no
+    // independently measured joint law and ignores it.
+    float construction {
+#if ELECTRY_MEASURED_BODY_RESPONSE
+        0.5f
+#else
+        0.0f
+#endif
+    };
     float scaleLength { 0.85f };    // 0 = 25.5 in, 1 = 28 in
     float pickupType { 0.32f };     // 0 humbucker, 1 narrow single coil
     float toneKnob { 0.70f };       // guitar's own passive tone control
@@ -198,10 +256,8 @@ struct EngineParameters
     float vibratoDepth { 0.30f };
 };
 
-// The plug-in exposes the six structural coordinates above as one playable
-// path through distinct solid-body builds. Pickups, tone, body-resonance
-// amount and playing controls deliberately remain independent.
-inline constexpr float defaultGuitarBuild = 0.8f;
+// The plug-in exposes the structural coordinates above as one playable path.
+// Pickups, tone, body-resonance amount and playing controls remain independent.
 void applyGuitarBuild(EngineParameters& parameters, float build) noexcept;
 
 // Per-string readout for the editor's fretboard display. It is produced on
@@ -223,6 +279,10 @@ class ElectryEngine
 {
 public:
     ElectryEngine() noexcept;
+
+    using ExpressionId = std::uint8_t;
+    static constexpr ExpressionId legacyExpressionId = 0;
+    static constexpr ExpressionId maximumExpressionId = 16;
 
     static constexpr int stringCount = 8;
     static constexpr int fretCount = 22;
@@ -281,6 +341,7 @@ public:
     {
         int midiNote { -1 };
         float velocity { 0.0f };
+        ExpressionId expressionId { legacyExpressionId };
     };
 
     void prepare(double sampleRate, int maxBlockSize);
@@ -291,19 +352,33 @@ public:
     // random.
     void setVariationSeed(std::uint32_t seed) noexcept { variationSeed_ = seed; }
     void setParameters(const EngineParameters& parameters);
-    void noteOn(int midiNote, float velocity);
+    void noteOn(int midiNote, float velocity,
+                ExpressionId expressionId = legacyExpressionId);
     // Solves one complete sample-accurate chord as a whole, so host insertion
     // order cannot change its physical strings, hand shape or variation
     // stream. Because the edge is known up front, a non-zero Strum Spread
     // delays only the strings the pick has not reached; it does not add the
     // scalar note path's causal re-anchor pre-roll to the leading string.
     void noteOnChord(std::span<const NoteOnEvent> events);
-    void noteOff(int midiNote);
+    void noteOff(int midiNote,
+                 ExpressionId expressionId = legacyExpressionId);
     void allNotesOff();
-    // Standard MIDI pitch bend moves every played and sympathetically ringing
-    // string by the same nominal -2..+2 semitone interval. Bend Time controls
-    // how long the strings take to reach the target.
+    // Standard MIDI pitch bend moves every legacy-ID and sympathetically
+    // ringing string by the same nominal -2..+2 semitone interval. Bend Time
+    // controls how long the strings take to reach the target.
     void setPitchBend(float normalisedBipolar) noexcept;
+    // Per-note expression is supplied as a semitone interval for one MIDI
+    // member channel. ID 0 is reserved for the legacy global wheel above;
+    // member bends glide with the same Bend Time but never add to it.
+    void setExpressionPitchBend(ExpressionId expressionId,
+                                float semitones) noexcept;
+    // The MPE master component remains live after a member Note Off, while the
+    // member component above freezes with the lifted finger. Keeping the two
+    // components separate is required for a release or pedal-held tail to
+    // follow later zone-master wheel movement without following channel reuse.
+    void setExpressionMasterPitchBend(ExpressionId expressionId,
+                                      float semitones) noexcept;
+    void snapExpressionPitchBendToTarget(ExpressionId expressionId) noexcept;
     // MIDI CC1 controls the performance resonance (0 = the Sympathetic Ring
     // parameter alone, 1 = full bridge coupling plus acoustic feedback from
     // the amplified output, scaled by the Resonance Depth parameter).
@@ -397,7 +472,11 @@ private:
 
     static constexpr int delayLineSize = 16384;
     static constexpr int controlPeriod = 16;
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    static constexpr int bodyModeCount = 3;
+#else
     static constexpr int bodyModeCount = 4;
+#endif
     static constexpr int decimatorHistorySize = 64;
     static constexpr int apertureHistorySize = 256;
     // Once no string is rendering and the shared body/coil/DC path has fallen
@@ -568,6 +647,14 @@ private:
             cumulative = 0.0;
             writeIndex = 0;
         }
+#if ELECTRY_ANALYTIC_RELEASE_IC
+        void prime(float input) noexcept
+        {
+            reset();
+            for (int sample = 0; sample < apertureHistorySize; ++sample)
+                (void) process(input);
+        }
+#endif
 
         void setWindow(float lengthSamples) noexcept
         {
@@ -632,6 +719,13 @@ private:
             history.fill(0.0f);
             writeIndex = 0;
         }
+#if ELECTRY_ANALYTIC_RELEASE_IC
+        void prime(float input) noexcept
+        {
+            history.fill(input);
+            writeIndex = 0;
+        }
+#endif
 
         void setSpacing(float delaySamples, float secondCoil) noexcept
         {
@@ -825,12 +919,18 @@ private:
         // contact that live flag can no longer distinguish a repick from a
         // released/refretted note.
         bool preservesVibratoFinger { false };
+        ExpressionId expressionId { legacyExpressionId };
     };
 
     struct Voice
     {
         bool active { false };
         bool keyDown { false };
+        ExpressionId expressionId { legacyExpressionId };
+        // A member channel may be reused while this string is still damping.
+        // Once its finger lifts, retain that performed interval on the voice.
+        bool expressionPitchBendFrozen { false };
+        float frozenExpressionPitchBendSemitones { 0.0f };
         // Matching Note Offs still owed for this pitch. A sequencer may order
         // the next repeated Note On before the previous Note Off at the same
         // timestamp; the physical string is repicked, but that older end must
@@ -901,11 +1001,12 @@ private:
         // Sounding pitch program. The compensated periods cache the loop
         // filter phase compensation applied to the fractional delays.
         float baseFrequency { 110.0f };
-        // The pitch the dispersion grid search was last fitted at; the fit is
-        // quantised to a few cents so a wheel glide does not re-run it on
-        // every control tick.
+        // The pitch and physical fret the dispersion grid search was last
+        // fitted at. Both coordinates are quantised so a wheel or finger
+        // glide does not re-run it on every control tick.
         float lastConfiguredSemitones { -999.0f };
         float lastConfiguredFrequency { -1.0f };
+        float lastConfiguredLiveFret { -999.0f };
         // The pitch the analytic phase compensation was last evaluated at;
         // this one tracks every sub-cent move so tuning stays exact.
         float lastCompensatedSemitones { -999.0f };
@@ -948,6 +1049,16 @@ private:
         float excitationAmplitude { 0.0f };
         float excitationCombDelay { 0.0f };
         float excitationPolarity { 1.0f };
+#if ELECTRY_ANALYTIC_RELEASE_IC
+        // Candidate-only released-string initial condition. A positive peak is
+        // also the one-shot pending flag; the physical position and contact
+        // half-width are latched because pitch may move during pick contact.
+        float analyticReleaseAmplitude { 0.0f };
+        float analyticReleasePluckFraction { 0.18f };
+        float analyticReleaseHalfWidthFraction { 0.0f };
+        float stringTensionNewtons { 80.0f };
+        bool analyticReleaseFreshContact { false };
+#endif
         // The principal release component is shaped with two string-scaled
         // low-pass sections so its modal envelope approximates the 1/n^2
         // falloff of a triangular pluck displacement. Ordinary sustained
@@ -1234,6 +1345,13 @@ private:
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    static void seedReleasedDisplacement(PolarisationLoop& loop,
+                                         float peakAmplitude,
+                                         float pluckFraction,
+                                         float halfWidthFraction,
+                                         float polarityAndWeight) noexcept;
+#endif
     [[nodiscard]] static bool plectrumContacts(PlayStyle style, bool legato) noexcept;
     void drawStrokeVariation(Voice& voice, std::uint32_t state) noexcept;
     [[nodiscard]] bool hasHeldFrettedFinger(
@@ -1250,19 +1368,25 @@ private:
                     int startDelaySamples,
                     std::uint32_t strokeVariationState,
                     std::uint64_t reservedStartOrder = 0,
-                    bool keyStateAlreadyApplied = false) noexcept;
+                    bool keyStateAlreadyApplied = false,
+                    ExpressionId expressionId = legacyExpressionId) noexcept;
     void repickHeldString(int stringIndex, float velocity,
                           bool reanchorTremolo = true);
     void noteOnInternal(int midiNote, float velocity, int forcedStringIndex,
                         bool addKeyOwner, bool handPositionPlanned,
                         bool completeChordStart = false,
                         int completeChordAnchor = -1,
-                        bool reanchorTremolo = true);
+                        bool reanchorTremolo = true,
+                        ExpressionId expressionId = legacyExpressionId);
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
-                        PlayStyle playStyle) noexcept;
+                        PlayStyle playStyle,
+                        ExpressionId expressionId = legacyExpressionId) noexcept;
+    void freezeExpressionPitchBend(Voice& voice) noexcept;
+    void stopLegatoTravel(Voice& voice) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
     void silenceVoice(Voice& voice) noexcept;
-    int chooseString(int midiNote, PlayStyle playStyle) const noexcept;
+    int chooseString(int midiNote, PlayStyle playStyle,
+                     ExpressionId expressionId) const noexcept;
     // What it costs the fretting hand to take this note on this string, in
     // fret-distance units. Lower wins; ties resolve toward the thicker string,
     // as they did when the rule was simply the lowest fret.
@@ -1320,6 +1444,14 @@ private:
     // parameter, so the wheel bends like a hand rather than snapping.
     float pitchBendTarget_ { 0.0f };
     float pitchBendSemitones_ { 0.0f };
+    static constexpr std::size_t expressionPitchBendCount
+        = static_cast<std::size_t>(maximumExpressionId) + 1;
+    std::array<float, expressionPitchBendCount> expressionPitchBendTargets_ {};
+    std::array<float, expressionPitchBendCount> expressionPitchBendSemitones_ {};
+    std::array<float, expressionPitchBendCount>
+        expressionMasterPitchBendTargets_ {};
+    std::array<float, expressionPitchBendCount>
+        expressionMasterPitchBendSemitones_ {};
     float bendGlideCoefficient_ { 0.05f };
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
@@ -1417,6 +1549,7 @@ private:
     // to its per-string picking-hand trigger.
     std::array<int, stringCount> heldMidiNotes_ {};
     std::array<int, stringCount> heldNoteCounts_ {};
+    std::array<ExpressionId, stringCount> heldExpressionIds_ {};
     // The visible B0 gesture is one picking wrist, not eight clocks. Its
     // phase is measured in strokes so a rate change takes effect immediately
     // without resetting time or accumulating integer-sample drift.

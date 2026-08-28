@@ -2,7 +2,13 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <vector>
+
+#ifndef ELECTRY_MEASURED_MODERN_CABINET
+#define ELECTRY_MEASURED_MODERN_CABINET 0
+#endif
 
 namespace electry
 {
@@ -67,9 +73,10 @@ public:
     }
 
     // Fixed group delay of the interpolating and decimating halfband chain, in
-    // host samples, while the gain block is engaged: 6 + 3 + 11/4 + 11/2 at
-    // 4x, 6 + 11/2 at 2x, none when the host already runs fast enough that the
-    // gain stages need no detour.
+    // host samples, while the gain block is engaged: 6 + 3 + 1.5 + 11/8 +
+    // 11/4 + 11/2 at 8x, 6 + 3 + 11/4 + 11/2 at 4x, 6 + 11/2 at 2x, none
+    // when the host already runs fast enough that the gain stages need no
+    // detour.
     [[nodiscard]] float gainStageLatencySamples() const noexcept;
 
 private:
@@ -78,8 +85,8 @@ private:
     // is not part of the plug-in API.
     friend struct ElectryFxTestAccess;
 
-    static constexpr int maximumOversamplingStages = 2;
-    static constexpr int maximumOversampledFrames = 4;
+    static constexpr int maximumOversamplingStages = 3;
+    static constexpr int maximumOversampledFrames = 8;
     static constexpr double minimumSampleRate = 8000.0;
     static constexpr double maximumSampleRate = 384000.0;
 
@@ -160,6 +167,7 @@ private:
         static constexpr int span = 2 * oddTapCount - 1;       // 11
         static constexpr int historySize = 32;                 // > 2 * span + 1
         static constexpr int historyMask = historySize - 1;
+        static constexpr float kaiserBeta = 7.5f;
 
         static_assert((historySize & historyMask) == 0,
                       "halfband history must be a power of two");
@@ -171,7 +179,7 @@ private:
         std::array<float, historySize> history {};
         int writeIndex { 0 };
 
-        void design(float kaiserBeta) noexcept;
+        void design() noexcept;
         void reset() noexcept
         {
             history.fill(0.0f);
@@ -221,6 +229,94 @@ private:
             return sum;
         }
     };
+
+#if ELECTRY_MEASURED_MODERN_CABINET
+    struct FftComplex
+    {
+        float real { 0.0f };
+        float imaginary { 0.0f };
+    };
+
+    template <std::size_t Size>
+    struct FftPlan
+    {
+        static_assert(Size >= 2 && (Size & (Size - 1)) == 0,
+                      "FFT size must be a power of two");
+        std::array<FftComplex, Size / 2> roots {};
+        std::array<std::uint16_t, Size> reversed {};
+
+        void prepare() noexcept;
+        void transform(std::array<FftComplex, Size>& data,
+                       bool inverse) const noexcept;
+    };
+
+    template <int BlockSize, int MaximumPartitions>
+    struct CabinetPartitionTier
+    {
+        static constexpr int fftSize = 2 * BlockSize;
+        using Spectrum = std::array<FftComplex,
+                                    static_cast<std::size_t>(fftSize)>;
+
+        std::array<Spectrum,
+                   static_cast<std::size_t>(MaximumPartitions)> history {};
+        std::array<float, static_cast<std::size_t>(BlockSize)> input {};
+        std::array<float, static_cast<std::size_t>(BlockSize)> output {};
+        std::array<float, static_cast<std::size_t>(BlockSize)> overlap {};
+        Spectrum scratch {};
+        int position { 0 };
+        int writePartition { 0 };
+
+        void reset() noexcept;
+        [[nodiscard]] float process(
+            float sample,
+            const std::array<Spectrum,
+                             static_cast<std::size_t>(MaximumPartitions)>& kernels,
+            int activePartitions,
+            const FftPlan<static_cast<std::size_t>(fftSize)>& plan) noexcept;
+        [[nodiscard]] bool atRest() const noexcept;
+    };
+
+    struct CabinetKernel
+    {
+        static constexpr int directTapCount = 64;
+        static constexpr int mediumBlockSize = 64;
+        static constexpr int mediumPartitionCount = 7;
+        static constexpr int longStartTap = 512;
+        static constexpr int longBlockSize = 512;
+        static constexpr int maximumLongPartitions = 15;
+        static constexpr int maximumTapCount = 8192;
+
+        using MediumTier = CabinetPartitionTier<mediumBlockSize,
+                                                 mediumPartitionCount>;
+        using LongTier = CabinetPartitionTier<longBlockSize,
+                                               maximumLongPartitions>;
+
+        std::array<float, maximumTapCount> impulse {};
+        std::array<MediumTier::Spectrum, mediumPartitionCount> medium {};
+        std::array<LongTier::Spectrum, maximumLongPartitions> longTail {};
+        FftPlan<2 * mediumBlockSize> mediumPlan {};
+        FftPlan<2 * longBlockSize> longPlan {};
+        int tapCount { 0 };
+        int longPartitionCount { 0 };
+        float normalisationGain { 1.0f };
+
+        void prepare(float internalSampleRate,
+                     float referenceMagnitude) noexcept;
+    };
+
+    struct CabinetConvolver
+    {
+        std::array<float, CabinetKernel::directTapCount> directHistory {};
+        CabinetKernel::MediumTier medium {};
+        CabinetKernel::LongTier longTail {};
+        int directWriteIndex { 0 };
+
+        void reset() noexcept;
+        [[nodiscard]] float process(float input,
+                                    const CabinetKernel& kernel) noexcept;
+        [[nodiscard]] bool atRest() const noexcept;
+    };
+#endif
 
     // A modulation-free multi-tap ambience. Three allpass diffusers feed two
     // damped comb resonators per channel, and the channel pair uses
@@ -320,6 +416,9 @@ private:
         bool pedalWasActive { false };
 
         std::array<AmpChannel, 3> amplifiers {};
+#if ELECTRY_MEASURED_MODERN_CABINET
+        std::unique_ptr<CabinetConvolver> modernCabinet {};
+#endif
         bool ampWasActive { false };
 
         void resetPedal() noexcept;
@@ -468,6 +567,10 @@ private:
     bool prepared_ { false };
 
     std::array<GainChannel, 2> gain_ {};
+
+#if ELECTRY_MEASURED_MODERN_CABINET
+    std::unique_ptr<CabinetKernel> modernCabinetKernel_ {};
+#endif
 
     std::array<std::vector<float>, 2> delayLines_ {};
     std::array<int, 2> delayTaps_ {};

@@ -677,13 +677,9 @@ Take renderBuildContrasts()
 {
     // One fixed performance/pickup voicing visits every anchor of the same
     // continuous Build path exposed by the plug-in.
-    struct Build { const char* name; float value; };
-    const std::array<Build, 6> builds {{
-        { "slab fixed", 0.0f }, { "contoured", 0.2f },
-        { "angular set", 0.4f }, { "modern bolt", 0.6f },
-        { "dense extended (default)", 0.8f },
-        { "neck-through extended", 1.0f },
-    }};
+    const std::array<float, 6> builds {
+        0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f
+    };
 
     EngineParameters parameters;
     parameters.pickupSelector = PickupSelector::Bridge;
@@ -696,7 +692,7 @@ Take renderBuildContrasts()
     Take take(parameters, FxParameters {}, false);
     for (const auto& build : builds)
     {
-        applyGuitarBuild(parameters, build.value);
+        applyGuitarBuild(parameters, build);
         take.setEngineParameters(parameters);
         // Long enough for the smoothers to settle and for the new voicing to
         // reach the ringing strings.

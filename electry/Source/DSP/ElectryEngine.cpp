@@ -406,12 +406,77 @@ void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value)
     line[static_cast<std::size_t>((index + 1) & mask)] += value * fraction;
 }
 
+#if ELECTRY_ANALYTIC_RELEASE_IC
+void ElectryEngine::seedReleasedDisplacement(
+    PolarisationLoop& loop, float peakAmplitude, float pluckFraction,
+    float halfWidthFraction, float polarityAndWeight) noexcept
+{
+    const float delay = clampf(loop.currentDelay, 4.0f,
+                               static_cast<float>(delayLineSize - 8));
+    const float centre = clampf(pluckFraction, 0.001f, 0.999f);
+    const float width = clampf(halfWidthFraction, 0.0f, 0.49f);
+    const std::array<float, 3> positions {
+        clampf(centre - width, 0.001f, 0.999f),
+        centre,
+        clampf(centre + width, 0.001f, 0.999f)
+    };
+    constexpr std::array<float, 3> contactWeights { 0.25f, 0.5f, 0.25f };
+    const float centreCompliance = centre * (1.0f - centre);
+    const int mask = delayLineSize - 1;
+    const int lastCell = static_cast<int>(std::ceil(delay));
+
+    // The physical rails are sampled at cell centres. Logical cell zero is
+    // the newest history sample (writeIndex - 1), and the second half of the
+    // folded ring stores the bridge-bound rail with the opposite sign. Equal
+    // rail magnitudes are the exact zero-initial-velocity condition.
+    for (int cell = 0; cell <= lastCell; ++cell)
+    {
+        float phase = (static_cast<float>(cell) + 0.5f) / delay;
+        phase -= std::floor(phase);
+        const float position = 2.0f * std::min(phase, 1.0f - phase);
+        float triangle = 0.0f;
+        for (std::size_t point = 0; point < positions.size(); ++point)
+        {
+            const float pick = positions[point];
+            const float displacement = position <= pick
+                ? position / pick
+                : (1.0f - position) / (1.0f - pick);
+            const float relativeCompliance = pick * (1.0f - pick)
+                                           / centreCompliance;
+            triangle += contactWeights[point] * relativeCompliance
+                      * displacement;
+        }
+        const float foldedSign = phase < 0.5f ? 1.0f : -1.0f;
+        loop.line[static_cast<std::size_t>(
+            (loop.writeIndex - 1 - cell) & mask)] +=
+                0.5f * peakAmplitude * polarityAndWeight
+                * foldedSign * triangle;
+    }
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Static helpers
 // ---------------------------------------------------------------------------
 
 void applyGuitarBuild(EngineParameters& parameters, float build) noexcept
 {
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    // The comparison has evidence for one material pair but no independent
+    // Size, Shape or Construction law. Keep those axes neutral while visiting
+    // six ordinary scale/gauge setups; the material coordinate alone remains
+    // monotonic. The 0.8 anchor is the preferred fitted heavy extended setup.
+    // This is a curated instrument path, not a claim that Ray's two specimens
+    // establish any material-to-string-set relationship.
+    static constexpr std::array<std::array<float, 6>, 6> anchors {{
+        { 0.00f, 0.50f, 0.50f, 0.50f, 0.00f, 1.00f },
+        { 0.20f, 0.50f, 0.50f, 0.50f, 0.20f, 0.80f },
+        { 0.40f, 0.50f, 0.50f, 0.50f, 0.40f, 0.60f },
+        { 0.60f, 0.50f, 0.50f, 0.50f, 0.60f, 0.40f },
+        { 0.80f, 0.50f, 0.50f, 0.50f, 0.85f, 1.00f },
+        { 1.00f, 0.50f, 0.50f, 0.50f, 1.00f, 0.00f },
+    }};
+#else
     // Slab/fixed, contoured, angular/set-neck, modern bolt-on, dense
     // extended, and continuous-neck extended. The path is intentionally not
     // a diagonal through six unrelated dials: real construction families
@@ -425,6 +490,7 @@ void applyGuitarBuild(EngineParameters& parameters, float build) noexcept
         { 0.00f, 0.00f, 0.00f, 0.00f, 0.85f, 1.00f },
         { 0.50f, 0.62f, 0.70f, 0.15f, 1.00f, 0.35f },
     }};
+#endif
 
     if (! std::isfinite(build))
         build = defaultGuitarBuild;
@@ -731,8 +797,17 @@ float ElectryEngine::highFrequencyDecayRatio(int stringIndex) const noexcept
     float highRatio = lerp(0.036f, 0.010f, parameters.stringAge);
     highRatio *= spec.wound ? 1.0f : 7.5f;
     highRatio *= lerp(1.15f, 0.78f, parameters.stringGauge);
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
     highRatio *= lerp(0.86f, 1.16f, parameters.bodyWood);
     highRatio *= lerp(0.58f, 1.70f, parameters.construction);
+#else
+    // Preserve the fitted shipping string itself while removing the old
+    // global material/joint direction. Only Body Wood acts through the quiet
+    // Ray direct-colour bank; the candidate has no material termination-loss
+    // law, and Size, Shape and Construction remain inactive. This constant is
+    // the shipping-Build baseline, not another material law.
+    highRatio *= 0.86f * 0.58f;
+#endif
     return highRatio;
 }
 
@@ -1035,6 +1110,14 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
                            / (vibratoOnsetSeconds
                               * static_cast<float>(sampleRate_));
 
+    // A new device/rate preparation starts with no per-note expression state.
+    // Ordinary reset() below deliberately preserves later controller targets,
+    // just as it does for the legacy global wheel.
+    expressionPitchBendTargets_.fill(0.0f);
+    expressionPitchBendSemitones_.fill(0.0f);
+    expressionMasterPitchBendTargets_.fill(0.0f);
+    expressionMasterPitchBendSemitones_.fill(0.0f);
+
     prepared_ = true;
     reset();
 }
@@ -1051,6 +1134,7 @@ void ElectryEngine::reset()
     }
     heldMidiNotes_.fill(-1);
     heldNoteCounts_.fill(0);
+    heldExpressionIds_.fill(legacyExpressionId);
     tremoloPickingPhase_ = 0.0;
 
     smoothedParameters_ = sanitise(targetParameters_);
@@ -1062,6 +1146,9 @@ void ElectryEngine::reset()
     sympatheticStringCount_ = 0;
     controlCountdown_ = 0;
     pitchBendSemitones_ = pitchBendTarget_;
+    expressionPitchBendSemitones_ = expressionPitchBendTargets_;
+    expressionMasterPitchBendSemitones_ =
+        expressionMasterPitchBendTargets_;
     sympatheticAppliedBend_ = pitchBendSemitones_;
     appliedBendGlideSeconds_ = -1.0f;
     resonanceAmount_ = resonanceTarget_;
@@ -1143,7 +1230,11 @@ void ElectryEngine::reset()
             static_cast<float>(sampleRate_));
     }
     smoothedOutputGain_ = smoothedParameters_.outputGain;
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    smoothedBodyLevel_ = 2.0f * smoothedParameters_.bodyResonance;
+#else
     smoothedBodyLevel_ = 24.5f * smoothedParameters_.bodyResonance;
+#endif
     stereoWidth_ = smoothedParameters_.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
     stereoSideScale_ = 0.24f * stereoWidth_;
     channelsLinked_ = stereoWidth_ == 0.0f;
@@ -1175,6 +1266,51 @@ void ElectryEngine::setPitchBend(float normalisedBipolar) noexcept
     if (! std::isfinite(normalisedBipolar))
         normalisedBipolar = 0.0f;
     pitchBendTarget_ = 2.0f * clampf(normalisedBipolar, -1.0f, 1.0f);
+}
+
+void ElectryEngine::setExpressionPitchBend(ExpressionId expressionId,
+                                            float semitones) noexcept
+{
+    if (expressionId == legacyExpressionId
+        || expressionId > maximumExpressionId)
+        return;
+    expressionPitchBendTargets_[static_cast<std::size_t>(expressionId)] =
+        clampf(std::isfinite(semitones) ? semitones : 0.0f, -192.0f, 192.0f);
+}
+
+void ElectryEngine::setExpressionMasterPitchBend(ExpressionId expressionId,
+                                                  float semitones) noexcept
+{
+    if (expressionId == legacyExpressionId
+        || expressionId > maximumExpressionId)
+        return;
+
+    const auto index = static_cast<std::size_t>(expressionId);
+    const float target = clampf(
+        std::isfinite(semitones) ? semitones : 0.0f, -192.0f, 192.0f);
+    expressionMasterPitchBendTargets_[index] = target;
+
+    // With no old string to move, cached master data is the starting pitch of
+    // the next finger rather than a glide from an unrelated default. A live or
+    // released tail instead hears the ordinary Bend Time movement below.
+    const bool hasSoundingVoice = std::any_of(
+        voices_.begin(), voices_.end(),
+        [expressionId] (const Voice& voice)
+        {
+            return voice.active && voice.expressionId == expressionId;
+        });
+    if (! hasSoundingVoice)
+        expressionMasterPitchBendSemitones_[index] = target;
+}
+
+void ElectryEngine::snapExpressionPitchBendToTarget(
+    ExpressionId expressionId) noexcept
+{
+    if (expressionId == legacyExpressionId
+        || expressionId > maximumExpressionId)
+        return;
+    const auto index = static_cast<std::size_t>(expressionId);
+    expressionPitchBendSemitones_[index] = expressionPitchBendTargets_[index];
 }
 
 void ElectryEngine::setResonance(float normalised) noexcept
@@ -1269,9 +1405,13 @@ void ElectryEngine::setSustainPedal(bool down) noexcept
 // Notes, keyswitches, and string allocation
 // ---------------------------------------------------------------------------
 
-void ElectryEngine::noteOn(int midiNote, float velocity)
+void ElectryEngine::noteOn(int midiNote, float velocity,
+                           ExpressionId expressionId)
 {
-    noteOnInternal(midiNote, velocity, -1, true, false);
+    if (expressionId > maximumExpressionId)
+        expressionId = legacyExpressionId;
+    noteOnInternal(midiNote, velocity, -1, true, false, false, -1, true,
+                   expressionId);
 }
 
 void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
@@ -1289,6 +1429,8 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         const float velocity = clampf(
             std::isfinite(event.velocity) ? event.velocity : 0.0f,
             0.0f, 1.0f);
+        const ExpressionId expressionId = event.expressionId <= maximumExpressionId
+            ? event.expressionId : legacyExpressionId;
         if (! isPlayableNote(event.midiNote) || velocity <= 0.0f)
             continue;
 
@@ -1298,8 +1440,12 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
                        < event.midiNote
                    || (sorted[static_cast<std::size_t>(insertion)].midiNote
                            == event.midiNote
-                       && sorted[static_cast<std::size_t>(insertion)].velocity
-                              <= velocity)))
+                       && (sorted[static_cast<std::size_t>(insertion)].expressionId
+                               < expressionId
+                           || (sorted[static_cast<std::size_t>(insertion)].expressionId
+                                   == expressionId
+                               && sorted[static_cast<std::size_t>(insertion)].velocity
+                                      <= velocity)))))
             ++insertion;
         if (insertion >= maximumChordEvents)
             continue;
@@ -1309,7 +1455,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
             sorted[static_cast<std::size_t>(index)] =
                 sorted[static_cast<std::size_t>(index - 1)];
         sorted[static_cast<std::size_t>(insertion)] = {
-            event.midiNote, velocity
+            event.midiNote, velocity, expressionId
         };
         eventCount = newCount;
     }
@@ -1319,7 +1465,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
     {
         const auto& event = sorted[0];
         noteOnInternal(event.midiNote, event.velocity, -1, true, false,
-                       true, -1);
+                       true, -1, true, event.expressionId);
         return;
     }
 
@@ -1327,18 +1473,24 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
     // not an artificial unison spread across several strings. Match distinct
     // pitches globally, then replay every canonical event on that assignment.
     std::array<int, stringCount> notes {};
+    std::array<ExpressionId, stringCount> expressionIds {};
     std::array<int, maximumChordEvents> eventNoteIndices {};
     int noteCount = 0;
     int selectedEventCount = 0;
     for (int eventIndex = 0; eventIndex < eventCount; ++eventIndex)
     {
         const int midiNote = sorted[static_cast<std::size_t>(eventIndex)].midiNote;
+        const ExpressionId expressionId =
+            sorted[static_cast<std::size_t>(eventIndex)].expressionId;
         if (noteCount == 0
-            || notes[static_cast<std::size_t>(noteCount - 1)] != midiNote)
+            || notes[static_cast<std::size_t>(noteCount - 1)] != midiNote
+            || expressionIds[static_cast<std::size_t>(noteCount - 1)]
+                   != expressionId)
         {
             if (noteCount == stringCount)
                 break;
-            notes[static_cast<std::size_t>(noteCount++)] = midiNote;
+            notes[static_cast<std::size_t>(noteCount)] = midiNote;
+            expressionIds[static_cast<std::size_t>(noteCount++)] = expressionId;
         }
         eventNoteIndices[static_cast<std::size_t>(eventIndex)] = noteCount - 1;
         ++selectedEventCount;
@@ -1357,6 +1509,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
 
     struct Score
     {
+        int expressionBindingMisses { 0 };
         int heldBindingMisses { 0 };
         int soundingBindingMisses { 0 };
         int legatoMisses { 0 };
@@ -1376,6 +1529,10 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
 
     const auto better = [] (const Score& candidate, const Score& incumbent)
     {
+        if (candidate.expressionBindingMisses
+            != incumbent.expressionBindingMisses)
+            return candidate.expressionBindingMisses
+                 < incumbent.expressionBindingMisses;
         if (candidate.heldBindingMisses != incumbent.heldBindingMisses)
             return candidate.heldBindingMisses < incumbent.heldBindingMisses;
         if (candidate.soundingBindingMisses != incumbent.soundingBindingMisses)
@@ -1428,12 +1585,15 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
         {
             const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+            const ExpressionId expressionId =
+                expressionIds[static_cast<std::size_t>(noteIndex)];
             const int stringIndex = assignment[static_cast<std::size_t>(noteIndex)];
             const auto index = static_cast<std::size_t>(stringIndex);
             const auto& voice = voices_[index];
             usedStrings[index] = true;
             score.strings[static_cast<std::size_t>(noteIndex)] = stringIndex;
 
+            bool expressionMatchAvailable = false;
             bool heldMatchAvailable = false;
             bool soundingMatchAvailable = false;
             for (int candidateString = 0; candidateString < stringCount;
@@ -1443,23 +1603,41 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
                 const int fret = midiNote - specs[candidate].openMidiNote;
                 if (fret < 0 || fret > fretCount)
                     continue;
+                expressionMatchAvailable = expressionMatchAvailable
+                    || (expressionId != legacyExpressionId
+                        && ((heldNoteCounts_[candidate] > 0
+                             && heldExpressionIds_[candidate] == expressionId)
+                            || (voices_[candidate].active
+                                && voices_[candidate].expressionId
+                                       == expressionId)));
                 heldMatchAvailable = heldMatchAvailable
                     || (heldNoteCounts_[candidate] > 0
-                        && heldMidiNotes_[candidate] == midiNote);
+                        && heldMidiNotes_[candidate] == midiNote
+                        && heldExpressionIds_[candidate] == expressionId);
                 soundingMatchAvailable = soundingMatchAvailable
                     || (voices_[candidate].active
-                        && voices_[candidate].midiNote == midiNote);
+                        && voices_[candidate].midiNote == midiNote
+                        && voices_[candidate].expressionId == expressionId);
             }
 
+            const bool expressionMatch = expressionId != legacyExpressionId
+                && ((heldNoteCounts_[index] > 0
+                     && heldExpressionIds_[index] == expressionId)
+                    || (voice.active && voice.expressionId == expressionId));
             const bool heldMatch = heldNoteCounts_[index] > 0
-                                && heldMidiNotes_[index] == midiNote;
+                                && heldMidiNotes_[index] == midiNote
+                                && heldExpressionIds_[index] == expressionId;
             const bool soundingMatch = voice.active
-                                    && voice.midiNote == midiNote;
+                                    && voice.midiNote == midiNote
+                                    && voice.expressionId == expressionId;
+            score.expressionBindingMisses += expressionMatchAvailable
+                                           && ! expressionMatch;
             score.heldBindingMisses += heldMatchAvailable && ! heldMatch;
             score.soundingBindingMisses += ! heldMatchAvailable
                 && soundingMatchAvailable && ! soundingMatch;
 
-            if (! heldMatchAvailable && ! soundingMatchAvailable
+            if (! expressionMatchAvailable && ! heldMatchAvailable
+                && ! soundingMatchAvailable
                 && (playStyle_ == PlayStyle::Hammer
                     || playStyle_ == PlayStyle::Slide))
             {
@@ -1473,6 +1651,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
                     const auto& candidateVoice = voices_[candidate];
                     const int fret = midiNote - specs[candidate].openMidiNote;
                     if (! candidateVoice.active || fret < 0 || fret > fretCount
+                        || candidateVoice.expressionId != expressionId
                         || (playStyle_ == PlayStyle::Slide && fret < 1))
                         continue;
                     const int distance = std::abs(fret - candidateVoice.fret);
@@ -1494,8 +1673,9 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
 
             const bool occupied = voice.active || heldNoteCounts_[index] > 0;
             score.occupiedStrings += occupied;
-            score.heldSteals += heldNoteCounts_[index] > 0 && ! heldMatch;
-            if (occupied && ! heldMatch && ! soundingMatch)
+            score.heldSteals += heldNoteCounts_[index] > 0
+                             && ! heldMatch && ! expressionMatch;
+            if (occupied && ! expressionMatch && ! heldMatch && ! soundingMatch)
             {
                 const bool releasing = voice.releasing
                                     && ! voice.pendingRepick.active
@@ -1622,7 +1802,8 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         for (int eventIndex = 0; eventIndex < eventCount; ++eventIndex)
         {
             const auto& event = sorted[static_cast<std::size_t>(eventIndex)];
-            noteOnInternal(event.midiNote, event.velocity, -1, true, false);
+            noteOnInternal(event.midiNote, event.velocity, -1, true, false,
+                           false, -1, true, event.expressionId);
         }
         return;
     }
@@ -1634,46 +1815,61 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
     // strings representing fewer MIDI owners than were actually pressed.
     const auto previousHeldNotes = heldMidiNotes_;
     const auto previousHeldCounts = heldNoteCounts_;
+    const auto previousHeldExpressionIds = heldExpressionIds_;
     for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
     {
         const auto destination = static_cast<std::size_t>(
             bestAssignment[static_cast<std::size_t>(noteIndex)]);
         if (previousHeldNotes[destination]
-                != notes[static_cast<std::size_t>(noteIndex)])
+                != notes[static_cast<std::size_t>(noteIndex)]
+            || previousHeldExpressionIds[destination]
+                != expressionIds[static_cast<std::size_t>(noteIndex)])
         {
             heldMidiNotes_[destination] = -1;
             heldNoteCounts_[destination] = 0;
+            heldExpressionIds_[destination] = legacyExpressionId;
         }
     }
     for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
     {
         const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+        const ExpressionId expressionId =
+            expressionIds[static_cast<std::size_t>(noteIndex)];
         const int destination =
             bestAssignment[static_cast<std::size_t>(noteIndex)];
         for (int source = 0; source < stringCount; ++source)
         {
             const auto sourceIndex = static_cast<std::size_t>(source);
+            const bool sameIdentity = previousHeldNotes[sourceIndex] == midiNote
+                && previousHeldExpressionIds[sourceIndex] == expressionId;
+            const bool sameExpression = expressionId != legacyExpressionId
+                && previousHeldExpressionIds[sourceIndex] == expressionId;
             if (source == destination || previousHeldCounts[sourceIndex] <= 0
-                || previousHeldNotes[sourceIndex] != midiNote)
+                || (! sameIdentity && ! sameExpression))
                 continue;
             heldMidiNotes_[sourceIndex] = -1;
             heldNoteCounts_[sourceIndex] = 0;
+            heldExpressionIds_[sourceIndex] = legacyExpressionId;
         }
     }
     for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
     {
         const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
+        const ExpressionId expressionId =
+            expressionIds[static_cast<std::size_t>(noteIndex)];
         const int destination =
             bestAssignment[static_cast<std::size_t>(noteIndex)];
         for (int source = 0; source < stringCount; ++source)
         {
             const auto sourceIndex = static_cast<std::size_t>(source);
             if (source == destination || previousHeldCounts[sourceIndex] <= 0
-                || previousHeldNotes[sourceIndex] != midiNote)
+                || previousHeldNotes[sourceIndex] != midiNote
+                || previousHeldExpressionIds[sourceIndex] != expressionId)
                 continue;
             const auto destinationIndex = static_cast<std::size_t>(destination);
             heldMidiNotes_[destinationIndex] = midiNote;
             heldNoteCounts_[destinationIndex] = previousHeldCounts[sourceIndex];
+            heldExpressionIds_[destinationIndex] = expressionId;
             break;
         }
     }
@@ -1707,7 +1903,8 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         const auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
         const bool legato = (playStyle_ == PlayStyle::Hammer
                              || playStyle_ == PlayStyle::Slide)
-                         && voice.active && voice.midiNote != event.midiNote;
+                         && voice.active && voice.midiNote != event.midiNote
+                         && voice.expressionId == event.expressionId;
         if (plectrumContacts(playStyle_, legato))
         {
             if (completeStrokeEvent < 0)
@@ -1731,7 +1928,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         noteOnInternal(event.midiNote, event.velocity,
                        bestAssignment[static_cast<std::size_t>(noteIndex)],
                        true, true, completeChordStart,
-                       chordAnchor);
+                       chordAnchor, true, event.expressionId);
     };
     // Form the complete physical chord first, then apply duplicate-pitch
     // restrikes. This is canonical across host insertion order and avoids a
@@ -1776,7 +1973,7 @@ void ElectryEngine::repickHeldString(int stringIndex, float velocity,
     // decayed below the audio-retirement floor; noteOnInternal restores the
     // durable fretting-key owner instead of adding a trigger-key owner.
     noteOnInternal(heldMidiNotes_[index], velocity, stringIndex, false, false,
-                   false, -1, reanchorTremolo);
+                   false, -1, reanchorTremolo, heldExpressionIds_[index]);
 }
 
 void ElectryEngine::noteOnInternal(int midiNote, float velocity,
@@ -1784,10 +1981,14 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
                                    bool handPositionPlanned,
                                    bool completeChordStart,
                                    int completeChordAnchor,
-                                   bool reanchorTremolo)
+                                   bool reanchorTremolo,
+                                   ExpressionId expressionId)
 {
     if (! prepared_)
         return;
+
+    if (expressionId > maximumExpressionId)
+        expressionId = legacyExpressionId;
 
     velocity = clampf(std::isfinite(velocity) ? velocity : 0.0f, 0.0f, 1.0f);
 
@@ -1847,7 +2048,7 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
         returnFrettingHandIfIdle(newChord);
 
     const int stringIndex = forcedStringIndex >= 0
-        ? forcedStringIndex : chooseString(midiNote, attackStyle);
+        ? forcedStringIndex : chooseString(midiNote, attackStyle, expressionId);
     if (stringIndex < 0)
         return;
 
@@ -1856,7 +2057,9 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     const bool legato = (attackStyle == PlayStyle::Hammer
                          || attackStyle == PlayStyle::Slide)
                      && voice.active
-                     && voice.midiNote != midiNote;
+                     && voice.midiNote != midiNote
+                     && (expressionId == legacyExpressionId
+                         || voice.expressionId == expressionId);
     // A hammered note has no pick stroke at all, while a slide needs a pick
     // only when it starts a phrase. Ask the same predicate as the excitation
     // before touching any wrist state, so a fretting-hand contact cannot
@@ -1950,25 +2153,53 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     }
 
     if (legato)
-        legatoRetarget(voice, midiNote, velocity, attackStyle);
+        legatoRetarget(voice, midiNote, velocity, attackStyle, expressionId);
     else
         startVoice(voice, midiNote, velocity, attackStyle, strokeIsUp,
                    startDelaySamples,
                    plectrumStroke
                        ? chordStrokeVariationState_
                        : strokeVariationStateFor(noteSequence_ + 1,
-                                                 stringIndex));
+                                                 stringIndex),
+                   0, false, expressionId);
 
     const auto heldIndex = static_cast<std::size_t>(stringIndex);
     if (addKeyOwner)
     {
-        if (heldMidiNotes_[heldIndex] == midiNote)
+        // A non-zero member channel is one performed finger. If it has moved
+        // to a pitch this string cannot play, release its preceding physical
+        // owner before binding the replacement.
+        if (expressionId != legacyExpressionId)
+        {
+            for (int oldString = 0; oldString < stringCount; ++oldString)
+            {
+                const auto oldIndex = static_cast<std::size_t>(oldString);
+                if (oldString == stringIndex || heldNoteCounts_[oldIndex] <= 0
+                    || heldExpressionIds_[oldIndex] != expressionId)
+                    continue;
+                heldMidiNotes_[oldIndex] = -1;
+                heldNoteCounts_[oldIndex] = 0;
+                heldExpressionIds_[oldIndex] = legacyExpressionId;
+                auto& oldVoice = voices_[oldIndex];
+                if (oldVoice.active && oldVoice.expressionId == expressionId)
+                {
+                    oldVoice.keyDown = false;
+                    oldVoice.keyDownCount = 0;
+                    oldVoice.sustained = false;
+                    beginVoiceRelease(oldVoice);
+                }
+            }
+        }
+
+        if (heldMidiNotes_[heldIndex] == midiNote
+            && heldExpressionIds_[heldIndex] == expressionId)
             heldNoteCounts_[heldIndex] = std::min(
                 heldNoteCounts_[heldIndex] + 1, 65535);
         else
         {
             heldMidiNotes_[heldIndex] = midiNote;
             heldNoteCounts_[heldIndex] = 1;
+            heldExpressionIds_[heldIndex] = expressionId;
         }
     }
     // startVoice() normally derives ownership from audible voice state, which
@@ -1980,34 +2211,42 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
     updateActiveVoiceCount();
 }
 
-void ElectryEngine::noteOff(int midiNote)
+void ElectryEngine::noteOff(int midiNote, ExpressionId expressionId)
 {
     if (! prepared_ || isKeyswitchNote(midiNote))
         return;
+    if (expressionId > maximumExpressionId)
+        expressionId = legacyExpressionId;
 
     for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
     {
         const auto index = static_cast<std::size_t>(stringIndex);
-        if (heldNoteCounts_[index] <= 0 || heldMidiNotes_[index] != midiNote)
+        if (heldNoteCounts_[index] <= 0 || heldMidiNotes_[index] != midiNote
+            || heldExpressionIds_[index] != expressionId)
             continue;
 
         auto& voice = voices_[index];
         if (heldNoteCounts_[index] > 1)
         {
             --heldNoteCounts_[index];
-            if (voice.active && voice.midiNote == midiNote)
+            if (voice.active && voice.midiNote == midiNote
+                && voice.expressionId == expressionId)
                 voice.keyDownCount = heldNoteCounts_[index];
             continue;
         }
 
         heldNoteCounts_[index] = 0;
         heldMidiNotes_[index] = -1;
-        if (! voice.active || voice.midiNote != midiNote)
+        heldExpressionIds_[index] = legacyExpressionId;
+        if (! voice.active || voice.midiNote != midiNote
+            || voice.expressionId != expressionId)
             continue;
 
         voice.keyDownCount = 0;
         voice.keyDown = false;
         voice.vibratoSemitones = 0.0f;
+        freezeExpressionPitchBend(voice);
+        stopLegatoTravel(voice);
         if (sustainPedalDown_)
             voice.sustained = true;
         else
@@ -2021,6 +2260,7 @@ void ElectryEngine::allNotesOff()
 {
     heldMidiNotes_.fill(-1);
     heldNoteCounts_.fill(0);
+    heldExpressionIds_.fill(legacyExpressionId);
     for (auto& voice : voices_)
     {
         if (! voice.active)
@@ -2033,7 +2273,8 @@ void ElectryEngine::allNotesOff()
     resetVibratoOnset();
 }
 
-int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcept
+int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
+                                ExpressionId expressionId) const noexcept
 {
     const auto& specs = stringSpecs();
     const auto fretOn = [&specs, midiNote] (int stringIndex)
@@ -2046,19 +2287,39 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
         return fret >= 0 && fret <= fretCount;
     };
 
-    // A repeated held pitch keeps its physical string even if a short Mute or
-    // Dead attack has already decayed below the audio retirement floor.
+    // A member channel moving pitch keeps its physical string whenever that
+    // string can reach the new fret.
+    if (expressionId != legacyExpressionId)
+        for (int s = 0; s < stringCount; ++s)
+            if (heldNoteCounts_[static_cast<std::size_t>(s)] > 0
+                && heldExpressionIds_[static_cast<std::size_t>(s)] == expressionId
+                && playable(s))
+                return s;
+
+    // A repeated held identity keeps its physical string even if a short Mute
+    // or Dead attack has already decayed below the audio retirement floor.
     for (int s = 0; s < stringCount; ++s)
         if (heldNoteCounts_[static_cast<std::size_t>(s)] > 0
             && heldMidiNotes_[static_cast<std::size_t>(s)] == midiNote
+            && heldExpressionIds_[static_cast<std::size_t>(s)] == expressionId
             && playable(s))
             return s;
 
-    // A repick of a note that is still sounding grabs the same string. This
-    // fallback also keeps the private test seam's directly-created voices sane.
+    // A released member-channel tail is still the same physical finger/string.
+    if (expressionId != legacyExpressionId)
+        for (int s = 0; s < stringCount; ++s)
+            if (voices_[static_cast<std::size_t>(s)].active
+                && voices_[static_cast<std::size_t>(s)].expressionId == expressionId
+                && playable(s))
+                return s;
+
+    // A repick of an identity that is still sounding grabs the same string.
+    // This fallback also keeps the private test seam's directly-created voices
+    // sane.
     for (int s = 0; s < stringCount; ++s)
         if (voices_[static_cast<std::size_t>(s)].active
             && voices_[static_cast<std::size_t>(s)].midiNote == midiNote
+            && voices_[static_cast<std::size_t>(s)].expressionId == expressionId
             && playable(s))
             return s;
 
@@ -2077,6 +2338,7 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
             // A slide needs a fingered destination, but a pull-off commonly
             // releases onto the open string beneath the lifted finger.
             if (! voice.active || ! playable(s)
+                || voice.expressionId != expressionId
                 || (playStyle == PlayStyle::Slide && targetFret < 1))
                 continue;
             const int distance = std::abs(targetFret - voice.fret);
@@ -2224,12 +2486,18 @@ float ElectryEngine::scaleLengthMetres() const noexcept
 float ElectryEngine::deadSpotFactor(int stringIndex, int fret) const noexcept
 {
     // Solid-body dead spots: locally raised neck conductance shortens decay
-    // at specific fret positions. Bolt-on construction deepens the effect.
+    // at specific fret positions.
     static constexpr std::array<float, stringCount> centres {
         8.0f, 9.0f, 9.5f, 11.0f, 12.5f, 6.0f, 5.0f, 7.5f
     };
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    // Ray's controlled material pair does not identify a joint/dead-spot law.
+    // Keep the shipping baseline instead of inventing one from Construction.
+    constexpr float depth = 0.03f;
+#else
     const float depth = lerp(0.03f, 0.45f,
                              smoothedParameters_.construction);
+#endif
     const float distance = static_cast<float>(fret)
                          - centres[static_cast<std::size_t>(stringIndex)];
     const float gaussian = std::exp(-distance * distance / (2.0f * 1.65f * 1.65f));
@@ -2245,12 +2513,24 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
 
     float t60 = spec.t60Seconds;
     t60 *= lerp(1.08f, 0.38f, parameters.stringAge);
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
     t60 *= lerp(1.16f, 0.86f, parameters.construction);
+#else
+    // Retain the intrinsic shipping string while removing the old
+    // Construction/Body laws. This avoids mistaking a baseline retune for
+    // material sound; the Ray candidate adds no termination loss.
+    t60 *= 1.16f;
+#endif
     t60 *= lerp(0.88f, 1.18f, parameters.stringGauge);
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
     t60 *= lerp(1.05f, 0.95f, parameters.bodyWood);
     t60 *= lerp(1.04f, 0.96f, parameters.bodySize);
+#else
+    t60 *= 1.05f * 1.04f;
+#endif
     t60 *= deadSpotFactor(voice.stringIndex, voice.fret);
 
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
     // The body modes are not merely a parallel EQ. Modal bridge admittance
     // removes string energy fastest when a fundamental or strong low partial
     // lands on a structural resonance, producing construction-dependent
@@ -2275,6 +2555,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
         / (1.0f + 3.8f * structuralCoupling * voice.bodyConductance);
     t60 *= voice.bodyLossFactor;
     t60 = clampf(t60, 0.02f, 26.0f);
+#endif
 
     // The bridge hand is a broadband absorber, not a rescaling of the string's
     // own frequency-dependent loss. Modelling it as a separate loss that adds
@@ -2371,7 +2652,19 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     // loss shelf below. Zero means no hand and an exactly bypassed shelf.
     float handShareForSlope = 0.0f;
     // The string's own targets, before the hand.
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    t60 = clampf(t60, 0.02f, 26.0f);
+#endif
     float t60High = t60 * highRatio;
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    // Ray's controlled material comparison found no significant fundamental-
+    // decay difference and supplies no complex, fret-specific termination
+    // mobility. Do not turn its three pickup-observed body poles into a
+    // broadband string-loss law. The candidate changes only the quiet direct
+    // structural colour below; intrinsic string damping remains untouched.
+    voice.bodyConductance = 0.0f;
+    voice.bodyLossFactor = 1.0f;
+#endif
     if (handT60 > 0.0f)
     {
         // Losses in parallel: decay rates add, so the reciprocals of the decay
@@ -2656,31 +2949,48 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         legatoOffset = fromSemis * (1.0f - smoothStep(voice.legatoBlend));
     }
 
-    // MIDI pitch bend is an interval, so every string receives the same
-    // semitone offset and a chord stays in tune while it moves. Fretting-hand
-    // vibrato is separate and reaches only stopped strings.
+    // Legacy pitch bend is one interval for every ID-0 string. A member voice
+    // reads its per-expression member and master components separately. Note
+    // Off freezes only the former; MPE master bend remains live for a release
+    // or pedal-held tail. Fretting-hand vibrato is separate and reaches only
+    // stopped strings.
     //
     // An open string is not fingered either. Nothing is holding it down, so
     // there is no contact to rock and no way for the hand to raise its pitch;
     // that is the same distinction the finger-noise term already draws at
     // fret 0.
     const float vibrato = voice.fret > 0 ? voice.vibratoSemitones : 0.0f;
+    float bend = pitchBendSemitones_;
+    if (voice.expressionId != legacyExpressionId)
+    {
+        const auto expressionIndex =
+            static_cast<std::size_t>(voice.expressionId);
+        bend = (voice.expressionPitchBendFrozen
+                    ? voice.frozenExpressionPitchBendSemitones
+                    : expressionPitchBendSemitones_[expressionIndex])
+             + expressionMasterPitchBendSemitones_[expressionIndex];
+    }
     const float semitones = legatoOffset
-                          + pitchBendSemitones_
+                          + bend
                           + vibrato;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
+    const float liveFret = clampf(static_cast<float>(voice.fret)
+                                      + legatoOffset,
+                                  0.0f, static_cast<float>(fretCount));
 
-    // The full dispersion grid search is only re-fitted once the pitch has
-    // moved beyond a small quantum. Re-fitting on every control tick of a
-    // wheel glide ran the 520-candidate search for every bent voice for the
-    // whole travel - measured beyond realtime on an eight-string chord at
-    // 96 kHz - while a fit six cents stale changes the two deficit targets by
+    // The full dispersion grid search is only re-fitted once the sounding
+    // pitch or live fret has moved beyond a small quantum. Re-fitting on every
+    // control tick of a wheel glide ran the 520-candidate search for every
+    // bent voice for the whole travel - measured beyond realtime on an
+    // eight-string chord at 96 kHz - while a fit six cents stale changes the
+    // two deficit targets by
     // well under one percent, far inside the fit's own tolerance. The
     // analytic phase compensation below still tracks every sub-cent move, so
     // tuning stays exact; only the stiffness fit is quantised.
     const bool fitMoved = forceDelayJump
         || std::abs(semitones - voice.lastConfiguredSemitones) > 0.06f
+        || std::abs(liveFret - voice.lastConfiguredLiveFret) > 0.06f
         || std::abs(f0 - voice.lastConfiguredFrequency)
                > 3.5e-3f * std::max(f0, 20.0f);
     const bool pitchMoved =
@@ -2758,6 +3068,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     {
         voice.lastConfiguredSemitones = semitones;
         voice.lastConfiguredFrequency = f0;
+        voice.lastConfiguredLiveFret = liveFret;
 
         // Stiffness inharmonicity from the string's physical make-up. Wound
         // strings bend with their core, not their full winding diameter.
@@ -2767,13 +3078,21 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         const float diameter = spec.plainDiameterMm * 1.0e-3f * gaugeScale;
         const float bendingDiameter = diameter * spec.bendingCoreScale;
         const float openLength = scaleLengthMetres();
+        const float liveUnbentFrequency = voice.baseFrequency
+            * std::exp2(legatoOffset / 12.0f);
         const float soundingLength = openLength
-            * std::exp2(-static_cast<float>(voice.fret) / 12.0f);
+            * std::exp2(-liveFret / 12.0f);
         const float massScale = spec.wound ? 0.85f : 1.0f;
         const float linearMass = massScale * steelDensity * pi
                                * 0.25f * diameter * diameter;
-        const float waveSpeed = 2.0f * soundingLength * voice.baseFrequency;
+        const float waveSpeed = 2.0f * soundingLength * liveUnbentFrequency;
         const float tension = linearMass * waveSpeed * waveSpeed;
+#if ELECTRY_ANALYTIC_RELEASE_IC
+        const float attackPitchRatio = f0
+            / std::max(liveUnbentFrequency, 20.0f);
+        voice.stringTensionNewtons = tension
+                                   * attackPitchRatio * attackPitchRatio;
+#endif
         const float bendingStiffness = pi * pi * pi * steelYoungModulus
                                      * bendingDiameter * bendingDiameter
                                      * bendingDiameter * bendingDiameter / 64.0f;
@@ -3010,11 +3329,13 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
     // again, while damping-only moves reuse the existing fit.
     const bool dampingDirty = moved(s.stringAge, a.stringAge)
                            || moved(s.stringGauge, a.stringGauge)
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
                            || moved(s.bodyWood, a.bodyWood)
                            || moved(s.bodySize, a.bodySize)
                            || moved(s.bodyShape, a.bodyShape)
                            || moved(s.bodyResonance, a.bodyResonance)
                            || moved(s.construction, a.construction)
+#endif
                            || moved(s.muteDamping, a.muteDamping)
                            || moved(palmMuteBlend_, appliedPalmMute_);
     const bool geometryDirty = moved(s.stringGauge, a.stringGauge)
@@ -3107,8 +3428,7 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
-    // Sympathetic strings follow the same standard MIDI pitch interval as
-    // played strings.
+    // Unowned sympathetic strings follow the legacy global wheel.
     const float f0 = midiToHz(static_cast<float>(spec.openMidiNote))
         * std::exp2(pitchBendSemitones_ / 12.0f);
     const float period = sampleRate / f0;
@@ -3439,6 +3759,12 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // the picking hand is already damping the bridge, they can change one
     // speaking length but cannot lift that hand or reopen sibling strings.
     const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    const bool analyticReleaseEligible = plectrumContact
+                                      && voice.analyticReleaseFreshContact;
+    voice.analyticReleaseAmplitude = 0.0f;
+    voice.analyticReleaseFreshContact = false;
+#endif
     const bool retainsExistingPalm = ! plectrumContact
         && lastHandContactClock_ >= 0
         && lastHandContactPlayStyle_ == PlayStyle::PalmMute;
@@ -3735,7 +4061,13 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // and the low Drop-E strings receive a little extra definition.
     pulseCutoff *= profile.brightness
                  * lerp(1.08f, 0.42f, parameters.stringAge)
+#if ELECTRY_MEASURED_BODY_RESPONSE
+                 // Construction belongs to the measured structural response,
+                 // not to the pick/string contact that excites it.
+                 * 0.92f
+#else
                  * lerp(0.92f, 1.12f, parameters.construction)
+#endif
                  * (1.0f + 0.24f * voice.lowStringWeight);
     noiseCutoff *= lerp(0.72f, 1.22f, profile.releaseRate)
                  * (plectrumContact
@@ -3918,6 +4250,37 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
     voice.excitationCombWidth = 0.5f * (contactMetres / soundingMetres)
                               * voice.vertical.targetDelay;
+
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    if (analyticReleaseEligible && voice.stringTensionNewtons > 0.0f)
+    {
+        // The 4.8 N full-stroke reference is the same physical force used by
+        // makeVelocityProfile()'s documented low-E deflection example. Remove
+        // the legacy modal path's 0.48 projection scalar before applying it;
+        // the complete triangular state needs no period-dependent projection.
+        constexpr float fullStrokeForceNewtons = 4.8f;
+        constexpr float legacyAmplitudeScale = 0.48f;
+        constexpr float sustainDisplacementGain = 1.55f;
+        const float forceNewtons = fullStrokeForceNewtons
+            * (amplitude / legacyAmplitudeScale)
+            * (displacementGain / sustainDisplacementGain);
+        const float peakMetres = forceNewtons * combFraction
+            * (1.0f - combFraction) * soundingMetres
+            / voice.stringTensionNewtons;
+        const float peakUnits = peakMetres
+                              / waveguideDisplacementMetresPerUnit;
+        if (std::isfinite(peakUnits) && peakUnits > 0.0f)
+        {
+            voice.analyticReleaseAmplitude = peakUnits;
+            voice.analyticReleasePluckFraction = combFraction;
+            voice.analyticReleaseHalfWidthFraction =
+                0.5f * (contactMetres / soundingMetres);
+            // Only the sustained modal approximation is replaced. The broad
+            // edge, scrape, contact choke, image and artifact paths remain.
+            voice.excitationAmplitude = 0.0f;
+        }
+    }
+#endif
 
     // The pick draws the string aside over most of the contact and then slips
     // off it: the release edge is several times faster than the load, and a
@@ -4103,12 +4466,31 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                int startDelaySamples,
                                std::uint32_t strokeVariationState,
                                std::uint64_t reservedStartOrder,
-                               bool keyStateAlreadyApplied) noexcept
+                               bool keyStateAlreadyApplied,
+                               ExpressionId expressionId) noexcept
 {
+    if (expressionId > maximumExpressionId)
+        expressionId = legacyExpressionId;
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const int fret = midiNote - spec.openMidiNote;
 
     const bool wasRinging = voice.active;
+    // keyStateAlreadyApplied identifies a delayed contact whose MIDI owner
+    // kept evolving during pre-roll. A released CC64 owner keeps its Note-Off
+    // pitch snapshot; a new key owner thaws to the channel's cached target.
+    const bool retainedExpressionPitchBendFrozen =
+        keyStateAlreadyApplied && ! voice.keyDown
+        && voice.expressionPitchBendFrozen;
+    const float retainedFrozenExpressionPitchBendSemitones =
+        retainedExpressionPitchBendFrozen
+            ? voice.frozenExpressionPitchBendSemitones : 0.0f;
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    const bool freshDelayedContact = voice.pendingRepick.active
+        && ! voice.pendingContactPreservesRing
+        && voice.analyticReleaseFreshContact;
+    const bool retainedAudibleSympatheticRing = ! wasRinging
+        && voice.sympatheticReady && voice.sympatheticEnergy > 1.0e-11f;
+#endif
     // A same-note picking-hand contact does not replace the fretting finger.
     // Read the live ownership before startVoice() rewrites it: a reattack
     // after Note Off is a newly assigned finger even when the old string is
@@ -4118,17 +4500,20 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     // Keep a fresh delayed refret fresh even if another overlapping Note On
     // arrives after scheduling has marked its key down.
     const bool sameOwnedNote = wasRinging && voice.keyDown
-                            && voice.midiNote == midiNote;
+                            && voice.midiNote == midiNote
+                            && voice.expressionId == expressionId;
     const bool sameHeldFinger = sameOwnedNote
         && (! voice.pendingRepick.active
             || voice.pendingRepick.preservesVibratoFinger);
     if (! sameOwnedNote && ! hasHeldFrettedFinger(&voice))
         resetVibratoOnset();
     const int repeatedKeyDownCount = wasRinging && voice.midiNote == midiNote
+        && voice.expressionId == expressionId
         ? voice.keyDownCount : 0;
     const bool delayedSameNoteRepick = reservedStartOrder == 0
                                      && wasRinging
                                      && voice.midiNote == midiNote
+                                     && voice.expressionId == expressionId
                                      && startDelaySamples > 0;
 
     if (delayedSameNoteRepick)
@@ -4146,12 +4531,17 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         voice.pendingContactPreservesRing = preservesExistingRing;
         voice.pendingRepick = {
             true, velocity, playStyle, strokeIsUp, strokeVariationState,
-            ++noteSequence_, sameHeldFinger
+            ++noteSequence_, sameHeldFinger, expressionId
         };
         return;
     }
 
     voice.pendingRepick.active = false;
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    voice.analyticReleaseAmplitude = 0.0f;
+    voice.analyticReleaseFreshContact = (! wasRinging || freshDelayedContact)
+                                      && ! retainedAudibleSympatheticRing;
+#endif
 
     // The fretting hand stops a sympathetically ringing open string before the
     // pick reaches it, so a coupled ring never survives into the played note.
@@ -4176,6 +4566,10 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.sustained = false;
     voice.releasing = false;
     voice.midiNote = midiNote;
+    voice.expressionId = expressionId;
+    voice.expressionPitchBendFrozen = retainedExpressionPitchBendFrozen;
+    voice.frozenExpressionPitchBendSemitones =
+        retainedFrozenExpressionPitchBendSemitones;
     voice.fret = std::clamp(fret, 0, fretCount);
     voice.playStyle = playStyle;
     voice.strokeIsUp = strokeIsUp;
@@ -4297,8 +4691,17 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
 }
 
 void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
-                                   PlayStyle playStyle) noexcept
+                                   PlayStyle playStyle,
+                                   ExpressionId expressionId) noexcept
 {
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    // A fretting-hand move, or a future pick reserved across one, is no longer
+    // a fresh string released from rest.
+    voice.analyticReleaseAmplitude = 0.0f;
+    voice.analyticReleaseFreshContact = false;
+#endif
+    if (expressionId > maximumExpressionId)
+        expressionId = legacyExpressionId;
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     // currentDelay lives in the raw delay-line coordinate, whose origin moves
     // when a new fret/style re-solves the damping and dispersion phase. Keep
@@ -4337,13 +4740,17 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     {
         voice.pendingRepick = {
             true, voice.velocity, voice.playStyle, voice.strokeIsUp,
-            voice.strokeVariationState, voice.startOrder, true
+            voice.strokeVariationState, voice.startOrder, true,
+            voice.expressionId
         };
     }
     if (travellingContact)
         voice.pendingRepick.preservesVibratoFinger = true;
     voice.legatoFromFrequency = fromFrequency;
     voice.midiNote = midiNote;
+    voice.expressionId = expressionId;
+    voice.expressionPitchBendFrozen = false;
+    voice.frozenExpressionPitchBendSemitones = 0.0f;
     voice.fret = std::clamp(midiNote - spec.openMidiNote, 0, fretCount);
     if (voice.fret <= 0)
     {
@@ -4478,10 +4885,35 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     }
 }
 
+void ElectryEngine::freezeExpressionPitchBend(Voice& voice) noexcept
+{
+    if (voice.expressionId == legacyExpressionId
+        || voice.expressionId > maximumExpressionId
+        || voice.expressionPitchBendFrozen)
+        return;
+    voice.frozenExpressionPitchBendSemitones =
+        expressionPitchBendSemitones_[
+            static_cast<std::size_t>(voice.expressionId)];
+    voice.expressionPitchBendFrozen = true;
+}
+
+void ElectryEngine::stopLegatoTravel(Voice& voice) noexcept
+{
+    // Note Off lifts the fretting finger even when CC64 keeps the string
+    // ringing. Hold the sounding coordinate it had reached and stop generating
+    // winding friction instead of letting the abandoned gesture finish.
+    voice.legatoIncrement = 0.0f;
+    voice.slideNoiseAmplitude = 0.0f;
+    voice.slideNoiseLevel = 0.0f;
+}
+
 void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
 {
     if (! voice.active)
         return;
+
+    freezeExpressionPitchBend(voice);
+    stopLegatoTravel(voice);
 
     const bool wasAlreadyReleasing = voice.releasing;
 
@@ -4497,6 +4929,13 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     voice.pendingContactPreservesRing = false;
     if (cancelledBeforeContact)
     {
+#if ELECTRY_ANALYTIC_RELEASE_IC
+        if (! preserveRingingString)
+        {
+            voice.analyticReleaseAmplitude = 0.0f;
+            voice.analyticReleaseFreshContact = false;
+        }
+#endif
         voice.strumChordId = 0;
 
         // Alternate reserves one direction for the assembled chord at Note On.
@@ -4553,7 +4992,15 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     // The fretting or picking hand damps the string over tens of
     // milliseconds; the loop then decays with roughly a 60 ms T60.
     const float sampleRate = static_cast<float>(sampleRate_);
-    const float period = sampleRate / std::max(voice.baseFrequency, 20.0f);
+    float releaseFrequency = voice.baseFrequency;
+    if (voice.legatoBlend < 1.0f && voice.legatoFromFrequency > 0.0f)
+    {
+        const float fromSemitones = 12.0f * std::log2(
+            voice.legatoFromFrequency / voice.baseFrequency);
+        releaseFrequency *= std::exp2(
+            fromSemitones * (1.0f - smoothStep(voice.legatoBlend)) / 12.0f);
+    }
+    const float period = sampleRate / std::max(releaseFrequency, 20.0f);
     voice.releaseGainTarget =
         std::pow(10.0f, -3.0f * period / (0.060f * sampleRate));
     voice.releaseGainCoefficient =
@@ -4597,10 +5044,19 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.sustained = false;
     voice.releasing = false;
     voice.midiNote = -1;
+    voice.expressionId = legacyExpressionId;
+    voice.expressionPitchBendFrozen = false;
+    voice.frozenExpressionPitchBendSemitones = 0.0f;
     voice.excitationPhase = ExcitationPhase::Idle;
     voice.excitationRemaining = 0;
     voice.excitationAmplitude = 0.0f;
     voice.excitationTransientAmplitude = 0.0f;
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    voice.analyticReleaseAmplitude = 0.0f;
+    voice.analyticReleasePluckFraction = 0.18f;
+    voice.analyticReleaseHalfWidthFraction = 0.0f;
+    voice.analyticReleaseFreshContact = false;
+#endif
     voice.excitationTailLength = 0;
     voice.contactFeedbackGain = 1.0f;
     voice.noiseRemaining = 0;
@@ -4611,6 +5067,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.displayLevel = 0.0f;
     voice.startDelaySamples = 0;
     voice.pendingRepick.active = false;
+    voice.pendingRepick.expressionId = legacyExpressionId;
     voice.pendingContactPreservesRing = false;
     voice.strumChordId = 0;
     voice.palmImpactVel = 0.0f;
@@ -4652,6 +5109,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.saddleRattle.reset();
     voice.lastConfiguredSemitones = -999.0f;
     voice.lastConfiguredFrequency = -1.0f;
+    voice.lastConfiguredLiveFret = -999.0f;
     voice.lastCompensatedSemitones = -999.0f;
     voice.lastCompensatedPeriod = 0.0f;
     voice.compensationDirty = true;
@@ -4672,6 +5130,50 @@ void ElectryEngine::configureBody() noexcept
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
 
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    // Ray et al. measured one walnut and one ash body with the same neck,
+    // bridge, pickups and strings. Keep each pickup-observed pole paired only
+    // with its measured mate; their three ratios are mode identities, not a
+    // frequency-warp law for unrelated resonances. The paper's tan-delta is
+    // alpha/(pi*f), so Q = 1/tan-delta for this amplitude-decay resonator.
+    static constexpr std::array<float, bodyModeCount> walnutFrequencies {
+        108.2f, 200.5f, 420.6f
+    };
+    static constexpr std::array<float, bodyModeCount> ashFrequencies {
+        119.0f, 204.7f, 440.4f
+    };
+    static constexpr std::array<float, bodyModeCount> walnutLossFactors {
+        0.119f, 0.073f, 0.046f
+    };
+    static constexpr std::array<float, bodyModeCount> ashLossFactors {
+        0.114f, 0.072f, 0.026f
+    };
+    // Absolute residues were not published. These remain quiet direct-path
+    // voicing under the end-to-end residual rails below, not measured V/F.
+    static constexpr std::array<float, bodyModeCount> modeLevels {
+        1.0f, 0.68f, 0.46f
+    };
+
+    for (int mode = 0; mode < bodyModeCount; ++mode)
+    {
+        const auto index = static_cast<std::size_t>(mode);
+        const float frequency = std::exp(lerp(
+            std::log(walnutFrequencies[index]),
+            std::log(ashFrequencies[index]), parameters.bodyWood));
+        const float lossFactor = std::exp(lerp(
+            std::log(walnutLossFactors[index]),
+            std::log(ashLossFactors[index]), parameters.bodyWood));
+        const float q = 1.0f / lossFactor;
+        const float level = modeLevels[index];
+        bodyModeLevels_[index] = level;
+        bodyModes_[index].configure(frequency, q, level, sampleRate);
+
+        const float omegaMode = twoPi * std::max(frequency, 30.0f);
+        bodyModeOmega_[index] = omegaMode;
+        bodyModeOmegaSquared_[index] = omegaMode * omegaMode;
+        bodyModeDamping_[index] = omegaMode / q;
+    }
+#else
     // Structural mode estimates for the two anchor bodies. These are
     // geometry-informed voicing values, not measured mode tables.
     static constexpr std::array<float, bodyModeCount> carvedModes {
@@ -4715,29 +5217,33 @@ void ElectryEngine::configureBody() noexcept
         bodyModeOmegaSquared_[index] = omegaMode * omegaMode;
         bodyModeDamping_[index] = omegaMode / std::max(q, 2.0f);
     }
+#endif
 }
 
 float ElectryEngine::bodyConductanceAt(float frequencyHz) const noexcept
 {
     // A normalised modal-conductance envelope. Near a structural mode the
-    // bridge accepts more string energy; far from every mode it approaches
-    // zero. This response is evaluated only while configuring a note, not in
-    // the sample loop, and is used exclusively to add loss.
+    // instrument termination accepts more string energy; far from every mode
+    // it approaches zero. This response is evaluated only while configuring a
+    // note, not in the sample loop, and is used exclusively to add loss.
     //
     // Each mode's own omega, omega-squared and loss rate are solved once in
     // configureBody() into bodyModeOmega_/bodyModeOmegaSquared_/
-    // bodyModeDamping_ rather than here: this call is reached up to six times
-    // per configureVoiceDamping() (once per partial), and only `frequencyHz`
-    // - the sounding partial, not the mode geometry - actually changes
-    // between those six calls.
+    // bodyModeDamping_ rather than here. The shipping path samples up to six
+    // partials; the default-off Ray candidate deliberately does not call this
+    // helper because it adds no termination loading.
     const float omega = twoPi * std::max(frequencyHz, 0.0f);
     const float omegaSquared = omega * omega;
     float response = 0.0f;
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
     float normaliser = 0.0f;
+#endif
     for (int mode = 0; mode < bodyModeCount; ++mode)
     {
         const auto index = static_cast<std::size_t>(mode);
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
         const float level = std::max(bodyModeLevels_[index], 0.0f);
+#endif
         const float dissipative = bodyModeDamping_[index] * omega;
         const float reactive = bodyModeOmegaSquared_[index] - omegaSquared;
         // Real (conductive) part of a normalised modal mobility. It is
@@ -4746,10 +5252,20 @@ float ElectryEngine::bodyConductanceAt(float frequencyHz) const noexcept
         const float conductance = dissipative * dissipative
             / std::max(reactive * reactive + dissipative * dissipative,
                        1.0e-12f);
+#if ELECTRY_MEASURED_BODY_RESPONSE
+        // Kept numerically defined for test introspection only. The Ray
+        // candidate deliberately never applies this envelope as string loss.
+        response = std::max(response, conductance);
+#else
         response += level * conductance;
         normaliser += level;
+#endif
     }
+#if ELECTRY_MEASURED_BODY_RESPONSE
+    return clampf(response, 0.0f, 1.0f);
+#else
     return clampf(response / std::max(normaliser, 1.0e-6f), 0.0f, 1.0f);
+#endif
 }
 
 void ElectryEngine::configurePickupFilters() noexcept
@@ -4858,6 +5374,8 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     {
         voice.legatoBlend = clampf(voice.legatoBlend + voice.legatoIncrement,
                                    0.0f, 1.0f);
+        if (voice.legatoBlend >= 1.0f)
+            voice.lastConfiguredLiveFret = -999.0f;
         // The friction follows how fast the finger is actually moving, which
         // is the derivative of the glide's own smoothstep, 6 b (1 - b). It is
         // therefore zero at both ends and the squeak swells and dies with the
@@ -4942,6 +5460,26 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
     const float touchWeight = 0.5f * voice.touchDepth;
     const float touchDelayScale = 1.0f + voice.touchFraction;
+
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    bool analyticReleaseSeeded = false;
+    if (voice.excitationPhase == ExcitationPhase::Release
+        && voice.analyticReleaseAmplitude > 0.0f)
+    {
+        seedReleasedDisplacement(
+            vertical, voice.analyticReleaseAmplitude,
+            voice.analyticReleasePluckFraction,
+            voice.analyticReleaseHalfWidthFraction,
+            voice.excitationPolarity * voice.verticalWeight);
+        seedReleasedDisplacement(
+            horizontal, voice.analyticReleaseAmplitude,
+            voice.analyticReleasePluckFraction,
+            voice.analyticReleaseHalfWidthFraction,
+            voice.excitationPolarity * voice.horizontalWeight);
+        voice.analyticReleaseAmplitude = 0.0f;
+        analyticReleaseSeeded = true;
+    }
+#endif
 
     // Loop reads and the damping/dispersion chain.
     const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback)
@@ -5039,6 +5577,23 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                            + coupling * (horizontalSample - verticalSample);
     const float horizontalIn = horizontalSample
                              + coupling * (verticalSample - horizontalSample);
+
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    float analyticReleasePrimeNeck = 0.0f;
+    float analyticReleasePrimeBridge = 0.0f;
+    if (analyticReleaseSeeded)
+    {
+        const auto seedOnlyTap = [&] (const DelayTap& tap)
+        {
+            return 0.85f * (verticalIn
+                            - pickupCombDepth * vertical.readTap(tap))
+                 + 0.35f * (horizontalIn
+                            - pickupCombDepth * horizontal.readTap(tap));
+        };
+        analyticReleasePrimeNeck = seedOnlyTap(voice.pickupTapNeck);
+        analyticReleasePrimeBridge = seedOnlyTap(voice.pickupTapBridge);
+    }
+#endif
 
     // Excitation: contact noise, then the pick-release pulse, then the tail.
     float excitation = 0.0f;
@@ -5175,7 +5730,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // and `bodyLossFactor`, and with every decay time, T60 and timbre
     // calibration in the instrument sitting downstream of it.
     //
-    // The same weights appear on the way in as on the way out: `bridgeForce`
+    // The same weights appear on the way in as on the way out: `bridgeMotion`
     // below reads the two polarisations 0.5/0.5, so the saddle drives them
     // 0.5/0.5, which is what reciprocity of a passive mechanical junction
     // requires. Folding the two halves into the gain leaves one multiply.
@@ -5247,6 +5802,33 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
             / std::sqrt(1.0f + driven * driven * inverseCeilingSquared);
         return (x + x * x * (0.55f + 0.30f * x)) * inverseDrive;
     };
+
+#if ELECTRY_ANALYTIC_RELEASE_IC
+    if (analyticReleaseSeeded)
+    {
+        const auto primePickup = [&] (float staticTap,
+                                      FractionalMovingAverage& aperture,
+                                      CoilPairSum& coilPair,
+                                      float drive, float driveInverse,
+                                      float& previousFlux)
+        {
+            // Before release the held triangle is static. Prime both temporal
+            // equivalents of the pickup's spatial aperture to that DC value,
+            // then prime Faraday's difference to the matching magnetic flux;
+            // only motion and the retained edge/noise can make voltage.
+            coilPair.prime(staticTap);
+            aperture.prime(staticTap);
+            previousFlux = voice.fluxScale
+                * magneticTransfer(staticTap, drive, driveInverse);
+        };
+        primePickup(analyticReleasePrimeNeck, voice.apertureNeck,
+                    voice.coilPairNeck, magneticDriveNeck_,
+                    magneticDriveNeckInverse_, voice.previousFluxNeck);
+        primePickup(analyticReleasePrimeBridge, voice.apertureBridge,
+                    voice.coilPairBridge, magneticDriveBridge_,
+                    magneticDriveBridgeInverse_, voice.previousFluxBridge);
+    }
+#endif
 
     // A pickup whose selector mix has faded to silence contributes nothing, so
     // its two fractional reads, spatial aperture, flux polynomial, induced-EMF
@@ -5323,16 +5905,17 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     accumulateStereoContribution(sums, voice.stereoLateral, 0.5f, neckSignal,
                                  0.5f, bridgeSignal);
 
-    // The bridge passes string vibration and playing noise into the body, and
-    // the same bridge force drives the sympathetic coupling bus. Every voice
+    // The waveguide state is displacement-domain. Its bounded bridge-motion
+    // proxy passes string vibration and playing noise into the body and drives
+    // the sympathetic coupling bus. Every voice
     // writes to the bus; the unfingered strings read all of it and the played
     // strings read it minus their own share, recorded here for the next
     // sample. The graph is no longer acyclic, so the played strings' gain is
     // held under an explicit spectral-radius bound in solveBridgeCoupling().
-    const float bridgeForce = 0.5f * (verticalTotal + horizontalTotal);
-    sympatheticBus_ += bridgeForce;
-    voice.busContribution = bridgeForce;
-    sums.body += bridgeForce + 1.6f * noiseSample;
+    const float bridgeMotion = 0.5f * (verticalTotal + horizontalTotal);
+    sympatheticBus_ += bridgeMotion;
+    voice.busContribution = bridgeMotion;
+    sums.body += bridgeMotion + 1.6f * noiseSample;
     constexpr float palmImpactVelocityFloor = 1.0e-4f;
     constexpr float palmImpactStateFloor = 1.0e-7f;
     if (voice.palmImpactVel > 0.0f || std::abs(voice.palmImpactState) > 0.0f)
@@ -5520,9 +6103,12 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             || std::abs(s.toneKnob - t.toneKnob) > 1.0e-4f;
         const bool bodyDirty =
             std::abs(s.bodyWood - t.bodyWood) > 1.0e-4f
+#if ! ELECTRY_MEASURED_BODY_RESPONSE
             || std::abs(s.bodySize - t.bodySize) > 1.0e-4f
             || std::abs(s.bodyShape - t.bodyShape) > 1.0e-4f
-            || std::abs(s.construction - t.construction) > 1.0e-4f;
+            || std::abs(s.construction - t.construction) > 1.0e-4f
+#endif
+            ;
 
         smoothTowards(s.bodyWood, t.bodyWood);
         smoothTowards(s.bodySize, t.bodySize);
@@ -5532,6 +6118,10 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         smoothTowards(s.pickupType, t.pickupType);
         smoothTowards(s.toneKnob, t.toneKnob);
         smoothTowards(s.bodyResonance, t.bodyResonance);
+#if ELECTRY_MEASURED_BODY_RESPONSE
+        if (t.bodyResonance == 0.0f && s.bodyResonance < 1.0e-5f)
+            s.bodyResonance = 0.0f;
+#endif
         smoothTowards(s.stringGauge, t.stringGauge);
         smoothTowards(s.stringAge, t.stringAge);
         smoothTowards(s.pickPosition, t.pickPosition);
@@ -5810,6 +6400,23 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                              * (pitchBendTarget_ - pitchBendSemitones_);
         if (std::abs(pitchBendSemitones_ - pitchBendTarget_) < 5.0e-4f)
             pitchBendSemitones_ = pitchBendTarget_;
+        for (std::size_t expressionIndex = 1;
+             expressionIndex < expressionPitchBendCount; ++expressionIndex)
+        {
+            auto& current = expressionPitchBendSemitones_[expressionIndex];
+            const float target = expressionPitchBendTargets_[expressionIndex];
+            current += bendGlideCoefficient_ * (target - current);
+            if (std::abs(current - target) < 5.0e-4f)
+                current = target;
+
+            auto& master =
+                expressionMasterPitchBendSemitones_[expressionIndex];
+            const float masterTarget =
+                expressionMasterPitchBendTargets_[expressionIndex];
+            master += bendGlideCoefficient_ * (masterTarget - master);
+            if (std::abs(master - masterTarget) < 5.0e-4f)
+                master = masterTarget;
+        }
 
         // Retune ringing coupled strings in place whenever the wheel moves.
         if (sympatheticActive_
@@ -5863,7 +6470,11 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         bridgePathActive_ = bridgeWanted;
 
         smoothedOutputGain_ = s.outputGain;
+#if ELECTRY_MEASURED_BODY_RESPONSE
+        smoothedBodyLevel_ = 2.0f * s.bodyResonance;
+#else
         smoothedBodyLevel_ = 24.5f * s.bodyResonance;
+#endif
         const float stereoTarget = s.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
         stereoWidth_ += pickupMixCoefficient_ * (stereoTarget - stereoWidth_);
         if (stereoTarget == 0.0f && stereoWidth_ < 1.0e-6f)
@@ -5934,18 +6545,21 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                     const bool keyDown = voice.keyDown;
                     const int keyDownCount = voice.keyDownCount;
                     const bool sustained = voice.sustained;
+                    const ExpressionId expressionId = voice.expressionId;
                     // Leave the descriptor active through startVoice(): its
                     // scheduling-time finger decision is needed before that
                     // function clears the pending state itself.
                     startVoice(voice, voice.midiNote, pending.velocity,
                                pending.playStyle, pending.strokeIsUp, 0,
                                pending.strokeVariationState,
-                               pending.startOrder, true);
-                    // Note Off and CC64 may have changed ownership during the
-                    // pre-roll; committing the sound must not erase them.
+                               pending.startOrder, true,
+                               pending.expressionId);
+                    // Note Off and CC64 may have changed ownership or frozen
+                    // the member bend during pre-roll; contact must preserve it.
                     voice.keyDown = keyDown;
                     voice.keyDownCount = keyDownCount;
                     voice.sustained = sustained;
+                    voice.expressionId = expressionId;
                 }
                 else
                 {

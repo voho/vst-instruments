@@ -380,7 +380,7 @@
       ],
       "settings": {
         "sample_rate_hz": 44100,
-        "oversampling": 4,
+        "oversampling": 8,
         "parameters": {
           "distortion": 0.45,
           "amp": 0.95,

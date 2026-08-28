@@ -11,9 +11,12 @@ phase compensation. A fretting hand with a position and a reach decides where ea
 note is played; a point-touch model produces natural and pinch harmonics as the
 string's own mode shapes rather than as transpositions; slides are a distance
 over a hand speed, their squeak the winding passing under the finger; a picking
-hand never puts the plectrum down in exactly the same place twice. The standard
-pitch wheel moves every string together over a uniform ±2 semitone range,
-and a resonance wheel can push a distorted tone into self-sustaining amplifier
+hand never puts the plectrum down in exactly the same place twice. Without an
+MPE zone, the standard pitch wheel moves every string together over a uniform
+±2 semitone range. Once a valid MIDI MPE zone and its pitch ranges are
+declared, each member channel owns a physical string and bends only that
+performed note while the zone master adds a chord-wide interval. A resonance
+wheel can push a distorted tone into self-sustaining amplifier
 feedback through a fixed nominal air delay, independent of DAW callback size,
 with performance-controlled idle-string drive. One bridge is shared by all
 eight strings:
@@ -45,8 +48,8 @@ The power-tube load lines also solve their source-derived screen resistors:
 individual 470 Ohm American branches and one common 800 Ohm British branch.
 Negative feedback, plate-plus-screen-current-driven sag, transformer flux and
 six-section speaker/cabinet voicing complete each path. The Modern path retains
-Electry's established metal circuit and output sample-for-sample.
-The nonlinear blocks run inside an up-to-4× oversampled domain, so a high-gain
+Electry's established metal circuit topology and voicing.
+The nonlinear blocks run inside an up-to-8× oversampled domain, so a high-gain
 tone saturates instead of folding its own harmonics back into the guitar band.
 These are meticulously bounded circuit-derived families, not capture-accurate
 replicas of named amplifiers, individual power-tube specimens, microphones or
@@ -56,10 +59,14 @@ phase-coherent divided-pickup view of the eight physical strings; Double is two
 separately seeded deterministic Electry performances, one per channel, with
 independent contact detail and a bounded 0-6 ms second-player pick clock.
 Neither stereo choice is a delayed copy or synthetic widening effect.
-One Guitar Build control follows a smooth path through six deliberately
-contrasting solid-body constructions, co-moving internal material, mass,
-shape, joint, scale and gauge coordinates. Pickup construction, selector,
-tone, body-colour amount and all player controls remain independent.
+The shipping Guitar Build control follows a smooth path through six
+deliberately contrasting solid-body constructions, co-moving internal material,
+mass, shape, joint, scale and gauge coordinates. The default-off measured-body
+comparison instead moves only the supported walnut-to-ash material coordinate
+while visiting six distinct 25.5-to-28-inch light/heavy string setups; unsupported
+size, shape and joint coordinates remain neutral.
+Pickup construction, selector, tone, body-colour amount and all player controls
+remain independent.
 
 Every model has named research references, listed below. Electry does not claim
 to be a capture-accurate clone of any one instrument.
@@ -86,25 +93,25 @@ real-recording boundaries and blind-study plan live in the
 | `02-range-full-fretboard.wav` | −11.3 dBFS | +8.3 dB |
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −12.9 dBFS | +9.9 dB |
-| `05-drop-e-rhythm-amp.wav` | −12.7 dBFS | +9.7 dB |
-| `06-lead-amp-delay-room.wav` | −11.6 dBFS | +8.6 dB |
+| `05-drop-e-rhythm-amp.wav` | −12.6 dBFS | +9.6 dB |
+| `06-lead-amp-delay-room.wav` | −11.8 dBFS | +8.8 dB |
 | `07-pickups-and-tone.wav` | −11.7 dBFS | +8.7 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
 | `09-guitar-build-contrasts.wav` | −8.1 dBFS | +5.1 dB |
 | `10-velocity-dynamics.wav` | −11.6 dBFS | +8.6 dB |
 | `11-power-chords-dry.wav` | −7.9 dBFS | +4.9 dB |
-| `12-power-chords-amp.wav` | −12.5 dBFS | +9.5 dB |
-| `13-long-rhythm-arrangement.wav` | −13.1 dBFS | +10.1 dB |
+| `12-power-chords-amp.wav` | −12.4 dBFS | +9.4 dB |
+| `13-long-rhythm-arrangement.wav` | −13.0 dBFS | +10.0 dB |
 | `14-whammy-and-feedback.wav` | −13.0 dBFS | +10.0 dB |
 | `15-mute-and-dead-audition.wav` | −12.4 dBFS | +9.4 dB |
 | `16-mute-and-dead-metal.wav` | −13.6 dBFS | +10.6 dB |
 | `17-extended-technique-solo.wav` | −12.1 dBFS | +9.1 dB |
 | `18-syncopated-djent-study.wav` | −12.4 dBFS | +9.4 dB |
 | `19-modern-metalcore-study.wav` | −12.5 dBFS | +9.5 dB |
-| `20-odd-meter-prog-study.wav` | +0.8 dBFS | −3.8 dB |
-| `21-blues-rock-lead-study.wav` | −9.5 dBFS | +6.5 dB |
-| `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
-| `23-amp-voices.wav` | −15.4 dBFS | +12.4 dB |
+| `20-odd-meter-prog-study.wav` | +0.9 dBFS | −3.9 dB |
+| `21-blues-rock-lead-study.wav` | −9.6 dBFS | +6.6 dB |
+| `22-tremolo-picking-study.wav` | −13.5 dBFS | +10.5 dB |
+| `23-amp-voices.wav` | −15.3 dBFS | +12.3 dB |
 <!-- peaks-table-end -->
 
 `15-mute-and-dead-audition.wav` is the quickest dry vocabulary check: the same
@@ -152,7 +159,7 @@ file. Near-legato overloaded chord turns expose each circuit's short-term grid
 recovery before the phrase moves through chugs, a ringing chord and a bent,
 vibrato lead. This compares response and nonlinear dynamics rather than a
 level-matched succession of unrelated presets. Existing amplified demos 05–22
-retain the sample-identical Modern path.
+continue to use that same Modern topology and voicing.
 
 Files 18–22 are original Electry studies, not endorsements or artist
 sound-alikes.
@@ -160,11 +167,13 @@ The finger-vibrato moments in files 06, 17, 21 and 22 use the same model availab
 from the visible A#0 **VIB** key. Hold it before or while a physically held
 stopped note rings; pre-held intent waits for the finger to land, and velocity
 chooses width. Channel and polyphonic pressure remain unassigned, so normal
-aftertouch cannot bend a chord by surprise.
+aftertouch cannot bend a chord by surprise. MPE currently maps its pitch
+dimension only; per-note pressure, CC 74 timbre and Note Off velocity await a
+capture- and listening-calibrated physical mapping.
 
 ## Factory rigs and quick start
 
-The editor's **RIG** selector provides three deterministic starting points and
+The editor's **RIG** selector provides four deterministic starting points and
 sets all 28 host parameters, so it cannot inherit a forgotten control from the
 previous patch. Rigs deliberately leave Pick Stroke, the base Play Style and
 the `LATCH | HOLD` choice alone.
@@ -175,6 +184,10 @@ the `LATCH | HOLD` choice alone.
   demo.
 - **Mute / Dead DI:** dry, +6 dB, hard near-bridge pick, no sympathetic ring
   and middle Mute Tightness, exposing the two hand contacts without an amp.
+- **Blues Rock Lead:** the host-loadable version of the warm neck-pickup Stereo
+  voicing behind `21-blues-rock-lead-study.wav`, with responsive 150 ms bends,
+  moderate Modern amp drive, compression, delay and room. Its +3.2 dB output is
+  the host control's nearest 0.1 dB step to the demo renderer's 1.45 gain.
 
 1. Load **Drop-E Metal**, leave the built-in amp on, and play E1..D6
    (MIDI notes 28..86), the full range drawn on the on-screen piano.
@@ -317,11 +330,29 @@ could produce the note, so an open string won every contest and most of the
 fretboard - and the sounding length, inharmonicity and pickup-comb geometry
 that come with it - was unreachable.
 
-The pitch wheel applies the same standard ±2 semitone bend to every played and
-sympathetically ringing string, so a chord stays in tune while all strings
-travel over the Bend Time parameter rather than snapping. Channel pressure and
-polyphonic aftertouch are deliberately unassigned, so controller pressure
-cannot silently alter pitch. The modulation wheel (CC 1) is the
+Before a valid MPE zone is declared, pitch wheels retain the original
+channel-agnostic contract: the latest wheel applies the same standard ±2
+semitone bend to every played and sympathetically ringing string, so a chord
+stays in tune. MIDI MPE Configuration RPNs activate lower or upper zones;
+Pitch Bend Sensitivity RPN 0 then sets their member and master ranges. JUCE's
+public zone layout keeps the whole-semitone part
+for routing, while Electry separately retains RPN 0's Data Entry LSB so the
+performed member and master ranges include their declared cents. Each member
+channel then remains bound to its physical string, including two channels
+playing the same pitch; its wheel uses the zone's per-note range, and the zone
+master's wheel adds its declared interval to every member. Both paths travel
+over Bend Time rather than snapping, and a layout change cannot orphan the Note
+Off of a note that began in the preceding zone. A released string freezes only
+its performed member interval while it damps; the zone master remains live for
+that natural or CC 64-held tail. Member-wheel data received on the idle channel
+is cached for its next finger instead of retuning the old tail. With no new
+member wheel, the next finger starts centred while the zone-master bend remains
+live. CC 121 recentres both wheels, nulls the current RPN/NRPN selection and
+keeps the exact declared ranges; CC 123 retains Electry's historical
+whole-instrument release semantics. Channel
+pressure, polyphonic aftertouch, MPE CC 74 timbre and Note Off velocity remain
+deliberately unassigned, so no uncalibrated message silently changes the
+guitar. The modulation wheel (CC 1) is the
 performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
@@ -459,8 +490,10 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   control sets the level and silences it exactly at zero. A gesture received
   mid-glide takes its source pitch, fractional fret, remaining distance and
   direction from the live smoothstep position rather than the old destination;
-  phase-compensated delay translation keeps the effective pitch continuous at
-  the handoff and through in-flight dispersion refits.
+  the stiffness coefficient follows that same fractional speaking length at
+  the string's established tension instead of jumping to the destination fret.
+  Phase-compensated delay translation keeps the effective pitch continuous at
+  the handoff, through in-flight dispersion refits and at the exact endpoint.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). The Artifacts path can open a
@@ -473,8 +506,10 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   different strings sharp by different amounts and made low chords sour. Real
   plucked strings can show nonlinear attack glide, but that path remains
   withheld until matched, absolute-pitch, multi-string and multi-velocity
-  captures can bound it. The pitch wheel moves every delay target by the same
-  ±2 semitone ratio over the Bend Time glide. Hold the visible A#0 **VIB** key
+  captures can bound it. Legacy pitch bend moves every delay target by the
+  same ±2 semitone ratio; an active MPE zone instead composes its declared
+  member and master intervals on each channel-owned string. Both use the Bend
+  Time glide. Hold the visible A#0 **VIB** key
   for upward-only fretting-hand vibrato; its velocity sets width, each stopped
   string has an independent finger phase, repicks of a live held note preserve
   that finger, and a pre-held gesture waits at zero for a physically held
@@ -576,9 +611,24 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   structural drive is converted once to induced voltage before the modal
   bank, guarded, then joined with string pickup voltage before the same coil;
   displacement is never mixed directly into an electrical signal. Their
-  positive, bounded modal bridge conductance also drains string energy when a
-  fundamental or strong partial meets a body mode, so the build changes
+  positive, bounded modal termination-conductance proxy also drains string
+  energy when a fundamental or strong partial meets a body mode, so the build changes
   sustain as well as timbre. Solid-body coupling, not an acoustic radiator.
+  A comparison-only `ELECTRY_MEASURED_BODY_RESPONSE` build remains default-off.
+  It substitutes three pickup-observed modes from Ray, Kaljun and Straže's
+  controlled one-walnut/one-ash comparison, pairing each frequency and loss
+  factor only with its measured mate. Their unpublished residues are represented
+  by a deliberately quiet direct-body voicing; the modes do not become a
+  broadband string-loss law. Body Size, Shape and Construction are exact no-ops
+  in this experiment because the study held them fixed and the reviewed sources
+  do not identify independent reusable laws for them. Guitar Build follows six
+  curated short, balanced and extended scale/gauge setups while Body Wood moves
+  monotonically between the measured specimens. The setup choices are ordinary
+  guitar voicing, not a material law, and do not invent responses for the
+  inactive coordinates. One specimen per material, unequal body mass and no
+  released raw transfer data make this a narrow matched-material experiment,
+  not a general tonewood taxonomy. The shipping path stays unchanged until
+  identical, level-matched blind renders select otherwise.
 - **Bridge coupling:** every string you are not fingering is a
   real waveguide, not a resonator bank. The plucked strings' bridge force is
   summed into a one-sample-delayed bus that drives the idle strings' own loops
@@ -780,20 +830,27 @@ complete signal path is regression tested on every platform rather than only
 inside a host. Amp Voice selects a complete nonlinear amplifier and
 speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
 
-- **Oversampled clipping.** The distortion pedal and the amplifier run inside a
-  4x oversampled domain, reached through two cascaded Kaiser-windowed halfband
-  stages whose kernels are designed at `prepare()` time rather than tabulated. A
+- **Oversampled clipping.** At 44.1 and 48 kHz the distortion pedal and the
+  amplifier run inside an 8x oversampled domain, reached through three cascaded
+  Kaiser-windowed halfband stages whose kernels are designed at `prepare()`
+  time rather than tabulated. A
   gain stage fed at host rate folds its own upper harmonics straight back into
   the guitar band, and that folded intermodulation is most of what makes a
   modelled high-gain tone read as digital: across pedal, amplifier, stacked
-  and quiet-amplifier steady-tone probes, the current non-harmonic floor is
-  -61.3 to -77.1 dB; the previous host-rate chain measured -28 to -40 dB on
-  the same class of probes. Above 96 kHz one halfband stage is
-  dropped and above 192 kHz both are, because a host already running that fast
-  supplies the bandwidth the stages need. While the block is engaged it adds
-  17.25 host samples of fixed group delay (0.36 ms at 48 kHz); with both gain
-  controls at zero it is skipped outright, costs nothing, and adds no delay at
-  all.
+  and quiet-amplifier steady-tone probes at both standard rates, the current
+  non-harmonic floor is -70.2 to -83.2 dB; the previous host-rate chain
+  measured -28 to -40 dB on the same class of probes. From a 48 kHz host upward,
+  the smallest 1x, 2x, 4x or 8x path that reaches a 384 kHz internal clock is
+  selected; 44.1 kHz is the maximum-8x exception at 352.8 kHz. The resulting
+  stage boundaries are 96, 192 and 384 kHz, and both sides of each remain below
+  the same -70 dB alias rail. Power-of-two staging puts the 88.2, 176.4 and
+  352.8 kHz host family at a 705.6 kHz internal clock; every rate-derived
+  circuit state uses that actual frame clock rather than the 384 kHz host-rate
+  ceiling.
+  While engaged it adds 20.125 host samples of fixed group delay below 96 kHz
+  (0.42 ms at 48 kHz), then 17.25/11.5/0 samples across the 96/192/384 kHz
+  stage retirements. With both gain controls at zero it is skipped outright,
+  costs nothing, and adds no delay at all.
 - **Pedal.** A tight 88 Hz input coupling network and a mid-focused voice feed
   the 2.2 kOhm / 10 nF antiparallel Shockley-diode node from
   [Yeh, Abel and Smith's DAFx-07 circuit](https://dafx.de/paper-archive/2007/Papers/p197.pdf).
@@ -810,10 +867,10 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   The resulting unloaded third-order passive networks are evaluated from
   [Yeh and Smith's exact symbolic transfer](https://dafx.de/paper-archive/2006/papers/p_001.pdf)
   and bilinear transformed at the nonlinear stage's internal rate. Their
-  measured 1 kHz insertion losses at 192 kHz are −13.0058 and −5.84512 dB;
+  measured 1 kHz insertion losses at 384 kHz are −13.0063 and −5.84533 dB;
   recovery happens before the output section, not as post-cabinet EQ. Modern
-  High-Gain deliberately retains the previous Electry path coefficient- and
-  operation-for-operation, preserving demos 01–22 byte-for-byte.
+  High-Gain retains the established Electry circuit topology and voicing; the
+  higher internal rate intentionally changes its wet samples.
 - **Voiced for the eighth string.** The Modern input stage passes the whole Drop-E
   fundamental rather than cutting it at 84 Hz, because clipping it is what
   generates the second and third harmonics the cabinet turns into a chug's
@@ -849,7 +906,10 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   `IS=1 nA`, `RS=1 Ohm` diode branch. A three-unknown analytic Newton step
   jointly solves total LTP current and both terminal-grid voltages while each
   capacitor is trapezoidally integrated, so grid current loads the correct
-  plate and leaves a real common negative bias displacement after overload.
+  plate and leaves a real common negative bias displacement after overload. Its
+  companion conductances use the exact nonlinear frame rate: the checked
+  384/705.6 kHz small-signal output-capacitor response agrees within the 0.05
+  dB regression bound at 40 Hz relative to 1 kHz.
   Idle remains 4.012 mA / 232.25 V / 225.53 V for ECC81 and 3.180 mA / 261.46
   V / 250.95 V for ECC83; the checked musical burst stays below `1e-10 A`
   residual. One millisecond after the pinned overload the shared American and
@@ -911,7 +971,11 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   voice, or the Modern sealed metal thump, 430 Hz cut and 3.1 kHz presence. All
   three end in a fourth-order loudspeaker roll-off inside the oversampled domain
   before decimation. These are parametric response models—not cabinet impulse
-  responses, individual speaker solves, microphones or room captures.
+  responses, individual speaker solves, microphones or room captures. The
+  default-off `ELECTRY_MEASURED_MODERN_CABINET` CMake option replaces only the
+  Modern cabinet filters with the vendored, phase-preserved CC0 impulse prefix
+  for controlled comparison; it is not the shipping path pending blind
+  listening.
 - **Level and topology.** Each gain stage divides its own small-signal gain
   back out, so reaching for a drive control is a change of tone rather than a
   jump in level; a saturating stage still ends up a few decibels louder than
@@ -934,21 +998,21 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   zero is a bit-exact dry bypass — verified by the regression suite — while
   engaging or disengaging either gain circuit and its oversampled block is
   crossfaded and cannot click.
-- **Cost.** With Modern High-Gain selected, Stereo on an Apple M1 Max, best of
-  three six-second runs at 48 kHz:
-  0.002x realtime in bypass, 0.075x for Distortion alone, 0.025x for Amp alone,
-  0.086x for the demonstrated 45% Distortion / 95% Amp metal chain, and 0.089x
-  with all five controls at maximum. At 96 kHz the corresponding metal/all-max
-  figures are 0.169x/0.178x; the all-max path remains below 0.19x through 384
-  kHz. A fresh optimized amp-only matrix for the two coupled circuits measures
-  American/British at 0.217/0.221x realtime at 48 kHz, 0.421/0.434x at 96 kHz
-  and 0.429/0.440x at 384 kHz; Modern in the same harness is 0.028/0.055/0.055x.
-  A deliberately continuous A↔B crossfade is 0.430/0.842/0.845x and pathological
-  three-way switching remains below 0.90x; settled selection runs only one
-  circuit. All timed process rows make zero heap allocations. The two 3.288
-  MiB pair tables take about 0.65 s once per process to construct during the
-  first `prepare()`, while same-rate reprepare is about 0.55 ms. For reference
-  the eight-string model itself runs at roughly 0.13-0.17x realtime at 96 kHz.
+- **Cost.** On an Apple M1 Max, a comparable optimized render of all 23 demos
+  (289.33 seconds of audio, including the string model and mixed dry/wet
+  material) moved from 21.94 seconds CPU / 22.71 seconds wall time with the
+  previous 4x standard-rate path to 33.65 / 35.27 seconds with the current 8x
+  path: +53.4% CPU, +55.3% wall, and 0.116x/0.122x aggregate realtime. This is
+  an end-to-end workload, not a worst-case amp-switch benchmark. The earlier
+  isolated harness was not retained, so its 48 kHz rows are historical rather
+  than current claims. Its still-current 96 kHz 4x rows—the same 384 kHz
+  nonlinear rate with twice the host-rate work—measured the metal/all-max
+  chains at 0.169x/0.178x, settled American/British at 0.421x/0.434x, Modern at
+  0.055x, continuous A↔B at 0.842x and pathological three-way switching below
+  0.90x. A fresh isolated standard-rate benchmark remains due. Timed process
+  rows make zero heap allocations; the two 3.288 MiB pair tables take about
+  0.65 seconds once per process to construct during the first `prepare()`,
+  while same-rate reprepare is about 0.55 ms.
 
 ### Guitar Build
 
@@ -973,6 +1037,16 @@ The 0.8 anchor is the current fitted default. Pickup selector and coil type,
 Tone, Body Resonance amount, string age and all picking/hand controls remain
 independent, so Guitar Build changes the instrument under the player without
 silently moving the pickup or the performance.
+
+The default-off measured-body comparison replaces those six confounded
+construction anchors with six curated setups. Body Wood moves monotonically
+from the measured walnut endpoint to ash while scale length stays inside
+25.5-28 inches and gauge inside the `.009-.080` to `.011-.098` sets. The path
+visits short/heavy, medium-heavy, balanced, long/light, extended/heavy and
+extended/light instruments, rather than pretending material determines scale
+or string tension. Body Size, Shape and Construction remain exactly neutral;
+pickup and player controls remain independent. At its 80% default the
+comparison preserves the fitted 27.63-inch heavy-set instrument exactly.
 
 The fit that selected the default remains the same evidence: against nine
 muted references at five pitches the joint error is 5.03 dB, compared with
@@ -1024,7 +1098,7 @@ High-Gain.
 | 1 | `pickupSelector` | Pickup selector | Neck / Both / **Bridge** |
 | 2 | `pickupType` | Pickup type | 0..100%, default 32% |
 | 3 | `tone` | Tone | 0..100%, default 70% |
-| 4 | `guitarBuild` | Guitar build | 0..100% through six smooth generic anchors, default **80% Dense extended** |
+| 4 | `guitarBuild` | Guitar build | 0..100%; shipping default **80% Dense extended**, comparison default **80% Extended heavy / 27.63-inch / `.098` low E** |
 | 5 | `bodyResonance` | Body resonance | 0..100%, default 35% |
 | 6 | `stringAge` | String age | 0..100%, default 30% |
 | 7 | `pickPosition` | Pick position | bridge..neck, default 18% |
@@ -1056,7 +1130,7 @@ High-Gain.
 | --- | --- | --- | --- |
 | String core | Karjalainen, Välimäki, and Tolonen's single-delay-loop condensation of digital waveguides | Eight independent strings in Drop-E tuning, each with two transverse-polarisation single-delay-loop waveguides, third-order Lagrange fractional reads, and a contractive bridge coupling matrix | The published SDL string family with two coupled polarisations per string; not a bidirectional multi-rail scattering simulation |
 | Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages. Both the detune and the exchange between the polarisations are fractions of a round trip rather than fixed numbers of samples, so neither follows the host clock; the loop filter's own two-frequency fit still does, leaving a measured 4.5 dB residual spread across 44.1-192 kHz at the top of the range | A qualitative reproduction of the documented mechanism with voiced constants; not calibrated polarisation data from a measured instrument |
-| Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, scale length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
+| Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, live fractional speaking length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation. During legato travel the established tension stays fixed while `B` follows `1/L^2`, including a one-shot exact endpoint fit | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
 | Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store | The shipping string keeps its compensated fundamental delay independent of pick velocity; a regression checks maximum-velocity Sustain on all eight isolated opens and a simultaneous low chord, then the three isolated low strings under Mute and Dead | Nonlinear tension glide is a documented future mechanism, not a shipping claim: the single-recording force prototype failed absolute multi-string tuning and remains withheld until matched captures identify a bounded model |
@@ -1064,11 +1138,11 @@ High-Gain.
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
-| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
+| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, moves stiffness with the live `1/L^2` coordinate, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position-, stiffness- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. A mid-glide Hammer takes its source and direction from the live fractional fret while phase-compensated delay translation preserves effective pitch. Neither gesture moves a planted Palm hand or rewrites sibling damping | Pitch-continuous, direction-aware legato with conservatively voiced finger attacks; not a velocity-continuous spline or a distributed or capture-fitted finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
-| Guitar Build | Solid-body material/geometry contrasts, set/bolt/neck-through joint practice, and modern extended-range scale and gauge practice | One host parameter smoothly follows six generic anchors through internal wood damping, body mass, modal shape, joint/bridge, 25.5-to-28-inch scale and Drop-E gauge coordinates; pickup construction, Tone and Body Resonance amount remain independent | A broad continuous construction trajectory; not a licensed or capture-verified reproduction of a named instrument, nor evidence that one material alone determines electric-guitar identity |
+| Guitar Build | Solid-body material/geometry contrasts, set/bolt/neck-through joint practice, Ray's controlled walnut/ash pair, and modern extended-range scale and gauge practice | Shipping follows six generic construction anchors; the default-off comparison moves Body Wood monotonically through Ray's pair while visiting six curated short/extended and light/heavy string setups, with unsupported body size, shape and joint coordinates neutral. Pickup construction, Tone and Body Resonance amount remain independent | Broad shipping voicing plus a narrower evidence-limited material experiment and explicitly voiced setup path; neither is a licensed reproduction of a named instrument nor evidence that one material alone determines electric-guitar identity |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
 | Dead note | Fretting-hand dead-note distinctions and distributed player/string contact; four CC0 Drop-E eight-string ghost attacks | An independent additive fretting-hand loss with a 1.6 s low-order target, its upper fit at the eighth partial, and a lightly darkened pick attack; Mute Pressure may stack as the separate bridge hand | A contact loss inside the loop whose stateful E1 envelope and centroid track the four-hit reference; not a gate, maximum palm mute, distributed finger-force solve, or universal calibration of dead-note hand coverage |
@@ -1077,14 +1151,14 @@ High-Gain.
 | Strum travel | Ordinary plectrum kinematics | Note-ons on different strings no more than 35 ms from the chord's first event are one stroke; its direction and extreme string set an accelerating travel order, every crossed string shares that direction, and Alternate advances once for the chord. Reusing a string starts a new stroke; a fully cancelled pre-contact chord consumes none | Deterministic, jittered accelerating pick travel across the string plane; not a model of pick angle, chord recognition, or the player's wrist trajectory |
 | Tremolo picking | Official Shreddage Hydra, RealEight, Electric Storm Deluxe, Evolution Dracus and Heavier7Strings repetition workflows; Armondes' five-player direct/progressive tremolo experiment; Electry's planned exact-eight capture protocol at 8/12/16 strokes/s | Hold visible B0 to run one deterministic wrist through the existing physical repick path. One shared fractional phase preserves Alternate/chord direction, velocity remains force, rate is 4..20 strokes/s with a 12/s default, an in-flight Strum traversal cannot be overwritten, a same-string legato move retargets rather than cancels its travelling pick, and each contact on a live, ringing held note leaves its vibrato finger intact. Because B0 and E6..B6 explicitly command the picking hand, a latched Hammer becomes neutral Sustain for that dedicated contact only and remains latched for later playable notes | A playable sample-accurate repeat scheduler whose 12/s default overlaps the published conventional-guitar direct-speed cluster and whose 8/12/16 anchors are ready for commissioned exact-eight capture; not host-synced pattern generation, a human timing distribution, or an exact eight-string rate/force fit |
 | Fretting vibrato | Guitar-TECHS CC-BY raw DIs; Magalhães et al.'s eight-player electric-guitar vibrato study | Hold the visible A#0 gesture; velocity controls a smooth-onset, upward-only width, with independent rate, depth and phase draws per physically held stopped string. Pre-held intent waits for a stopped finger; open and key-released strings remain fixed. Picking-hand repicks and overlapping ownership of the same held or delayed note preserve its onset and finger, while a released/refretted note assigns another. Velocity 64 is nominally about 5.6 Hz / 20 cents and 127 about 6.4 Hz / 40 cents | A playable finger-rock model whose existing range overlaps published six-string players; not an exact eight-string calibration or a finger/string force solve |
-| Pitch control | Channel-wide MIDI pitch bend | The wheel applies the same ±2 semitone offset to every played and sympathetically ringing string over the Bend Time glide. Channel pressure and polyphonic aftertouch are deliberately unassigned | Uniform, chord-safe MIDI pitch bend; not a physical vibrato-bar simulation, and no pressure message silently changes tuning |
+| Pitch control | Legacy MIDI pitch bend, the official [MIDI MPE specification](https://midi.org/midi-polyphonic-expression-mpe-specification-adopted), and [MIDI 1.0 RPN/controller semantics](https://midi.org/midi-1-0-control-change-messages) | With no active zone, the latest wheel applies the same ±2 semitone offset to every played and sympathetically ringing string. In a declared lower or upper MPE zone, each member channel owns a physical string and uses the exact semitone-plus-cent per-note range retained alongside JUCE's integer routing state; the exact master range adds to every zone member. Same-pitch member notes remain distinct, layout changes retain outstanding Note Off ownership, a released tail freezes its member interval while its zone master stays live, idle-channel wheel data initializes the next finger, and both paths use Bend Time. CC 121 recentres wheels and nulls RPN selection without deleting the zone or its exact ranges; CC 123 retains whole-instrument release semantics | Standards-gated, fixed-state per-note pitch without changing ordinary MIDI; not a physical vibrato-bar simulation. Per-note pressure, CC 74 timbre and release velocity remain unassigned |
 | Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, while high-gain players control unused strings | A sample-rate-derived FIFO holds a voiced nominal 5.805 ms acoustic delay (256 samples at 44.1 kHz), while the plug-in renders, amplifies and returns causal chunks no longer than that delay so DAW block size cannot select the howl. A soft-clipped, gain-scaled copy drives played strings fully and idle sympathetic strings at a voiced one-quarter direct share while leaving their bridge drive unchanged. CC1 resonance, Resonance Depth and rig acoustic loudness scale the path, so a distorted tone at full wheel regenerates while a dry DI never can; every element is bounded | A fixed-delay, level-gated, saturating regeneration path with a performance-voiced unused-string share; not a measured player-to-speaker distance, finger-by-finger muting, room acoustics, speaker directivity, or a standing-wave model |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
-| Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
+| Oversampling | Standard nonlinear-audio antialiasing practice | The physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x. The separate distortion/amplifier domain uses the smallest 1x, 2x, 4x or 8x path reaching 384 kHz from a 48 kHz host upward, with 44.1 kHz bounded at 8x/352.8 kHz | Genuine internal oversampling and filtered decimation, with all tested gain profiles below a -70 dB alias floor on both sides of the 96/192/384 kHz stage transitions; not a quality label applied to a native-rate nonlinear stage |
 | Output modes | Phase-coherent divided/hex pickup practice, ordinary double-tracked guitar performance, and four CC-BY HiMMP rhythm DIs | Mono is the conventional summed DI. Stereo weights one engine's modeled strings by physical lateral position and folds coherently to mono. Double runs two complete, differently seeded mono engines into left and right before one shared FX chain; the second gets one deterministic 0-6 ms causal timing offset per picked wrist stroke, shared across a chord and composed with strum travel | Stereo is a virtual divided-pickup string field and Double is two deterministic modeled performances rather than a delayed copy. Its tight timing envelope is directionally grounded in conventional Drop-C takes, not capture-fitted eight-string timing, and it does not claim to reproduce the decisions of two human performances |
 | Distortion pedal | [Yeh, Abel and Smith's antiparallel-diode RC formulation](https://dafx.de/paper-archive/2007/Papers/p197.pdf) and standard nonlinear-audio antialiasing practice | A 2.2 kOhm / 10 nF Shockley-diode node whose capacitor state is trapezoidally integrated and solved with bounded Newton iterations at every oversampled step, surrounded by Electry's eighth-string input and voice filters | A real circuit solve of the documented clipping node; not a full named pedal schematic, component-tolerance study, or SPICE validation |
-| Amplifier and speaker/cabinet | [Yeh and Smith's exact passive tone-stack derivation](https://dafx.de/paper-archive/2006/papers/p_001.pdf); [Dempwolf and Zölzer's measured 12AX7 model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf); Reefman's measured [uTracer TubeLib ECC81/ECC83/6L6GC/EL34 fits](https://www.dos4ever.com/uTracer3/TubeLib.inc) and [model derivation](https://www.dos4ever.com/uTracer3/Theory.pdf); [Fender Twin Reverb AB763](https://schematicheaven.net/fenderamps/twin_reverb_ab763_schem.pdf), [Marshall 1959](https://www.prowessamplifiers.com/schematics/Marshall/1959_superlead.pdf) and [Macak/Schimmel](https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf) phase-splitter and grid-coupling circuits; [RCA 6L6GC](https://frank.pocnet.net/sheets/049/6/6L6GC.pdf) and [Mullard EL34](https://frank.pocnet.net/sheets/129/e/EL34.pdf) push-pull operating points; official [Fender amplifier](https://www.fmicassets.com/Damroot/Original/10001/021730_gamp_manual_all_revE.pdf), [Marshall 1959](https://www.marshall.com/us/en/product/1959-handwired-head?pid=1007086) and [Peavey 6505](https://assets.peavey.com/literature/manuals/00575680.pdf) architecture references; official [Jensen C12K](https://www.jensentone.com/vintage-ceramic/c12k), [Celestion G12M](https://celestion.com/product/g12m-greenback/) and [Vintage 30](https://celestion.com/product/vintage-30/) response boundaries | Three complete paths share a residual-checked measured-current 12AX7 preamp table. American and British add exact unloaded third-order passive RC stacks; nonlinear ECC81/ECC83 long-tailed pairs jointly solve two source-valued output capacitors, 220 kOhm bias returns, factory grid stoppers and TubeLib overload-grid conduction; common/differential-sensitive 6L6GC or EL34 load-line tables retain the resulting blocking shift. The American 6L6GC pair solves individual AB763-derived 470 Ohm screen branches around the RCA operating family; the British EL34 pair solves Mullard's common 800 Ohm resistor from its matching pair condition. These screen equations are coupled to the plate load-line solve and baked into the preparation-time tables. Voiced negative feedback, plate-plus-screen-current-driven sag and independent transformer state follow; Modern preserves the established cascaded path. Six biquads per path supply distinct zero-latency speaker/cabinet response voices, and all nonlinear work stays inside the up-to-4× oversampled block | Exact passive RC transfers, translated measured-current preamp/phase-inverter/power-tube formulae, residual-bounded coupled LTP/grid solves and bounded ideal push-pull load-line/screen-resistor solves inside three deliberately voiced paths. Terminal grid conduction and blocking recovery are modeled while positive-grid plate transfer remains explicitly AB1-bounded. The American screen components are a documented-source hybrid, not a complete Twin DC stage; the upstream 1 kOhm / 20 uF dynamic screen node, Marshall quartet/choke supply, reactive transformer/speaker load, full positive-grid plate data, complete named schematic, component-tolerance or specimen fit, cabinet IR, loudspeaker mechanics, microphone and room capture remain outside the claim |
+| Amplifier and speaker/cabinet | [Yeh and Smith's exact passive tone-stack derivation](https://dafx.de/paper-archive/2006/papers/p_001.pdf); [Dempwolf and Zölzer's measured 12AX7 model](https://dafx.de/paper-archive/2011/Papers/76_e.pdf); Reefman's measured [uTracer TubeLib ECC81/ECC83/6L6GC/EL34 fits](https://www.dos4ever.com/uTracer3/TubeLib.inc) and [model derivation](https://www.dos4ever.com/uTracer3/Theory.pdf); [Fender Twin Reverb AB763](https://schematicheaven.net/fenderamps/twin_reverb_ab763_schem.pdf), [Marshall 1959](https://www.prowessamplifiers.com/schematics/Marshall/1959_superlead.pdf) and [Macak/Schimmel](https://www.dafx.de/paper-archive/2010/DAFx10/MacakSchimmel_DAFx10_P12.pdf) phase-splitter and grid-coupling circuits; [RCA 6L6GC](https://frank.pocnet.net/sheets/049/6/6L6GC.pdf) and [Mullard EL34](https://frank.pocnet.net/sheets/129/e/EL34.pdf) push-pull operating points; official [Fender amplifier](https://www.fmicassets.com/Damroot/Original/10001/021730_gamp_manual_all_revE.pdf), [Marshall 1959](https://www.marshall.com/us/en/product/1959-handwired-head?pid=1007086) and [Peavey 6505](https://assets.peavey.com/literature/manuals/00575680.pdf) architecture references; official [Jensen C12K](https://www.jensentone.com/vintage-ceramic/c12k), [Celestion G12M](https://celestion.com/product/g12m-greenback/) and [Vintage 30](https://celestion.com/product/vintage-30/) response boundaries | Three complete paths share a residual-checked measured-current 12AX7 preamp table. American and British add exact unloaded third-order passive RC stacks; nonlinear ECC81/ECC83 long-tailed pairs jointly solve two source-valued output capacitors, 220 kOhm bias returns, factory grid stoppers and TubeLib overload-grid conduction; common/differential-sensitive 6L6GC or EL34 load-line tables retain the resulting blocking shift. The American 6L6GC pair solves individual AB763-derived 470 Ohm screen branches around the RCA operating family; the British EL34 pair solves Mullard's common 800 Ohm resistor from its matching pair condition. These screen equations are coupled to the plate load-line solve and baked into the preparation-time tables. Voiced negative feedback, plate-plus-screen-current-driven sag and independent transformer state follow; Modern preserves the established cascaded path. Six biquads per path supply distinct zero-latency speaker/cabinet response voices, and all nonlinear work stays inside the up-to-8× oversampled block | Exact passive RC transfers, translated measured-current preamp/phase-inverter/power-tube formulae, residual-bounded coupled LTP/grid solves and bounded ideal push-pull load-line/screen-resistor solves inside three deliberately voiced paths. Terminal grid conduction and blocking recovery are modeled while positive-grid plate transfer remains explicitly AB1-bounded. The American screen components are a documented-source hybrid, not a complete Twin DC stage; the upstream 1 kOhm / 20 uF dynamic screen node, Marshall quartet/choke supply, reactive transformer/speaker load, full positive-grid plate data, complete named schematic, component-tolerance or specimen fit, cabinet IR, loudspeaker mechanics, microphone and room capture remain outside the claim |
 
 ## Known gaps
 
@@ -1181,8 +1255,10 @@ polyphony with open-position chord mapping, repick reuse, and stealing; a
 slide whose pitch travels through the intermediate semitones rather than
 jumping, whose travel time scales with the interval, whose chained Slide and
 Hammer retargets preserve the programmed and effective loop pitch, direction
-and remaining distance, whose in-flight dispersion refits cannot reverse the
-physical pitch trajectory, whose friction band follows the speed of the hand,
+and remaining distance, whose stiffness follows the live fractional fret
+monotonically in both directions and lands on the independently settled
+endpoint, whose in-flight dispersion refits cannot reverse the physical pitch
+trajectory, whose friction band follows the speed of the hand,
 which is far louder on a wound string than on a plain one and exactly absent at
 a silent Finger Noise control, which injects no second modal attack and cannot
 cancel or re-anchor a pending picked strum; a fretting hand that keeps a lead
@@ -1190,7 +1266,15 @@ phrase in one position instead of falling back to open strings, leaves the
 open-position shapes untouched, retains a planted Palm hand through hammers,
 pull-offs and legato slides without changing sibling damping, and relaxes to the
 nut when the phrase ends;
-pitch-wheel travel, sustain-pedal hold, the balanced A#0 fretting-vibrato
+legacy pitch-wheel travel plus fixed-state MPE member/master pitch composition,
+same-pitch channel ownership in both directions across a zone-layout change,
+an exact RPN semitone-plus-cent member range and a separately live master
+interval, bounded-overlap rejection, idle-wheel
+initialization, member-frozen/master-live release tails including a delayed
+repick, new-finger thaw exactly at delayed contact, null RPN selection on CC
+121 and re-prepare, and ownership clearing at Panic, prepare, All Sound Off and
+All Notes Off;
+sustain-pedal hold; the balanced A#0 fretting-vibrato
 gesture with five-rate coverage for pre-held-silence/open-string onset,
 immediate final-key release, sustain-tail exclusion, held-sibling continuity,
 off-grid refret, stopped-open-stopped legato, overlapping delayed-note ownership
@@ -1212,8 +1296,15 @@ energy balance, determinism, and opposite string endpoints. The plug-in suite
 additionally pins the 28-parameter layout, including Tremolo Rate's and Amp
 Voice's appended indices, Guitar Build's named anchors,
 formatted values, current-state round trips, bus layout, sample-accurate
-note starts, MIDI controller behavior (uniform pitch bend, unassigned channel
-pressure and polyphonic aftertouch, sustain, all-sound-off, all-notes-off), UI
+note starts, MIDI controller behavior (bit-identical channel-agnostic pitch
+before zone activation; same-sample MPE setup; selective member and additive
+master bends using declared ranges, measured from shared search intervals that
+reject negligible captures; an exact semitone-plus-cent member range; a
+member-frozen, master-live CC 64 tail; retained layout and range but nulled RPN
+selection through CC 121 and re-prepare; unassigned channel pressure and
+polyphonic aftertouch; cached pre-note bends; release-tail isolation; bounded
+ownership overflow; sustain,
+all-sound-off, all-notes-off, Panic and prepare lifecycle clearing), UI
 keyswitch triggering of both banks, panic, output-gain and APVTS
 output-mode effects, three visible non-overlapping mode buttons, three visible
 non-overlapping Amp Voice buttons, Modern default and missing-field migration,
@@ -1222,13 +1313,23 @@ distinct Double channels, an unchanged primary lane and clean Double re-entry,
 the sympathetic, Mute Pressure (parameter and CC 2) and Strum Spread controls
 reaching the rendered audio, offscreen editor rendering including the live
 fretboard's bounds, and prepare/release cycles at three rates.
+Black-box artifact tests additionally load the exact built VST3 bundle, and on
+macOS the exact AU binary, rather than linking the processor class or searching
+installed plug-in directories. They pin bundle identity, zero-input stereo
+instrument buses, MIDI rendering, the 28 named Electry controls, all four
+factory rigs and serialized-state restoration. The ten raw evaluation WAVs are
+also read back from disk and must retain a silent lead-in, the intended E1/E2
+pitch class, distinct articulations and monotonically shorter Palm tails from
+light through hard; mutation fixtures prove that silence, duplicate audio,
+wrong pitch and reversed mute depth are rejected.
 The engine suite separately pins bounded/repeatable second-player pick timing,
 one offset per chord, strum composition and pre-contact cancellation.
 
 The amplifier chain has its own suite: the shipping rapid-Mute body's current
-30-80 ms medians are 8.4092% upper-band share and 0.895602 harmonicity, above
+30-80 ms medians are 8.3868% upper-band share and 0.895642 harmonicity, above
 the 6% body floor while remaining nonperiodic; halfband unity DC gain, the -6 dB
-halfband symmetry point, passband ripple and stopband rejection; the diode
+halfband symmetry point, a dense passband sweep below 0.01 dB deviation and a
+dense stopband sweep above 70 dB rejection; the diode
 node's independent DC points, symmetry and capacitor memory; the measured
 12AX7 model's cathode/plate KCL residuals, rail-to-cutoff recovery, plate-load
 convergence, quiescent normalisation and asymmetry; a monotonic 16,385-point
@@ -1247,9 +1348,10 @@ and an audible effect from each amount control on its own at 100%; exact
 American and British third-order tone-stack coefficients and 1 kHz insertion
 loss; the six-point response fingerprint and pairwise spectral separation of
 all three amp/speaker paths; model-ordered nonlinear compression and a
-same-performance Drop-E level bound; the alias floor of the pedal, every
-amplifier, and the two
-stacked, at two input levels; direct A/B circuit-state checks that
+same-performance Drop-E level bound; 48 alias probes covering the pedal, every
+amplifier, stacked gain and a quiet input at both 44.1 and 48 kHz and on both
+sides of the 96/192/384 kHz oversampling transitions, each below -70 dB;
+direct A/B circuit-state checks that
 plate-plus-screen demand rises under a loud hold and recovers during silence,
 plus the established full-path supply droop/recovery probe; an output transformer whose distortion falls about
 46 dB per decade of frequency and 41 dB for 24 dB of level, measured at the
@@ -1257,6 +1359,9 @@ stage rather than through the cabinet; each Modern cabinet voicing feature
 relative to 1 kHz; loudness bounds across every model's whole amp travel and every
 combination of the gain and compressor controls on a rendered Drop-E rhythm
 figure, dry and palm muted; 48/384 kHz response agreement for every Amp Voice;
+the exact nonlinear frame-rate map, invariant 40 Hz coupled-phase-inverter
+response at 384 and 705.6 kHz and the same invariant through public 48/88.2 kHz
+processing;
 stable and mid-switch block-size invariance, bounded switching steps, exact
 one-hot settling and inactive-state clearing; the lead delay's first repeat at 360 ms with a
 clean gap before it; a decaying, decorrelated room tail; bounded sample steps
@@ -1373,6 +1478,103 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-27 internal-rate phase-inverter capacitors
+
+- The American/British output-coupling-capacitor solve was called once per
+  oversampled frame but upper-clamped that frame clock to the 384 kHz host-rate
+  ceiling. Hosts at 88.2, 176.4 and 352.8 kHz all run the nonlinear path at
+  705.6 kHz, so their 100/22 nF companion models advanced 384 kHz coefficients
+  705,600 times per second.
+- Before correction, a quiet full British path alternated by rate family:
+  40 Hz relative to 1 kHz moved from -20.938 to -23.373 dB and 80 Hz moved from
+  -0.099 to -0.890 dB. The solver now retains its actual finite internal clock
+  and applies only the existing lower safety bound.
+- The direct 40 Hz circuit regression failed before the fix by 2.548 dB and now
+  passes a 0.05 dB 384/705.6 kHz bound; the same public-path 48/88.2 kHz rail
+  also closes the production-callsite gap. A separate
+  full-path sweep across 48, 88.2, 96, 176.4, 192, 352.8 and 384 kHz leaves
+  only 0.00376/0.00176 dB of spread. The 44.1 kHz canonical renderer already
+  ran at 352.8 kHz, below the bad clamp, so none of its twenty-three WAVs
+  changes. No A–Z gate was needed because the analogue time constant and the
+  clock that advances it are objective.
+
+### 2026-08-27 continuous slide stiffness
+
+- A slide previously selected the destination integer fret's inharmonicity at
+  contact even though its delay and audible pitch travelled continuously. An
+  octave ascent therefore installed four times the source `B` before the
+  fretting finger had moved.
+- Stiffness now uses the same live fractional fret as the legato glide. The
+  established string tension stays fixed while `B` follows `1/L^2` monotonically
+  through ascending and chained descending travel; the existing phase-delay
+  translation keeps effective pitch continuous and one endpoint-only dirty mark
+  lands on the independently settled target fit.
+- Regression coverage pins contact and chained-retarget continuity, the full
+  geometric `B` trajectory, exact endpoint identity and a post-slide sub-quantum
+  wheel move that must not reopen the expensive dispersion search. The existing
+  portable CPU guardrails remain unchanged. No A–Z gate was needed because this
+  repairs a violated physical formula without adding a voicing choice, control
+  or dependency.
+
+### 2026-08-27 MPE string-owned pitch expression
+
+- Added MIDI MPE advertisement and JUCE's fixed-size lower/upper-zone RPN
+  parser. A same-sample configuration sequence conditions its attacks before
+  string allocation, independent of the host's event insertion order.
+- Member channels now own physical strings and use the zone's exact declared
+  semitone-plus-cent pitch range; a master wheel adds its own exact declared
+  range to every member. Electry retains those float ranges beside JUCE's
+  integer zone-routing state. Two member channels at the same MIDI pitch
+  allocate separate strings and release independently, even if the zone layout
+  changes before Note Off.
+- The realtime path uses a fixed 128-entry FIFO for each MIDI pitch, fixed
+  16-channel owner counts and bend arrays, and rejects an excess attack before
+  it can become an unreleasable engine owner. With no valid zone, explicit
+  expression ID zero and multichannel MIDI remain sample-identical to the
+  legacy channel-agnostic path. A released tail freezes its performed member
+  interval while its zone-master interval remains live. A released pending
+  contact retains that snapshot through the exact contact sample; a genuinely
+  new finger keeps the old ring unchanged during pick travel, then thaws to its
+  cached member bend at contact. CC 121 recentres expression and nulls the
+  current RPN/NRPN selection without deleting the zone or its exact ranges;
+  prepare and release likewise clear that parser transaction while retaining
+  the zone and ranges. CC 121/123 retain
+  whole-instrument reset/release semantics, and prepare, release, Panic, All
+  Sound Off and All Notes Off cannot leave stale note ownership.
+- This checkpoint maps standardized pitch only. Pressure, CC 74 timbre and
+  release velocity remain unassigned until captures and a predeclared listening
+  comparison justify an audible physical mapping. No A–Z gate was needed for
+  the routing itself because MIDI ownership and pitch intervals are objective.
+
+### 2026-08-27 standard-rate nonlinear antialiasing
+
+- Raised the distortion/amplifier domain from 4x to 8x at 44.1 and 48 kHz and
+  retuned the shared 23-tap halfband window from Kaiser beta 8.6 to 7.5. The
+  dense kernel sweep moved from 55.45 to 75.55 dB minimum stopband rejection
+  while holding worst passband deviation to 0.00145 dB.
+- Twelve full-path pedal, amplifier, stacked-gain and quiet-signal probes now
+  sit below -70 dB at both standard rates. The complete range is
+  -70.16..-83.25 dB; at 48 kHz, Modern High-Gain moved from -61.28 to
+  -72.70 dB without changing its circuit topology or voicing.
+- From 48 kHz upward, the rate policy now retains the smallest oversampling
+  factor that reaches 384 kHz; 44.1 kHz remains the maximum-8x exception at
+  352.8 kHz. All six nonlinear profiles remain below -70 dB on both sides of
+  the resulting 96/192/384 kHz stage transitions.
+- Engaged gain-stage delay rose from 17.25 to 20.125 host samples (0.42 ms at
+  48 kHz). The comparable 23-demo renderer costs about 55% more wall time but
+  still completes at 0.122x aggregate realtime on the documented M1 Max.
+  Canonical Ubuntu regeneration changed the 13 wet/amped references while all
+  ten dry/reference performances remained byte-identical.
+- No A–Z listening gate was run: the predeclared non-harmonic-energy and kernel
+  response measurements objectively selected this correction.
+
+### 2026-08-27 blues-rock factory rig
+
+- Promoted the host-representable version of demo 21's neck-pickup lead voicing
+  to the **Blues Rock Lead** factory rig. It restores all 28 host controls from
+  a deterministic starting point while leaving Pick Stroke, Play Style and
+  LATCH/HOLD under the player's control, like the existing rigs.
 
 ### 2026-08-27 source screen-grid loading
 
@@ -1690,9 +1892,9 @@ tone stacks, feedback, transformer, cabinets and untouched Modern branch remain.
   per picked wrist stroke. The primary engine stays sample-exact, chords share
   one offset plus strum travel, and no additional control was added.
 - Audited a CC0 SM57/V30 cabinet IR. A magnitude-only refit improved isolated
-  curve error but broke complete-chain level and muted-body rails, so the
-  zero-latency cabinet stayed unchanged pending a partitioned-convolution and
-  listening comparison.
+  curve error but broke complete-chain level and muted-body rails. A default-off
+  phase-preserved partitioned-convolution candidate now permits the controlled
+  listening comparison while the shipping zero-latency cabinet stays unchanged.
 - Deferred a stronger unilateral repick contact: its passive topology is
   available, but public repetition audio cannot set its physical constants.
 
@@ -1788,10 +1990,12 @@ Standalone:
 - Point-touch harmonics as an exact first-order contact loss inside the loop —
   natural, pinch and touch — plus slides, hammer-ons and pull-offs, dead notes,
   palm muting as an additive absorber, and incidental fret collisions.
-- A uniform ±2 semitone MIDI pitch wheel over the Bend Time glide, and a
-  resonance wheel that drives a bounded, saturating amplifier-feedback path
-  through a fixed nominal 5.805 ms acoustic return, independent of host block
-  size; pressure messages are unassigned.
+- A uniform ±2 semitone legacy MIDI pitch wheel plus lower/upper-zone MPE
+  member/master pitch composition with exact semitone-plus-cent ranges over the
+  Bend Time glide, and a resonance
+  wheel that drives a bounded, saturating amplifier-feedback path through a
+  fixed nominal 5.805 ms acoustic return, independent of host block size;
+  pressure messages, MPE CC 74 timbre and release velocity are unassigned.
 - A published pickup signal structure: per-string position comb following each
   fret, an O(1) fractional moving average for the finite aperture's exact sinc
   response, bounded flux nonlinearity differentiated into induced EMF, and a
@@ -1802,7 +2006,7 @@ Standalone:
 - An FX chain — distortion; selectable American, British and Modern amplifier,
   sag, transformer and parametric speaker/cabinet paths; compression; lead
   delay; and stereo room — with the circuit-derived nonlinear stages inside an
-  up-to-4× oversampled domain, and every amount defaulting to a true 0 % dry
+  up-to-8× oversampled domain, and every amount defaulting to a true 0 % dry
   setting.
 - Mono as the summed dry DI, Stereo as a phase-coherent divided-pickup view
   that folds coherently back to mono, and Double as two independent engines.
@@ -1845,13 +2049,19 @@ ctest --test-dir build --output-on-failure
 
 On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
 universal VST3, Audio Unit and Standalone app and renders the committed editor
-screenshot while the suite runs. After installing the component, validate it
-with `auval -v aumu Elc1 Eltr`. `./scripts/sign-and-package-macos.sh` stages,
-signs and packages all three products; provide the signing and notarization
-environment described by that script for distribution.
+screenshot while the suite runs. After final signing it runs
+`./scripts/validate-macos-artifacts.sh` against those exact bundles, including
+strict signature and identity checks plus direct AU and VST3 load/render/state
+smokes. After installation, `auval -strict -v aumu Elc1 Eltr` remains a useful
+registry check, but it selects by type/subtype/manufacturer and therefore is not
+proof that it found the just-built component. `./scripts/sign-and-package-macos.sh`
+stages, signs and packages all three products; provide the signing and
+notarization environment described by that script for distribution.
 
 ## Licensing
 
 Original code under the MIT license (`LICENSE`). JUCE is used under its own
-terms — see `THIRD_PARTY_NOTICES.md`. No samples, impulse responses or
-third-party presets are included.
+terms — see `THIRD_PARTY_NOTICES.md`. No guitar performances, sample libraries,
+neural-network weights or third-party presets are included. The sole bundled
+third-party audio-derived data is the CC0 1,024-sample cabinet-impulse prefix
+identified in `THIRD_PARTY_NOTICES.md`.
