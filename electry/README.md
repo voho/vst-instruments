@@ -59,12 +59,12 @@ phase-coherent divided-pickup view of the eight physical strings; Double is two
 separately seeded deterministic Electry performances, one per channel, with
 independent contact detail and a bounded 0-6 ms second-player pick clock.
 Neither stereo choice is a delayed copy or synthetic widening effect.
-The shipping Guitar Build control follows a smooth path through six
-deliberately contrasting solid-body constructions, co-moving internal material,
-mass, shape, joint, scale and gauge coordinates. The default-off measured-body
-comparison instead moves only the supported walnut-to-ash material coordinate
-while visiting six distinct 25.5-to-28-inch light/heavy string setups; unsupported
-size, shape and joint coordinates remain neutral.
+The shipping Guitar Build control moves the supported walnut-to-ash material
+coordinate through three paired pickup-observed modes while visiting six
+distinct 25.5-to-28-inch light/heavy string setups. Unsupported size, shape and
+joint coordinates remain neutral; the scale/gauge path is explicit voicing, not
+a claim that material determines either one. The former four-mode construction
+path remains available only as an explicit legacy comparator.
 Pickup construction, selector, tone, body-colour amount and all player controls
 remain independent.
 
@@ -97,16 +97,16 @@ real-recording boundaries and blind-study plan live in the
 | `06-lead-amp-delay-room.wav` | −11.8 dBFS | +8.8 dB |
 | `07-pickups-and-tone.wav` | −11.7 dBFS | +8.7 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
-| `09-guitar-build-contrasts.wav` | −8.1 dBFS | +5.1 dB |
+| `09-guitar-build-contrasts.wav` | −8.2 dBFS | +5.2 dB |
 | `10-velocity-dynamics.wav` | −11.6 dBFS | +8.6 dB |
 | `11-power-chords-dry.wav` | −7.9 dBFS | +4.9 dB |
 | `12-power-chords-amp.wav` | −12.4 dBFS | +9.4 dB |
-| `13-long-rhythm-arrangement.wav` | −13.0 dBFS | +10.0 dB |
+| `13-long-rhythm-arrangement.wav` | −12.9 dBFS | +9.9 dB |
 | `14-whammy-and-feedback.wav` | −13.0 dBFS | +10.0 dB |
 | `15-mute-and-dead-audition.wav` | −12.4 dBFS | +9.4 dB |
 | `16-mute-and-dead-metal.wav` | −13.6 dBFS | +10.6 dB |
 | `17-extended-technique-solo.wav` | −12.1 dBFS | +9.1 dB |
-| `18-syncopated-djent-study.wav` | −12.4 dBFS | +9.4 dB |
+| `18-syncopated-djent-study.wav` | −12.3 dBFS | +9.3 dB |
 | `19-modern-metalcore-study.wav` | −12.5 dBFS | +9.5 dB |
 | `20-odd-meter-prog-study.wav` | +0.9 dBFS | −3.9 dB |
 | `21-blues-rock-lead-study.wav` | −9.6 dBFS | +6.6 dB |
@@ -604,31 +604,24 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   fades Neck, Both (with the
   paired-coil resonance shift), or Bridge; the passive tone control moves
   the loaded resonance down and damps it.
-- **Body:** four modal resonators voiced along strongly separated wood, size,
-  shape, and construction endpoints receive bridge motion and
-  contact noise. Each resonator is normalised at its own modal peak so low
-  modes do not acquire an unintended frequency-dependent boost. The resulting
-  structural drive is converted once to induced voltage before the modal
-  bank, guarded, then joined with string pickup voltage before the same coil;
-  displacement is never mixed directly into an electrical signal. Their
-  positive, bounded modal termination-conductance proxy also drains string
-  energy when a fundamental or strong partial meets a body mode, so the build changes
-  sustain as well as timbre. Solid-body coupling, not an acoustic radiator.
-  A comparison-only `ELECTRY_MEASURED_BODY_RESPONSE` build remains default-off.
-  It substitutes three pickup-observed modes from Ray, Kaljun and Straže's
-  controlled one-walnut/one-ash comparison, pairing each frequency and loss
-  factor only with its measured mate. Their unpublished residues are represented
-  by a deliberately quiet direct-body voicing; the modes do not become a
-  broadband string-loss law. Body Size, Shape and Construction are exact no-ops
-  in this experiment because the study held them fixed and the reviewed sources
-  do not identify independent reusable laws for them. Guitar Build follows six
-  curated short, balanced and extended scale/gauge setups while Body Wood moves
-  monotonically between the measured specimens. The setup choices are ordinary
-  guitar voicing, not a material law, and do not invent responses for the
-  inactive coordinates. One specimen per material, unequal body mass and no
-  released raw transfer data make this a narrow matched-material experiment,
-  not a general tonewood taxonomy. The shipping path stays unchanged until
-  identical, level-matched blind renders select otherwise.
+- **Body:** three pickup-observed modes from Ray, Kaljun and Straže's controlled
+  one-walnut/one-ash comparison receive bridge motion and contact noise. Each
+  frequency and loss factor remains paired only with its measured mate and each
+  resonator is normalised at its own modal peak. Structural drive is converted
+  once to induced voltage before the bank, guarded, then joined with string
+  pickup voltage before the same coil; displacement is never mixed directly
+  into an electrical signal. The unpublished residues remain deliberately quiet
+  direct-body voicing, and the modes do not become a broadband string-loss law:
+  `bodyConductance` is zero and `bodyLossFactor` is one. Body Size, Shape and
+  Construction are exact no-ops because the study held them fixed and the
+  reviewed sources do not identify reusable independent laws for them. Guitar
+  Build follows six curated short, balanced and extended scale/gauge setups
+  while Body Wood moves monotonically between the specimens. Those setup choices
+  are ordinary guitar voicing, not a material law. One specimen per material,
+  unequal body mass and no released raw transfer data make this a narrow
+  matched-material model, not a general tonewood taxonomy. This is the default
+  `ELECTRY_MEASURED_BODY_RESPONSE=ON` shipping path; `OFF` retains the former
+  four-mode geometry-informed voicing only for explicit legacy comparisons.
 - **Bridge coupling:** every string you are not fingering is a
   real waveguide, not a resonator bank. The plucked strings' bridge force is
   summed into a one-sample-delayed bus that drives the idle strings' own loops
@@ -1016,49 +1009,42 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
 
 ### Guitar Build
 
-One host control now replaces the six separate Wood, Size, Shape, Neck Join,
-Scale and Gauge dials. **Guitar Build** travels through six generic anchors;
-between adjacent anchors a smoothstep interpolation co-moves the internal wood
-damping, body mass, modal shape, neck/bridge joint, scale length and Drop-E
-gauge coordinates. This is a curved path through plausible combinations, not
-a diagonal sweep from every minimum to every maximum and not a selector for
-named guitars.
+One host control replaces the six separate Wood, Size, Shape, Neck Join, Scale
+and Gauge dials. **Guitar Build** travels through six curated shipping setups.
+Between adjacent anchors a smoothstep interpolation moves Body Wood
+monotonically through Ray's walnut-to-ash pair and changes scale length and
+Drop-E gauge inside their ordinary ranges. The scale/gauge associations are
+voicing, not evidence that material causes scale or string tension; Body Size,
+Shape and Construction remain exactly neutral.
 
-| Position | Generic anchor | Coordinated direction |
+| Position | Shipping anchor | Voiced setup |
 | ---: | --- | --- |
-| 0.0 | Slab fixed | bright/light flat body, fixed bridge, conventional scale and light set |
-| 0.2 | Contoured | lighter contoured body, slightly extended scale and light set |
-| 0.4 | Angular set | denser angular body with a set-style joint and slightly firmer set |
-| 0.6 | Modern bolt | light modern body, bolt-style joint and intermediate extended scale |
-| **0.8** | **Dense extended** | **thick carved/set-style Drop-E build, 27.63-inch scale and heavy set** |
-| 1.0 | Neck-through | balanced extended-scale build with a neck-through direction and medium set |
+| 0.0 | Walnut short/heavy | walnut endpoint, 25.5-inch scale, heavy set |
+| 0.2 | Short medium-heavy | 26-inch scale, medium-heavy set |
+| 0.4 | Medium balanced | 26.5-inch scale, balanced set |
+| 0.6 | Long light | 27-inch scale, lighter set |
+| **0.8** | **Extended heavy** | **27.63-inch scale and heavy `.011-.098` set** |
+| 1.0 | Ash extended/light | ash endpoint, 28-inch scale, light `.009-.080` set |
 
 The 0.8 anchor is the current fitted default. Pickup selector and coil type,
 Tone, Body Resonance amount, string age and all picking/hand controls remain
 independent, so Guitar Build changes the instrument under the player without
-silently moving the pickup or the performance.
+silently moving the pickup or the performance. The former six-anchor
+construction trajectory is retained only by an explicit
+`ELECTRY_MEASURED_BODY_RESPONSE=OFF` legacy-comparison build.
 
-The default-off measured-body comparison replaces those six confounded
-construction anchors with six curated setups. Body Wood moves monotonically
-from the measured walnut endpoint to ash while scale length stays inside
-25.5-28 inches and gauge inside the `.009-.080` to `.011-.098` sets. The path
-visits short/heavy, medium-heavy, balanced, long/light, extended/heavy and
-extended/light instruments, rather than pretending material determines scale
-or string tension. Body Size, Shape and Construction remain exactly neutral;
-pickup and player controls remain independent. At its 80% default the
-comparison preserves the fitted 27.63-inch heavy-set instrument exactly.
+The historical fit that selected the retained scale/gauge/player default
+remains the same evidence: against nine muted references at five pitches the
+legacy path's joint error was 5.03 dB, compared with 6.31 dB at the old
+all-midpoint prototype. Moving only the four structural weight coordinates
+scored 6.41 dB; moving Pick Position away from 0.18 cost 2.1 dB and selecting
+the neck pickup cost 1.5 dB. The result selected a whole voicing, not evidence
+that any single material coordinate identifies a guitar.
 
-The fit that selected the default remains the same evidence: against nine
-muted references at five pitches the joint error is 5.03 dB, compared with
-6.31 dB at the old all-midpoint prototype. Moving only the four structural
-weight coordinates scored 6.41 dB; moving Pick Position away from 0.18 cost
-2.1 dB and selecting the neck pickup cost 1.5 dB. The result is a fitted whole
-voicing rather than evidence that any single material coordinate identifies a
-guitar.
-
-The earlier isolated-coordinate audit is retained because it motivated the
-single rich trajectory. Sweeping each internal coordinate end to end by the
-same normalised-difference measure the suite uses produced:
+The earlier isolated-coordinate audit is retained as history because it
+motivated replacing the legacy construction trajectory. Sweeping each legacy
+coordinate end to end by the same normalised-difference measure the suite uses
+produced:
 
 | Axis | On the old midpoints | On the new defaults | Suite floor |
 | --- | --- | --- | --- |
@@ -1070,11 +1056,11 @@ same normalised-difference measure the suite uses produced:
 | body resonance | 0.080 | 0.028 | 0.080 |
 | pick position | 1.341 | 1.346 | 0.350 |
 
-At the fitted default, five isolated structural/gauge sweeps lose between a
-tenth and two thirds of their relative range, and four sit below their original
-suite floors. A darker, heavier, louder note makes each isolated coordinate a
-smaller fraction of the whole; Body Resonance is worst hit. The current
-`testGuitarBuildRangeIsAudible` therefore measures the six complete anchors,
+On that legacy path's fitted default, five isolated structural/gauge sweeps
+lose between a tenth and two thirds of their relative range, and four sit below
+their original suite floors. A darker, heavier, louder note makes each isolated
+coordinate a smaller fraction of the whole; Body Resonance is worst hit. The
+current `testGuitarBuildRangeIsAudible` therefore measures the six complete anchors,
 while the lower-level material tests state the instrument they measure instead
 of inheriting the default.
 
@@ -1098,7 +1084,7 @@ High-Gain.
 | 1 | `pickupSelector` | Pickup selector | Neck / Both / **Bridge** |
 | 2 | `pickupType` | Pickup type | 0..100%, default 32% |
 | 3 | `tone` | Tone | 0..100%, default 70% |
-| 4 | `guitarBuild` | Guitar build | 0..100%; shipping default **80% Dense extended**, comparison default **80% Extended heavy / 27.63-inch / `.098` low E** |
+| 4 | `guitarBuild` | Guitar build | 0..100%; default **80% Extended heavy / 27.63-inch / `.098` low E** |
 | 5 | `bodyResonance` | Body resonance | 0..100%, default 35% |
 | 6 | `stringAge` | String age | 0..100%, default 30% |
 | 7 | `pickPosition` | Pick position | bridge..neck, default 18% |
@@ -1141,8 +1127,8 @@ High-Gain.
 | Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, moves stiffness with the live `1/L^2` coordinate, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position-, stiffness- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. A mid-glide Hammer takes its source and direction from the live fractional fret while phase-compensated delay translation preserves effective pitch. Neither gesture moves a planted Palm hand or rewrites sibling damping | Pitch-continuous, direction-aware legato with conservatively voiced finger attacks; not a velocity-continuous spline or a distributed or capture-fitted finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
-| Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
-| Guitar Build | Solid-body material/geometry contrasts, set/bolt/neck-through joint practice, Ray's controlled walnut/ash pair, and modern extended-range scale and gauge practice | Shipping follows six generic construction anchors; the default-off comparison moves Body Wood monotonically through Ray's pair while visiting six curated short/extended and light/heavy string setups, with unsupported body size, shape and joint coordinates neutral. Pickup construction, Tone and Body Resonance amount remain independent | Broad shipping voicing plus a narrower evidence-limited material experiment and explicitly voiced setup path; neither is a licensed reproduction of a named instrument nor evidence that one material alone determines electric-guitar identity |
+| Solid body | Ray's controlled walnut/ash pair; Paté's bridge-admittance and decay analysis; Elliott, Magill and Kendrick's vibro-electric transfer measurements | Structural bridge displacement is differentiated before three double-precision, peak-normalised modal resonators and a 4 kHz guard, producing quiet body-induced voltage before the loaded pickup coils. Each Ray frequency/loss-factor pole stays paired with its measured mate; no unsupported termination loss is added | A narrow specimen-to-specimen structural pickup-colour morph with voiced residues inside measured transfer bounds; not undifferentiated acoustic displacement, transferable complex bridge mobility, or a general material taxonomy |
+| Guitar Build | Ray's controlled walnut/ash pair and modern extended-range scale and gauge practice | Body Wood moves monotonically through the paired modes while six curated short/extended and light/heavy string setups provide the audible path. Unsupported body size, shape and joint coordinates remain neutral; Pickup construction, Tone and Body Resonance amount remain independent | An evidence-limited material morph plus an explicitly voiced setup path; not evidence that material determines scale/gauge or that Shape, Size or Construction has been identified |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
 | Dead note | Fretting-hand dead-note distinctions and distributed player/string contact; four CC0 Drop-E eight-string ghost attacks | An independent additive fretting-hand loss with a 1.6 s low-order target, its upper fit at the eighth partial, and a lightly darkened pick attack; Mute Pressure may stack as the separate bridge hand | A contact loss inside the loop whose stateful E1 envelope and centroid track the four-hit reference; not a gate, maximum palm mute, distributed finger-force solve, or universal calibration of dead-note hand coverage |

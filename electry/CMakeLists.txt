@@ -32,7 +32,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ELECTRY_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
 option(ELECTRY_MEASURED_BODY_RESPONSE
-    "Build the default-off matched-material modal candidate" OFF)
+    "Use the shipping matched-material modal body response" ON)
 option(ELECTRY_MEASURED_MODERN_CABINET
     "Build the default-off measured-IR Modern cabinet candidate" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH

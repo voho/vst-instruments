@@ -4,6 +4,24 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-08-28 — promote the measured body path
+
+In the sealed, whole-file-RMS-matched follow-up the hidden mapping was A = the
+legacy shipping four-mode construction path and B = the three-mode measured
+candidate. The user reported: “build: B is a bit cleaner”; “metal: B but close
+to tie”; “rock: close to tie”; “blues B”; and “overall: close to tie but B
+slightly better with less body.” This is listening feedback, not a material
+measurement.
+
+Decision: promote B as the shipping baseline. Keep the unsupported Size, Shape
+and Construction axes neutral and retain A only as an explicit legacy
+comparator. A post-verdict level-matched audit found no broad low-mid deficit:
+the genre renders were effectively flat by broad band, while Build 0.8 was
+about 0.5 dB lower below 160 Hz and the changed Build anchors shed 2-3 dB of
+2-5 kHz coloration. Treat “less body” as a description of the preferred sound,
+not a request to restore it. Leave the direct-body gain unchanged; revisit it
+only if listening identifies too little body as a defect.
+
 ## 2026-08-28 — retain the body-candidate direction, but widen its range
 
 In the body/build listening pass the user found little meaningful difference

@@ -9,16 +9,14 @@ to one phrase is useful evidence; it is not a market-leading claim by itself.
 
 The unreleased plug-in currently exposes 28 host parameters; development
 snapshots have no backward-compatibility contract. One **Guitar Build**
-parameter replaces six separate construction axes and follows a smooth path
-through Slab fixed, Contoured, Angular set, Modern bolt, Dense extended and
-Neck-through anchors. Internally that path co-moves wood damping, body mass,
-modal shape, joint/bridge construction, scale and Drop-E gauge; the fitted
-Drop-E build at 0.8 is the default. Pickup selector and type, Tone, Body
-Resonance amount, string age and all player/contact controls remain independent.
-The default-off measured-body comparison keeps the same one-control surface but
-moves Body Wood through its separately documented walnut-to-ash pair while
-visiting six curated scale/gauge setups. Size, Shape and Construction stay
-neutral.
+parameter replaces six separate construction axes. It moves Body Wood through
+the separately documented walnut-to-ash pair while visiting six curated
+short/heavy through extended/light scale/gauge setups; the fitted extended
+heavy Drop-E build at 0.8 is the default. Size, Shape and Construction stay
+neutral because no independent reusable law passed the evidence gate. Pickup
+selector and type, Tone, Body Resonance amount, string age and all
+player/contact controls remain independent. The former four-mode construction
+trajectory is available only in an explicit legacy-comparison build.
 **Output Mode** is one three-choice Mono/Stereo/Double parameter; Double means
 two separately seeded complete engines, one mono performance per channel. The
 second player's picked wrist strokes also carry a deterministic 0-6 ms causal
@@ -241,10 +239,11 @@ a physically held note, while All Notes Off, Panic, prepare and release clear
 it. Channel and polyphonic pressure remain discarded. Exact eight-string lead
 captures are still required before rate, depth and onset can be called frozen.
 
-### Default-off matched-material modal experiment
+### Shipping matched-material modal body
 
-`ELECTRY_MEASURED_BODY_RESPONSE` defaults to `OFF`, so the shipping four-mode
-body path is unchanged. An `ON` build is an experiment, not a product claim:
+`ELECTRY_MEASURED_BODY_RESPONSE` defaults to `ON` and selects the shipping
+three-mode body path. `OFF` retains the former four-mode geometry-informed
+voicing only as an explicit legacy comparator:
 
 ```bash
 cmake -S . -B build-measured-body -DCMAKE_BUILD_TYPE=Release \
@@ -265,8 +264,8 @@ give three paired body-pickup (`BP`) poles:
 | 2 | 200.5 Hz / 0.073 | 204.7 Hz / 0.072 |
 | 3 | 420.6 Hz / 0.046 | 440.4 Hz / 0.026 |
 
-The candidate pairs each pole only with its measured mate. For `w = Body Wood`
-it uses positive-domain interpolation
+The shipping model pairs each pole only with its measured mate. For
+`w = Body Wood` it uses positive-domain interpolation
 
 `f = exp(lerp(log(f_walnut), log(f_ash), w))`
 
@@ -278,9 +277,9 @@ unrelated Paté poles. That transfer is removed.
 
 Ray found no significant material difference in open-string fundamental decay;
 differences began at E2 harmonic 2 and A2 harmonic 3. It also supplies no
-complex fret-specific mobility. The experiment therefore adds no termination
-loss: `bodyConductance = 0` and `bodyLossFactor = 1` exactly. Body Size, Shape
-and Construction are exact no-ops in this modal experiment. The candidate-only
+complex fret-specific mobility. The shipping model therefore adds no
+termination loss: `bodyConductance = 0` and `bodyLossFactor = 1` exactly. Body Size, Shape
+and Construction are exact no-ops in this modal model. The shipping
 Guitar Build keeps `Wood` monotonic at its six `0.0, 0.2, ..., 1.0` anchors and
 holds the three inactive axes at `0.5`. Its Scale anchors are
 `[0, .2, .4, .6, .85, 1]`; Gauge is `[1, .8, .6, .4, 1, 0]`. These are curated
@@ -301,6 +300,18 @@ with adjacent changes of `0.0095-0.0188`, matching the user's report that the
 range was insufficient.
 One body per species, unequal body mass, elastic support, mode-dependent sensor
 results and unavailable raw data prevent a universal tonewood claim.
+
+A sealed, whole-file-RMS-matched comparison then used A = the legacy shipping
+path and B = this measured path. The user reported Build “B is a bit cleaner,”
+Metal “B but close to tie,” Rock “close to tie,” Blues “B,” and overall “close
+to tie but B slightly better with less body.” That by-ear preference promotes B
+to the shipping baseline; it does not turn the source data into a general
+material law. A post-verdict, level-matched diagnostic found the genre renders
+effectively flat by broad spectral band. At Build 0.8, B was about `0.5 dB`
+lower below `160 Hz`; changed Build anchors also reduced `2-5 kHz` coloration
+by roughly `2-3 dB`. No category preferred A, so B is promoted unchanged.
+“Less body” is not treated as authority to raise the unmeasured direct-body
+scalar unless later listening identifies it as a defect.
 
 #### Shape evidence boundary and identification gate
 
@@ -361,13 +372,13 @@ conditional on one material and joint:
    `Y_string = Y_bb + Y_nn - Y_bn - Y_nb`.
 
    Simultaneous `V_DI/F_bridge` and `V_DI/F_neck` measurements supply the
-   complex vibro-electric residues that the current candidate lacks and
+   complex vibro-electric residues that the current model lacks and
    therefore replaces with voicing.
    If the three termination curves do not collapse to a frequency-only law,
    add a position map rather than averaging away the disagreement.
 5. Remove the damping and use a fixed-displacement wire-break plucker at
    `x/L = 0.18`. Capture five untouched high-impedance DI and bridge-motion
-   takes for MIDI 35, 45, 55, 68, 71 and 77; these span the candidate's six
+   takes for MIDI 35, 45, 55, 68, 71 and 77; these span the model's six
    structural neighbourhoods. Extract partial decay as a held-out check on the
    force-response identification.
 6. Fit stable common poles and complex residues jointly across the force
@@ -388,14 +399,14 @@ change on all six validation notes before blind listening.
 That study does not create a universal material-by-shape law. Such a claim
 requires repeating the complete trio design across multiple independent lots
 of each material and withholding entire bodies while fitting main effects and
-interactions. The shipping overall Guitar Build co-moves material, shape,
-construction, scale and gauge and therefore cannot identify Shape
-independently. The candidate path holds Shape exactly neutral, so its A/B says
-nothing about that axis either.
+interactions. The shipping Guitar Build holds Shape exactly neutral, so its
+listening comparison says nothing about that axis. The legacy comparator's
+co-moving material, shape, construction, scale and gauge likewise cannot
+identify Shape independently.
 
 Until that gate is met, Body Wood remains only the narrow three-mode Ray
 specimen morph above. Shape, Construction and Size remain inactive in the
-default-off experiment, and shipping remains unchanged.
+shipping model.
 
 [Paté, Le Carrou and Fabre](https://www.lam.jussieu.fr/Membres/LeCarrou/Articles/A8_Pate_PredictingDecayTime.pdf)
 confirm why loading is excluded: their decay equation needs the conductance at

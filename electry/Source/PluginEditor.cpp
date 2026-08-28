@@ -1311,7 +1311,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
 
 #if ELECTRY_MEASURED_BODY_RESPONSE
     setup (guitarBuildKnob, guitarBuild,
-           "Comparison model using three pickup-observed modes from one "
+           "Uses three pickup-observed modes from one "
            "matched walnut/ash body pair. Only each measured material pole is "
            "morphed to its mate; modal levels are quiet voicing. Shape, joint "
            "and body size remain neutral until matched captures exist. Guitar "

@@ -2217,7 +2217,7 @@ void testMeasuredBodyResponsePhysics()
     // Elliott measured the pickup's body-borne transfer against the complete
     // pickup voltage, not against an arbitrary internal gain. Measure that
     // same end-to-end residual through Electry's coils, output guard and DC
-    // path. The candidate is deliberately only this quiet direct colour.
+    // path. The shipping model is deliberately only this quiet direct colour.
     const auto renderDirectCase = [&] (
         bool muteDirect, int midiNote, PickupSelector pickup,
         float shape, float construction, float wood)
@@ -5799,7 +5799,7 @@ void testPickupsToneAndBuildMorph()
         slabRender.left, continuousRender.left, start, start + window);
 #if ELECTRY_MEASURED_BODY_RESPONSE
     expect(buildDifference > 0.05 && buildDifference < 0.50,
-           "candidate Guitar Build endpoints escaped the subtle structural range ("
+           "measured Guitar Build endpoints escaped the subtle structural range ("
                + std::to_string(buildDifference) + ")");
 #else
     expect(buildDifference > 0.08,
@@ -5979,7 +5979,7 @@ void testAdvancedDispersionAndBodyConductance()
 #if ELECTRY_MEASURED_BODY_RESPONSE
     expect(snapshot.bodyConductance == 0.0f
                && snapshot.bodyLossFactor == 1.0f,
-           "Ray direct-colour candidate invented termination loading");
+           "Ray direct-colour model invented termination loading");
 #else
     expect(snapshot.bodyConductance >= 0.0f && snapshot.bodyConductance <= 1.0f,
            "modal bridge conductance escaped its passive range");
@@ -6516,13 +6516,13 @@ void testMaterialAndControlAudibility()
         const double midNoteDifference = compareAxis(namedAxis.second, 45);
 #if ELECTRY_MEASURED_BODY_RESPONSE
         const std::string axisName(namedAxis.first);
-        std::cout << "PROBE candidate body " << axisName
+        std::cout << "PROBE measured body " << axisName
                   << " E1/A2 residuals: " << lowNoteDifference << ", "
                   << midNoteDifference << '\n';
         if (axisName != "wood")
         {
             expect(lowNoteDifference < 1.0e-9 && midNoteDifference < 1.0e-9,
-                   std::string("inactive candidate axis ") + axisName
+                   std::string("inactive measured-body axis ") + axisName
                        + " invented a material response");
         }
         else
@@ -6693,7 +6693,7 @@ void testGuitarBuildMacro()
             && std::abs(rawDefaultCoordinates[coordinate]
                             - mappedDefaultCoordinates[coordinate]) < 1.0e-6f;
     expect(defaultsMatch,
-           "candidate raw-engine default differs from Guitar Build default");
+           "measured raw-engine default differs from Guitar Build default");
 #endif
 
     for (std::size_t anchor = 0; anchor < expected.size(); ++anchor)
@@ -6714,7 +6714,7 @@ void testGuitarBuildMacro()
                 && std::abs(actual[coordinate] - expected[anchor][coordinate])
                        < 1.0e-6f;
         expect(matches,
-               "candidate Guitar Build missed physical-path anchor "
+               "measured Guitar Build missed physical-path anchor "
                    + std::to_string(anchor));
 #else
         expect(actual == expected[anchor],
@@ -6747,7 +6747,7 @@ void testGuitarBuildMacro()
             && std::abs(invalidCoordinates[coordinate]
                             - expected[4][coordinate]) < 1.0e-6f;
     expect(invalidMatches,
-           "invalid candidate Guitar Build did not use its fitted default");
+           "invalid measured Guitar Build did not use its fitted default");
 #else
     const EngineParameters defaults;
     expect(std::abs(invalid.bodyWood - defaults.bodyWood) < 1.0e-5f
@@ -6845,7 +6845,7 @@ void testGuitarBuildRangeIsAudible()
 #if ELECTRY_MEASURED_BODY_RESPONSE
             expect(std::isfinite(difference)
                        && difference > 0.02 && difference < 0.75,
-                   "candidate adjacent Guitar Build anchors collapsed or "
+                   "measured adjacent Guitar Build anchors collapsed or "
                    "escaped their non-exaggeration rail");
 #else
             expect(difference > 0.04,
@@ -6859,7 +6859,7 @@ void testGuitarBuildRangeIsAudible()
             renders.front().left, renders.back().left, start, end);
 #if ELECTRY_MEASURED_BODY_RESPONSE
         expect(std::isfinite(overall) && overall > 0.12 && overall < 0.90,
-               "candidate Guitar Build endpoints became inaudible or escaped "
+               "measured Guitar Build endpoints became inaudible or escaped "
                "their non-exaggeration rail");
 #else
         expect(overall > 0.12,
@@ -15015,10 +15015,10 @@ void testHumbuckerTwoCoilNotch()
 {
     constexpr double sampleRate = 48000.0;
 
-    // These golden pickup spectra belong to the fitted shipping string/build,
-    // not to whichever product default a comparison build selects. Pin that
-    // fixture explicitly so a candidate scale/gauge default cannot masquerade
-    // as a pickup regression.
+    // These golden pickup spectra predate the body-path promotion and belong to
+    // this fixed string/scale/gauge fixture, not whichever Build default a test
+    // selects. Pin the fixture so an alternate Build cannot masquerade as a
+    // pickup regression.
     const auto pickupReference = []
     {
         EngineParameters parameters;
@@ -15185,7 +15185,7 @@ void testHumbuckerTwoCoilNotch()
             // down, so a one-decibel tolerance avoids promoting numerical
             // residue into a pickup claim.
 #if ELECTRY_MEASURED_BODY_RESPONSE
-            // The body candidate deliberately changes the complete pickup
+            // The measured body deliberately changes the complete pickup
             // voltage. Keep this as a tight pickup-shape alarm without
             // freezing the old oversized structural path into the reference.
             const double tolerance = partial.index <= 12 ? 0.5 : 1.25;

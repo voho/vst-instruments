@@ -582,7 +582,7 @@ void testParameterTextParsing()
 #if ELECTRY_MEASURED_BODY_RESPONSE
     expectParameterValueForText (processor, electry::parameters::guitarBuild,
                                  "Medium balanced", 0.4f, 1.0e-3f,
-                                 "candidate guitarBuild named anchor");
+                                 "measured guitarBuild named anchor");
 #else
     expectParameterValueForText (processor, electry::parameters::guitarBuild,
                                  "Angular set", 0.4f, 1.0e-3f,

@@ -462,7 +462,7 @@ void ElectryEngine::seedReleasedDisplacement(
 void applyGuitarBuild(EngineParameters& parameters, float build) noexcept
 {
 #if ELECTRY_MEASURED_BODY_RESPONSE
-    // The comparison has evidence for one material pair but no independent
+    // The shipping model has evidence for one material pair but no independent
     // Size, Shape or Construction law. Keep those axes neutral while visiting
     // six ordinary scale/gauge setups; the material coordinate alone remains
     // monotonic. The 0.8 anchor is the preferred fitted heavy extended setup.
@@ -803,7 +803,7 @@ float ElectryEngine::highFrequencyDecayRatio(int stringIndex) const noexcept
 #else
     // Preserve the fitted shipping string itself while removing the old
     // global material/joint direction. Only Body Wood acts through the quiet
-    // Ray direct-colour bank; the candidate has no material termination-loss
+    // Ray direct-colour bank; this path has no material termination-loss
     // law, and Size, Shape and Construction remain inactive. This constant is
     // the shipping-Build baseline, not another material law.
     highRatio *= 0.86f * 0.58f;
@@ -2518,7 +2518,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
 #else
     // Retain the intrinsic shipping string while removing the old
     // Construction/Body laws. This avoids mistaking a baseline retune for
-    // material sound; the Ray candidate adds no termination loss.
+    // material sound; the Ray path adds no termination loss.
     t60 *= 1.16f;
 #endif
     t60 *= lerp(0.88f, 1.18f, parameters.stringGauge);
@@ -2660,7 +2660,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     // Ray's controlled material comparison found no significant fundamental-
     // decay difference and supplies no complex, fret-specific termination
     // mobility. Do not turn its three pickup-observed body poles into a
-    // broadband string-loss law. The candidate changes only the quiet direct
+    // broadband string-loss law. This model changes only the quiet direct
     // structural colour below; intrinsic string damping remains untouched.
     voice.bodyConductance = 0.0f;
     voice.bodyLossFactor = 1.0f;
@@ -5229,8 +5229,8 @@ float ElectryEngine::bodyConductanceAt(float frequencyHz) const noexcept
     //
     // Each mode's own omega, omega-squared and loss rate are solved once in
     // configureBody() into bodyModeOmega_/bodyModeOmegaSquared_/
-    // bodyModeDamping_ rather than here. The shipping path samples up to six
-    // partials; the default-off Ray candidate deliberately does not call this
+    // bodyModeDamping_ rather than here. The legacy geometry path samples up
+    // to six partials; the shipping Ray path deliberately does not call this
     // helper because it adds no termination loading.
     const float omega = twoPi * std::max(frequencyHz, 0.0f);
     const float omegaSquared = omega * omega;
@@ -5254,7 +5254,7 @@ float ElectryEngine::bodyConductanceAt(float frequencyHz) const noexcept
                        1.0e-12f);
 #if ELECTRY_MEASURED_BODY_RESPONSE
         // Kept numerically defined for test introspection only. The Ray
-        // candidate deliberately never applies this envelope as string loss.
+        // Shipping deliberately never applies this envelope as string loss.
         response = std::max(response, conductance);
 #else
         response += level * conductance;

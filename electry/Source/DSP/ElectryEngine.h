@@ -155,38 +155,25 @@ enum class OutputMode { Mono, Stereo };
 
 inline constexpr float defaultGuitarBuild = 0.8f;
 
-// Shipping material and construction axes morph between classic solid-body
-// anchors. Scale length spans a conventional electric into a modern
-// baritone/8-string build, while the remaining performance controls use their
-// full 0..1 range. The default-off comparison path is documented on the fields
-// below.
-// The shipping defaults describe a specific instrument rather than the midpoint
-// of every axis, because the midpoint of every axis is not a guitar anyone owns.
-// They are a thick carved set-neck blank strung with the heaviest set on a
-// 27.6-inch scale, a humbucker-leaning bridge pickup, the tone control a little
-// back, and a softer pick close to the bridge - the Drop-E rhythm instrument
-// this model exists to be. Fitted against nine dry muted power-chord references
-// at five pitches: the joint tilt-and-contour error is 5.03 dB here against
-// 6.31 for the former all-midpoints defaults.
-//
-// The four "weight" fields on their own do not get there. Moved without the
-// scale length, pickup type and pick position below, the same body, gauge, age,
-// tone and pick-hardness values score 6.41 - slightly *worse* than the midpoints
-// they replaced, because the pick sitting further out costs more than the thick
-// blank recovers. The eleven fields are one voicing and do not decompose.
+// Shipping moves the one supported walnut-to-ash material coordinate through
+// Ray's paired pickup-observed modes while Guitar Build visits six curated
+// scale/gauge setups. Size, Shape and Construction remain neutral because the
+// reviewed evidence does not identify independent reusable laws for them. The
+// 0.8 default retains the fitted 27.6-inch heavy-set Drop-E setup. The legacy
+// four-mode construction path remains available only as an explicit comparator.
 struct EngineParameters
 {
     PickupSelector pickupSelector { PickupSelector::Bridge };
-    // Shipping: mahogany/maple-like to swamp-ash-like. The default-off
-    // measured-modal experiment can support only a walnut-like to ash-like
-    // material contrast from its controlled source.
+    // Shipping: the narrow walnut-like to ash-like material contrast supported
+    // by Ray's controlled pair. The legacy comparator used broader voiced
+    // mahogany/maple-like to swamp-ash-like labels.
 #if ELECTRY_MEASURED_BODY_RESPONSE
     float bodyWood { defaultGuitarBuild };
 #else
     float bodyWood { 0.0f };
 #endif
-    // Shipping: thick/heavy to thin/light. The measured-modal experiment has
-    // no physical dimension behind this coordinate and deliberately ignores it.
+    // The measured shipping model has no physical dimension behind this
+    // coordinate and deliberately ignores it.
     float bodySize {
 #if ELECTRY_MEASURED_BODY_RESPONSE
         0.5f
@@ -194,8 +181,8 @@ struct EngineParameters
         0.0f
 #endif
     };
-    // Shipping: carved single-cut to flat single-cut slab. The measured-modal
-    // experiment has no independently measured shape law and ignores it.
+    // The shipping model has no independently measured shape law and ignores
+    // this legacy carved-single-cut-to-flat-slab coordinate.
     float bodyShape {
 #if ELECTRY_MEASURED_BODY_RESPONSE
         0.5f
@@ -203,8 +190,8 @@ struct EngineParameters
         0.0f
 #endif
     };
-    // Shipping: set-neck/stopbar to bolt-on/through-body. The experiment has no
-    // independently measured joint law and ignores it.
+    // The shipping model has no independently measured joint law and ignores
+    // this legacy set-neck/stopbar-to-bolt-on/through-body coordinate.
     float construction {
 #if ELECTRY_MEASURED_BODY_RESPONSE
         0.5f
