@@ -336,7 +336,7 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 //
 //   * No factory preset may exceed -1 dBFS sample peak. This is no longer the
 //     binding rule: once digital full scale was referred to the output summer's
-//     own rail, the untrimmed bank already peaked no higher than -3.67 dBFS.
+//     modelled asymptote, the untrimmed bank peaked no higher than -3.67 dBFS.
 //     It stays as a floor under the contract rather than as the thing the
 //     trims are chosen to satisfy.
 //   * No factory preset may exceed -31 dBFS gated loudness. Derived once, as

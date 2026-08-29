@@ -130,8 +130,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
     { parameters::quality,
-      static_cast<float> (
-          YouKnow106AudioProcessor::choiceForOversamplingFactor (1)),
+      static_cast<float> (YouKnow106AudioProcessor::qualityChoiceCount - 1),
       1.0e-5f },
     { parameters::vcfTanhMode,
       static_cast<float> (YouKnow106AudioProcessor::vcfTanhDefaultChoice),

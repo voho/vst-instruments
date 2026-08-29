@@ -58,10 +58,13 @@ level, with pixel-measured reads of p. 8 (timing chart) and p. 9 (module
 drawing); the Owner's Manual; two Roland Service Information bulletins
 (100222, 100229). Hash-identified firmware images (voice/main B-2, assigner
 A-5) analysed behaviourally, alongside published clean-room assigner reverse
-engineering. Datasheets for the Panasonic MN3009 and MN3101, NEC µPC1252H2,
-Toshiba TA75558, TC4051/4052/4053B and 2SK30A, Hitachi HD14051B, Intel
-82C54/8254, NEC µPD7810/7811, TI TL072/TL082, Rohm BA6110 and Alfa
-AS3109/AS662. A1QH80017A VCF/VCA module teardown photographs, the
+engineering and a pinned [unofficial partial IC29 disassembly](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt)
+used only as corroboration. Datasheets for the Panasonic MN3009 and MN3101,
+NEC µPC1252H2, Toshiba TA75558, TC4051/4052/4053B and 2SK30A, Hitachi
+HD14051B, [OKI MSM82C53](https://www.bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf)
+and Intel 8254/8253, NEC µPD7810/7811, TI TL072/TL082, Rohm BA6110 and Alfa
+AS3109/AS662; and [Nippon Chemi-Con's aluminum-electrolytic voltage-bias guidance](https://www.chemi-con.co.jp/en/faq/detail.php?id=alBiasVoltageChara).
+A1QH80017A VCF/VCA module teardown photographs, the
 Open80017a/dksynth module reconstruction, and published DCO charge-circuit
 analysis.
 
@@ -151,11 +154,11 @@ forty-year-old unit will null against the plug-in.
   four-position high-pass (derived shelf and cut corners, MNA-qualified);
   the stored VCA LEVEL byte drives the common µPC1252H2 through its derived
   gain law and 9.08 ms control settling (anchored/derived).
-- The final TA75558 summer mixes dry 100/47 and wet 100/39, bounded by its
-  own rail; output AC coupling and the nominal-linear dual 10K volume law
-  with its real internal loading follow (anchored/derived). Digital full
-  scale is referred to the output stage's own rail — the plug-in cannot
-  clip before the circuit it models does (product policy).
+- The final TA75558 summer mixes dry 100/47 and wet 100/39. Its provisional
+  ±13.5 V loaded-swing asymptote sits inside the ±15 V supplies; output AC
+  coupling and the nominal-linear dual 10K volume law with its real internal
+  loading follow (anchored/derived). Digital full scale is referred to that
+  model asymptote so it adds no lower digital ceiling (product policy, OQ-05).
 - Power-rail droop under load is computed and measurably inert (0.1 cents
   across the full one-to-six-voice change) — reported, not tuned into
   audibility.
@@ -186,12 +189,14 @@ ladder and the VCF numerical-kernel settings described under
 
 ### Voices, character and aging
 
-The first six slots are persistent physical voice-card models: DCO, filter,
-comparator and card noise keep running behind a closed VCA, and the shared
-converter visits its 23 destinations sequentially, so a unison stack is
-never artificially phase-locked. There is no six-oscillator detune
-generator; the LFO and envelope generator are shared and digital, exactly
-as in the hardware.
+The first six slots are persistent physical voice-card models. The Exact
+reference path keeps each DCO, filter, comparator and card-noise source running
+behind a closed VCA; the faster tanh modes retain the free-running DCO,
+sub-divider and noise state but use the documented idle-card approximation.
+The shared converter still visits its 23 destinations sequentially, so a
+unison stack is never artificially phase-locked. There is no six-oscillator
+detune generator; the LFO and envelope generator are shared and digital,
+exactly as in the hardware.
 
 At **Unit Character** 0% the engine is the deterministic calibrated-nominal
 model. At 100% — the default, the "matches real hardware" reference — a
@@ -317,9 +322,8 @@ The QUALITY selector offers a 1×/2×/4× internal-rate ladder applied as a
 ceiling against what the host rate needs; engine cost tracks the applied
 factor nearly linearly, and the worst audited six-voice resonant scenario
 measures 0.85× realtime at 4× on one Apple M1 Max core (0.23× at 1×). New
-instances ship at 1× — a deliberate cheapest-first product decision the
-project's own numerical audits argue against (the BBD and VCF domains pass
-their absolute gates only at 4×); 2× and 4× are one menu away.
+instances ship at 4× because the BBD and VCF domains pass their absolute
+numerical gates only there; 1× and 2× remain available for lower CPU use.
 
 The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
 nonlinear filter. Normal — the cheapest rung, roughly half the filter's
@@ -328,23 +332,28 @@ that returned no audible difference between any rung, beside measured
 whole-file nulls of −88…−110 dBc. The engine's own default stays the
 reference Merson kernel, so every frozen fingerprint keeps testing it. Two
 further machine settings (VCF Tanh, VCF Fast Early) select the solver's
-numerical kernels, with the exact forms as defaults. None of these is part
-of a patch.
+nonlinear kernels. Fresh instances use Poly/Cubic, the CPU-first pair retained
+after a blind comparison found no audible difference; Exact/Hermite preserve
+the reference forms. None of these is part of a patch.
 
 The plug-in reports a fixed 41-host-sample latency covering oscillator
 reconstruction and decimation only. A quality change waits until the
-instrument is idle; nothing these switches select moves a modelled physical
-quantity — noise density and the warm-up clock are normalized to elapsed
-time. A host transport stop is treated as a stop, not a power cycle: the
-modelled chassis stays warm, while a new `prepare()` starts cold.
+instrument is idle. Quality and solver rungs do not move a modelled physical
+quantity; the faster tanh modes additionally enable the documented idle-card
+and settled-chorus work skips, while Exact retains the always-running reference
+path. Noise density and the warm-up clock are normalized to elapsed time. A
+host transport stop is treated as a stop, not a power cycle: the modelled
+chassis stays warm, while a new `prepare()` starts cold.
 
 ### Settled guardrails
 
 Not to be reopened without contradictory primary evidence:
 
 - Chorus modes are Off/I/II only and mutually exclusive; obsolete
-  both-buttons states canonicalise to II. Off mutes the wet return only —
-  oscillator and BBDs keep running. Normal output is dry plus wet.
+  both-buttons states canonicalise to II. Off mutes the wet return only. The
+  Exact reference keeps the oscillator and BBDs running; faster tanh modes may
+  rebuild the inaudible wet history on engagement. Normal output is dry plus
+  wet.
 - Chorus balance is dry 100/47, wet 100/39: the wet leg is the hotter one, by
   1.62 dB.
 - The chorus modulator is a straight symmetric triangle and line 2 is its
@@ -395,8 +404,10 @@ Deliberate, each with its reason recorded:
 - **Removed on review**, with reasons recorded: a voice-VCA thump
   heuristic, a switchable-leg mixer model, a BBD clock-scaled smear
   multiplier, wet-mute distortion ~44 dB too strong, a sub-driver
-  amplitude asymmetry that is really an edge-timing effect, and several
-  numerically unstable or double-counting candidates.
+  amplitude asymmetry that is really an edge-timing effect, and the unsourced
+  C14 voltage-coefficient default, which current general aluminum-electrolytic
+  bias guidance does not support; plus several numerically unstable or
+  double-counting candidates.
 - The twenty-one [open questions](#open-questions) below name the hardware
   evidence that would close each remaining gap.
 
@@ -410,11 +421,11 @@ unit; the priority column is this project's own ranking of audible impact.
 | --- | --- | --- |
 | OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. The shipped 1.4–6.4 ms sweep endpoints come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar | P0 |
 | OQ-03 | Chorus noise and SNR under calibrated conditions. Mode I keeps the MN3009's 0.2 mVrms max A-weighted row at HISS 100%; the 29.86% default is an explicit new-part policy inferred from its 88 dB typical S/N and 1.5 Vrms guaranteed swing, not a specified typical-noise row. Mode II ships the reported ~3.95 dB delta as a relative factor. Installed-unit absolute noise PSD is open | P0 |
-| OQ-05 | Loaded TA75558S IC6 and High-output clipping swing. Device identity, resistor gains and ±15 V rails are settled; the modelled 13.5 V rail bound sits between the datasheet's guaranteed and typical columns | P0 |
+| OQ-05 | Loaded TA75558S IC6 and High-output clipping swing. Device identity, resistor gains and ±15 V supply rails are settled. The traced maximum-volume, no-external-load midband impedance is about 8.22 kΩ; an approximate symmetric reading of the datasheet's 25 °C typical Vop-p graph is roughly ±13.9 V around 8–9 kΩ. The modelled ±13.5 V asymptote is therefore plausible and about 0.4 V below that typical curve, but is not a guaranteed limit. The exact installed-unit swing and knee remain open | P0 |
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced | P0 |
 | OQ-06 | Absolute output-reference calibration. The product convention is settled and not reopenable; only the physical reference value is open. Roland's L −30 / M −15 / H 0 dBm selector spec fixes the intended steps but not the reference impedance | dependent |
 | OQ-07 | Converter hold topology and time constants. Ownership and inventory are closed — 23 used 0.01 µF holds over a 4.2 ms pass, per-destination smoothing designator-complete | P1 |
-| OQ-08 | Exact intra-pass timing and DCO pitch-write restart. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. A pixel-measured chart-geometry profile is selectable | P1 |
+| OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. Roland names IC33/IC34 as M82C53 and ties their GATE inputs high. A pinned partial IC29 listing corroborates control-word + count for a changed pitch on a non-running voice and count-only writes while running; matching Mode-3 documentation says a running new count takes effect after the next OUT transition, while a mode write forces OUT high. Roland's p. 9 description settles that a positive-going DCO/OUT edge discharges C54 and clocks the sub divider. The listing is not independently hash-tied; exact timestamps, explicit PIT polarity/half-cycle state and the resulting first-cycle geometry remain open. The current unconditional phase-zero restart is compatibility policy, not a hardware claim | P1 |
 | OQ-09 | Resonance byte-to-loop-gain law. Topology and mechanism are settled, including the Roland-printed input-side compensation from the p. 9 module drawing; the drawing prints no component values, so the 0.2296 coefficient stays voiced | P1 |
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. About −0.8 V holds the comparator output high, represented by a provisional hard-zero audio gate; what the coupling network does — DC shift, residual bleed, loading, the switching transient — is untraced | P1 |
 | OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled, supporting the shipped quasi-linear compatibility law; the transfer law itself awaits measurement | P1 |
@@ -453,7 +464,12 @@ unit; the priority column is this project's own ranking of audible impact.
   the datasheet maximum. Eight plug-in-only factory VR1 trims were minimally
   lowered to keep all 128 tones inside the established loudness contract.
 - A three-level 1×/2×/4× QUALITY control with fixed reported latency; new
-  instances default to the cheapest 1× mode, with 2× and 4× one menu away.
+  instances now default to the fidelity-qualified 4× mode, while saved
+  sessions retain their stored choice and 1×/2× remain available.
+- Disabled the unmeasured C14 voltage-coefficient candidate by default. Its
+  internal comparison switch is not serialized, so restored sessions also use
+  the evidence-conservative default; the opt-in comparison renderer retains it
+  pending a level-swept installed-part measurement under OQ-21.
 - Added a VCF SOLVER control beside QUALITY, choosing how much arithmetic the
   filter's solver spends per internal sample. New instances use Normal, which
   roughly halves whole-engine CPU; High and Max cost more, and Max is what

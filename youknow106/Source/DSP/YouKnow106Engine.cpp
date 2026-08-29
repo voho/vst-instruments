@@ -55,8 +55,9 @@ constexpr float subMixVolts = 5.0f;
 // assumes no crest convention; it lands at -11.96 dB against self-oscillation,
 // inside the anchored band at its conservative end.
 //
-// Raising it required the output boundary to be referred to the summer's rail
-// first (see outputBoundaryGain). Without that, a six-note NOISE-10 chord peaks
+// Raising it required the output boundary to be referred to the summer model's
+// provisional asymptote first (see outputBoundaryGain). Without that, a
+// six-note NOISE-10 chord peaks
 // at +1.97 dBFS: one shared generator sums coherently across held voices, at
 // 20*log10(N), so noise chords reach full scale far sooner than oscillator
 // chords do. That is what "high Noise settings sound broken" was.
@@ -974,13 +975,14 @@ float YouKnow106Engine::outputSummerClip(float value) noexcept
     if (!std::isfinite(value))
         return 0.0f;
 
-    constexpr float railUnits = outputSummerRailVolts / internalVoltsPerUnit;
+    constexpr float asymptoteUnits =
+        outputSummerSwingAsymptoteVolts / internalVoltsPerUnit;
     // The exponent is fixed at eight, so multiplies and three square roots
     // preserve the same algebraic curve without two general-purpose powers.
     // Double keeps even FLT_MAX's normalized eighth power finite, letting an
-    // extreme input approach the rail instead of folding back to zero.
+    // extreme input approach the asymptote instead of folding back to zero.
     const double normalised = std::abs(static_cast<double>(value))
-                            / static_cast<double>(railUnits);
+                            / static_cast<double>(asymptoteUnits);
     const double squared = normalised * normalised;
     const double fourth = squared * squared;
     const double eighth = fourth * fourth;
@@ -1499,17 +1501,16 @@ float YouKnow106Engine::noiseSourceLowPassHz() noexcept
 
 float YouKnow106Engine::outputBoundaryGain() noexcept
 {
-    // One internal unit is internalVoltsPerUnit, the summer cannot pass its own
-    // rail, and the volume wiper at its loudest adds no more than its own
-    // maximum passband gain. Their product is the largest steady output the
-    // instrument can present, and that is what 0 dBFS is defined as.
-    const float fullScaleVolts = outputSummerRailVolts
+    // One internal unit is internalVoltsPerUnit. The provisional summer
+    // asymptote through the volume wiper's maximum passband gain defines this
+    // model's steady-state 0 dBFS policy; OQ-05 still owns the physical swing.
+    const float fullScaleVolts = outputSummerSwingAsymptoteVolts
                                * outputCouplingHighGain(1.0f);
     if (!(fullScaleVolts > 0.0f) || !std::isfinite(fullScaleVolts))
         return 1.0f;
     // Expressed through the same Vref helper every other boundary question
     // uses: the reference is the RMS that lands on -18 dBFS once full scale is
-    // the rail, so the two cannot drift apart.
+    // the model asymptote, so the two cannot drift apart.
     return outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
 }
 
@@ -4116,9 +4117,11 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     voice.lastVoiceMidi = voiceMidi;
     voice.hasVoicePitchHistory = true;
 
-    // A running note timer is not restarted by a legato pitch message. A
-    // different pitch on a free/releasing voice requests a restart, but the
-    // voice CPU consumes it only on that voice's next scan update.
+    // A running note timer takes the count-only path for a legato pitch message.
+    // A different pitch on a free/releasing voice requests the Mode-3
+    // control-word path, but the voice CPU consumes it only on that voice's
+    // next scan update. The current unconditional phase-zero action remains an
+    // OQ-08 compatibility policy because it does not yet track OUT polarity.
     if (pitchChanged && !voiceWasRunning)
         voice.dcoResetPending = true;
 
@@ -4591,9 +4594,15 @@ void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     const double frequency = dcoQuantisedFrequency(voice.dco.divider, parameters.range);
     voice.dco.periodSamples = frequency > 0.0 ? oversampledRate_ / frequency : 1.0e6;
     // The compensation voltage the firmware writes for this pitch. The count
-    // above reprogrammes the timer instantly; this target reaches the
-    // integrator through the hold capacitor's slew, and the ratio of the two
-    // is the momentary amplitude error every pitch step leaves behind.
+    // currently changes the modelled period at this converter write. The
+    // published partial IC29 listing corroborates that a running voice receives
+    // a count-only Mode-3 write. The matching M82C53 documentation applies the
+    // new count after the next OUT transition. Roland maps the positive-going
+    // OUT edge to both C54 discharge and the sub clock, but this model has no
+    // PIT polarity/half-cycle state; the control-word path's analogue effect
+    // therefore remains OQ-08 work. This target reaches the
+    // integrator through the hold capacitor's slew, and the ratio of the two is
+    // the momentary amplitude error every pitch step leaves.
     voice.dcoCvTarget = frequency > 0.0 ? static_cast<float>(frequency) : 1.0f;
 }
 
@@ -6349,22 +6358,21 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                                 parameters.calibration,
                                 parameters.useChorusRateNoiseHypothesis);
 
-            // TA75558S IC6 cannot swing past its own +/-15 V rails. Unlike the
-            // modelled tolerances, this is not scaled by Unit Character: a
-            // freshly calibrated instrument has exactly the same rails, and a
-            // "pristine reference" whose output stage could swing to infinity
-            // would be the less faithful model, not the more faithful one.
+            // TA75558S IC6 has finite loaded output swing inside its +/-15 V
+            // supplies. The modelled 13.5 V asymptote and knee are provisional
+            // OQ-05 policy, not per-card tolerances, so Unit Character does not
+            // scale them.
             const auto wetLeftKey = std::bit_cast<std::uint32_t>(wetLeft);
             const auto wetRightKey = std::bit_cast<std::uint32_t>(wetRight);
             wetLeft = outputSummerClip(wetLeft);
-            // outputSummerClip's rail and exponent are fixed. Reuse only for an
-            // identical float representation, preserving signed zero and NaN
-            // payload distinctions as well as ordinary unequal stereo samples.
+            // outputSummerClip's asymptote and exponent are fixed. Reuse only
+            // for an identical float representation, preserving signed zero
+            // and NaN payload distinctions as well as unequal stereo samples.
             wetRight = wetLeftKey == wetRightKey
                      ? wetLeft : outputSummerClip(wetRight);
 
             // TA75558S IC6 output slew limit. A part
-            // property, so -- exactly like the rails above -- it is not
+            // property, so -- like the shared swing policy above -- it is not
             // scaled by Unit Character: a previous revision divided it by
             // calibration, granting the pristine reference a 10x faster
             // op-amp and a full-character unit one slower than the part's own

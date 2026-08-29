@@ -156,20 +156,20 @@ struct EngineParameters
     // component tolerance, trimmer residual, thermal wander and optional
     // circuit non-linearity -- the IR3109 stage offsets and integrating-
     // capacitor spread, the chorus clock law, the spatial thermal gradient,
-    // C14's voltage-dependent capacitance and the VCF Early effect. Every
-    // optional physical-circuit mechanism answers to this one control.
+    // the optional C14 voltage-dependence candidate and the VCF Early effect.
+    // Every optional physical-circuit mechanism answers to this one control.
     //
     // Mechanisms the *nominal* circuit has are deliberately not on it: the
-    // output summer's supply rails and the passive mixer's resistor loading
-    // apply at every setting, because a freshly calibrated instrument has them
-    // too.
+    // output summer's provisional loaded-swing bound and the passive mixer's
+    // resistor loading apply at every setting, because a freshly calibrated
+    // instrument has them too.
     //
     // Zero is the calibrated nominal model -- no spread, no drift, none of the
-    // optional non-linear shapes leaning in -- and one models the complete,
-    // real-hardware-accurate span. Neither end is a claim that any real
-    // instrument sits exactly there (no qualifying post-calibration residual
-    // data exists to describe a real population, OQ-10); one is simply the
-    // declared "matches real hardware" reference. The shipped default is 1.0.
+    // optional non-linear shapes leaning in -- and one selects the declared
+    // full-character reference. Neither end is a claim that any real instrument
+    // sits exactly there (no qualifying post-calibration residual data exists
+    // to describe a real population, OQ-10); one is simply the declared
+    // "matches real hardware" reference. The shipped default is 1.0.
     //
     // Bounded at 2. Every mechanism is written as
     // nominal + (physical - nominal) * calibration, which interpolates only on
@@ -181,8 +181,9 @@ struct EngineParameters
     static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { Chorus::defaultNoiseScale };
     int polyphony { 6 };           // 6 is the hardware voice count.
-    // Numerical kernel only: Exact preserves the established sound and state;
-    // ZonedHermite trades a bounded interpolation error for lower VCF CPU use.
+    // Exact preserves the established always-running sound and state.
+    // ZonedHermite and PolyZoned trade bounded kernel error for lower VCF CPU
+    // use and also enable the documented inactive-card and Chorus-Off skips.
     VcfTanhMode vcfTanhMode { VcfTanhMode::Exact };
     // Numerical kernel only, and independent of the tanh choice above: which
     // Runge-Kutta tableau advances the capacitor states. MersonHalfSteps
@@ -213,7 +214,12 @@ struct EngineParameters
     // 4.21 dB causal hypothesis for controlled comparisons; it does not
     // multiply the two profiles. OQ-03 still owns absolute level and causality.
     bool useChorusRateNoiseHypothesis { false };
-    bool enableElectrolyticC14Nonlinearity { true };
+    // Comparison-only. The former default used an unmeasured 0.15 voltage
+    // coefficient, driven from the bus rather than the voltage across C14.
+    // Current aluminum-electrolytic manufacturer guidance says voltage bias
+    // does not change capacitance; leave the candidate off until an installed
+    // 10 uF non-polar part is measured under the OQ-21 conditions.
+    bool enableElectrolyticC14Nonlinearity { false };
     // On by default: uses CircuitDerivedResonanceProfile's
     // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
     // BA662-family linear gm, 2026-08-20) instead of the voiced quadratic-then-
@@ -534,7 +540,7 @@ public:
     // exponent at one) cannot describe that knee, and the revision that used
     // one left the model up to 143 cents flat around a 16 kHz cutoff.
     //
-    // Like the output summer's rails this is a property of the part, so it
+    // Like other shared component limits this is a property of the part, so it
     // applies at every Unit Character setting. Gating it left the "calibrated
     // reference" with a filter that kept tracking the exponential law past the
     // point the transconductor can follow it, 292 cents sharp near the top.
@@ -652,29 +658,29 @@ public:
         internalVoltsPerUnit * minus18DbfsAmplitude;
     [[nodiscard]] static float outputReferenceGain(float referenceRmsVolts) noexcept;
 
-    // IC6 cannot drive its output past its own supply rails. That bound is a
-    // property of the part, not a tolerance, so it applies at every Unit
-    // Character setting including zero.
+    // IC6's loaded output swing stops inside its +/-15 V supply rails. With no
+    // installed-unit capture, 13.5 V is a provisional model asymptote: about
+    // 0.4 V below the datasheet's 25 C typical curve at the traced 8.22 kOhm
+    // midband load. It is not a guaranteed part limit or a supply-rail value.
+    // As a shared output-stage policy rather than a per-unit tolerance, it
+    // applies at every Unit Character setting including zero.
     //
     // The shape is the generalized algebraic clip above, already used for the
     // VCF saturation and the BBD write, rather than a tanh. A tanh has no
     // linear region at all: its distortion rises as (V/asymptote)^2 from the
     // first millivolt, which put roughly 0.3% third harmonic on every sample
-    // at an ordinary 2.6 V node swing. A TA75558S on +/-15 V rails delivering
-    // a few volts is specified far below that. A high exponent keeps the
-    // stage numerically linear through the levels it actually runs at and
-    // bends it only as it approaches the rail, which is what the device does.
-    static constexpr float outputSummerRailVolts = 13.5f;
+    // at an ordinary 2.6 V node swing. A few volts is well inside the TA75558S
+    // datasheet's typical loaded-swing envelope, but it supplies no THD row.
+    // The provisional high exponent keeps the model numerically linear there;
+    // OQ-05 still owns the installed low-level distortion, knee and swing.
+    static constexpr float outputSummerSwingAsymptoteVolts = 13.5f;
     static constexpr float outputSummerClipExponent = 8.0f;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
 
-    // Digital full scale is the modelled output stage's own ceiling: IC6's rail
-    // seen through the volume wiper at its loudest setting. Mapping 0 dBFS
-    // anywhere below that throws the difference away as digital clipping, which
-    // is what used to put 31 factory presets over full scale and what stopped
-    // the shared noise rail from being raised to its service anchor. Referring
-    // the boundary to the rail instead means the plug-in cannot clip before the
-    // circuit it models does.
+    // Digital full scale follows the provisional model asymptote through the
+    // volume wiper at its loudest setting. Mapping 0 dBFS lower would add a
+    // second digital ceiling below the current analogue policy; this is not a
+    // claim that every installed IC6 reaches 13.5 V (OQ-05).
     //
     // The bound is the steady-state one. The output coupling is a high-pass, so
     // a large enough transient can overshoot it; the measured worst case over
@@ -1542,10 +1548,11 @@ private:
         // and still has a root note, so without this it would be swept into the
         // next unison retarget and resurrected on a key it never played.
         bool unisonMember { false };
-        // The voice CPU requests an oscillator restart only for a different
-        // pitch on a voice whose key/sustain run bits are both clear. The
-        // restart is consumed when this voice's turn in the converter scan
-        // arrives, never synchronously at the host MIDI event.
+        // The voice CPU takes its Mode-3 control-word path only for a different
+        // pitch on a voice whose key/sustain run bits are both clear. This
+        // request is consumed when the voice's converter turn arrives, never
+        // synchronously at the host MIDI event. The present phase-zero action
+        // is compatibility policy pending explicit 82C53 OUT state (OQ-08).
         bool dcoResetPending { true };
         // The retired card is advancing only its free-running state (DCO
         // phase, sub-divider level, render scale, card noise) through the
@@ -1690,9 +1697,12 @@ private:
                  float samplesAgo) const noexcept;
     void addSlope(BandlimitedTrack& track, float slopeStep,
                   float samplesAgo) const noexcept;
-    // A voice-CPU pitch write restarts the timer/ramp at the beginning of the
-    // current internal interval. Unlike a hard engine reset, an audible
-    // releasing card retains its delayed naive history and residual tails.
+    // Compatibility implementation of the voice CPU's Mode-3 control-word
+    // path: it currently forces the timer/ramp to the beginning of this
+    // internal interval. Hardware forces OUT high, so the analogue reset
+    // depends on its previous polarity; OQ-08 needs explicit PIT state before
+    // replacing this policy. Unlike a hard engine reset, an audible releasing
+    // card retains its delayed naive history and residual tails.
     void restartDcoBandlimited(Voice& voice,
                                double previousPeriodSamples) noexcept;
     // Fraction of the ramp's full excursion consumed by the finite-slope reset

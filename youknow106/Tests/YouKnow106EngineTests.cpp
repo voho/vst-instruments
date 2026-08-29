@@ -1863,8 +1863,13 @@ void testHeldTransposeUpdatesVoiceCpuPitchHistory()
            "transpose change during release did not schedule DCO reset");
 }
 
-void testPhysicalPitchWriteRestartIsBandlimited()
+void testCompatibilityPitchWriteRestartIsBandlimited()
 {
+    // This freezes the current phase-zero compatibility policy, not a settled
+    // hardware claim. An M82C53 mode write forces OUT high, so a physical C54
+    // reset and sub clock depend on the unmodelled previous OUT polarity
+    // (OQ-08). Until explicit PIT state replaces it, the provisional event
+    // must at least remain bandlimited and leave unrelated card state intact.
     constexpr double sampleRate = 192000.0;
     YouKnow106Engine engine;
     engine.prepare(sampleRate, blockSize, false);
@@ -1881,7 +1886,8 @@ void testPhysicalPitchWriteRestartIsBandlimited()
     // one-sample advances leaves a clearly measurable hard saw step.
     engine.noteOn(120, 1.0f);
     expect(YouKnow106TestAccess::dcoResetPending(engine, 0),
-           "different pitch on a releasing card did not request a timer restart");
+           "different pitch on a releasing card did not request the "
+           "control-word path");
 
     YouKnow106TestAccess::primeDcoRestartFixture(engine, 0, 0.75);
     const auto pulseBefore = YouKnow106TestAccess::pulseTrackState(engine, 0);
@@ -1896,22 +1902,22 @@ void testPhysicalPitchWriteRestartIsBandlimited()
 
     YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
     expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
-           "the converter did not consume the pending timer restart");
+           "the converter did not consume the pending control-word request");
     expect(YouKnow106TestAccess::dcoPhase(engine, 0) == 0.0,
-           "the physical timer restart did not land at phase zero");
+           "the compatibility restart did not land at phase zero");
     const auto logic = YouKnow106TestAccess::dcoLogicStates(engine, 0);
     expect(logic[0] == -1.0f && logic[1] == 1.0f,
-           "the physical timer restart did not reset comparator/divider state");
+           "the compatibility restart did not reset comparator/divider state");
     expect(YouKnow106TestAccess::dcoPeriodSamples(engine, 0) != periodBefore,
            "the pitch write restarted without programming the new period");
     expect(YouKnow106TestAccess::dcoCv(engine, 0) == cvBefore,
-           "the timer restart bypassed the physical compensation hold");
+           "the compatibility restart bypassed the physical compensation hold");
     expect(YouKnow106TestAccess::dcoCvTarget(engine, 0) != cvTargetBefore,
            "the pitch write did not update the compensation target");
     expect(YouKnow106TestAccess::filterState(engine, 0) == filterBefore,
-           "a timer restart reset the continuously powered filter");
+           "the compatibility restart reset the continuously powered filter");
     expect(YouKnow106TestAccess::microscopicNoiseState(engine, 0) == noiseBefore,
-           "a timer restart reseeded the physical card");
+           "the compatibility restart reseeded the physical card");
 
     const auto sawAfter = YouKnow106TestAccess::sawTrackState(engine, 0);
     const auto pulseAfter = YouKnow106TestAccess::pulseTrackState(engine, 0);
@@ -4378,7 +4384,8 @@ void testFixedOutputBoundaryCorpus()
         // unchanged; this records the intentional waveform change instead of
         // relaxing the product boundary.
         // Step 18 re-pins the corpus after digital full scale was referred to
-        // the output summer's own rail instead of sitting 12.71 dB below it.
+        // the output summer's model asymptote instead of sitting 12.71 dB below
+        // it.
         // Every figure below is the previous one times that one scalar
         // (0.231344), which is the point: the boundary is a pure gain, so the
         // instrument's behaviour is unchanged and only where 0 dBFS lies moved.
@@ -4512,11 +4519,11 @@ void testFixedOutputBoundaryCorpus()
         }
     }
 
-    // Full scale is now the modelled output summer's own rail, so this is no
-    // longer asking the corpus to fly far past it -- that would mean the
+    // Full scale is now the output summer model's provisional asymptote, so this
+    // no longer asks the corpus to fly far past it -- that would mean the
     // calibration was wrong. What still has to be true, and is the whole reason
     // the check exists, is that nothing CLAMPS: the bound the corpus meets must
-    // be the soft analogue rail plus the coupling's overshoot, not a digital
+    // be the soft analogue bound plus the coupling's overshoot, not a digital
     // limiter. Solo Unison's stacked low note is the probe that reaches it.
     expect(passedPositiveOne || passedNegativeOne,
            "the hot corpus no longer reaches full scale at all, so it cannot "
@@ -6762,6 +6769,19 @@ void testChorusSweepTrajectoryDefault()
                "the hyperbolic switch acted at zero Unit Character");
 }
 
+void testElectrolyticC14VoltageCoefficientIsComparisonOnly()
+{
+    // The old 0.15 law had no part measurement behind it and used the bus
+    // voltage rather than the voltage across C14. Aluminum-electrolytic
+    // current manufacturer guidance does not support a generic voltage-bias
+    // capacitance shift. Keep the candidate available to the comparison
+    // renderer, but do not let it silently become part of the shipping
+    // instrument again.
+    const EngineParameters defaults;
+    expect(!defaults.enableElectrolyticC14Nonlinearity,
+           "the unsupported C14 voltage coefficient became a default again");
+}
+
 void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
 {
     // A real 106's chorus floor was reported about 3.95 dB higher in mode II:
@@ -8885,7 +8905,7 @@ int main()
     testHeldKeyRescanRunsHighToLow();
     testRescanPreservesVoiceCpuPitchHistory();
     testHeldTransposeUpdatesVoiceCpuPitchHistory();
-    testPhysicalPitchWriteRestartIsBandlimited();
+    testCompatibilityPitchWriteRestartIsBandlimited();
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
     testMidNoteSustainSnapsUpAndDecaysDown();
@@ -8962,6 +8982,7 @@ int main()
     testChorusWidthAndSilence();
     testGlideKeepsTheRampContinuous();
     testChorusSweepTrajectoryDefault();
+    testElectrolyticC14VoltageCoefficientIsComparisonOnly();
     testChorusNoiseIsPresentAndDefeatable();
     testIdleOutputFloorCarriesTheMn3009NoiseRow();
     testChorusNoiseProfilesReproduceTheMeasuredModeDelta();

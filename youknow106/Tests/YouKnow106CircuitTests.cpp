@@ -4955,10 +4955,11 @@ void testNoiseSourceShapingFollowsItsCircuit()
     // The declared coordinate is +/-2 V at the SHAPED rail, which the source
     // reaches by being generated at 7.4161 V and losing 11.383 dB to its own
     // C41/R79 pole; the result is then read at an output whose full scale is
-    // the summer's rail. Those three are what this bound watches, and it is
-    // deliberately wide enough to fail only on a real mistake rather than on
-    // the last digit of any of them. Writing the coordinate onto the source
-    // ahead of the shaping instead -- which a previous revision did -- reads
+    // the summer model's provisional asymptote. Those three are what this bound
+    // watches, and it is deliberately wide enough to fail only on a real
+    // mistake rather than on the last digit of any of them. Writing the
+    // coordinate onto the source ahead of the shaping instead -- which a
+    // previous revision did -- reads
     // 11.4 dB low here, and a dead source falls through the floor.
     expect(std::isfinite(rms) && rms > 0.0035 && rms < 0.0070,
            "full-level main-noise RMS left its shaped +/-2 V range: "
@@ -5772,12 +5773,13 @@ void testCorrectionResidualsVanishAtTheEdges()
     expectNear(measured, programmed, 0.5,
                "the rendered ramp is not at the frequency the timer was given");
 }
-void testOutputSummerIsLinearBelowItsRails()
+void testOutputSummerIsLinearBelowItsAsymptote()
 {
     // IC6 runs on +/-15 V and the audio it carries is a few volts, so the stage
-    // must be numerically linear there and bend only as it nears the rail. A
-    // tanh cannot do this: its distortion rises as (V/asymptote)^2 from zero,
-    // which is what put roughly 0.3% third harmonic on every sample.
+    // should be numerically linear there. The provisional model bends only as
+    // it nears its 13.5 V loaded-swing asymptote. A tanh cannot do this: its
+    // distortion rises as (V/asymptote)^2 from zero, which is what put roughly
+    // 0.3% third harmonic on every sample.
     const auto thirdHarmonicFraction = [](double peakVolts) {
         constexpr int points = 4096;
         const double amplitude =
@@ -5800,18 +5802,19 @@ void testOutputSummerIsLinearBelowItsRails()
     expect(thirdHarmonicFraction(2.6) < 5.0e-4,
            "the output summer distorts at its own nominal level");
     expect(thirdHarmonicFraction(5.0) < 5.0e-3,
-           "the output summer distorts well below its rails");
+           "the output summer distorts well below its modelled asymptote");
 
-    // It must still be a bound: no input may drive the stage past the rail.
-    constexpr float rail = YouKnow106Engine::outputSummerRailVolts
-                         / YouKnow106Engine::internalVoltsPerUnit;
+    // It must still be a bound: no input may pass the modelled asymptote.
+    constexpr float asymptote =
+        YouKnow106Engine::outputSummerSwingAsymptoteVolts
+        / YouKnow106Engine::internalVoltsPerUnit;
     for (const float drive : {
              0.0f, std::numeric_limits<float>::denorm_min(),
              -std::numeric_limits<float>::denorm_min(), 0.25f, -1.0f,
-             3.0f, -rail, 10.0f, std::numeric_limits<float>::max() })
+             3.0f, -asymptote, 10.0f, std::numeric_limits<float>::max() })
     {
         const double normalised = std::abs(static_cast<double>(drive))
-                                / static_cast<double>(rail);
+                                / static_cast<double>(asymptote);
         const float reference = static_cast<float>(
             static_cast<double>(drive)
             / algebraicSoftClipDenominator(normalised, 8.0));
@@ -5822,10 +5825,10 @@ void testOutputSummerIsLinearBelowItsRails()
     }
     for (const float drive : { 10.0f, 100.0f, 1.0e6f })
     {
-        expect(std::abs(YouKnow106Engine::outputSummerClip(drive)) <= rail,
-               "the output summer swung past its supply rail");
-        expect(std::abs(YouKnow106Engine::outputSummerClip(-drive)) <= rail,
-               "the output summer swung past its negative supply rail");
+        expect(std::abs(YouKnow106Engine::outputSummerClip(drive)) <= asymptote,
+               "the output summer passed its positive model asymptote");
+        expect(std::abs(YouKnow106Engine::outputSummerClip(-drive)) <= asymptote,
+               "the output summer passed its negative model asymptote");
     }
     expect(std::isfinite(YouKnow106Engine::outputSummerClip(
                std::numeric_limits<float>::max())),
@@ -5956,7 +5959,7 @@ void testDecimatorProtectsTheTopOfTheBand()
 
 int main()
 {
-    testOutputSummerIsLinearBelowItsRails();
+    testOutputSummerIsLinearBelowItsAsymptote();
     testDecimatorProtectsTheTopOfTheBand();
     testFilterDriveMatchesTheDerivedBudget();
     testCascadeAgainstReferenceSolve();

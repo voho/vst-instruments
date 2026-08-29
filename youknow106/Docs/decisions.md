@@ -5,6 +5,33 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-08-29 — C14 voltage coefficient withdrawn from the default
+
+The optional C14 capacitance modulation remains available to the isolated
+comparison renderer but no longer ships enabled. Its `0.15` coefficient had no
+installed-part measurement, and the implementation drove it from the complete
+bus voltage rather than the voltage across C14. More importantly, current
+[aluminum-electrolytic manufacturer guidance](https://www.chemi-con.co.jp/en/faq/detail.php?id=alBiasVoltageChara)
+states that voltage bias does not change this capacitor class's capacitance.
+That general guidance is not a measurement of Roland's 1980s 10 uF non-polar
+part under AC, so it does not prove the real distortion is zero; it does make
+removing the guessed law the evidence-conservative default. OQ-21 remains open
+for a level-swept transfer/THD or direct voltage-across-C14 capacitance
+measurement, plus a switching capture. The internal comparison flag is not
+serialized, so this correction also changes restored sessions at nonzero Unit
+Character; preserving an unsupported default would be the less faithful
+compatibility choice.
+
+## 2026-08-28 — Fidelity-first quality default
+
+New instances now request the deepest 4× QUALITY rung. The DCO passes the
+project's numerical gates at every rung, but the BBD and VCF domains pass their
+absolute gates only at 4× for common host rates; keeping 1× as the default was
+therefore a CPU-first product choice at odds with the fidelity goal. Existing
+sessions retain their stored choice, 1× and 2× remain available, and the
+request is still capped against the host rate, so sufficiently high-rate hosts
+do no redundant work.
+
 ## 2026-08-28 — Resonance control law
 
 The circuit-derived linear-above-junction profile is now the default. The

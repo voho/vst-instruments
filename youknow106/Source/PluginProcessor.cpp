@@ -620,20 +620,14 @@ YouKnow106AudioProcessor::createParameterLayout()
     // internal work. Version 3 follows every parameter shipped by the two
     // earlier public layouts.
     //
-    // New instances start at 1x. This is a product decision taken on request,
-    // and it is the one default in this plug-in that the project's own
-    // numerical-quality audits argue against: the common-host matrices in
-    // README.md admit the DCO at every tested factor but record the BBD and
-    // VCF domains as passing at 4x and rejecting their lower common-host
-    // factors, and Step 9's recalibration measures the HQ-off wet line about
-    // +0.30...+0.38 dB high at 44.1/48 kHz. 1x is therefore cheapest and
-    // aliases most; 2x and 4x remain one menu away, and the selection is a
-    // ceiling rather than a floor, so a host already running at 176.4 kHz or
-    // above resolves every rung to 1x anyway.
+    // New instances start on the deepest rung: unlike the DCO, the BBD and VCF
+    // domains pass their absolute numerical-quality gates only at 4x for common
+    // host rates. Existing sessions keep their stored choice, and the selection
+    // remains a ceiling, so a 176.4 kHz-or-higher host still resolves to 1x.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { quality, 3 }, "Quality",
         juce::StringArray { "1x", "2x", "4x" },
-        choiceForOversamplingFactor (1),
+        qualityChoiceCount - 1,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // This is an engine policy, not a patch control. Keep published ordinals
