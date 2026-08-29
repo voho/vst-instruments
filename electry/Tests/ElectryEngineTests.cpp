@@ -16613,17 +16613,10 @@ void testHumbuckerTwoCoilNotch()
 }
 
 // The instrument has to sound the same at every host rate, and the decay
-// envelope is where that is hardest: a per-sample constant anywhere inside the
-// string loop turns into a rate-dependent decay, because the number of samples
-// in a round trip is proportional to the sample rate.
-//
-// Two such constants used to be here. The second polarisation's detuning was a
-// bare 0.11 samples, which is a fixed offset rather than a fixed fraction of a
-// period, so the two polarisations beat at a rate that moved with the clock;
-// and the polarisation coupling was charged per rendered sample rather than per
-// round trip. Together they left the 22nd-fret high E 36.5 dB down at half a
-// second on a 44.1 kHz host and 14.5 dB down on a 96 kHz one - the same note,
-// the same patch, a 22 dB difference in how long it rings.
+// envelope is where that is hardest. The polarisation seam is encountered once
+// per loop, but its historical coefficient was derived from the compensated
+// digital delay. That made the same note decay differently between rate
+// families and produced a twofold coefficient jump just above a 96 kHz host.
 void testDecayIsSampleRateInvariant()
 {
     struct Window { double start, end; double toleranceDb; };
@@ -16632,13 +16625,14 @@ void testDecayIsSampleRateInvariant()
     // two frequencies and can only interpolate between them in normalised
     // radians.
     const std::array<Window, 3> windows {{
-        { 0.10, 0.50, 3.0 }, { 0.50, 1.50, 3.0 }, { 1.50, 3.00, 8.0 } }};
+        { 0.10, 0.50, 1.0 }, { 0.50, 1.50, 1.0 }, { 1.50, 3.00, 2.0 } }};
 
     for (const int note : { 28, 45, 64, 86 })
     {
-        std::array<std::array<double, 3>, 5> levels {};
+        std::array<std::array<double, 3>, 6> levels {};
         int rateIndex = 0;
-        for (const double rate : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
+        for (const double rate :
+             { 44100.0, 48000.0, 88200.0, 96000.0, 96001.0, 192000.0 })
         {
             ElectryEngine engine;
             engine.prepare(rate, 512);
@@ -16671,6 +16665,7 @@ void testDecayIsSampleRateInvariant()
             ++rateIndex;
         }
 
+        std::array<double, windows.size()> spreads {};
         for (std::size_t w = 0; w < windows.size(); ++w)
         {
             double lowest = 1.0e30, highest = -1.0e30;
@@ -16679,80 +16674,123 @@ void testDecayIsSampleRateInvariant()
                 lowest = std::min(lowest, perRate[w]);
                 highest = std::max(highest, perRate[w]);
             }
-            expect(highest - lowest < windows[w].toleranceDb,
+            spreads[w] = highest - lowest;
+            expect(spreads[w] < windows[w].toleranceDb,
                    "note " + std::to_string(note) + "'s decay between "
                        + std::to_string(windows[w].start) + " s and "
                        + std::to_string(windows[w].end)
                        + " s depends on the host sample rate ("
-                       + std::to_string(highest - lowest) + " dB spread)");
+                       + std::to_string(spreads[w]) + " dB spread)");
         }
+        if (note == 86)
+            std::cout << "PROBE high-E host-rate decay spreads: "
+                      << spreads[0] << "/" << spreads[1] << "/"
+                      << spreads[2] << " dB\n";
     }
 }
 
-// The two polarisations meet at the bridge and at the nut or fret, so they
-// exchange energy once per round trip. Charging a fixed fraction per rendered
-// sample instead made the exchange proportional to the loop length: over 900%
-// per round trip on the open low E, which averaged its two polarisations into
-// one, and 33% at the top of the range, where the mismatch between the two loop
-// lengths turned that exchange into dissipation and cost the string 36 dB of
-// sustain against its own fitted decay target.
-void testPolarisationCouplingIsPerRoundTrip()
+// A returned wave encounters the two-polarisation seam once per loop. Its
+// coefficient must therefore follow the note, not the internal clock. The
+// engine changes from 2x to native immediately above a 96 kHz host, so that
+// boundary is the most sensitive construction check.
+void testPolarisationCouplingIsRateInvariant()
 {
-    constexpr double sampleRate = 48000.0;
-    ElectryEngine engine;
-    engine.prepare(sampleRate, 512);
+    constexpr std::array<double, 7> rates {
+        44100.0, 48000.0, 88200.0, 96000.0, 96001.0, 192000.0, 384000.0
+    };
     EngineParameters parameters;
     parameters.sympatheticAmount = 0.0f;
     parameters.artifactAmount = 0.0f;
-    engine.setParameters(parameters);
-    engine.reset();
 
-    // Two notes an octave and a half apart, on different strings, must exchange
-    // the same fraction of the wave per round trip.
-    //
-    // This first half is a construction check and nothing more, and it is worth
-    // being plain about that: the per-sample coupling is defined as
-    // `0.04 / max(delay, 4)`, so the product below is 0.04 by definition and can
-    // only move if one of that expression's clamps engages. What it pins is
-    // exactly that - that neither clamp engages anywhere in the playable range,
-    // which is the only way the "one number per round trip" property can fail
-    // once the definition is in place. The load-bearing assertions are the
-    // rendered ones underneath it.
-    double perRoundTrip[2] = { 0.0, 0.0 };
-    int index = 0;
-    for (const int note : { 28, 79 })
+    for (const int note : { 28, 79, 86 })
     {
-        engine.reset();
-        engine.noteOn(note, 0.9f);
-        StereoBuffer settle(1024);
-        renderInto(engine, settle);
-        const int stringIndex = TestAccess::stringForNote(engine, note);
-        expect(stringIndex >= 0, "the coupling probe note was not allocated");
-        if (stringIndex < 0)
-            return;
-        const auto snapshot = TestAccess::snapshot(engine, stringIndex);
-        expect(snapshot.polarisationCoupling > 0.0f,
-               "the polarisation coupling was switched off");
-        expect(snapshot.polarisationCoupling < 0.25f
-                   && snapshot.verticalDelayTarget > 4.0f,
-               "a clamp in the per-round-trip coupling engaged inside the "
-               "playable range, so the exchange is no longer one number");
-        perRoundTrip[index++] = static_cast<double>(snapshot.polarisationCoupling)
-                              * static_cast<double>(snapshot.verticalDelayTarget);
-    }
-    expect(std::abs(perRoundTrip[0] - perRoundTrip[1])
-               < 0.02 * std::max(perRoundTrip[0], perRoundTrip[1]),
-           "the polarisation exchange per round trip depends on the pitch ("
-               + std::to_string(perRoundTrip[0]) + " vs "
-               + std::to_string(perRoundTrip[1]) + ")");
+        std::array<double, rates.size()> couplings {};
+        for (std::size_t index = 0; index < rates.size(); ++index)
+        {
+            ElectryEngine engine;
+            engine.prepare(rates[index], 512);
+            engine.setParameters(parameters);
+            engine.reset();
+            engine.noteOn(note, 0.9f);
+            const int stringIndex = TestAccess::stringForNote(engine, note);
+            expect(stringIndex >= 0,
+                   "the coupling probe note was not allocated at "
+                       + std::to_string(rates[index]) + " Hz");
+            if (stringIndex < 0)
+                return;
 
-    // What that buys audibly, and this is the part that carries weight: the top
-    // of the range keeps ringing, and it does so on every host. The former
-    // per-sample constant left this note 55.7 dB under its own attack a second
-    // later at 48 kHz - gone before the next beat of a moderate tempo - and
-    // 22.9 dB under it at 96 kHz, so the same patch was a different instrument
-    // on a different host.
-    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+            const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+            expect(snapshot.polarisationCoupling > 0.0f,
+                   "the polarisation coupling was switched off");
+            expect(snapshot.polarisationCoupling < 0.25f,
+                   "the polarisation-coupling upper clamp engaged inside the "
+                   "playable range");
+            expect(snapshot.lastCompensatedPeriod > 0.0f,
+                   "the coupling probe has no solved sounding period");
+            if (! (snapshot.lastCompensatedPeriod > 0.0f))
+                return;
+            couplings[index] = snapshot.polarisationCoupling;
+
+            const double liveFrequency =
+                TestAccess::internalSampleRate(engine)
+                / static_cast<double>(snapshot.lastCompensatedPeriod);
+            const double referenceProduct =
+                static_cast<double>(snapshot.polarisationCoupling)
+                * 96000.0 / liveFrequency;
+            expect(std::abs(referenceProduct - 0.04) < 1.0e-6,
+                   "the 96 kHz-reference polarisation pitch law moved ("
+                       + std::to_string(referenceProduct) + ")");
+        }
+
+        const auto [lowest, highest] =
+            std::minmax_element(couplings.begin(), couplings.end());
+        const double relativeSpread = (*highest - *lowest) / *highest;
+        expect(relativeSpread < 1.0e-4,
+               "note " + std::to_string(note)
+                   + "'s polarisation coupling follows the host clock ("
+                   + std::to_string(100.0 * relativeSpread) + "% spread)");
+
+        const double boundarySpread =
+            std::abs(couplings[3] - couplings[4])
+            / std::max(couplings[3], couplings[4]);
+        expect(boundarySpread < 1.0e-4,
+               "note " + std::to_string(note)
+                   + "'s polarisation coupling jumps above the 96 kHz "
+                     "oversampling boundary ("
+                   + std::to_string(100.0 * boundarySpread) + "%)");
+    }
+
+    // Pin live sounding pitch rather than only static MIDI assignment. A
+    // future shortcut from f0 back to baseFrequency would pass every check
+    // above but make the seam ignore wheel, MPE, legato and vibrato travel.
+    ElectryEngine bent;
+    bent.prepare(48000.0, 512);
+    bent.setParameters(parameters);
+    bent.setPitchBend(0.5f); // +1 semitone at the legacy +/-2-semitone range.
+    bent.reset();
+    constexpr int bentNote = 79;
+    bent.noteOn(bentNote, 0.9f);
+    const int bentString = TestAccess::stringForNote(bent, bentNote);
+    expect(bentString >= 0, "the bent coupling probe note was not allocated");
+    if (bentString < 0)
+        return;
+    const auto bentSnapshot = TestAccess::snapshot(bent, bentString);
+    expect(bentSnapshot.lastCompensatedPeriod > 0.0f,
+           "the bent coupling probe has no solved sounding period");
+    if (! (bentSnapshot.lastCompensatedPeriod > 0.0f))
+        return;
+    const double bentFrequency = TestAccess::internalSampleRate(bent)
+        / static_cast<double>(bentSnapshot.lastCompensatedPeriod);
+    const double bentReferenceProduct =
+        static_cast<double>(bentSnapshot.polarisationCoupling)
+        * 96000.0 / bentFrequency;
+    expect(std::abs(bentReferenceProduct - 0.04) < 1.0e-6,
+           "the polarisation coupling ignored live sounding pitch ("
+               + std::to_string(bentReferenceProduct) + ")");
+
+    // The construction check is backed by the rendered outcome: the high note
+    // must keep its established sustain on both sides of the rate-family seam.
+    for (const double rate : { 44100.0, 48000.0, 96000.0, 96001.0, 192000.0 })
     {
         ElectryEngine rateEngine;
         rateEngine.prepare(rate, 512);
@@ -17602,7 +17640,7 @@ int main()
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
     testDecayIsSampleRateInvariant();
-    testPolarisationCouplingIsPerRoundTrip();
+    testPolarisationCouplingIsRateInvariant();
     testCoupledStringLosesItsTopEndLikeAPlayedString();
     testCoupledStringKeepsItsFundamentalDecayTarget();
     testFingeredStringsShareTheBridge();

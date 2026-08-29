@@ -1184,10 +1184,10 @@ private:
         // depends only on the string and the pickup geometry.
         float fluxScale { 1.0f };
 
-        // How much the two polarisations exchange per rendered sample. It is
-        // solved from the per-reflection constant and the loop length, so the
-        // exchange per round trip is the same at every pitch and every host
-        // rate. Resolved with the pitch, not per sample.
+        // Cross-mix coefficient of the two-polarisation seam. A returned wave
+        // encounters it once per loop. Its nominal linear-with-f0 voicing is
+        // derived from the sounding period at the 96 kHz reference clock, so a
+        // given pitch gets the same coefficient at every host rate.
         float polarisationCoupling { 0.0f };
 
         // Per-articulation constants, resolved once per attack instead of

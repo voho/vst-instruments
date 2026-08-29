@@ -381,20 +381,22 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   inharmonicity (diameter, effective wound core, scale length,
   tension), and a contractive bridge coupling. The horizontal polarisation
   decays 1.7x slower and is detuned by a fraction of a cent, giving the
-  natural two-stage decay and slow beating. Both that detune and the exchange
-  between the two polarisations are fractions of a round trip rather than fixed
-  numbers of samples, which is most of what makes the decay envelope the same
-  at every host rate: charged per rendered sample instead, they left the
-  22nd-fret high E 36.5 dB under its own attack half a second later on a
-  44.1 kHz host and 14.5 dB under it on a 96 kHz one, and dissipated the
-  mismatch between the two loop lengths as loss rather than exchanging it -
-  36 dB of the top string's sustain, against its own fitted decay target. It is
-  most of it rather than all of it, and the remainder is worth naming: the loop
-  filter itself is a one-pole interpolating between two fitted frequencies in
-  normalised radians, which is not exactly rate-invariant. The 22nd-fret high E
-  measures 20.0, 19.3 and 15.5 dB under its attack at 1-2 s on 44.1, 48 and
-  96 kHz hosts - a 4.5 dB residual spread, against 32.7 dB before. The regression
-  bound is 3 dB through 1.5 s and 8 dB through 3 s. Loop-filter phase is
+  natural two-stage decay and slow beating. The detune is a fixed fraction of
+  the sounding period. Polarisation cross-coupling is the amplitude gain `c`
+  of a memoryless, contractive two-by-two matrix at the folded-loop seam: a
+  returned travelling wave encounters that matrix once per loop. Its nominal
+  linear-with-`f0` voicing is now written explicitly as
+  `c = 0.04 f0 / 96000`, so neither the host clock nor damping/dispersion phase
+  compensation can retune it. The
+  former `0.04 / compensatedDelay` approximated that nominal trajectory only
+  within one internal-rate family; at the 96 kHz host boundary it halved `c`
+  before doubling it again immediately above the boundary. On the 22nd-fret
+  high E, host-rate spreads in the 0.1-0.5, 0.5-1.5 and 1.5-3.0 s windows fell
+  from 0.80/2.64/6.65 dB to 0.063/0.092/0.153 dB across 44.1-192 kHz, including
+  the 96/96.001 kHz seam. The regression bounds are now 1/1/2 dB in those
+  windows. Removing filter phase from the coefficient raises that 48 kHz
+  high-E late window by 1.56 dB; the numeric `0.04` period-product anchor is
+  unchanged and is not presented as measured bridge data. Loop-filter phase is
   compensated analytically, holding the fundamental within a few cents
   across the fretboard at 44.1-384 kHz. At host rates through 96 kHz the
   complete physical and nonlinear signal path runs internally at 2x and is
@@ -1124,7 +1126,7 @@ High-Gain.
 | Block | Reference | What Electry implements | Precise claim |
 | --- | --- | --- | --- |
 | String core | Karjalainen, Välimäki, and Tolonen's single-delay-loop condensation of digital waveguides | Eight independent strings in Drop-E tuning, each with two transverse-polarisation single-delay-loop waveguides, third-order Lagrange fractional reads, and a contractive bridge coupling matrix | The published SDL string family with two coupled polarisations per string; not a bidirectional multi-rail scattering simulation |
-| Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages. Both the detune and the exchange between the polarisations are fractions of a round trip rather than fixed numbers of samples, so neither follows the host clock; the loop filter's own two-frequency fit still does, leaving a measured 4.5 dB residual spread across 44.1-192 kHz at the top of the range | A qualitative reproduction of the documented mechanism with voiced constants; not calibrated polarisation data from a measured instrument |
+| Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature; [Evangelista and Raspaud's vector bridge scattering](https://dafx.de/paper-archive/2009/papers/paper_97.pdf); [Bank and Karjalainen's passive admittance-matrix bridge model](https://www.dafx.de/paper-archive/2010/DAFx10/BankKarjalainen_DAFx10_P60.pdf) | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages. A memoryless contractive two-by-two seam matrix uses cross-amplitude gain `c = 0.04 f0 / 96000`, preserving the nominal linear-with-`f0` voicing while making the same-pitch coefficient independent of the host clock and digital filter phase. The top-note decay spread is 0.153 dB in the latest 1.5-3.0 s regression window across 44.1-192 kHz, including the 96/96.001 kHz rate-family seam | A qualitative reproduction of the documented mechanism with a rate-invariant voiced scalar; not calibrated polarisation data, a measured frequency-dependent bridge reflectance, or a characteristic-impedance-normalised passive multiport |
 | Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, live fractional speaking length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation. During legato travel the established tension stays fixed while `B` follows `1/L^2`, including a one-shot exact endpoint fit | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
@@ -1227,10 +1229,12 @@ of an open string that the played note does not itself produce, exact bypass
 and never-configured coupled loops at 0%, coupling determinism, a coupled
 string handed back to the player when it is picked, and bounded, ring-out-to-
 exact-silence behaviour at maximum coupling across three host rates;
-a decay envelope that agrees across 44.1, 48, 88.2, 96 and 192 kHz to within
-3 dB in every window through 1.5 s, a polarisation exchange that is one number
-per round trip at every pitch with neither of its clamps engaged, a 22nd-fret
-high E that still sustains on 44.1, 48 and 96 kHz hosts, a coupled ring whose
+a decay envelope that agrees across 44.1, 48, 88.2, 96, 96.001 and 192 kHz to
+within 1 dB through 1.5 s and 2 dB through 3 s; a polarisation seam whose
+coefficient follows only sounding pitch and remains continuous across 44.1,
+48, 88.2, 96, 96.001, 192 and 384 kHz with neither clamp engaged; a 22nd-fret
+high E that still sustains on both sides of that host-rate seam; a coupled ring
+whose
 kilohertz band sits 60 dB or more under its low band, and coupled loops whose
 realised round-trip decay - read back from the gain and coefficient they
 actually run - holds its fundamental target at String Age 1.0 and at half and
@@ -2128,6 +2132,24 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 sample-rate-invariant polarisation seam
+
+- The two returned travelling waves encounter their contractive mixing matrix
+  once per loop, but its coefficient was calculated from the rate-specific
+  compensated delay. The same pitch therefore received half the cross-amplitude
+  gain at a 96 kHz host that it received immediately above the engine's
+  2x-to-native boundary.
+- The existing `0.04` anchor and nominal linear-with-`f0` voicing are now
+  expressed against the sounding period at the 96 kHz reference clock. Damping
+  and dispersion phase remain responsible for tuning, but can no longer retune
+  the polarisation seam. This adds no work to the per-sample path.
+- The 22nd-fret high-E decay spread across the three 0.1-0.5, 0.5-1.5 and
+  1.5-3.0 s windows fell from 0.80/2.64/6.65 dB to
+  0.063/0.092/0.153 dB across 44.1-192 kHz, including the 96/96.001 kHz seam.
+  The eight-string 96 kHz worst-case CPU ratio remained 0.1197x. No listening
+  gate or absolute coupling refit was used: this checkpoint enforces one
+  digital/physical invariant and does not claim measured bridge calibration.
 
 ### 2026-08-28 force-decoupled exact pick release
 

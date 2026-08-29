@@ -138,19 +138,17 @@ float sympatheticHandMuteForT60(float t60) noexcept
                   0.0f, 1.0f);
 }
 
-// How much of one transverse polarisation crosses into the other over one
-// round trip of the string. The two meet at the bridge saddle and at the nut or
-// fret, which is where a real string's polarisations exchange energy, so this
-// is charged per round trip and not per rendered sample. A few per cent per
-// reflection is what a compliant saddle does; the former per-sample constant
-// worked out at 33% per round trip at the top of the range and over 900% at the
-// bottom, which mixed the polarisations into one and dissipated the difference.
-// Swept at 0.33, 0.16, 0.08, 0.04 and 0.02: everything at or below the open G3
-// moves by under 0.3 dB in every decay window, while the top of the range gains
-// monotonically. 0.04 takes the 22nd-fret high E from 32 dB down at half a
-// second - inaudible before the next beat of a moderate tempo - to 13 dB down,
-// which is the sustain the string's own fitted T60 was always asking for.
-constexpr float polarisationCouplingPerRoundTrip = 0.04f;
+// Reference voicing for the two-polarisation seam. The matrix coefficient c
+// historically followed 0.04 / loopDelay at the 96 kHz internal clock. A
+// returned travelling wave encounters that matrix once per loop, so c itself
+// is its cross-amplitude gain; 0.04 is only its voiced period product, not a
+// physical per-reflection energy fraction. Deriving the period from f0 keeps
+// that pitch law independent of the host clock and of rate-specific damping and
+// dispersion phase compensation. A measured, passive 2x2 bridge-admittance
+// fit can eventually replace this voiced scalar.
+// https://www.dafx.de/paper-archive/2010/DAFx10/BankKarjalainen_DAFx10_P60.pdf
+constexpr float polarisationCouplingPeriodProductAt96k = 0.04f;
+constexpr float polarisationCouplingReferenceRate = 96000.0f;
 
 // Bridge coupling between the strings that are actually being played.
 //
@@ -3543,19 +3541,15 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
             static_cast<float>(delayLineSize - 8));
     }
 
-    // The two polarisations are coupled where they meet: at the bridge and the
-    // nut, once per round trip. Charging a fixed fraction on every rendered
-    // sample instead made the exchange proportional to the loop length, which
-    // is proportional to the sample rate and inversely proportional to the
-    // pitch. Measured, the former per-sample 0.004 exchanged 33% of the wave
-    // per round trip at the top of the range and over 900% at the bottom - so
-    // the low strings' two polarisations were averaged into one long before
-    // they could produce the two-stage decay and beating they exist for, while
-    // the high strings' loops lost 44 dB in the first second against a fitted
-    // T60 of eight seconds. Per round trip it is one number at every pitch.
+    // This is the coefficient of the memoryless two-by-two scattering matrix
+    // at the seam, not a per-sample loss. Solving it from the sounding period at
+    // the 96 kHz reference clock preserves the nominal linear-with-f0 voicing
+    // without letting sample-rate-specific filter phase retune it. Using the raw
+    // compensated delay here formerly produced a twofold jump immediately
+    // above the 96 kHz oversampling boundary.
     voice.polarisationCoupling = clampf(
-        polarisationCouplingPerRoundTrip
-            / std::max(voice.vertical.targetDelay, 4.0f),
+        polarisationCouplingPeriodProductAt96k
+            * (f0 / polarisationCouplingReferenceRate),
         0.0f, 0.25f);
 
     // Delay smoothing time constant: fast enough to track bends transparently.
@@ -6012,8 +6006,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
 
     // Passive bridge coupling exchanges a little energy between the two
-    // polarisations; the mixing matrix is contractive, so it stays stable. The
-    // depth is solved per round trip in configureVoicePitch().
+    // returned travelling waves. They encounter this contractive matrix once
+    // on each loop; configureVoicePitch() rate-normalises its coefficient.
     const float coupling = voice.polarisationCoupling;
     const float verticalIn = verticalSample
                            + coupling * (horizontalSample - verticalSample);
