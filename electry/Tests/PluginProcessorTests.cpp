@@ -4512,6 +4512,19 @@ void testEditorRendering()
         {
             clickedString = stringIndex;
         };
+        auto accessibility = fretboard->createAccessibilityHandler();
+        expect (accessibility != nullptr
+                    && accessibility->getRole()
+                           == juce::AccessibilityRole::button
+                    && accessibility->getActions().contains (
+                           juce::AccessibilityActionType::press),
+                "the live fretboard has no accessible button action");
+        expect (accessibility != nullptr
+                    && accessibility->getActions().invoke (
+                           juce::AccessibilityActionType::press)
+                    && clickedString == 0,
+                "the live fretboard's accessible press did not repick the "
+                "selected physical string");
         const auto clickString = [fretboard] (int stringIndex,
                                               juce::ModifierKeys modifiers)
         {

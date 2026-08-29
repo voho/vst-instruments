@@ -841,6 +841,8 @@ void ElectryFretboardDisplay::selectString (int stringIndex)
               + juce::String (electry::ElectryEngine::stringCount - selectedString)
               + " selected. Use Up and Down or number keys 1 through 8 to "
                 "select; Space or Return repicks");
+    if (auto* handler = getAccessibilityHandler())
+        handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
     repaint();
 }
 
@@ -925,6 +927,20 @@ bool ElectryFretboardDisplay::keyPressed (const juce::KeyPress& key)
     }
 
     return true;
+}
+
+std::unique_ptr<juce::AccessibilityHandler>
+ElectryFretboardDisplay::createAccessibilityHandler()
+{
+    auto actions = juce::AccessibilityActions().addAction (
+        juce::AccessibilityActionType::press,
+        [this]
+        {
+            if (onRepick)
+                onRepick (selectedString);
+        });
+    return std::make_unique<juce::AccessibilityHandler> (
+        *this, juce::AccessibilityRole::button, std::move (actions));
 }
 
 bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
