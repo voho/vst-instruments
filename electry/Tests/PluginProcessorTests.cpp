@@ -4290,6 +4290,12 @@ void testEditorRendering()
             "editor is missing the live status readout");
     if (statusControl != nullptr)
     {
+        statusControl->setStatus (4, 4, true, 48000.0, 127, 0, 0, false);
+        expect (statusControl->getWidth() >= 256,
+                "live status is too narrow for its busiest valid readout");
+        expect (statusControl->getStatusText()
+                    == "4 STRINGS +4 RING  |  CC2 MUTE +100%",
+                "live status lost its busiest valid readout");
         auto accessibility = statusControl->createAccessibilityHandler();
         expect (accessibility != nullptr
                     && accessibility->getRole()
@@ -4297,6 +4303,7 @@ void testEditorRendering()
                     && accessibility->getTitle()
                            == statusControl->getStatusText(),
                 "live status is not exposed as accessible static text");
+        statusControl->setStatus (0, 0, true, sampleRate, 0, 0, 0, false);
     }
 
     auto* outputModeControl = findControl (electry::parameters::outputMode);

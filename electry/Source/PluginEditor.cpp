@@ -36,6 +36,7 @@ const juce::Colour sympatheticRing { 0xff6fa8b8 };
 constexpr int editorWidth = 1080;
 constexpr int editorHeight = 860;
 constexpr int fretboardPanelHeight = 152;
+constexpr int statusDisplayWidth = 256;
 constexpr int timerHz = 30;
 constexpr int lastDrawnFret = electry::ElectryEngine::fretCount;
 constexpr int firstKeyboardNote = electry::ElectryEngine::firstKeyswitchNote; // C0
@@ -1651,7 +1652,8 @@ void ElectryAudioProcessorEditor::resized()
     header.removeFromLeft (10);
     panicButton.setBounds (header.removeFromRight (74).reduced (0, 7));
     header.removeFromRight (10);
-    statusDisplay.setBounds (header.removeFromRight (208).reduced (0, 7));
+    statusDisplay.setBounds (
+        header.removeFromRight (statusDisplayWidth).reduced (0, 7));
     header.removeFromRight (10);
     factoryProgramLabel.setBounds (header.removeFromLeft (32));
     header.removeFromLeft (6);
