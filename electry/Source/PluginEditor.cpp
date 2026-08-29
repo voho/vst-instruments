@@ -345,13 +345,14 @@ void ElectryLookAndFeel::drawRotarySlider (juce::Graphics& graphics, int x, int 
 }
 
 void ElectryLookAndFeel::drawButtonBackground (juce::Graphics& graphics,
-                                               juce::Button& button, const juce::Colour&,
+                                               juce::Button& button,
+                                               const juce::Colour& backgroundColour,
                                                bool isHighlighted, bool isDown)
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     const bool on = button.getToggleState();
 
-    auto fill = on ? colours::oxblood : colours::knobFace;
+    auto fill = on ? colours::oxblood : backgroundColour;
     if (isDown)
         fill = fill.brighter (0.25f);
     else if (isHighlighted)
@@ -1282,6 +1283,8 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
 
     panicButton.setComponentID ("panic");
     panicButton.setHasFocusOutline (true);
+    panicButton.setColour (juce::TextButton::buttonColourId,
+                           colours::oxblood.darker (0.12f));
     panicButton.setTooltip ("Immediately silence all strings");
     panicButton.onClick = [this] { electryProcessor.requestPanic(); };
     addAndMakeVisible (panicButton);

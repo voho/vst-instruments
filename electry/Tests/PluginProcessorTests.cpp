@@ -4270,6 +4270,16 @@ void testEditorRendering()
                     && panicControl->getTooltip()
                            == "Immediately silence all strings",
                 "PANIC lost its accessible label or help text");
+        expect (panicControl->isColourSpecified (
+                    juce::TextButton::buttonColourId)
+                    && panicControl->findColour (
+                           juce::TextButton::buttonColourId)
+                           != panicControl->getLookAndFeel().findColour (
+                                  juce::TextButton::buttonColourId),
+                "PANIC does not have a distinct idle danger colour");
+        expect (! panicControl->getClickingTogglesState()
+                    && ! panicControl->getToggleState(),
+                "PANIC became a latched action to obtain visual emphasis");
     }
 
     auto* outputModeControl = findControl (electry::parameters::outputMode);
