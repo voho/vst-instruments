@@ -1475,6 +1475,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     keyboard.setTitle (
         "MIDI keyboard: hold A#0 for vibrato or B0 for tremolo picking; E1 to D6 plays");
     keyboard.setComponentID ("keyboard");
+    keyboard.setHasFocusOutline (true);
     addAndMakeVisible (keyboard);
 
     setSize (editorWidth, editorHeight);

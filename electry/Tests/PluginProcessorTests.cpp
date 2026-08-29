@@ -4612,6 +4612,9 @@ void testEditorRendering()
         expect (midiKeyboard != nullptr
                     && midiKeyboard->getWhiteNoteText (24).isEmpty(),
                 "keyboard labels the silent C1 dead zone as playable");
+        expect (keyboard->getWantsKeyboardFocus()
+                    && keyboard->hasFocusOutline(),
+                "keyboard is not visibly keyboard-focusable");
         expect (keyboard->getTitle().contains ("D6")
                     && keyboard->getTitle().contains ("A#0")
                     && keyboard->getTitle().contains ("B0")
