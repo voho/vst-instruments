@@ -1767,16 +1767,26 @@ paper's 1,038-file Strandberg seven-string corpus is a separate generalisation
 test set, not the deposited EG-IPT archive; conflating the two had made this
 source look both smaller and unavailable.
 
-A range-only audit of the 23,757,983,313-byte archive selected the sixth-string
-note-index `02` DI under `ordinario`, `muted` and `snap-pizz` for all available
-pickup folders. Eight files exist; `HB-bridge/snap-pizz` is absent. ZIP CRC and
-SHA-256 checks passed after 36 HTTP range requests totalling 30,512,346 bytes,
-or 0.1284% of the archive. The read-only source receipt has SHA-256
-`1a60c1c1b4cffecd90f5c47d5f180bda92716f9653cfd84fe46573dac964a5f1`;
-no third-party audio is committed. Filename ordering suggests open E2, but that
-identity remains an analysis hypothesis until measured. Even then this is a
-controlled conventional six-string technique/pickup check, not licensed
-Drop-E calibration data. [GOAT](https://zenodo.org/records/15690894),
+A range-only audit of the 23,757,983,313-byte archive selected the literal
+sixth-string note-identifier `02` DI under `ordinario`, `muted` and `snap-pizz`.
+Eight files match. The HB-bridge snap-pizz technique is not absent: it has 23
+sixth-string files under a different, unexplained identifier sequence beginning
+at `03`, so none was guessed into the frozen `02` subset. ZIP CRC and SHA-256
+checks passed after 36 HTTP range requests totalling 30,512,346 bytes, or
+0.1284% of the archive. The read-only source receipt and follow-up filename
+forensics have SHA-256
+`1a60c1c1b4cffecd90f5c47d5f180bda92716f9653cfd84fe46573dac964a5f1`
+and `31dd194e792f2ae38d23d8ef7fd249d23e46ded951053ea5f5709897a6395724`;
+no third-party audio is committed.
+
+The paper defines `_6s` as string 6 but calls `02` only a unique note
+identifier; it specifies neither the numeric grammar nor the guitar tuning.
+The common 23-identifier lattice is compatible with open plus frets 1-22, but
+does not prove that order or standard-tuned open E2. Released-WAV normalization
+is also unstated. Pitch must therefore establish note identity before analysis,
+and even a confirmed E2 remains a controlled conventional six-string
+technique/pickup check rather than licensed Drop-E calibration data.
+[GOAT](https://zenodo.org/records/15690894),
 [IDMT-SMT-Guitar](https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html)
 and the [pitx muted pack](https://freesound.org/people/pitx/packs/898/) are
 noncommercial; [GADA](https://gingerpianist.github.io/GADA_demo_page/) exposes
