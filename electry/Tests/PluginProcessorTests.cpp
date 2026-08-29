@@ -4193,9 +4193,15 @@ void testEditorRendering()
                     && knobs[first]->slider.getTitle() == fullParameterName
                     && accessibility != nullptr
                     && accessibility->getTitle() == fullParameterName
+                    && knobs[first]->slider.getTooltip().contains (
+                           "Double-click to reset to its default")
+                    && knobs[first]->slider.getHelpText()
+                           == knobs[first]->slider.getTooltip()
+                    && accessibility->getHelp()
+                           == knobs[first]->slider.getTooltip()
                     && knobs[first]->slider.getWantsKeyboardFocus()
                     && knobs[first]->slider.hasFocusOutline(),
-                "knob lacks its full accessible parameter name or visible "
+                "knob lacks its full accessible name, reset help, or visible "
                 "keyboard focus: "
                     + knobs[first]->getName().toStdString());
         for (auto* child : knobs[first]->getChildren())

@@ -1530,7 +1530,10 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     const auto setup = [this] (ElectryKnob& knob, const char* parameterId,
                                const char* tooltip)
     {
-        knob.slider.setTooltip (tooltip);
+        const juce::String help = juce::String (tooltip)
+                                + " Double-click to reset to its default.";
+        knob.slider.setTooltip (help);
+        knob.slider.setHelpText (help);
         knob.setComponentID (parameterId);
         addAndMakeVisible (knob);
         attachSlider (knob.slider, parameterId);
