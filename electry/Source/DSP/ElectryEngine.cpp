@@ -4836,16 +4836,12 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // independent force/contact axes above, this keeps the pole from supplying
     // a second hardness-dependent displacement gain while leaving the separate
     // broad plectrum edge alone.
-    // configureVoicePitch() has already stored the live target period,
-    // including a wheel/MPE bend present when the pick arrives. Normalising a
-    // plectrum at the MIDI note instead would reintroduce a level change for
-    // bent attacks.
-    // Finger contacts retain their established base-note reference so a
-    // legato glide does not turn the hammer/pull velocity law into a level
-    // modulation.
-    const float releaseOmega = plectrumContact
-        ? twoPi / std::max(voice.lastCompensatedPeriod, 1.0f)
-        : twoPi * voice.baseFrequency * inverseSampleRate_;
+    // configureVoicePitch() has already stored the period sounding at contact:
+    // a live wheel/MPE bend on a fresh attack, or the source fret for a settled
+    // Hammer/pull.
+    // Normalising at the written destination would reintroduce a level change
+    // after the actual release pole.
+    const float releaseOmega = twoPi / std::max(projectionPeriod, 1.0f);
     const float releaseMagnitude = onePoleMagnitude(
         voice.excitationReleaseCoefficient, releaseOmega);
     voice.excitationAmplitude *= clampf(

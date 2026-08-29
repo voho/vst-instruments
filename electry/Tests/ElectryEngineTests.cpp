@@ -5927,12 +5927,27 @@ void testPullOffLegatoDirection()
            "descending legato did not use a lateral release");
     const float expectedProjectionRatio = hammer.voice.lastCompensatedPeriod
                                         / pullOff.voice.lastCompensatedPeriod;
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    constexpr float twoPi = 6.28318530717958647692f;
+    const auto effectiveReleaseAmplitude = [] (const auto& result)
+    {
+        const float omega = twoPi
+            / std::max(result.voice.lastCompensatedPeriod, 1.0f);
+        return result.voice.excitationAmplitude
+            * TestAccess::onePoleMagnitude(
+                result.voice.excitationReleaseCoefficient, omega);
+    };
+    const float actualProjectionRatio = effectiveReleaseAmplitude(hammer)
+                                      / effectiveReleaseAmplitude(pullOff);
+#else
     const float actualProjectionRatio = hammer.voice.excitationAmplitude
                                       / pullOff.voice.excitationAmplitude;
+#endif
     expect(std::abs(actualProjectionRatio / expectedProjectionRatio - 1.0f)
                < 2.0e-5f,
-           "hammer/pull modal projection did not follow the settled source "
-           "target period (ratio " + std::to_string(actualProjectionRatio)
+           "hammer/pull effective release amplitude did not follow the "
+           "settled source target period (ratio "
+               + std::to_string(actualProjectionRatio)
                + ", expected " + std::to_string(expectedProjectionRatio)
                + ")");
 #if ! ELECTRY_ENERGY_ATTACK_PITCH
@@ -6024,6 +6039,81 @@ void testPullOffLegatoDirection()
     expect(maximumStep < std::max(0.05f, 1.2f * scale),
            "pull-off transition produced a hard discontinuity");
 }
+
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+void testFingerReleaseUsesContactPeriodAcrossRates()
+{
+    constexpr int targetNote = 52;
+    constexpr float twoPi = 6.28318530717958647692f;
+
+    struct Contact
+    {
+        TestAccess::VoiceSnapshot voice;
+        bool finite { false };
+        float peak { 0.0f };
+    };
+    const auto renderContact = [=] (double sampleRate, int sourceNote)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        engine.noteOn(sourceNote, 0.7f);
+        engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        engine.noteOn(targetNote, 0.7f);
+        const int stringIndex = TestAccess::stringForNote(engine, targetNote);
+
+        Contact result;
+        result.voice = TestAccess::snapshot(engine, stringIndex);
+        StereoBuffer audio(static_cast<int>(0.080 * sampleRate));
+        renderInto(engine, audio);
+        result.finite = allFinite(audio);
+        result.peak = peakAbs(audio.left);
+        return result;
+    };
+    const auto effectiveAmplitude = [] (const Contact& contact)
+    {
+        const float omega = twoPi
+            / std::max(contact.voice.lastCompensatedPeriod, 1.0f);
+        return contact.voice.excitationAmplitude
+            * TestAccess::onePoleMagnitude(
+                contact.voice.excitationReleaseCoefficient, omega);
+    };
+
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0,
+                                     192000.0, 384000.0 })
+    {
+        const Contact hammer = renderContact(sampleRate, 50);
+        const Contact pullOff = renderContact(sampleRate, 54);
+        const float expected = hammer.voice.lastCompensatedPeriod
+                             / pullOff.voice.lastCompensatedPeriod;
+        const float actual = effectiveAmplitude(hammer)
+                           / effectiveAmplitude(pullOff);
+        const std::string at = " at "
+            + std::to_string(static_cast<int>(sampleRate)) + " Hz";
+        expect(hammer.voice.valid && pullOff.voice.valid
+                   && hammer.voice.lastCompensatedPeriod > 0.0f
+                   && pullOff.voice.lastCompensatedPeriod > 0.0f,
+               "finger release fixture did not retain its contact periods" + at);
+        expect(std::isfinite(actual)
+                   && std::abs(actual / expected - 1.0f) < 2.0e-5f,
+               "finger release makeup used the written destination instead "
+               "of the contact period" + at + " (ratio "
+                   + std::to_string(actual) + ", expected "
+                   + std::to_string(expected) + ")");
+        expect(hammer.finite && pullOff.finite
+                   && hammer.peak > 1.0e-5f && pullOff.peak > 1.0e-5f,
+               "finger release became silent or non-finite" + at);
+    }
+}
+#endif
 
 void testHardPickingStaysInTune()
 {
@@ -19107,6 +19197,9 @@ int main()
     testPitchWheelBendsSympatheticStrings();
     testHammerOnLegatoContinuity();
     testPullOffLegatoDirection();
+#if ELECTRY_DECOUPLED_PICK_RELEASE
+    testFingerReleaseUsesContactPeriodAcrossRates();
+#endif
     testHardPickingStaysInTune();
 #if ELECTRY_ENERGY_ATTACK_PITCH
     testEnergyAttackPitchExperiment();

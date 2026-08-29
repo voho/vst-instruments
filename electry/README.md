@@ -2490,6 +2490,29 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 contact-period finger release makeup
+
+- Finger-contact modal projection already follows the period sounding at
+  contact, but its release-pole makeup was still evaluated at the written
+  destination. Applying the pole at the contact coordinate therefore left a
+  second pitch-dependent gain: the former 48 kHz path returns an effective
+  four-semitone Hammer/pull ratio of 1.347827 instead of
+  `2^(4/12) = 1.259921`, 6.98% high. The makeup now uses the same already-
+  validated contact period as projection and modal cutoff.
+- A direct coefficient/state oracle covers 44.1, 48, 96, 192 and 384 kHz and
+  requires the effective post-pole ratio above, a finite coefficient-derived
+  ratio and finite audible output. A same-compiler render changed exactly the
+  seven Hammer/pull demos
+  03, 06, 15, 17, 18, 21 and 22; the other 16 WAV pairs were byte-identical and
+  no printed peak crossed a tenth-decibel boundary. Valid plectrum contacts
+  retain the identical period and arithmetic; a legato Slide's modal amplitude
+  remains exactly zero.
+- This removes one event-time coordinate inconsistency without a fitted
+  coefficient, new state or sample-loop work. No admissible corpus recording
+  holds finger force, source fret, destination fret and rig fixed while varying
+  only this release coordinate, so the result is a discretisation invariant,
+  not a capture fit or real-recording parity claim.
+
 ### 2026-08-29 sounding-period modal spectrum
 
 - The two temporal poles that approximate triangular displacement's `1/n^2`
