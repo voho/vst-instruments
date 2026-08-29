@@ -815,6 +815,19 @@ struct ElectryEngineTestAccess
         };
     }
 
+    static double loopLineEnergy(const ElectryEngine& engine,
+                                 int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return 0.0;
+        const auto& line = engine
+            .voices_[static_cast<std::size_t>(stringIndex)].vertical.line;
+        double energy = 0.0;
+        for (const float sample : line)
+            energy += static_cast<double>(sample) * sample;
+        return energy;
+    }
+
     static double modalMagnitudeAt(float frequencyHz, float q, float modeGain,
                                    float sampleRate,
                                    float evaluationFrequencyHz) noexcept
@@ -12638,6 +12651,45 @@ void testSympatheticBridgeCoupling()
            "bridge coupling did not ring the open high E after the played "
            "string was damped (" + std::to_string(bypassed) + " -> "
                + std::to_string(coupled) + ")");
+
+    // Reaching the exact bypass while an idle string is already ringing must
+    // drop the physical loop, not only its ready flag. Otherwise a later
+    // played note can inherit delay-line and filter residue that the engine
+    // has declared absent.
+    {
+        ElectryEngine liveBypass;
+        liveBypass.prepare(sampleRate, 512);
+        auto liveParameters = parameters;
+        liveParameters.sympatheticAmount = 1.0f;
+        liveBypass.setParameters(liveParameters);
+        liveBypass.reset();
+        liveBypass.noteOn(45, 0.95f);
+        StereoBuffer establish(static_cast<int>(0.20 * sampleRate));
+        renderInto(liveBypass, establish);
+        const int highString = ElectryEngine::stringCount - 1;
+        const auto populatedFilters = TestAccess::loopFilterState(
+            liveBypass, highString);
+        expect(TestAccess::snapshot(liveBypass, highString).sympatheticReady
+                   && TestAccess::loopLineEnergy(liveBypass, highString) > 0.0
+                   && std::all_of(populatedFilters.begin(),
+                                  populatedFilters.end(),
+                                  [] (float state) { return state != 0.0f; }),
+               "the live sympathetic-bypass fixture did not establish a ring");
+
+        liveParameters.sympatheticAmount = 0.0f;
+        liveBypass.setParameters(liveParameters);
+        StereoBuffer close(static_cast<int>(0.20 * sampleRate));
+        renderInto(liveBypass, close);
+        const auto clearedFilters = TestAccess::loopFilterState(
+            liveBypass, highString);
+        expect(! TestAccess::snapshot(liveBypass, highString).sympatheticReady
+                   && TestAccess::loopLineEnergy(
+                          liveBypass, highString) == 0.0
+                   && std::all_of(clearedFilters.begin(),
+                                  clearedFilters.end(),
+                                  [] (float state) { return state == 0.0f; }),
+               "exact sympathetic bypass retained an idle loop state");
+    }
 
     // At zero the coupled waveguides are never configured, keeping the bypass
     // both silent and free of idle-string work.

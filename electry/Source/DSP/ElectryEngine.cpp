@@ -6901,6 +6901,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 {
                     if (voice.active)
                         continue;
+                    voice.vertical.clear();
                     voice.sympatheticReady = false;
                     voice.sympatheticEnergy = 0.0f;
                     resetVoicePickupState(voice);
