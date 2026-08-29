@@ -193,8 +193,9 @@ the `LATCH | HOLD` choice alone.
    (MIDI notes 28..86), the full range drawn on the on-screen piano.
    C0/C#0/D0 select Down, Up or Alternate picking.
 2. Keep a note or chord held and click its row in the live fretboard for one
-   hard repick without releasing the fretting key. Velocity-sensitive host or
-   controller playing uses MIDI E6..B6 for physical strings 8..1; those
+   hard repick without releasing the fretting key. The visible 8..1 column
+   uses the same physical-string order as the number keys. Velocity-sensitive
+   host or controller playing uses MIDI E6..B6 for physical strings 8..1; those
    performance triggers are not drawn as misleading pitched piano keys. If
    Hammer is latched, these dedicated picking-hand commands still make a
    neutral Sustain pick contact and leave the latch ready for the next note.

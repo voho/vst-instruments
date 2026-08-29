@@ -976,7 +976,10 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
     if (bounds.getWidth() < 120.0f || bounds.getHeight() < 40.0f)
         return;
 
-    auto tuningArea = bounds.removeFromLeft (26.0f);
+    // Keep the physical string number beside its tuning. The panel and
+    // keyboard instructions both expose 1-8 repicks, so showing only E1..E4
+    // here made that mapping needlessly implicit.
+    auto tuningArea = bounds.removeFromLeft (42.0f);
     auto meterArea = bounds.removeFromRight (54.0f);
     bounds.removeFromLeft (4.0f);
     meterArea.removeFromLeft (8.0f);
@@ -1155,13 +1158,23 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
                 juce::Justification::centred);
         }
 
-        // Tuning label.
+        // Physical string number and tuning label.
+        auto labelBounds = juce::Rectangle<float> (
+            tuningArea.getX(), y - 6.0f, tuningArea.getWidth(), 12.0f);
+        auto stringNumberBounds = labelBounds.removeFromLeft (14.0f);
+        graphics.setColour (stringIndex == selectedString
+                                ? colours::accentBright
+                                : colours::dimText.withAlpha (0.58f));
+        graphics.setFont (juce::FontOptions (8.8f, juce::Font::bold));
+        graphics.drawText (juce::String (
+                               electry::ElectryEngine::stringCount - stringIndex),
+                           stringNumberBounds, juce::Justification::centred);
+
         graphics.setColour (ringing ? colours::binding
                                     : colours::dimText.withAlpha (0.72f));
         graphics.setFont (juce::FontOptions (10.2f, juce::Font::bold));
         graphics.drawText (tuningNames[static_cast<std::size_t> (stringIndex)],
-                           juce::Rectangle<float> (tuningArea.getX(), y - 6.0f,
-                                                   tuningArea.getWidth(), 12.0f),
+                           labelBounds,
                            juce::Justification::centredRight);
 
         // Per-string level meter.
