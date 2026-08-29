@@ -192,6 +192,9 @@ struct YouKnow106TestAccess
         dco.pitState = YouKnow106Engine::Dco::PitState::running;
         dco.pitOutHigh = outHigh;
         dco.pitClocksToEvent = clocksToEvent;
+        dco.pitWriteState = YouKnow106Engine::Dco::PitWriteState::idle;
+        dco.pitWriteDivider = count;
+        dco.cpuStatesToWrite = 0.0;
         engine.updateActiveDcoPeriod(dco, range);
     }
 
@@ -206,11 +209,6 @@ struct YouKnow106TestAccess
     {
         return static_cast<int>(engine.voices_[static_cast<std::size_t>(slot)]
                                     .dco.consumePitEvent());
-    }
-
-    static int initialLoadEvent() noexcept
-    {
-        return static_cast<int>(YouKnow106Engine::Dco::PitEvent::initialLoad);
     }
 
     static int fallingPitEvent() noexcept
@@ -437,6 +435,52 @@ struct YouKnow106TestAccess
     {
         return static_cast<int>(
             YouKnow106Engine::Dco::PitState::awaitingInitialLoad);
+    }
+
+    static int awaitingCountState() noexcept
+    {
+        return static_cast<int>(
+            YouKnow106Engine::Dco::PitState::awaitingCount);
+    }
+
+    static int pitWriteState(const YouKnow106Engine& engine,
+                             int slot) noexcept
+    {
+        return static_cast<int>(
+            engine.voices_[static_cast<std::size_t>(slot)]
+                .dco.pitWriteState);
+    }
+
+    static int idlePitWriteState() noexcept
+    {
+        return static_cast<int>(
+            YouKnow106Engine::Dco::PitWriteState::idle);
+    }
+
+    static int awaitingLsbWriteState() noexcept
+    {
+        return static_cast<int>(
+            YouKnow106Engine::Dco::PitWriteState::awaitingLsb);
+    }
+
+    static int awaitingMsbWriteState() noexcept
+    {
+        return static_cast<int>(
+            YouKnow106Engine::Dco::PitWriteState::awaitingMsb);
+    }
+
+    static std::uint32_t pitWriteDivider(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.pitWriteDivider;
+    }
+
+    static double cpuStatesToWrite(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.cpuStatesToWrite;
     }
 
     static int stoppedPitState() noexcept
@@ -2437,8 +2481,11 @@ void testMode3CountStagingAndControlPolarity()
     YouKnow106TestAccess::programDcoCount(engine, 0, 11u, true);
     expect(YouKnow106TestAccess::pitOutHigh(engine, 0)
                && YouKnow106TestAccess::pitState(engine, 0)
-                      == YouKnow106TestAccess::awaitingInitialLoadState()
+                      == YouKnow106TestAccess::awaitingCountState()
                && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 0.25
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::awaitingLsbWriteState()
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
                && YouKnow106TestAccess::dcoLogicStates(engine, 0)[0] == 1.0f
                && YouKnow106TestAccess::dcoLogicStates(engine, 0)[1] == 1.0f,
            "forcing a low OUT high did not make exactly the C54/sub edge");
@@ -2470,13 +2517,17 @@ void testMode3CountStagingAndControlPolarity()
                "bandlimited control edge changed a pre-event sub sample");
     expectNear(transition.back(), 1.0, 0.02,
                "bandlimited control edge did not settle on its new sub state");
-    expect(YouKnow106TestAccess::consumePitEvent(engine, 0)
-               == YouKnow106TestAccess::initialLoadEvent(),
-           "the control-word count did not load on the next PIT clock");
+    for (int frame = 0; frame < 4; ++frame)
+        YouKnow106TestAccess::advanceDcoPitAndRamp(engine, 0, true);
     expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 11u
-               && YouKnow106TestAccess::pitOutHigh(engine, 0)
-               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 6.0,
-           "initial Mode-3 load did not begin the odd count's high half");
+               && YouKnow106TestAccess::pitState(engine, 0)
+                      != YouKnow106TestAccess::awaitingInitialLoadState()
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::idlePitWriteState()
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) > 0.0
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) <= 6.0,
+           "the odd initial Mode-3 count did not enter CE");
 
     YouKnow106TestAccess::setMode3Running(engine, 0, 9u, true, 2.75);
     YouKnow106TestAccess::setDcoLogicStates(engine, 0, -1.0f, -1.0f);
@@ -2485,10 +2536,13 @@ void testMode3CountStagingAndControlPolarity()
                && YouKnow106TestAccess::dcoLogicStates(engine, 0)[0] == -1.0f
                && YouKnow106TestAccess::dcoLogicStates(engine, 0)[1] == -1.0f,
            "forcing an already-high OUT fabricated an analogue or sub edge");
-    (void) YouKnow106TestAccess::consumePitEvent(engine, 0);
+    for (int frame = 0; frame < 4; ++frame)
+        YouKnow106TestAccess::advanceDcoPitAndRamp(engine, 0, true);
     expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 8u
-               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 4.0,
-           "even initial count did not begin with its four-clock high half");
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) > 0.0
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) <= 4.0,
+           "the even initial Mode-3 count did not enter CE");
 
     // A warm charge already held at the positive supply bound is not a cold
     // start merely because its slope and reset countdown are both zero. With
@@ -2504,7 +2558,8 @@ void testMode3CountStagingAndControlPolarity()
     YouKnow106TestAccess::setPositiveRailHeld(warm, 0, true);
     YouKnow106TestAccess::setDcoLogicStates(warm, 0, 1.0f, -1.0f);
     YouKnow106TestAccess::programDcoCount(warm, 0, 10000u, true);
-    YouKnow106TestAccess::advanceDcoPitAndRamp(warm, 0, true);
+    for (int frame = 0; frame < 4; ++frame)
+        YouKnow106TestAccess::advanceDcoPitAndRamp(warm, 0, true);
     expect(YouKnow106TestAccess::activeDcoDivider(warm, 0) == 10000u
                && YouKnow106TestAccess::dcoRampState(warm, 0)[0] == warmRail
                && YouKnow106TestAccess::dcoRampState(warm, 0)[1] == 0.0
@@ -2536,7 +2591,8 @@ void testMode3CountStagingAndControlPolarity()
     YouKnow106Engine cold;
     cold.prepare(192000.0, blockSize, false);
     YouKnow106TestAccess::programDcoCount(cold, 0, 10000u, true);
-    YouKnow106TestAccess::advanceDcoPitAndRamp(cold, 0, true);
+    for (int frame = 0; frame < 4; ++frame)
+        YouKnow106TestAccess::advanceDcoPitAndRamp(cold, 0, true);
     expect(YouKnow106TestAccess::activeDcoDivider(cold, 0) == 10000u
                && YouKnow106TestAccess::dcoRampValue(cold, 0) < -0.99
                && YouKnow106TestAccess::dcoRampState(cold, 0)[1] > 0.0,
@@ -2548,6 +2604,197 @@ void testMode3CountStagingAndControlPolarity()
                && YouKnow106TestAccess::pitOutHigh(engine, 0)
                && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
            "hard reset did not restore the deterministic high/stopped PIT state");
+}
+
+void testPitByteTransactionsFollowRecoveredCpuTiming()
+{
+    constexpr double elevenCpuStatesRate = 4000000.0 / 11.0;
+    constexpr std::uint32_t requested = 0x5678u;
+    const auto advance = [](YouKnow106Engine& engine, DcoRange range,
+                            int frames = 1) {
+        for (int frame = 0; frame < frames; ++frame)
+            YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+                engine, 0, range, 20.0f, 20.0f,
+                false, false, false);
+    };
+
+    struct PhaseCase
+    {
+        DcoRange range;
+        double startingClocks;
+        double clocksAfterMsb;
+    };
+    constexpr std::array phases {
+        PhaseCase { DcoRange::Four, 0.25, 0.25 },
+        PhaseCase { DcoRange::Eight, 0.25, 0.25 },
+        PhaseCase { DcoRange::Sixteen, 0.25, 0.75 },
+        PhaseCase { DcoRange::Sixteen, 0.50, 1.00 },
+    };
+
+    for (const auto& phase : phases)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(elevenCpuStatesRate, blockSize, false);
+        expect(YouKnow106TestAccess::pitState(engine, 0)
+                       == YouKnow106TestAccess::stoppedPitState()
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                       == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::pitWriteDivider(engine, 0)
+                       == YouKnow106TestAccess::activeDcoDivider(engine, 0)
+                   && YouKnow106TestAccess::cpuStatesToWrite(engine, 0) == 0.0,
+               "a new DCO started with an in-flight PIT byte transaction");
+        YouKnow106TestAccess::setMode3Running(
+            engine, 0, 0x1234u, true, phase.startingClocks, phase.range);
+        YouKnow106TestAccess::stageMode3Count(engine, 0, 0x2345u);
+        YouKnow106TestAccess::programDcoCount(engine, 0, requested, true);
+
+        expect(YouKnow106TestAccess::pitState(engine, 0)
+                       == YouKnow106TestAccess::awaitingCountState()
+                   && YouKnow106TestAccess::pitOutHigh(engine, 0)
+                   && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                       == YouKnow106TestAccess::awaitingLsbWriteState()
+                   && YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       == 55.0,
+               "the control write did not start the recovered 55+11-state "
+               "transaction or clear the old complete pair");
+
+        advance(engine, phase.range, 4);
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                       == YouKnow106TestAccess::awaitingLsbWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 11.0) < 1.0e-10
+                   && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+               "the control transaction wrote its LSB before 13.75 us");
+        advance(engine, phase.range);
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                       == YouKnow106TestAccess::awaitingMsbWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 11.0) < 1.0e-10
+                   && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+               "the 13.75 us LSB write fabricated a complete PIT count");
+        advance(engine, phase.range);
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                       == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::pitState(engine, 0)
+                       == YouKnow106TestAccess::awaitingInitialLoadState()
+                   && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+                   && YouKnow106TestAccess::pendingDcoDivider(engine, 0)
+                       == requested,
+               "the 16.50 us MSB write did not complete exactly one count");
+        expectNear(YouKnow106TestAccess::pitClocksToEvent(engine, 0),
+                   phase.clocksAfterMsb, 1.0e-10,
+                   "the control transaction lost the selected PIT-clock phase");
+        advance(engine, phase.range);
+        expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == requested
+                   && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+               "the completed control-path count did not load on the next "
+               "selected PIT clock");
+    }
+
+    // Count-only starts with the LSB. At this exact 2.75 us tie, the old
+    // complete pair must enter CE at the OUT edge before the MSB completes the
+    // new pair, leaving that new value pending for the following transition.
+    YouKnow106Engine collision;
+    collision.prepare(elevenCpuStatesRate, blockSize, false);
+    constexpr std::uint32_t active = 0x1234u;
+    constexpr std::uint32_t oldPending = 0x2345u;
+    YouKnow106TestAccess::setMode3Running(
+        collision, 0, active, true, 5.5, DcoRange::Eight);
+    YouKnow106TestAccess::stageMode3Count(collision, 0, oldPending);
+    YouKnow106TestAccess::programDcoCount(
+        collision, 0, requested, false);
+    expect(YouKnow106TestAccess::activeDcoDivider(collision, 0) == active
+               && YouKnow106TestAccess::pendingDcoDivider(collision, 0)
+                      == oldPending
+               && YouKnow106TestAccess::pendingDcoDividerValid(collision, 0)
+               && YouKnow106TestAccess::pitWriteState(collision, 0)
+                      == YouKnow106TestAccess::awaitingMsbWriteState()
+               && YouKnow106TestAccess::cpuStatesToWrite(collision, 0)
+                      == 11.0,
+           "the running-path LSB overwrote the older complete count pair");
+    advance(collision, DcoRange::Eight);
+    expect(YouKnow106TestAccess::activeDcoDivider(collision, 0) == oldPending
+               && !YouKnow106TestAccess::pitOutHigh(collision, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(collision, 0)
+                      == requested
+               && YouKnow106TestAccess::pendingDcoDividerValid(collision, 0)
+               && YouKnow106TestAccess::pitWriteState(collision, 0)
+                      == YouKnow106TestAccess::idlePitWriteState(),
+           "an exact OUT/MSB collision did not apply PIT first and leave the "
+           "new count pending");
+
+    collision.reset();
+    expect(YouKnow106TestAccess::pitState(collision, 0)
+                   == YouKnow106TestAccess::stoppedPitState()
+               && YouKnow106TestAccess::pitWriteState(collision, 0)
+                      == YouKnow106TestAccess::idlePitWriteState()
+               && YouKnow106TestAccess::pitWriteDivider(collision, 0)
+                      == YouKnow106TestAccess::activeDcoDivider(collision, 0)
+               && YouKnow106TestAccess::cpuStatesToWrite(collision, 0) == 0.0
+               && !YouKnow106TestAccess::pendingDcoDividerValid(collision, 0),
+           "reset retained an in-flight PIT byte transaction");
+}
+
+void testPitByteTimingIsProcessingGridInvariant()
+{
+    YouKnow106Engine at48k;
+    YouKnow106Engine at48kHq;
+    YouKnow106Engine at192k;
+    at48k.prepare(48000.0, blockSize, false);
+    at48kHq.prepare(48000.0, blockSize, true);
+    at192k.prepare(192000.0, blockSize, false);
+
+    constexpr std::uint32_t requested = 0x3456u;
+    for (auto* engine : { &at48k, &at48kHq, &at192k })
+    {
+        YouKnow106TestAccess::setMode3Running(
+            *engine, 0, 0x1234u, true, 0.25, DcoRange::Eight);
+        YouKnow106TestAccess::programDcoCount(
+            *engine, 0, requested, true);
+    }
+
+    const auto advance = [](YouKnow106Engine& engine, int frames) {
+        for (int frame = 0; frame < frames; ++frame)
+            YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+                engine, 0, DcoRange::Eight, 20.0f, 20.0f,
+                false, false, false);
+    };
+    // The same 20.833333 us is one 48 kHz/1x internal frame, four 48
+    // kHz/4x frames, and four 192 kHz/1x host/internal frames.
+    advance(at48k, 1);
+    advance(at48kHq, 4);
+    advance(at192k, 4);
+
+    const auto sameLogicalState = [](const YouKnow106Engine& left,
+                                     const YouKnow106Engine& right) {
+        return YouKnow106TestAccess::activeDcoDivider(left, 0)
+                   == YouKnow106TestAccess::activeDcoDivider(right, 0)
+            && YouKnow106TestAccess::pendingDcoDivider(left, 0)
+                   == YouKnow106TestAccess::pendingDcoDivider(right, 0)
+            && YouKnow106TestAccess::pendingDcoDividerValid(left, 0)
+                   == YouKnow106TestAccess::pendingDcoDividerValid(right, 0)
+            && YouKnow106TestAccess::pitState(left, 0)
+                   == YouKnow106TestAccess::pitState(right, 0)
+            && YouKnow106TestAccess::pitOutHigh(left, 0)
+                   == YouKnow106TestAccess::pitOutHigh(right, 0)
+            && YouKnow106TestAccess::pitWriteState(left, 0)
+                   == YouKnow106TestAccess::pitWriteState(right, 0)
+            && YouKnow106TestAccess::pitWriteDivider(left, 0)
+                   == YouKnow106TestAccess::pitWriteDivider(right, 0)
+            && std::abs(YouKnow106TestAccess::cpuStatesToWrite(left, 0)
+                        - YouKnow106TestAccess::cpuStatesToWrite(right, 0))
+                   < 1.0e-10
+            && std::abs(YouKnow106TestAccess::pitClocksToEvent(left, 0)
+                        - YouKnow106TestAccess::pitClocksToEvent(right, 0))
+                   < 1.0e-9;
+    };
+    expect(sameLogicalState(at48k, at48kHq)
+               && sameLogicalState(at48k, at192k),
+           "equal wall time changed the PIT transaction across sample-rate "
+           "or HQ grids");
 }
 
 void testControlWordConverterWritePreservesCardState()
@@ -2594,17 +2841,19 @@ void testControlWordConverterWritePreservesCardState()
     expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
            "the converter did not consume the pending control-word request");
     expect(YouKnow106TestAccess::pitState(engine, 0)
-                   == YouKnow106TestAccess::awaitingInitialLoadState()
+                   == YouKnow106TestAccess::awaitingCountState()
                && YouKnow106TestAccess::pitOutHigh(engine, 0)
                && YouKnow106TestAccess::activeDcoDivider(engine, 0)
                       == activeBefore
                && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
                       == periodBefore
-               && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
-               && YouKnow106TestAccess::pendingDcoDivider(engine, 0)
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+               && YouKnow106TestAccess::pitWriteDivider(engine, 0)
                       != activeBefore
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::awaitingLsbWriteState()
                && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 0.25,
-           "the converter bypassed the control-word/next-clock load path");
+           "the converter bypassed the control/LSB/MSB transaction path");
     expect(YouKnow106TestAccess::dcoCv(engine, 0) == cvBefore,
            "the control-word write bypassed the physical compensation hold");
     expect(YouKnow106TestAccess::dcoCvTarget(engine, 0) != cvTargetBefore,
@@ -2628,11 +2877,14 @@ void testControlWordConverterWritePreservesCardState()
            "the control-word edge discarded delayed waveform history");
 
     const std::uint32_t requested =
-        YouKnow106TestAccess::pendingDcoDivider(engine, 0);
-    YouKnow106TestAccess::advanceDcoPitAndRamp(engine, 0, true);
+        YouKnow106TestAccess::pitWriteDivider(engine, 0);
+    for (int frame = 0; frame < 4; ++frame)
+        YouKnow106TestAccess::advanceDcoPitAndRamp(engine, 0, true);
     expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == requested
                && YouKnow106TestAccess::pitState(engine, 0)
                       != YouKnow106TestAccess::awaitingInitialLoadState()
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::idlePitWriteState()
                && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
                && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
                       != periodBefore,
@@ -2691,16 +2943,20 @@ void testWideDownwardRetargetStaysOnRampRails()
             YouKnow106TestAccess::dcoLogicStates(engine, 0)[1];
         YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
         const std::uint32_t requested =
-            YouKnow106TestAccess::pendingDcoDivider(engine, 0);
+            YouKnow106TestAccess::pitWriteDivider(engine, 0);
         expect(requested > activeBefore
-                   && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+                   && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == (fixture.writesControlWord
+                          ? YouKnow106TestAccess::awaitingLsbWriteState()
+                          : YouKnow106TestAccess::awaitingMsbWriteState()),
                std::string(fixture.name)
-                   + " did not stage the wide downward count");
+                   + " did not begin the wide downward byte transaction");
         expect(fixture.writesControlWord
                    ? YouKnow106TestAccess::pitState(engine, 0)
-                         == YouKnow106TestAccess::awaitingInitialLoadState()
+                         == YouKnow106TestAccess::awaitingCountState()
                    : YouKnow106TestAccess::pitState(engine, 0)
-                         != YouKnow106TestAccess::awaitingInitialLoadState(),
+                         != YouKnow106TestAccess::awaitingCountState(),
                std::string(fixture.name)
                    + " took the wrong converter programming branch");
 
@@ -2743,11 +2999,16 @@ void testWideDownwardRetargetStaysOnRampRails()
         {
             processOne();
             expect(YouKnow106TestAccess::activeDcoDivider(engine, 0)
+                           == activeBefore
+                       && YouKnow106TestAccess::pendingDcoDividerValid(
+                           engine, 0)
+                       && YouKnow106TestAccess::pendingDcoDivider(engine, 0)
                            == requested
                        && YouKnow106TestAccess::pitOutHigh(engine, 0)
                               != fixture.startsOutHigh,
                    std::string(fixture.name)
-                       + " did not load CE at the old half-cycle transition");
+                       + " did not retain old CE and stage the new count "
+                         "after the byte window");
             if (fixture.startsOutHigh)
             {
                 expect(YouKnow106TestAccess::dcoLogicStates(engine, 0)[1]
@@ -2805,7 +3066,7 @@ void testWideDownwardRetargetStaysOnRampRails()
         expect(sawNextRisingDischarge,
                std::string(fixture.name)
                    + " never reached the next positive OUT edge");
-        if (fixture.startsOutHigh)
+        if (fixture.writesControlWord && fixture.startsOutHigh)
             expect(sawRailHold && heldExactly,
                    std::string(fixture.name)
                        + " did not hold the old high-note slope at the supply "
@@ -3243,11 +3504,12 @@ void testPitEventBudgetCoversWorstCaseInterval()
     // Inclusive worst case: 8 kHz, 1x, the 4 MHz range clock and N=8 expose
     // 500 input clocks in one sample. Starting on an OUT event puts both the
     // left- and right-edge events in the walk while scale 4 adds one supply
-    // hit to every charge.
+    // hit to every charge. One in-flight MSB adds the new scheduler event.
     YouKnow106Engine engine;
     engine.prepare(8000.0, blockSize, false);
     YouKnow106TestAccess::setMode3Running(
         engine, 0, 8u, false, 0.0, DcoRange::Four);
+    YouKnow106TestAccess::programDcoCount(engine, 0, 8u, false);
     YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
     YouKnow106TestAccess::setDcoRampScales(engine, 0, 4.0f, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
@@ -3261,11 +3523,15 @@ void testPitEventBudgetCoversWorstCaseInterval()
     expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 8u
                && !YouKnow106TestAccess::pitOutHigh(engine, 0)
                && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 4.0
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::idlePitWriteState()
+               && YouKnow106TestAccess::cpuStatesToWrite(engine, 0) == 0.0
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
                && ramp[0]
                       == YouKnow106TestAccess::dcoPositiveBaseRail(engine, 0)
                && ramp[1] == 0.0 && ramp[2] == 0.0
                && YouKnow106TestAccess::positiveRailHeld(engine, 0),
-           "the 252-event interval stopped before its 500-clock right edge: out="
+           "the 253-event interval stopped before its 500-clock right edge: out="
                + std::to_string(YouKnow106TestAccess::pitOutHigh(engine, 0))
                + " clocks=" + std::to_string(
                    YouKnow106TestAccess::pitClocksToEvent(engine, 0))
@@ -3288,14 +3554,38 @@ void testPitStateMatchesFastFreewheel()
         rendered, 0, 100u, true, 50.0);
     YouKnow106TestAccess::setMode3Running(
         freewheeled, 0, 100u, true, 50.0);
+    YouKnow106TestAccess::programDcoCount(rendered, 0, 101u, true);
+    YouKnow106TestAccess::programDcoCount(freewheeled, 0, 101u, true);
 
+    bool transactionMatched = true;
     for (int sample = 0; sample < 200; ++sample)
     {
         YouKnow106TestAccess::advanceDcoPitAndRamp(rendered, 0, true);
         YouKnow106TestAccess::advanceDcoPitAndRamp(freewheeled, 0, false);
+        transactionMatched = transactionMatched
+            && YouKnow106TestAccess::activeDcoDivider(rendered, 0)
+                   == YouKnow106TestAccess::activeDcoDivider(freewheeled, 0)
+            && YouKnow106TestAccess::pendingDcoDivider(rendered, 0)
+                   == YouKnow106TestAccess::pendingDcoDivider(freewheeled, 0)
+            && YouKnow106TestAccess::pitState(rendered, 0)
+                   == YouKnow106TestAccess::pitState(freewheeled, 0)
+            && YouKnow106TestAccess::pitOutHigh(rendered, 0)
+                   == YouKnow106TestAccess::pitOutHigh(freewheeled, 0)
+            && YouKnow106TestAccess::pitClocksToEvent(rendered, 0)
+                   == YouKnow106TestAccess::pitClocksToEvent(freewheeled, 0)
+            && YouKnow106TestAccess::pitWriteState(rendered, 0)
+                   == YouKnow106TestAccess::pitWriteState(freewheeled, 0)
+            && YouKnow106TestAccess::pitWriteDivider(rendered, 0)
+                   == YouKnow106TestAccess::pitWriteDivider(freewheeled, 0)
+            && YouKnow106TestAccess::cpuStatesToWrite(rendered, 0)
+                   == YouKnow106TestAccess::cpuStatesToWrite(freewheeled, 0)
+            && YouKnow106TestAccess::pendingDcoDividerValid(rendered, 0)
+                   == YouKnow106TestAccess::pendingDcoDividerValid(
+                       freewheeled, 0);
     }
 
-    expect(YouKnow106TestAccess::activeDcoDivider(rendered, 0)
+    expect(transactionMatched
+               && YouKnow106TestAccess::activeDcoDivider(rendered, 0)
                == YouKnow106TestAccess::activeDcoDivider(freewheeled, 0)
                && YouKnow106TestAccess::pitOutHigh(rendered, 0)
                       == YouKnow106TestAccess::pitOutHigh(freewheeled, 0)
@@ -6405,10 +6695,14 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                          summary(values, &Observation::heldOneTimeConstant));
             printSummary("output-onset-proxy", outputOnset);
         }
+        // Unlike the converter/VCA milestones above, this threshold also sees
+        // DCO phase. The recovered 55+11-state control/count writes therefore
+        // move only its extrema while leaving the Pitch and VoiceVca scan
+        // ordinals fixed.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 105.0, 228.0, 351.0 }
-                          : std::array<double, 3> { 86.0, 209.0, 334.0 },
+                          ? std::array<double, 3> { 105.0, 228.0, 350.0 }
+                          : std::array<double, 3> { 86.0, 209.0, 332.0 },
                       0.0, mode + " output-onset-proxy");
     }
     int maximumOnsetDifference = 0;
@@ -6432,7 +6726,7 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
     expect(maximumPitchDifference == 201
                && maximumTargetDifference == 201,
            "the documented HQ scan-grid quantisation changed");
-    expect(std::abs(maximumOnsetDifference - 223) <= 2,
+    expect(std::abs(maximumOnsetDifference - 220) <= 2,
            "the documented paired HQ onset-grid bound moved to "
                + std::to_string(maximumOnsetDifference));
 }
@@ -10353,6 +10647,8 @@ int main()
     if (std::getenv("YOUKNOW106_PIT_TESTS_ONLY") != nullptr)
     {
         testMode3CountStagingAndControlPolarity();
+        testPitByteTransactionsFollowRecoveredCpuTiming();
+        testPitByteTimingIsProcessingGridInvariant();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
         testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();
@@ -10427,6 +10723,8 @@ int main()
     testRescanPreservesVoiceCpuPitchHistory();
     testHeldTransposeUpdatesVoiceCpuPitchHistory();
     testMode3CountStagingAndControlPolarity();
+    testPitByteTransactionsFollowRecoveredCpuTiming();
+    testPitByteTimingIsProcessingGridInvariant();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();
     testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();

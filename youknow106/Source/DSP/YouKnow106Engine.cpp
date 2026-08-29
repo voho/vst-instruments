@@ -1839,14 +1839,13 @@ std::uint32_t YouKnow106Engine::Dco::mode3HalfClocks(
     return outHigh ? (count + 1u) / 2u : count / 2u;
 }
 
-bool YouKnow106Engine::Dco::programMode3(std::uint32_t count) noexcept
+bool YouKnow106Engine::Dco::programMode3() noexcept
 {
-    // A mode word resets the CE and forces OUT high immediately. The firmware
-    // follows it with one complete LSB/MSB count, represented at this converter
-    // timestamp. When the CE was running, its fractional countdown also carries
-    // the selected CLK phase needed to locate the following input edge. Cold
-    // start has no recovered CPU/CLK phase, so it deliberately chooses one full
-    // clock; that sub-clock timestamp policy remains documented in OQ-08.
+    // A mode word resets the CE and forces OUT high immediately. The selected
+    // input clock keeps running while CE waits for the later LSB/MSB pair, so
+    // retain its phase rather than leaving the next-clock countdown frozen.
+    // Cold start has no recovered CPU/CLK phase and deliberately begins one
+    // full clock away; that absolute phase remains documented in OQ-08.
     double nextClock = 1.0;
     if (pitState != PitState::stopped && pitClocksToEvent > 0.0)
     {
@@ -1858,9 +1857,8 @@ bool YouKnow106Engine::Dco::programMode3(std::uint32_t count) noexcept
 
     const bool positiveEdge = !pitOutHigh;
     pitOutHigh = true;
-    pendingDivider = count;
-    pendingDividerValid = true;
-    pitState = PitState::awaitingInitialLoad;
+    pendingDividerValid = false;
+    pitState = PitState::awaitingCount;
     pitClocksToEvent = nextClock;
     return positiveEdge;
 }
@@ -1872,6 +1870,8 @@ void YouKnow106Engine::Dco::stageMode3Count(std::uint32_t count) noexcept
     // the active CE count.
     pendingDivider = count;
     pendingDividerValid = true;
+    if (pitState == PitState::awaitingCount)
+        pitState = PitState::awaitingInitialLoad;
 }
 
 YouKnow106Engine::Dco::PitEvent
@@ -1904,6 +1904,9 @@ void YouKnow106Engine::Dco::reset() noexcept
     pendingDividerValid = false;
     pitState = PitState::stopped;
     pitOutHigh = true;
+    pitWriteState = PitWriteState::idle;
+    pitWriteDivider = divider;
+    cpuStatesToWrite = 0.0;
     coldInitialLoadPending = false;
     pitClocksToEvent = 0.0;
     rampValue = -1.0;
@@ -1988,13 +1991,20 @@ void YouKnow106Engine::updateActiveDcoPeriod(
 void YouKnow106Engine::programDcoCount(
     Voice& voice, std::uint32_t count, bool writesControlWord) noexcept
 {
+    auto& dco = voice.dco;
+    dco.pitWriteDivider = count;
     if (!writesControlWord)
     {
-        voice.dco.stageMode3Count(count);
+        // Compatibility policy anchors the LSB to this converter timestamp;
+        // the recovered B-2 path reaches the MSB store 11 states (2.75 us)
+        // later. The absolute converter/CPU anchor remains open in OQ-08.
+        // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
+        dco.pitWriteState = Dco::PitWriteState::awaitingMsb;
+        dco.cpuStatesToWrite = pitLsbToMsbStates;
         return;
     }
 
-    const bool coldStart = voice.dco.pitState == Dco::PitState::stopped;
+    const bool coldStart = dco.pitState == Dco::PitState::stopped;
     if (coldStart)
     {
         // Engine construction has no earlier firmware scan from which to
@@ -2002,14 +2012,22 @@ void YouKnow106Engine::programDcoCount(
         // initialization policy: the first programmed cell starts settled.
         voice.dcoCv = voice.dcoCvTarget;
     }
-    voice.dco.coldInitialLoadPending =
-        voice.dco.coldInitialLoadPending || coldStart;
+    dco.coldInitialLoadPending = dco.coldInitialLoadPending || coldStart;
 
     // Mode programming forces OUT high. That is a physical C54/sub event only
     // when the previously stored output was low; an already-high output does
     // not acquire a fabricated edge or a fabricated sub polarity.
-    if (voice.dco.programMode3(count))
+    if (dco.programMode3())
         beginDcoDischarge(voice, 1.0f, true);
+
+    // Compatibility policy anchors the control store here. IC29 B-2's reset
+    // branch then reaches LSB after 55 CPU states, and both paths take 11 more
+    // states to MSB. These are NEC instruction-cycle sums, not inferred
+    // converter-slot fractions; the absolute anchor remains open in OQ-08:
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
+    // https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17
+    dco.pitWriteState = Dco::PitWriteState::awaitingLsb;
+    dco.cpuStatesToWrite = pitControlToLsbStates;
 }
 
 void YouKnow106Engine::OtaCascade::reset() noexcept
@@ -5611,8 +5629,9 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
     double elapsed = 0.0;
     // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
     // can contain 126 OUT transitions plus 63 reset completions and 63 supply
-    // hits. 512 leaves a real guard margin over that 252-event supported worst
-    // case while still bounding malformed state without allocating anything.
+    // hits. The fixed byte transaction adds at most two scheduled events, so
+    // 512 leaves a real margin over the 254-event supported worst case while
+    // still bounding malformed state without allocating anything.
     constexpr int maximumEventsPerInterval = 512;
     for (int eventIndex = 0;
          eventIndex < maximumEventsPerInterval
@@ -5620,9 +5639,15 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
          ++eventIndex)
     {
         const double remaining = intervalSeconds - elapsed;
-        const double pitSeconds = dco.pitState == Dco::PitState::stopped
+        const double pitSeconds =
+            dco.pitState == Dco::PitState::stopped
+                || dco.pitState == Dco::PitState::awaitingCount
             ? std::numeric_limits<double>::infinity()
             : std::max(0.0, dco.pitClocksToEvent) / pitClockHz;
+        const double cpuWriteSeconds =
+            dco.pitWriteState == Dco::PitWriteState::idle
+                ? std::numeric_limits<double>::infinity()
+                : std::max(0.0, dco.cpuStatesToWrite) / voiceCpuStateHz;
         const double resetSeconds = dco.resetSecondsRemaining > 0.0
             ? dco.resetSecondsRemaining
             : std::numeric_limits<double>::infinity();
@@ -5645,7 +5670,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                                      / dco.rampSlopePerSecond)
                    : std::numeric_limits<double>::infinity());
         const double segment = std::min(
-            { remaining, pitSeconds, resetSeconds, positiveRailSeconds });
+            { remaining, pitSeconds, cpuWriteSeconds,
+              resetSeconds, positiveRailSeconds });
 
         if (addCorrections && !comparatorPinnedForInterval && segment > 0.0)
         {
@@ -5688,9 +5714,27 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
         if (dco.resetSecondsRemaining > 0.0)
             dco.resetSecondsRemaining = std::max(
                 0.0, dco.resetSecondsRemaining - segment);
-        if (dco.pitState != Dco::PitState::stopped)
+        if (dco.pitState == Dco::PitState::awaitingCount)
+        {
+            // CE is stopped, not the selected CLK. Retain its phase
+            // analytically while the two count bytes are in flight. Map an
+            // exact boundary to one full clock: if the MSB shares that
+            // timestamp, the input edge has already happened and initial load
+            // belongs to the following clock.
+            double phase = std::fmod(
+                dco.pitClocksToEvent - segment * pitClockHz, 1.0);
+            if (std::abs(phase) <= eventToleranceSeconds * pitClockHz)
+                phase = 1.0;
+            else if (phase < 0.0)
+                phase += 1.0;
+            dco.pitClocksToEvent = phase;
+        }
+        else if (dco.pitState != Dco::PitState::stopped)
             dco.pitClocksToEvent = std::max(
                 0.0, dco.pitClocksToEvent - segment * pitClockHz);
+        if (dco.pitWriteState != Dco::PitWriteState::idle)
+            dco.cpuStatesToWrite = std::max(
+                0.0, dco.cpuStatesToWrite - segment * voiceCpuStateHz);
         elapsed += segment;
 
         const bool resetComplete =
@@ -5699,7 +5743,10 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             positiveRailSeconds <= segment + eventToleranceSeconds;
         const bool pitEvent =
             pitSeconds <= segment + eventToleranceSeconds;
-        if (!resetComplete && !positiveRailHit && !pitEvent)
+        const bool cpuWriteEvent =
+            cpuWriteSeconds <= segment + eventToleranceSeconds;
+        if (!resetComplete && !positiveRailHit && !pitEvent
+            && !cpuWriteEvent)
             break;
 
         // Complete an older C54 discharge before processing a coincident new
@@ -5762,6 +5809,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             }
         }
 
+        // This block deliberately precedes the byte-write block: a running
+        // OUT transition tied with the MSB still belongs to the old count.
         if (pitEvent)
         {
             const auto event = dco.consumePitEvent();
@@ -5788,6 +5837,21 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             {
                 beginDcoDischarge(
                     voice, eventSamplesAgo(elapsed), addCorrections);
+            }
+        }
+
+        if (cpuWriteEvent)
+        {
+            if (dco.pitWriteState == Dco::PitWriteState::awaitingLsb)
+            {
+                dco.pitWriteState = Dco::PitWriteState::awaitingMsb;
+                dco.cpuStatesToWrite = pitLsbToMsbStates;
+            }
+            else if (dco.pitWriteState == Dco::PitWriteState::awaitingMsb)
+            {
+                dco.stageMode3Count(dco.pitWriteDivider);
+                dco.pitWriteState = Dco::PitWriteState::idle;
+                dco.cpuStatesToWrite = 0.0;
             }
         }
     }

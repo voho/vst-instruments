@@ -896,6 +896,12 @@ private:
     // instrument has comes from the reference and the control chain, not from
     // six independent oscillator cores.
     static constexpr double masterClockHz = 8000000.0;
+    // IC29 executes one state every 250 ns. The recovered pitch-write paths
+    // below are timed in these states, independently of the selected DCO clock.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8
+    static constexpr double voiceCpuStateHz = 4000000.0;
+    static constexpr double pitControlToLsbStates = 55.0;
+    static constexpr double pitLsbToMsbStates = 11.0;
     static constexpr std::uint32_t minimumDivider = 8u;
     static constexpr std::uint32_t maximumDivider = 65535u;
     // The whole instrument is served by one converter and three 8-way muxes:
@@ -1153,6 +1159,7 @@ private:
         enum class PitState : std::uint8_t
         {
             stopped,
+            awaitingCount,
             awaitingInitialLoad,
             running
         };
@@ -1164,6 +1171,13 @@ private:
             risingEdge
         };
 
+        enum class PitWriteState : std::uint8_t
+        {
+            idle,
+            awaitingLsb,
+            awaitingMsb
+        };
+
         // `divider` is the count currently in the counter element. A complete
         // count-only LSB/MSB write updates only the count register; Mode 3
         // transfers it to the counter element after the current OUT half-cycle.
@@ -1172,13 +1186,20 @@ private:
         bool pendingDividerValid { false };
         PitState pitState { PitState::stopped };
         bool pitOutHigh { true };
+        // One voice CPU can have only its current M82C53 byte sequence in
+        // flight. The LSB latch becomes a complete count register on the MSB;
+        // no general CPU/event queue is needed for this fixed firmware path.
+        PitWriteState pitWriteState { PitWriteState::idle };
+        std::uint32_t pitWriteDivider { 4545u };
+        double cpuStatesToWrite { 0.0 };
         // Engine construction has no earlier powered-card capacitor state.
         // Keep that initialization policy explicit; a warm ramp held at its
         // positive supply bound also has zero slope/reset time and must not be
         // mistaken for cold.
         bool coldInitialLoadPending { false };
         // Remaining selected input-clock periods to the next CE load or OUT
-        // transition. Its fractional part retains clock phase between samples.
+        // transition. While CE awaits both count bytes this is instead only
+        // the continuously running selected-CLK phase, kept in (0, 1].
         double pitClocksToEvent { 0.0 };
         double periodSamples { 100.0 };
         // Linear C54 compatibility model. Positive OUT starts the discharge;
@@ -1210,11 +1231,9 @@ private:
 
         [[nodiscard]] static std::uint32_t mode3HalfClocks(
             std::uint32_t count, bool outHigh) noexcept;
-        // The firmware's control-word branch is represented at one converter
-        // timestamp. The exact CPU-instruction spacing and asynchronous CLK
-        // phase remain OQ-08 timing policy; the retained fractional countdown
-        // locates the next clock whenever a running CE supplies that phase.
-        [[nodiscard]] bool programMode3(std::uint32_t count) noexcept;
+        // A control word stops CE while the selected PIT input-clock phase
+        // continues. The later complete LSB/MSB pair arms the next-clock load.
+        [[nodiscard]] bool programMode3() noexcept;
         void stageMode3Count(std::uint32_t count) noexcept;
         [[nodiscard]] PitEvent consumePitEvent() noexcept;
         void reset() noexcept;
