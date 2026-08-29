@@ -1369,6 +1369,8 @@ all-sound-off, all-notes-off, Panic and prepare lifecycle clearing), UI
 keyswitch triggering of both banks, panic, output-gain and APVTS
 output-mode effects, three visible non-overlapping mode buttons, three visible
 non-overlapping Amp Voice buttons, Modern default and missing-field migration,
+Space activation for every keyboard-focusable PANIC and exclusive-choice
+button with disabled controls rejecting it,
 all 25 knob accessibility handlers exposing their canonical full parameter
 names while retaining the compact visible captions,
 deterministic
@@ -2270,6 +2272,21 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 keyboard Space activation
+
+- PANIC and all six exclusive-choice strips now activate with Space as well as
+  Return. They already requested keyboard focus and drew a focus outline, but
+  JUCE 8.0.14's base text-button key handler accepts Return only. One shared
+  Electry text-button type maps Space into that same JUCE activation path, so
+  asynchronous click delivery, radio selection and existing callbacks retain
+  one implementation rather than acquiring a second UI action path.
+- The plug-in regression proves an enabled instance accepts Space, a disabled
+  instance rejects it through JUCE's existing enabled-state guard, and PANIC
+  plus every button in every choice strip uses the shared type. This changes no
+  bounds, colours, labels, screenshots, parameters or audio and adds no steady
+  UI or render CPU work; it is one key-event comparison when a focused button
+  receives input.
 
 ### 2026-08-29 bridgeward upstroke endpoints
 

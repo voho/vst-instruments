@@ -4070,6 +4070,21 @@ juce::Image renderEditorSnapshot (juce::AudioProcessorEditor& editor)
     return snapshot;
 }
 
+void testTextButtonKeyboardActivation()
+{
+    ElectryTextButton enabled { "ENABLED" };
+    expect (enabled.keyPressed (
+                juce::KeyPress { juce::KeyPress::spaceKey }),
+            "an enabled Electry button did not route Space through its "
+            "activation path");
+
+    ElectryTextButton disabled { "DISABLED" };
+    disabled.setEnabled (false);
+    expect (! disabled.keyPressed (
+                 juce::KeyPress { juce::KeyPress::spaceKey }),
+            "a disabled Electry button consumed Space");
+}
+
 void testEditorRendering()
 {
     ElectryAudioProcessor processor;
@@ -4170,6 +4185,9 @@ void testEditorRendering()
                         && button->hasFocusOutline(),
                     std::string (componentId)
                         + " choice is not visibly keyboard-focusable");
+            expect (dynamic_cast<ElectryTextButton*> (button) != nullptr,
+                    std::string (componentId)
+                        + " choice does not activate with Space");
             expect (button->getTitle() == expectedTitle,
                     std::string (componentId)
                         + " choice has no contextual accessibility title");
@@ -4266,7 +4284,7 @@ void testEditorRendering()
         factoryProgramControl->setSelectedId (1, juce::sendNotificationSync);
     }
 
-    auto* panicControl = dynamic_cast<juce::TextButton*> (
+    auto* panicControl = dynamic_cast<ElectryTextButton*> (
         findControl ("panic"));
     expect (panicControl != nullptr,
             "editor is missing the PANIC action");
@@ -5179,6 +5197,7 @@ int main()
     testOutputGainImpact();
     testPerformanceControls();
     testOutputModeAudioField();
+    testTextButtonKeyboardActivation();
     testEditorRendering();
     testPrepareReleaseCycles();
     runRealtimeDeadlineBenchmarkIfRequested();

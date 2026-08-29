@@ -613,6 +613,14 @@ void ElectryKeyboardComponent::drawBlackNote (
 // Choice strip
 // ---------------------------------------------------------------------------
 
+bool ElectryTextButton::keyPressed (const juce::KeyPress& key)
+{
+    return juce::TextButton::keyPressed (
+        key.isKeyCode (juce::KeyPress::spaceKey)
+            ? juce::KeyPress { juce::KeyPress::returnKey }
+            : key);
+}
+
 ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
                                         juce::StringArray choices,
                                         int maximumColumns,
@@ -627,7 +635,7 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
 
     for (int index = 0; index < choices.size(); ++index)
     {
-        auto button = std::make_unique<juce::TextButton> (choices[index]);
+        auto button = std::make_unique<ElectryTextButton> (choices[index]);
         button->setTitle (choiceContext + ": " + choices[index]);
         button->setClickingTogglesState (true);
         button->setRadioGroupId (1, juce::dontSendNotification);

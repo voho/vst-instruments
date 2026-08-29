@@ -31,6 +31,17 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
+// JUCE's text button activates on Return but not Space. Electry advertises
+// these controls as keyboard-focusable, so give its action and radio buttons
+// the conventional second activation key through the same JUCE click path.
+class ElectryTextButton final : public juce::TextButton
+{
+public:
+    using juce::TextButton::TextButton;
+
+    bool keyPressed (const juce::KeyPress&) override;
+};
+
 // A guitar-oriented keyboard for keyswitches and the pitched playable range.
 // Pick style stays latched; the play-style highlight follows either its latch
 // or the active HOLD override.
@@ -75,7 +86,7 @@ public:
 
 private:
     juce::String titleText;
-    std::vector<std::unique_ptr<juce::TextButton>> buttons;
+    std::vector<std::unique_ptr<ElectryTextButton>> buttons;
     int maxColumns;
     int selectedIndex = 0;
 };
@@ -194,7 +205,7 @@ private:
     juce::Label keyboardHintLabel;
     juce::ComboBox factoryProgramSelector;
     ElectryStatusDisplay statusDisplay;
-    juce::TextButton panicButton { "PANIC" };
+    ElectryTextButton panicButton { "PANIC" };
 
     // The two independent keyswitch banks: how the pick moves and what the
     // hands do. Any combination of the two is reachable.
