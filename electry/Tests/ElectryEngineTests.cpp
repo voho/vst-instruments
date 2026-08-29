@@ -799,6 +799,22 @@ struct ElectryEngineTestAccess
              + 4.0f * sectionDeficit(loop.dispersionHighCoefficient);
     }
 
+    static std::array<float, 9> loopFilterState(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return {};
+        const auto& loop = engine
+            .voices_[static_cast<std::size_t>(stringIndex)].vertical;
+        return {
+            loop.damping.state,
+            loop.dispersion1.state, loop.dispersion2.state,
+            loop.dispersion3.state, loop.dispersion4.state,
+            loop.dispersion5.state, loop.dispersion6.state,
+            loop.dispersion7.state, loop.dispersion8.state
+        };
+    }
+
     static double modalMagnitudeAt(float frequencyHz, float q, float modeGain,
                                    float sampleRate,
                                    float evaluationFrequencyHz) noexcept
@@ -16965,6 +16981,7 @@ void testPickupGeometryFollowsLiveWaveSpeed()
     {
         auto coupledParameters = parameters;
         coupledParameters.sympatheticAmount = 1.0f;
+        coupledParameters.stringGauge = 0.0f;
         ElectryEngine coupled;
         coupled.prepare(sampleRate, 512);
         coupled.setParameters(coupledParameters);
@@ -16977,6 +16994,10 @@ void testPickupGeometryFollowsLiveWaveSpeed()
         expect(TestAccess::snapshot(coupled, idleString).sympatheticReady,
                "the sympathetic pickup fixture did not wake idle E1");
         const auto idleRest = TestAccess::pickupGeometry(coupled, idleString);
+        const auto idleDispersion = TestAccess::snapshot(
+            coupled, idleString);
+        const auto idleFilterState = TestAccess::loopFilterState(
+            coupled, idleString);
 
         ElectryEngine played;
         played.prepare(sampleRate, 512);
@@ -16986,6 +17007,8 @@ void testPickupGeometryFollowsLiveWaveSpeed()
         played.reset();
         played.noteOn(ElectryEngine::lowestPlayableNote, 0.9f);
         const auto playedOpen = TestAccess::pickupGeometry(played, idleString);
+        const auto playedDispersion = TestAccess::snapshot(
+            played, idleString);
         expect(idleRest.neckTapDelay == playedOpen.neckTapDelay
                    && idleRest.bridgeTapDelay == playedOpen.bridgeTapDelay
                    && idleRest.apertureDelay == playedOpen.apertureDelay
@@ -16995,6 +17018,38 @@ void testPickupGeometryFollowsLiveWaveSpeed()
                    && TestAccess::coilPairActive(coupled, idleString, true)
                    && TestAccess::coilPairActive(coupled, idleString, false),
                "idle E1 did not expose distinct pickup positions and two coils");
+        expect(idleDispersion.inharmonicity
+                       == playedDispersion.inharmonicity
+                   && idleDispersion.dispersionLowCoefficient
+                       == playedDispersion.dispersionLowCoefficient
+                   && idleDispersion.dispersionHighCoefficient
+                       == playedDispersion.dispersionHighCoefficient
+                   && idleDispersion.dispersionLowPartial
+                       == playedDispersion.dispersionLowPartial
+                   && idleDispersion.dispersionHighPartial
+                       == playedDispersion.dispersionHighPartial,
+               "idle E1 did not reuse the played open string's stiffness fit");
+        expect(idleDispersion.inharmonicity > 0.0f
+                   && std::all_of(idleFilterState.begin() + 1,
+                                  idleFilterState.end(),
+                                  [] (float state)
+                                  {
+                                      return std::isfinite(state)
+                                          && state != 0.0f;
+                                  }),
+               "idle E1 did not run its eight-stage dispersion cascade");
+        const auto expectIdleTuning = [&] (const std::string& context)
+        {
+            const float effective = TestAccess::effectiveLoopFrequency(
+                coupled, idleString, false, true);
+            expect(std::isfinite(effective)
+                       && std::abs(centsBetween(
+                              effective,
+                              TestAccess::sympatheticFrequency(
+                                  coupled, idleString))) < 0.25,
+                   context + " detuned idle E1");
+        };
+        expectIdleTuning("sympathetic dispersion phase compensation");
 
         coupledParameters.pickupType = 1.0f;
         coupled.setParameters(coupledParameters);
@@ -17025,17 +17080,72 @@ void testPickupGeometryFollowsLiveWaveSpeed()
                    && TestAccess::coilPairActive(coupled, idleString, false),
                "idle E1 did not restore its humbucker pickup geometry");
 
+        float bendHighWater = TestAccess::effectiveLoopFrequency(
+            coupled, idleString);
+        double bendWorstDrawdownCents = 0.0;
         coupled.setPitchBend(1.0f);
-        StereoBuffer bendSettle(static_cast<int>(0.20 * sampleRate));
-        renderInto(coupled, bendSettle, 17);
-        const auto idleBent = TestAccess::pickupGeometry(coupled, idleString);
+        const int bendTickFrames = TestAccess::hostFramesPerControlPeriod(
+            coupled);
+        StereoBuffer bendTick(bendTickFrames);
+        for (int rendered = 0;
+             rendered < static_cast<int>(0.20 * sampleRate);
+             rendered += bendTickFrames)
+        {
+            renderInto(coupled, bendTick, bendTickFrames);
+            const float current = TestAccess::effectiveLoopFrequency(
+                coupled, idleString);
+            bendHighWater = std::max(bendHighWater, current);
+            bendWorstDrawdownCents = std::max(
+                bendWorstDrawdownCents,
+                centsBetween(bendHighWater, current));
+        }
+        expect(bendWorstDrawdownCents < 0.05,
+               "a rising sympathetic-string bend fell "
+                   + std::to_string(bendWorstDrawdownCents)
+                   + " cents at a loop-filter refit");
+        const auto idleBentGeometry = TestAccess::pickupGeometry(
+            coupled, idleString);
+        const auto idleBentDispersion = TestAccess::snapshot(
+            coupled, idleString);
         const float bendSemitones = 12.0f * std::log2(
             TestAccess::sympatheticFrequency(coupled, idleString)
             / midiHz(ElectryEngine::lowestPlayableNote));
         expect(bendSemitones > 1.9f,
                "the sympathetic pickup fixture did not reach its bend");
-        expectScaled(humbuckerRestored, idleBent, bendSemitones,
+        expectScaled(humbuckerRestored, idleBentGeometry, bendSemitones,
                      "live sympathetic-string bend");
+        const float fittedBend = TestAccess::lastConfiguredSemitones(
+            coupled, idleString);
+        const float expectedBendRatio = std::exp2(-fittedBend / 6.0f);
+        expect(fittedBend > 1.9f
+                   && std::abs(idleBentDispersion.inharmonicity
+                                   / idleDispersion.inharmonicity
+                                   / expectedBendRatio
+                               - 1.0f) < 2.0e-5f,
+               "live sympathetic-string bend left stiffness outside the "
+               "1/T law");
+        expectIdleTuning("live sympathetic-string bend");
+
+        // Gauge changes alter flexural rigidity, even while this unowned
+        // string is already ringing. This also pins the inactive-voice cache
+        // invalidation: without it B remains on the light string exactly.
+        coupledParameters.stringGauge = 1.0f;
+        coupled.setParameters(coupledParameters);
+        renderInto(coupled, endpointSettle, 17);
+        const auto rebuiltDispersion = TestAccess::snapshot(
+            coupled, idleString);
+        const float rebuiltFit = TestAccess::lastConfiguredSemitones(
+            coupled, idleString);
+        constexpr float gaugeBRatio = 121.0f / 81.0f;
+        const float expectedRebuiltRatio = gaugeBRatio
+            * std::exp2(-rebuiltFit / 6.0f);
+        expect(std::abs(rebuiltDispersion.inharmonicity
+                            / idleDispersion.inharmonicity
+                            / expectedRebuiltRatio
+                        - 1.0f) < 0.01f,
+               "live String Gauge automation did not refit idle-string "
+               "dispersion");
+        expectIdleTuning("live sympathetic-string gauge rebuild");
 
         // Picking this already-ringing steel changes ownership, not the
         // physical pickup. Preserve its populated spatial/Faraday memories so
@@ -17044,8 +17154,18 @@ void testPickupGeometryFollowsLiveWaveSpeed()
             TestAccess::pickupHistory(coupled, idleString, true);
         const auto bridgeBeforeHandoff =
             TestAccess::pickupHistory(coupled, idleString, false);
+        const auto filtersBeforeHandoff = TestAccess::loopFilterState(
+            coupled, idleString);
         const std::array<bool, 3> populated { true, true, true };
         coupled.noteOn(ElectryEngine::lowestPlayableNote, 0.9f);
+        const auto filtersAfterHandoff = TestAccess::loopFilterState(
+            coupled, idleString);
+        bool filtersChokedTogether = true;
+        for (std::size_t i = 0; i < filtersBeforeHandoff.size(); ++i)
+        {
+            filtersChokedTogether = filtersChokedTogether
+                && filtersAfterHandoff[i] == 0.22f * filtersBeforeHandoff[i];
+        }
         expect(neckBeforeHandoff == populated
                    && bridgeBeforeHandoff == populated
                    && ! TestAccess::snapshot(coupled, idleString)
@@ -17055,6 +17175,9 @@ void testPickupGeometryFollowsLiveWaveSpeed()
                    && TestAccess::pickupHistory(coupled, idleString, false)
                        == bridgeBeforeHandoff,
                "the sympathetic-to-played handoff cleared pickup history");
+        expect(filtersChokedTogether,
+               "the sympathetic-to-played handoff left loop-filter memory "
+               "outside the physical choke");
     }
 
 }
@@ -17226,7 +17349,10 @@ void testHumbuckerTwoCoilNotch()
             { 4, 24.7026 }, { 6, 22.5968 }, { 8, 15.7140 },
             { 10, 5.52877 }, { 12, -2.75441 }, { 14, -7.49994 },
             { 16, -13.3693 }, { 18, -29.0575 }, { 20, -41.6398 },
-            { 22, -57.8266 }, { 24, -67.7500 }, { 26, -60.3338 },
+            // The very low-level 24th bin includes the default sympathetic
+            // bank; its reference moved when idle strings gained the same
+            // stiff-string dispersion as played strings.
+            { 22, -57.8266 }, { 24, -61.3650 }, { 26, -60.3338 },
             { 28, -65.1425 },
 #endif
         }};
@@ -18345,6 +18471,30 @@ void testCpuGuardrail()
               << idleDefaultCase << "x default (Bridge + Mono)\n";
     expect(idleWorstCase < ceiling && idleDefaultCase < ceiling,
            "the sympathetic-string render exceeded the portable CPU ceiling");
+
+    // The idle strings share the played-string dispersion fitter. Exercise a
+    // full wheel glide here as well as the settled render above: without the
+    // six-cent fit quantum this would run seven 520-candidate searches on
+    // every control tick, a cost the all-active glide below cannot expose.
+    double idleGlideCase = 1.0e9;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        ElectryEngine glideEngine;
+        strikeWithIdleStrings(
+            glideEngine, PickupSelector::Both, electry::OutputMode::Stereo);
+        wakeIdleStrings(glideEngine, "idle wheel-glide CPU fixture");
+        glideEngine.setPitchBend(1.0f);
+        idleGlideCase = std::min(
+            idleGlideCase, timeRender(glideEngine, buffer));
+    }
+    std::cout << "One-active/seven-idle wheel-glide CPU ratio at 96 kHz: "
+              << idleGlideCase << "x\n";
+    expect(idleGlideCase < ceiling,
+           "a bent sympathetic-string bank exceeded the portable CPU ceiling");
+    expect(idleGlideCase < idleWorstCase * 2.0,
+           "the sympathetic wheel glide costs far more than its settled "
+           "render (" + std::to_string(idleGlideCase) + "x vs "
+               + std::to_string(idleWorstCase) + "x)");
 
     // The default configuration is cheaper than the worst case, and it is
     // deliberately not asserted here. It used to be, as `defaultCase <

@@ -1431,6 +1431,11 @@ private:
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
     void configureVoiceDamping(Voice& voice, PlayStyle dampingStyle) noexcept;
+    void configureVoiceDispersion(Voice& voice, float configuredF0,
+                                  float liveFret,
+                                  float liveUnbentFrequency,
+                                  float dispersionOmega,
+                                  float dispersionPeriod) noexcept;
     void configurePickupGeometry(Voice& voice, float soundingLength,
                                  float period, float waveSpeed) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;

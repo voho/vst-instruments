@@ -3070,6 +3070,157 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     voice.compensationDirty = true;
 }
 
+void ElectryEngine::configureVoiceDispersion(
+    Voice& voice, float configuredF0, float liveFret,
+    float liveUnbentFrequency, float dispersionOmega,
+    float dispersionPeriod) noexcept
+{
+    // Stiffness inharmonicity from the string's physical make-up. Wound
+    // strings use an empirical effective flexural diameter rather than the
+    // full winding diameter. This solve is shared by played and
+    // sympathetically ringing instances of the same physical steel.
+    const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
+    const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
+                                  smoothedParameters_.stringGauge);
+    const float diameter = spec.plainDiameterMm * 1.0e-3f * gaugeScale;
+    const float bendingDiameter = diameter * spec.bendingCoreScale;
+    const float openLength = scaleLengthMetres();
+    const float soundingLength = openLength
+        * std::exp2(-liveFret / 12.0f);
+    const float massScale = spec.wound ? 0.85f : 1.0f;
+    const float linearMass = massScale * steelDensity * pi
+                           * 0.25f * diameter * diameter;
+    const float waveSpeed = 2.0f * soundingLength * liveUnbentFrequency;
+    const float tension = linearMass * waveSpeed * waveSpeed;
+    // Kemp's stiff-string derivation gives
+    // B = pi^2 E S kappa^2 / (T L^2)
+    // and f0 = sqrt(T / mu) / (2 L), so a bend or fretting-hand
+    // vibrato at fixed L scales T by the square of its pitch ratio and
+    // B by the inverse square. A pure fret/slide move keeps
+    // L * f constant and therefore leaves this tension ratio at one.
+    // Equations 3--5:
+    // https://link.springer.com/article/10.1007/s42452-020-2391-2
+    // The default-off energy-attack experiment remains outside this
+    // static construction fit; configuredF0 deliberately excludes it.
+    const float tensionPitchRatio = configuredF0
+        / std::max(liveUnbentFrequency, 20.0f);
+    const float liveTension = tension
+        * tensionPitchRatio * tensionPitchRatio;
+#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
+    voice.stringTensionNewtons = liveTension;
+#endif
+    const float bendingStiffness = pi * pi * pi * steelYoungModulus
+                                 * bendingDiameter * bendingDiameter
+                                 * bendingDiameter * bendingDiameter / 64.0f;
+    float inharmonicity = bendingStiffness
+        / std::max(liveTension * soundingLength * soundingLength, 1.0e-9f);
+    inharmonicity = clampf(inharmonicity, 0.0f, 3.0e-3f);
+
+    // Eight cascaded first-order sections are fitted in factored form: four
+    // share each band coefficient. A bounded two-pass grid minimises relative
+    // phase-delay error at both reference partials. This runs only at
+    // note/control setup, never in the sample loop.
+    const float highPartial = clampf(
+        std::floor(0.30f * static_cast<float>(sampleRate_) / configuredF0),
+        4.0f, 16.0f);
+    const float lowPartial = std::min(
+        4.0f, std::max(2.0f, std::floor(0.5f * highPartial)));
+    float lowCoefficient = 0.0f;
+    float highCoefficient = 0.0f;
+
+    const auto wantedDeficit = [&] (float partial)
+    {
+        const float stretch =
+            std::sqrt((1.0f + inharmonicity * partial * partial)
+                      / (1.0f + inharmonicity));
+        return dispersionPeriod * (1.0f - 1.0f / stretch);
+    };
+    // allpassPhaseDelay(coefficient, omega) - the term at the sounding
+    // fundamental itself, as opposed to the reference partial - depends on
+    // the candidate coefficient alone, not on which of the two reference
+    // partials it is being scored against. Resolve the base term once per
+    // candidate so the grid does only the distinct atan2 evaluations.
+    const auto pairDeficitFromBase = [&] (float base, float coefficient,
+                                          float partial)
+    {
+        const float omegaRef = std::min(
+            dispersionOmega * partial, pi * 0.95f);
+        return 2.0f * (base - allpassPhaseDelay(coefficient, omegaRef));
+    };
+    if (inharmonicity > 1.0e-8f)
+    {
+        const float wantedLow = wantedDeficit(lowPartial);
+        const float wantedHigh = wantedDeficit(highPartial);
+        const float lowScale = std::max(wantedLow, 0.01f);
+        const float highScale = std::max(wantedHigh, 0.04f);
+        float bestError = 1.0e30f;
+        float lowMinimum = -0.995f;
+        float lowMaximum = 0.0f;
+        float highMinimum = -0.995f;
+        float highMaximum = 0.0f;
+
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            const int divisions = pass == 0 ? 17 : 13;
+            const float lowStep = (lowMaximum - lowMinimum)
+                                / static_cast<float>(divisions);
+            const float highStep = (highMaximum - highMinimum)
+                                 / static_cast<float>(divisions);
+            for (int lowIndex = 0; lowIndex <= divisions; ++lowIndex)
+            {
+                const float candidateLow = lowMinimum
+                    + lowStep * static_cast<float>(lowIndex);
+                const float lowBase = allpassPhaseDelay(
+                    candidateLow, dispersionOmega);
+                for (int highIndex = 0; highIndex <= divisions; ++highIndex)
+                {
+                    const float candidateHigh = highMinimum
+                        + highStep * static_cast<float>(highIndex);
+                    const float highBase = allpassPhaseDelay(
+                        candidateHigh, dispersionOmega);
+                    const float actualLow =
+                        2.0f * pairDeficitFromBase(
+                            lowBase, candidateLow, lowPartial)
+                        + 2.0f * pairDeficitFromBase(
+                            highBase, candidateHigh, lowPartial);
+                    const float actualHigh =
+                        2.0f * pairDeficitFromBase(
+                            lowBase, candidateLow, highPartial)
+                        + 2.0f * pairDeficitFromBase(
+                            highBase, candidateHigh, highPartial);
+                    const float lowError = (actualLow - wantedLow) / lowScale;
+                    const float highError =
+                        (actualHigh - wantedHigh) / highScale;
+                    const float error = lowError * lowError
+                                      + 1.30f * highError * highError
+                                      + 1.0e-5f
+                                        * (candidateLow * candidateLow
+                                           + candidateHigh * candidateHigh);
+                    if (error < bestError)
+                    {
+                        bestError = error;
+                        lowCoefficient = candidateLow;
+                        highCoefficient = candidateHigh;
+                    }
+                }
+            }
+
+            lowMinimum = std::max(-0.995f, lowCoefficient - lowStep);
+            lowMaximum = std::min(0.0f, lowCoefficient + lowStep);
+            highMinimum = std::max(-0.995f, highCoefficient - highStep);
+            highMaximum = std::min(0.0f, highCoefficient + highStep);
+        }
+    }
+
+    voice.inharmonicity = inharmonicity;
+    voice.dispersionLowPartial = lowPartial;
+    voice.dispersionHighPartial = highPartial;
+    voice.vertical.dispersionLowCoefficient = lowCoefficient;
+    voice.vertical.dispersionHighCoefficient = highCoefficient;
+    voice.horizontal.dispersionLowCoefficient = lowCoefficient;
+    voice.horizontal.dispersionHighCoefficient = highCoefficient;
+}
+
 void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept
 {
     float legatoOffset = 0.0f;
@@ -3369,154 +3520,11 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         voice.lastConfiguredSemitones = semitones;
         voice.lastConfiguredFrequency = configuredF0;
         voice.lastConfiguredLiveFret = liveFret;
-
-        // Stiffness inharmonicity from the string's physical make-up. Wound
-        // strings use an empirical effective flexural diameter rather than
-        // the full winding diameter.
-        const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-        const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
-                                      smoothedParameters_.stringGauge);
-        const float diameter = spec.plainDiameterMm * 1.0e-3f * gaugeScale;
-        const float bendingDiameter = diameter * spec.bendingCoreScale;
-        const float openLength = scaleLengthMetres();
         const float liveUnbentFrequency = voice.baseFrequency
             * std::exp2(legatoOffset / 12.0f);
-        const float soundingLength = openLength
-            * std::exp2(-liveFret / 12.0f);
-        const float massScale = spec.wound ? 0.85f : 1.0f;
-        const float linearMass = massScale * steelDensity * pi
-                               * 0.25f * diameter * diameter;
-        const float waveSpeed = 2.0f * soundingLength * liveUnbentFrequency;
-        const float tension = linearMass * waveSpeed * waveSpeed;
-        // Kemp's stiff-string derivation gives
-        // B = pi^2 E S kappa^2 / (T L^2)
-        // and f0 = sqrt(T / mu) / (2 L), so a bend or fretting-hand
-        // vibrato at fixed L scales T by the square of its pitch ratio and
-        // B by the inverse square. A pure fret/slide move keeps
-        // L * f constant and therefore leaves this tension ratio at one.
-        // Equations 3--5:
-        // https://link.springer.com/article/10.1007/s42452-020-2391-2
-        // The default-off energy-attack experiment remains outside this
-        // static construction fit; configuredF0 deliberately excludes it.
-        const float tensionPitchRatio = configuredF0
-            / std::max(liveUnbentFrequency, 20.0f);
-        const float liveTension = tension
-            * tensionPitchRatio * tensionPitchRatio;
-#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
-        voice.stringTensionNewtons = liveTension;
-#endif
-        const float bendingStiffness = pi * pi * pi * steelYoungModulus
-                                     * bendingDiameter * bendingDiameter
-                                     * bendingDiameter * bendingDiameter / 64.0f;
-        float inharmonicity = bendingStiffness
-            / std::max(liveTension * soundingLength * soundingLength, 1.0e-9f);
-        inharmonicity = clampf(inharmonicity, 0.0f, 3.0e-3f);
-
-        // Eight cascaded first-order sections are fitted in factored form:
-        // four share each band coefficient. A
-        // bounded two-pass grid minimises relative phase-delay error at both
-        // reference partials. This is done only at note/control setup.
-        const float highPartial = clampf(
-            std::floor(0.30f * static_cast<float>(sampleRate_) / configuredF0),
-            4.0f, 16.0f);
-        const float lowPartial = std::min(
-            4.0f, std::max(2.0f, std::floor(0.5f * highPartial)));
-        float lowCoefficient = 0.0f;
-        float highCoefficient = 0.0f;
-
-        const auto wantedDeficit = [&] (float partial)
-        {
-            const float stretch =
-                std::sqrt((1.0f + inharmonicity * partial * partial)
-                          / (1.0f + inharmonicity));
-            return dispersionPeriod * (1.0f - 1.0f / stretch);
-        };
-        // allpassPhaseDelay(coefficient, omega) - the term at the sounding
-        // fundamental itself, as opposed to the reference partial - depends on
-        // the candidate coefficient alone, not on which of the two reference
-        // partials it is being scored against. pairDeficit() used to take that
-        // base term as a fresh call every time, so each grid point below
-        // recomputed it twice for candidateLow (once scoring lowPartial, once
-        // scoring highPartial) and twice for candidateHigh, four calls that
-        // could only ever produce two distinct values. pairDeficitFromBase()
-        // takes the base term already solved instead, so the caller can share
-        // it: candidateLow's base is resolved once per lowIndex, outside the
-        // highIndex loop it does not depend on, and candidateHigh's base is
-        // resolved once per grid point instead of twice.
-        const auto pairDeficitFromBase = [&] (float base, float coefficient,
-                                              float partial)
-        {
-            const float omegaRef = std::min(
-                dispersionOmega * partial, pi * 0.95f);
-            return 2.0f * (base - allpassPhaseDelay(coefficient, omegaRef));
-        };
-        if (inharmonicity > 1.0e-8f)
-        {
-            const float wantedLow = wantedDeficit(lowPartial);
-            const float wantedHigh = wantedDeficit(highPartial);
-            const float lowScale = std::max(wantedLow, 0.01f);
-            const float highScale = std::max(wantedHigh, 0.04f);
-            float bestError = 1.0e30f;
-            float lowMinimum = -0.995f;
-            float lowMaximum = 0.0f;
-            float highMinimum = -0.995f;
-            float highMaximum = 0.0f;
-
-            for (int pass = 0; pass < 2; ++pass)
-            {
-                const int divisions = pass == 0 ? 17 : 13;
-                const float lowStep = (lowMaximum - lowMinimum)
-                                    / static_cast<float>(divisions);
-                const float highStep = (highMaximum - highMinimum)
-                                     / static_cast<float>(divisions);
-                for (int lowIndex = 0; lowIndex <= divisions; ++lowIndex)
-                {
-                    const float candidateLow = lowMinimum
-                        + lowStep * static_cast<float>(lowIndex);
-                    const float lowBase = allpassPhaseDelay(
-                        candidateLow, dispersionOmega);
-                    for (int highIndex = 0; highIndex <= divisions; ++highIndex)
-                    {
-                        const float candidateHigh = highMinimum
-                            + highStep * static_cast<float>(highIndex);
-                        const float highBase = allpassPhaseDelay(
-                            candidateHigh, dispersionOmega);
-                        const float actualLow =
-                            2.0f * pairDeficitFromBase(lowBase, candidateLow, lowPartial)
-                            + 2.0f * pairDeficitFromBase(highBase, candidateHigh, lowPartial);
-                        const float actualHigh =
-                            2.0f * pairDeficitFromBase(lowBase, candidateLow, highPartial)
-                            + 2.0f * pairDeficitFromBase(highBase, candidateHigh, highPartial);
-                        const float lowError = (actualLow - wantedLow) / lowScale;
-                        const float highError = (actualHigh - wantedHigh) / highScale;
-                        const float error = lowError * lowError
-                                          + 1.30f * highError * highError
-                                          + 1.0e-5f
-                                            * (candidateLow * candidateLow
-                                               + candidateHigh * candidateHigh);
-                        if (error < bestError)
-                        {
-                            bestError = error;
-                            lowCoefficient = candidateLow;
-                            highCoefficient = candidateHigh;
-                        }
-                    }
-                }
-
-                lowMinimum = std::max(-0.995f, lowCoefficient - lowStep);
-                lowMaximum = std::min(0.0f, lowCoefficient + lowStep);
-                highMinimum = std::max(-0.995f, highCoefficient - highStep);
-                highMaximum = std::min(0.0f, highCoefficient + highStep);
-            }
-        }
-
-        voice.inharmonicity = inharmonicity;
-        voice.dispersionLowPartial = lowPartial;
-        voice.dispersionHighPartial = highPartial;
-        voice.vertical.dispersionLowCoefficient = lowCoefficient;
-        voice.vertical.dispersionHighCoefficient = highCoefficient;
-        voice.horizontal.dispersionLowCoefficient = lowCoefficient;
-        voice.horizontal.dispersionHighCoefficient = highCoefficient;
+        configureVoiceDispersion(
+            voice, configuredF0, liveFret, liveUnbentFrequency,
+            dispersionOmega, dispersionPeriod);
         voice.compensationDirty = true;
     }
 
@@ -3676,7 +3684,11 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
             // its delay target and loop filter are re-solved without clearing
             // the line, so the ring never clicks.
             if (voice.sympatheticReady)
+            {
+                if (geometryDirty)
+                    voice.lastConfiguredSemitones = -999.0f;
                 configureSympatheticString(voice);
+            }
             continue;
         }
         if (dampingDirty)
@@ -3778,6 +3790,31 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     const float f0 = openFrequency * waveSpeedRatio;
     const float period = sampleRate / f0;
     const float omega = twoPi * f0 * inverseSampleRate_;
+    auto& loop = voice.vertical;
+    // The coupled open string is the same stiff steel as its played-open
+    // counterpart. Keep the expensive two-band fit on the same six-cent
+    // control quantum as a played voice while compensating its phase at every
+    // smaller tuning move.
+    const bool fitMoved = ! voice.sympatheticReady
+        || std::abs(pitchBendSemitones_ - voice.lastConfiguredSemitones) > 0.06f
+        || std::abs(voice.lastConfiguredLiveFret) > 0.06f
+        || std::abs(f0 - voice.lastConfiguredFrequency)
+               > 3.5e-3f * std::max(f0, 20.0f);
+    float previousDampingPhaseDelay = 0.0f;
+    float previousDispersionPhaseDelay = 0.0f;
+    if (voice.sympatheticReady)
+    {
+        previousDampingPhaseDelay = onePolePhaseDelay(
+            loop.loopDampingCoefficient, omega);
+        if (fitMoved)
+        {
+            previousDispersionPhaseDelay =
+                4.0f * allpassPhaseDelay(
+                loop.dispersionLowCoefficient, omega)
+                + 4.0f * allpassPhaseDelay(
+                    loop.dispersionHighCoefficient, omega);
+        }
+    }
 
     // An open string that nobody is touching rings longer than a fretted one,
     // but it still follows the string set, its age, and the bridge hand.
@@ -3796,9 +3833,14 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     // T60 of 3.7 s where the same string played decays that band in 0.12 s. A
     // sympathetic ring is not a bright metallic reverb, and the whole coupled
     // bank was reading as one.
-    auto& loop = voice.vertical;
-    loop.dispersionLowCoefficient = 0.0f;
-    loop.dispersionHighCoefficient = 0.0f;
+    if (fitMoved)
+    {
+        voice.lastConfiguredSemitones = pitchBendSemitones_;
+        voice.lastConfiguredFrequency = f0;
+        voice.lastConfiguredLiveFret = 0.0f;
+        configureVoiceDispersion(
+            voice, f0, 0.0f, openFrequency, omega, period);
+    }
     const float highRatio = clampf(
         highFrequencyDecayRatio(voice.stringIndex)
             * (palmMuteBlend_ > 0.0f ? lerp(1.0f, 0.62f, palmMuteBlend_) : 1.0f),
@@ -3833,10 +3875,21 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     loop.fittedLossDepth = 0.0f;
     loop.fittedLossDipActive = false;
 #endif
+    const float dispersionPhaseDelay =
+        4.0f * allpassPhaseDelay(loop.dispersionLowCoefficient, omega)
+        + 4.0f * allpassPhaseDelay(
+            loop.dispersionHighCoefficient, omega);
+    const float dampingPhaseDelay = onePolePhaseDelay(
+        loop.loopDampingCoefficient, omega);
+    const float loopPhaseDelay = dampingPhaseDelay + dispersionPhaseDelay;
     const float compensatedPeriod = clampf(
-        period - onePolePhaseDelay(loop.loopDampingCoefficient, omega),
+        period - loopPhaseDelay,
         4.0f, static_cast<float>(delayLineSize - 8));
     loop.targetDelay = compensatedPeriod;
+    voice.compensatedPeriodVertical = compensatedPeriod;
+    voice.lastCompensatedSemitones = pitchBendSemitones_;
+    voice.lastCompensatedPeriod = period;
+    voice.compensationDirty = false;
     // Same fixed time constant configureVoicePitch() uses, shared via
     // voiceDelaySmoothing_ so the two call sites cannot drift apart.
     loop.delaySmoothing = voiceDelaySmoothing_;
@@ -3844,6 +3897,14 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     // woken one starts there, so a build change never clicks the ring.
     if (! voice.sympatheticReady)
         loop.currentDelay = compensatedPeriod;
+    else
+        loop.currentDelay = clampf(
+            loop.currentDelay
+                + previousDampingPhaseDelay - dampingPhaseDelay
+                + (fitMoved
+                       ? previousDispersionPhaseDelay - dispersionPhaseDelay
+                       : 0.0f),
+            4.0f, static_cast<float>(delayLineSize - 8));
 
     const float openLength = scaleLengthMetres();
     voice.pickupTensionSemitones = pitchBendSemitones_;
@@ -5016,6 +5077,19 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     {
         for (auto& sample : voice.vertical.line)
             sample *= 0.22f;
+        // The delay line and its filters are one linear ringing state. Choke
+        // all of it by the same amount before the played/fretted fit takes
+        // ownership, rather than letting a full-level filter memory survive
+        // the fretting contact or resetting it into a filter-start transient.
+        voice.vertical.damping.state *= 0.22f;
+        voice.vertical.dispersion1.state *= 0.22f;
+        voice.vertical.dispersion2.state *= 0.22f;
+        voice.vertical.dispersion3.state *= 0.22f;
+        voice.vertical.dispersion4.state *= 0.22f;
+        voice.vertical.dispersion5.state *= 0.22f;
+        voice.vertical.dispersion6.state *= 0.22f;
+        voice.vertical.dispersion7.state *= 0.22f;
+        voice.vertical.dispersion8.state *= 0.22f;
         voice.sympatheticEnergy = 0.0f;
     }
     voice.sympatheticReady = false;
@@ -6585,6 +6659,14 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
     }
 
     float sample = loop.readFractional(loop.currentDelay);
+    sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);
+    sample = loop.dispersion2.process(sample, loop.dispersionLowCoefficient);
+    sample = loop.dispersion3.process(sample, loop.dispersionLowCoefficient);
+    sample = loop.dispersion4.process(sample, loop.dispersionLowCoefficient);
+    sample = loop.dispersion5.process(sample, loop.dispersionHighCoefficient);
+    sample = loop.dispersion6.process(sample, loop.dispersionHighCoefficient);
+    sample = loop.dispersion7.process(sample, loop.dispersionHighCoefficient);
+    sample = loop.dispersion8.process(sample, loop.dispersionHighCoefficient);
     sample = loop.damping.process(sample, loop.loopDampingCoefficient);
     sample *= loop.loopGain * sympatheticHandGain_;
 
