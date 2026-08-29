@@ -900,10 +900,13 @@ private:
     // below are timed in these states, independently of the selected DCO clock.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8
     static constexpr double voiceCpuStateHz = 4000000.0;
-    // T is the existing DCO-converter boundary poll, treated as the start of
-    // ANI PA,$EF. Both recovered paths have completed their MSB store 323
-    // states before it: reset control is T-389, then both paths share the
-    // 55-state LSB and 11-state MSB spacing.
+    // These are recovered no-interrupt instruction-start anchors, not pin
+    // edges. T is product policy at the start of ANI PA,$EF: reset control
+    // starts at T-389, running LSB at T-334, and both paths' MSB at T-323 CPU
+    // states. NEC does not publish exact clock-to-/WR edges, the PA4 write
+    // point inside ANI, or loaded TC4051/0.01-uF settling. ADC/serial are
+    // masked across the PIT bytes but may delay T after EI; their unmeasured
+    // jitter stays unmodelled.
     static constexpr double dcoPitchPrestageStates = 389.0;
     static constexpr double pitControlToLsbStates = 55.0;
     static constexpr double pitLsbToMsbStates = 11.0;

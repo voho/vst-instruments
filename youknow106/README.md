@@ -447,6 +447,26 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model is settled policy: zero inter-voice spread, zero drift, with all seeded variation living in Unit Character as voiced sound design | P3 |
 | OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled and the ladder's ideal taps land within 1.2 dB of the published steps | P3 |
 
+OQ-08's `T-389`, `T-334` and `T-323` values are proven no-interrupt
+**instruction-start** anchors, not external-pin timestamps. NEC specifies
+seven states for STAX but publishes only [write-cycle relationship
+limits](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=12), not an exact
+clock-to-`/WR` edge; its 20-state ANI description likewise does not locate the
+PA output-latch write. The recovered firmware proves that PB/PC are written
+while PA4 inhibits IC24, then `ANI PA,$EF` enables the selected hold, but the
+PA4 edge and TC4051/0.01-uF settling to a declared pitch threshold require a
+hardware capture. In particular, the TC4051's [120 ns typical / 380 ns maximum
+INH-enable row](https://toshiba.semicon-storage.com/info/TC4051BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4051BP#page=6)
+uses a 50 pF test load and is not a settling specification for the board's
+10,000 pF hold. `DI` prevents an interrupt from splitting the PIT bytes, while
+`EI` before the DAC calculation permits ADC or serial service to delay the
+later ANI. The ADC vector and handler total 172 states; a [later CMOS-family
+manual](https://www.renesas.com/en/document/mah/87ad-series-upd78c18-users-manual#page=183)
+documents 16-state automatic entry, which would make one insertion 188 states
+(47.00 us), but it excludes the installed NMOS part and warns of internal
+timing differences. The engine therefore keeps the deterministic
+zero-interrupt profile instead of inventing a pin edge or jitter distribution.
+
 ## Release history
 
 ### 1.1.0 — unreleased
