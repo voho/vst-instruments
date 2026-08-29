@@ -532,7 +532,25 @@ struct YouKnow106TestAccess
             voice.dco.reset();
             voice.dco.periodSamples = engine.oversampledRate_
                                     / (173.0 + 29.0 * card);
-            voice.dco.phase = 0.271 + 0.071 * static_cast<double>(card);
+            const double phase =
+                0.271 + 0.071 * static_cast<double>(card);
+            const double periodSeconds =
+                voice.dco.periodSamples / engine.oversampledRate_;
+            const double resetSeconds = static_cast<double>(
+                YouKnow106Engine::resetFraction(periodSeconds))
+                                      * periodSeconds;
+            const double riseFraction = std::max(
+                1.0 - resetSeconds / periodSeconds, 1.0e-4);
+            voice.dco.rampValue = 2.0 * std::clamp(
+                phase / riseFraction, 0.0, 1.0) - 1.0;
+            voice.dco.rampSlopePerSecond =
+                2.0 / std::max(periodSeconds - resetSeconds, 1.0e-12);
+            voice.dco.resetSecondsRemaining = 0.0;
+            voice.dco.pitState = YouKnow106Engine::Dco::PitState::running;
+            voice.dco.pitOutHigh = phase < 0.5;
+            // This contract probes one interval. Keep the explicit physical
+            // ramp moving while placing its next PIT edge safely beyond it.
+            voice.dco.pitClocksToEvent = 1.0e12;
             voice.dco.renderScale = 1.0f;
             voice.dcoCv = static_cast<float>(173.0 + 29.0 * card);
             voice.dcoCvTarget = voice.dcoCv;

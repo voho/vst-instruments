@@ -259,6 +259,7 @@ struct YouKnow106TestAccess
         engine.prepare(hostRate, 1, hq);
         engine.activeParameters_ = parametersFor(pwmMode, vcaMode);
         engine.targetParameters_ = engine.activeParameters_;
+        engine.refreshVoiceRampCurrentScales();
         engine.converterPassLfoGated_ = -0.37f;
         engine.passiveHoldEventLatch_ = {};
         engine.assignmentRescanPending_ = false;
@@ -292,7 +293,6 @@ struct YouKnow106TestAccess
                 && voiceIndex % 2 == 0;
             voice.sustained = false;
             voice.dco.periodSamples = 1.0e12;
-            voice.dco.phase = 0.25;
             voice.dco.renderScale = 1.0f;
             voice.dcoCv = voice.dcoCvTarget = 261.6f;
             voice.cutoffCounts = voice.cutoffCountsTarget = 1000.0f;
@@ -605,7 +605,6 @@ struct YouKnow106TestAccess
         voice.cardIndex = 0;
         voice.dco.reset();
         voice.dco.periodSamples = 1.0e12;
-        voice.dco.phase = 0.25;
         voice.dco.renderScale = 1.0f;
         voice.moduleCoupling.reset();
         voice.inputCompensation = 1.0f;

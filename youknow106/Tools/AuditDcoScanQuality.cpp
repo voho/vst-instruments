@@ -49,7 +49,8 @@ struct YouKnow106TestAccess
     };
 
     static void configureDco(YouKnow106Engine& engine, double internalRate,
-                             double frequency, Waveform waveform,
+                             double frequency, DcoRange range,
+                             Waveform waveform,
                              float duty) noexcept
     {
         engine.prepare(internalRate, 256, false);
@@ -64,6 +65,7 @@ struct YouKnow106TestAccess
         parameters.envDepth = 0.0f;
         parameters.keyFollow = 0.0f;
         parameters.calibration = 0.0f;
+        parameters.range = range;
         parameters.chorus = ChorusMode::Off;
         parameters.chorusNoise = 0.0f;
         engine.setParameters(parameters);
@@ -73,12 +75,32 @@ struct YouKnow106TestAccess
         voice.cardIndex = 0;
         voice.dco.reset();
         voice.dco.periodSamples = internalRate / frequency;
+        const auto divider = static_cast<std::uint32_t>(std::llround(
+            YouKnow106Engine::rangeClockHz(range) / frequency));
+        voice.dco.divider = divider;
+        voice.dco.pendingDivider = divider;
+        voice.dco.pendingDividerValid = false;
+        voice.dco.pitState = YouKnow106Engine::Dco::PitState::running;
+        voice.dco.pitOutHigh = true;
+        voice.dco.pitClocksToEvent = static_cast<double>(
+            YouKnow106Engine::Dco::mode3HalfClocks(divider, true));
         voice.dcoCv = static_cast<float>(frequency);
         voice.dcoCvTarget = static_cast<float>(frequency);
         voice.dco.renderScale = 1.0f;
+        const double periodSeconds = voice.dco.periodSamples / internalRate;
+        const double resetSeconds = static_cast<double>(
+            YouKnow106Engine::resetFraction(periodSeconds)) * periodSeconds;
+        voice.dco.rampValue = -1.0;
+        voice.dco.rampSlopePerSecond = 2.0 / std::max(
+            periodSeconds - resetSeconds, periodSeconds * 1.0e-4);
+        voice.dco.resetSecondsRemaining = 0.0;
+        voice.dco.positiveRailHeld = false;
         voice.pulseDuty = duty;
-        voice.previousPulseDuty = duty;
-        voice.pulseDutyPrimed = true;
+        voice.pulseThresholdVolts = 12.0f * (1.0f - duty);
+        voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
+        voice.pulsePinnedHigh = duty >= 1.0f;
+        voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
+        voice.pulseThresholdPrimed = true;
         voice.feedback = 0.0f;
         voice.filterOmegaStep = 0.0f;
         voice.inputCompensation = 1.0f;
@@ -777,7 +799,7 @@ DcoMetrics runDcoMatrix(int host, int factor)
             const auto run = [&](Access::Waveform waveform, double duty) {
                 ++result.candidateTakes;
                 YouKnow106Engine engine;
-                Access::configureDco(engine, host * factor, frequency,
+                Access::configureDco(engine, host * factor, frequency, range,
                                      waveform, static_cast<float>(duty));
                 const int internalFrames = (settleHostFrames + analysisLength) * factor;
                 std::vector<float> internal(static_cast<std::size_t>(internalFrames));

@@ -913,6 +913,10 @@ private:
     // its finite slope.
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
+    // Compatibility ceiling for delayed hybrid cycles: the schematic powers
+    // the ramp MC5534A from +/-15 V but does not specify its installed output
+    // swing. +15 V is therefore an ideal supply bound, not a measured clamp.
+    static constexpr float dcoPositiveRailVolts = 15.0f;
 
     // Four-pole transconductor cascade. The 560/68560 divider below is inside
     // the part, so each differential pair sees an attenuated copy of the stage
@@ -1146,19 +1150,47 @@ private:
     // divide-by-two sub: one complete oscillator cell.
     struct Dco
     {
-        struct GeometryMemo
+        enum class PitState : std::uint8_t
         {
-            bool valid { false };
-            std::uint64_t periodKey { 0u };
-            std::uint32_t inverseRateKey { 0u };
-            double increment { 0.0 };
-            double reset { 0.0 };
-            double rise { 0.0 };
+            stopped,
+            awaitingInitialLoad,
+            running
         };
 
+        enum class PitEvent : std::uint8_t
+        {
+            initialLoad,
+            fallingEdge,
+            risingEdge
+        };
+
+        // `divider` is the count currently in the counter element. A complete
+        // count-only LSB/MSB write updates only the count register; Mode 3
+        // transfers it to the counter element after the current OUT half-cycle.
         std::uint32_t divider { 4545u };
+        std::uint32_t pendingDivider { 4545u };
+        bool pendingDividerValid { false };
+        PitState pitState { PitState::stopped };
+        bool pitOutHigh { true };
+        // Engine construction has no earlier powered-card capacitor state.
+        // Keep that initialization policy explicit; a warm ramp held at its
+        // positive supply bound also has zero slope/reset time and must not be
+        // mistaken for cold.
+        bool coldInitialLoadPending { false };
+        // Remaining selected input-clock periods to the next CE load or OUT
+        // transition. Its fractional part retains clock phase between samples.
+        double pitClocksToEvent { 0.0 };
         double periodSamples { 100.0 };
-        double phase { 0.0 };
+        // Linear C54 compatibility model. Positive OUT starts the discharge;
+        // its exact transistor waveform remains unmeasured, so the established
+        // finite linear reset is retained without claiming it is that waveform.
+        double rampValue { -1.0 };
+        double rampSlopePerSecond { 0.0 };
+        double resetSecondsRemaining { 0.0 };
+        // A supply-limited charge is distinct from every other zero-slope
+        // state. While held, live card-current changes reproject rampValue so
+        // the physical capacitor node remains exactly +15 V.
+        bool positiveRailHeld { false };
         // The compensation ratio the current cycle's ramp was launched with.
         // The physical ramp integrates whatever current its slewing CV set at
         // the discharge, so a CV still catching up changes the *slope of the
@@ -1175,12 +1207,16 @@ private:
         BandlimitedTrack saw {};
         BandlimitedTrack pulse {};
         BandlimitedTrack sub {};
-        // periodSamples is also written directly by focused audit probes, so
-        // this is a lazy exact-key memo rather than a setter-maintained cache.
-        // Including the inverse-rate bits makes a live quality change miss even
-        // when the physical oscillator period happens to keep the same bits.
-        GeometryMemo geometry {};
 
+        [[nodiscard]] static std::uint32_t mode3HalfClocks(
+            std::uint32_t count, bool outHigh) noexcept;
+        // The firmware's control-word branch is represented at one converter
+        // timestamp. The exact CPU-instruction spacing and asynchronous CLK
+        // phase remain OQ-08 timing policy; the retained fractional countdown
+        // locates the next clock whenever a running CE supplies that phase.
+        [[nodiscard]] bool programMode3(std::uint32_t count) noexcept;
+        void stageMode3Count(std::uint32_t count) noexcept;
+        [[nodiscard]] PitEvent consumePitEvent() noexcept;
         void reset() noexcept;
     };
 
@@ -1551,11 +1587,11 @@ private:
         // The voice CPU takes its Mode-3 control-word path only for a different
         // pitch on a voice whose key/sustain run bits are both clear. This
         // request is consumed when the voice's converter turn arrives, never
-        // synchronously at the host MIDI event. The present phase-zero action
-        // is compatibility policy pending explicit 82C53 OUT state (OQ-08).
+        // synchronously at the host MIDI event. Mode programming then forces
+        // the explicitly stored 82C53 OUT high; only low-to-high discharges C54.
         bool dcoResetPending { true };
         // The retired card is advancing only its free-running state (DCO
-        // phase, sub-divider level, render scale, card noise) through the
+        // PIT/ramp, sub-divider level, render scale, card noise) through the
         // cheap freewheel path rather than the full render whose output the
         // engine discards anyway. Set only under the fast VCF tanh modes;
         // Exact keeps the established always-on card render. Waking resumes
@@ -1631,19 +1667,25 @@ private:
         // for every active voice, every internal sample.
         float vcaGain { 0.0f };
         float pulseDuty { 0.5f };
-        // rampCurrentScaleFor(card, calibration), solved once by
-        // updatePulseComparator and reused by renderVoice: both run
-        // back-to-back on the same voice against the same card and the same
-        // calibration, so the second call was recomputing an unchanged
-        // result rather than reading it.
+        // Physical comparator threshold. `pulseDuty` remains the public/
+        // diagnostic nominal duty, but its endpoint clamps lose reachable
+        // thresholds on low-amplitude ramps and the actual -0.8 V Pulse-Off
+        // write. Keeping volts also survives a renderScale change mid-sample.
+        float pulseThresholdVolts { 6.0f };
+        bool pulsePinnedHigh { false };
+        // rampCurrentScaleFor(card, calibration), refreshed when calibration
+        // moves and by updatePulseComparator for rendered cards. renderVoice
+        // then consumes this exact cached scale, including on the retired fast
+        // path that deliberately skips the comparator update.
         float rampCurrentScale { 1.0f };
         // PWM is a moving comparator threshold, not a pulse oscillator whose
         // edge position is frozen for one sample.  Retaining the previous
         // threshold lets renderVoice solve crossings caused by both the ramp
         // and the slewing hold voltage; without it, deep PWM can skip an edge
         // and leave a full extra pulse cycle in the output.
-        float previousPulseDuty { 0.5f };
-        bool pulseDutyPrimed { false };
+        float previousPulseThresholdVolts { 6.0f };
+        bool previousPulsePinnedHigh { false };
+        bool pulseThresholdPrimed { false };
 
         float energy { 0.0f };
         std::uint32_t noiseState { 1u };
@@ -1697,26 +1739,26 @@ private:
                  float samplesAgo) const noexcept;
     void addSlope(BandlimitedTrack& track, float slopeStep,
                   float samplesAgo) const noexcept;
-    // Compatibility implementation of the voice CPU's Mode-3 control-word
-    // path: it currently forces the timer/ramp to the beginning of this
-    // internal interval. Hardware forces OUT high, so the analogue reset
-    // depends on its previous polarity; OQ-08 needs explicit PIT state before
-    // replacing this policy. Unlike a hard engine reset, an audible releasing
-    // card retains its delayed naive history and residual tails.
-    void restartDcoBandlimited(Voice& voice,
-                               double previousPeriodSamples) noexcept;
+    // Start the retained finite-linear C54 discharge on a verified positive
+    // M82C53 OUT edge and clock the sub flip-flop at the same timestamp.
+    void beginDcoDischarge(Voice& voice, float samplesAgo,
+                           bool addCorrections) noexcept;
+    void beginDcoCharge(Voice& voice, float samplesAgo,
+                        bool addCorrections) noexcept;
+    void programDcoCount(Voice& voice, std::uint32_t count,
+                         bool writesControlWord) noexcept;
+    void updateActiveDcoPeriod(Dco& dco, DcoRange range) noexcept;
+    void advanceDcoPitAndRamp(Voice& voice, DcoRange range,
+                              float previousThresholdVolts,
+                              float thresholdVolts,
+                              bool previousPinnedHigh,
+                              bool pinnedHigh,
+                              bool addCorrections) noexcept;
     // Fraction of the ramp's full excursion consumed by the finite-slope reset
     // at a given period, clamped so a very high note cannot invert the ramp.
     static float resetFraction(double periodSeconds) noexcept;
-    // The wrap-reset fraction and the post-reset rise-time fraction for a DCO
-    // period expressed in internal samples: { resetFraction(period *
-    // inverseOversampledRate_), max(1 - reset, 1e-4) }. renderVoice's
-    // per-sample ramp advance, rebuildRateDependentVoiceState's rate-change
-    // retiming, and restartDcoBandlimited's old/new ramp geometry each derive
-    // this identical pair from a period; shared here so they cannot drift
-    // apart.
-    [[nodiscard]] std::array<double, 2> dcoResetAndRise(double periodSamples) const noexcept;
-
+    [[nodiscard]] static double dcoPositiveBaseRail(
+        double totalRampScale) noexcept;
     void buildHalfbandKernel() noexcept;
     [[nodiscard]] static const CorrectionTables& correctionTables() noexcept;
     void buildVoiceCards() noexcept;
@@ -1727,6 +1769,7 @@ private:
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
     void refreshVoiceCardThermalScales() noexcept;
+    void refreshVoiceRampCurrentScales() noexcept;
     void refreshAgedUnitState() noexcept;
     // One internal sample of chassis warm-up: the wall-clock timer and the
     // exponential the voices read. The render loop's only way to advance it,
@@ -1791,11 +1834,12 @@ private:
     // One complete voice update, retained as a narrow test seam. Realtime
     // processing calls the split destination methods through the recovered
     // converter queue below.
-    void updateVoiceScan(Voice& voice, const EngineParameters& parameters,
-                         float lfoGated) noexcept;
-    void updateVoiceEnvelopeAndPitch(Voice& voice,
-                                     const EngineParameters& parameters,
-                                     float lfoGated) noexcept;
+    [[nodiscard]] std::uint32_t updateVoiceScan(
+        Voice& voice, const EngineParameters& parameters,
+        float lfoGated) noexcept;
+    [[nodiscard]] std::uint32_t updateVoiceEnvelopeAndPitch(
+        Voice& voice, const EngineParameters& parameters,
+        float lfoGated) noexcept;
     void updateVoiceVcfTarget(Voice& voice,
                               const EngineParameters& parameters,
                               float lfoGated) noexcept;
@@ -1866,7 +1910,7 @@ private:
                       float noiseSample) noexcept;
     // The cheap advance a retired physical card takes under the fast VCF
     // tanh modes: exactly the free-running state a reassignment can hear --
-    // DCO phase, sub-divider level, per-cycle render scale, card noise --
+    // DCO PIT/ramp state, sub-divider level, per-cycle render scale, card noise --
     // with none of the reconstruction, comparator or filter work whose
     // output is discarded behind the shut VCA. See Voice::freewheeling.
     void freewheelVoiceCard(Voice& voice) noexcept;

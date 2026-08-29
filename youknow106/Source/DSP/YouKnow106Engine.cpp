@@ -1260,32 +1260,6 @@ float YouKnow106Engine::pulseFallPhase(float duty, float resetFraction) noexcept
          + geometry.reset * std::clamp(1.0f - threshold, 0.0f, 1.0f);
 }
 
-namespace
-{
-// renderVoice's end-of-sample comparator reconciliation always wants both
-// edges of the same (duty, resetFraction) pair together. This performs the
-// exact same arithmetic as one call to each of pulseRisePhase/pulseFallPhase
-// -- same operations, same intermediate types -- just without clamping duty
-// and deriving the shared ramp geometry twice to reach two numbers that were
-// always going to be read together.
-struct PulseEdgePhases
-{
-    float rise;
-    float fall;
-};
-
-PulseEdgePhases pulseEdgePhases(float duty, float resetFraction) noexcept
-{
-    const auto geometry = pulseRampGeometry(resetFraction);
-    const float clampedDuty = std::clamp(duty, 0.0f, 1.0f);
-    const float threshold = 1.0f - clampedDuty;
-    return {
-        geometry.rise * (1.0f - clampedDuty),
-        geometry.rise + geometry.reset * std::clamp(1.0f - threshold, 0.0f, 1.0f)
-    };
-}
-} // namespace
-
 float YouKnow106Engine::pwmDutyCycle(float controlVolts) noexcept
 {
     return pwmDutyCycle(controlVolts, 1.0f);
@@ -1580,12 +1554,17 @@ float YouKnow106Engine::resetFraction(double periodSeconds) noexcept
     return static_cast<float>(std::clamp(fraction, 1.0e-6, 0.25));
 }
 
-std::array<double, 2> YouKnow106Engine::dcoResetAndRise(double periodSamples) const noexcept
+double YouKnow106Engine::dcoPositiveBaseRail(
+    double totalRampScale) noexcept
 {
-    const double reset = static_cast<double>(
-        resetFraction(periodSamples * inverseOversampledRate_));
-    const double rise = std::max(1.0 - reset, 1.0e-4);
-    return { reset, rise };
+    // The stored ramp state x is mapped to physical volts as
+    // V = 6 * totalScale * (x + 1). Solve V=+15 V for x rather than clamping
+    // x itself: compensation and card-current scale are part of the same
+    // physical ramp and therefore move its base-coordinate supply crossing.
+    const double safeScale = std::max(totalRampScale, 1.0e-6);
+    return static_cast<double>(dcoPositiveRailVolts)
+         / (0.5 * static_cast<double>(rampAmplitudeVolts) * safeScale)
+         - 1.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1850,10 +1829,83 @@ float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
 // Oscillator, filter and high-pass state
 // ---------------------------------------------------------------------------
 
+std::uint32_t YouKnow106Engine::Dco::mode3HalfClocks(
+    std::uint32_t count, bool outHigh) noexcept
+{
+    return outHigh ? (count + 1u) / 2u : count / 2u;
+}
+
+bool YouKnow106Engine::Dco::programMode3(std::uint32_t count) noexcept
+{
+    // A mode word resets the CE and forces OUT high immediately. The firmware
+    // follows it with one complete LSB/MSB count, represented at this converter
+    // timestamp. When the CE was running, its fractional countdown also carries
+    // the selected CLK phase needed to locate the following input edge. Cold
+    // start has no recovered CPU/CLK phase, so it deliberately chooses one full
+    // clock; that sub-clock timestamp policy remains documented in OQ-08.
+    double nextClock = 1.0;
+    if (pitState != PitState::stopped && pitClocksToEvent > 0.0)
+    {
+        const double fraction = pitClocksToEvent
+                              - std::floor(pitClocksToEvent);
+        if (fraction > 1.0e-12)
+            nextClock = fraction;
+    }
+
+    const bool positiveEdge = !pitOutHigh;
+    pitOutHigh = true;
+    pendingDivider = count;
+    pendingDividerValid = true;
+    pitState = PitState::awaitingInitialLoad;
+    pitClocksToEvent = nextClock;
+    return positiveEdge;
+}
+
+void YouKnow106Engine::Dco::stageMode3Count(std::uint32_t count) noexcept
+{
+    // The count register has one value, so another complete pair before the
+    // transfer replaces the older pending pair -- including a write equal to
+    // the active CE count.
+    pendingDivider = count;
+    pendingDividerValid = true;
+}
+
+YouKnow106Engine::Dco::PitEvent
+YouKnow106Engine::Dco::consumePitEvent() noexcept
+{
+    if (pitState == PitState::awaitingInitialLoad)
+    {
+        if (pendingDividerValid)
+            divider = pendingDivider;
+        pendingDividerValid = false;
+        pitState = PitState::running;
+        pitOutHigh = true;
+        pitClocksToEvent = static_cast<double>(
+            mode3HalfClocks(divider, true));
+        return PitEvent::initialLoad;
+    }
+
+    pitOutHigh = !pitOutHigh;
+    if (pendingDividerValid)
+        divider = pendingDivider;
+    pendingDividerValid = false;
+    pitClocksToEvent = static_cast<double>(
+        mode3HalfClocks(divider, pitOutHigh));
+    return pitOutHigh ? PitEvent::risingEdge : PitEvent::fallingEdge;
+}
+
 void YouKnow106Engine::Dco::reset() noexcept
 {
-    phase = 0.0;
-    geometry.valid = false;
+    pendingDivider = divider;
+    pendingDividerValid = false;
+    pitState = PitState::stopped;
+    pitOutHigh = true;
+    coldInitialLoadPending = false;
+    pitClocksToEvent = 0.0;
+    rampValue = -1.0;
+    rampSlopePerSecond = 0.0;
+    resetSecondsRemaining = 0.0;
+    positiveRailHeld = false;
     renderScale = 1.0f;
     pulseState = -1.0f;
     subState = 1.0f;
@@ -1862,80 +1914,98 @@ void YouKnow106Engine::Dco::reset() noexcept
     sub.reset();
 }
 
-void YouKnow106Engine::restartDcoBandlimited(
-    Voice& voice, double previousPeriodSamples) noexcept
+void YouKnow106Engine::beginDcoDischarge(
+    Voice& voice, float samplesAgo, bool addCorrections) noexcept
 {
     auto& dco = voice.dco;
-    if (!dco.saw.primed || !dco.pulse.primed || !dco.sub.primed)
+    dco.positiveRailHeld = false;
+    const double intervalSeconds = 1.0 / oversampledRate_;
+    const float oldSlope = static_cast<float>(
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        * intervalSeconds);
+    const double periodSeconds = std::max(
+        dco.periodSamples / oversampledRate_, 1.0e-12);
+    const double resetSeconds = std::max(
+        static_cast<double>(resetFraction(periodSeconds)) * periodSeconds,
+        1.0e-12);
+    dco.rampSlopePerSecond = (-1.0 - dco.rampValue) / resetSeconds;
+    dco.resetSecondsRemaining = resetSeconds;
+    const float newSlope = static_cast<float>(
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        * intervalSeconds);
+    if (addCorrections && dco.saw.primed)
+        addSlope(dco.saw, newSlope - oldSlope, samplesAgo);
+
+    const float nextSub = -dco.subState;
+    if (addCorrections && dco.sub.primed)
+        addStep(dco.sub, nextSub - dco.subState, samplesAgo);
+    dco.subState = nextSub;
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(dcoSubTransitions, 1);
+#endif
+}
+
+void YouKnow106Engine::beginDcoCharge(
+    Voice& voice, float samplesAgo, bool addCorrections) noexcept
+{
+    auto& dco = voice.dco;
+    dco.positiveRailHeld = false;
+    const double intervalSeconds = 1.0 / oversampledRate_;
+    const float oldSlope = static_cast<float>(
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        * intervalSeconds);
+    dco.rampValue = -1.0;
+    dco.resetSecondsRemaining = 0.0;
+    dco.renderScale = dcoLaunchScale(voice);
+    const double periodSeconds = std::max(
+        dco.periodSamples / oversampledRate_, 1.0e-12);
+    const double resetSeconds = static_cast<double>(
+        resetFraction(periodSeconds)) * periodSeconds;
+    dco.rampSlopePerSecond = 2.0 / std::max(
+        periodSeconds - resetSeconds, periodSeconds * 1.0e-4);
+    const float newSlope = static_cast<float>(
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        * intervalSeconds);
+    if (addCorrections && dco.saw.primed)
+        addSlope(dco.saw, newSlope - oldSlope, samplesAgo);
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(dcoCycleWraps, 1);
+#endif
+}
+
+void YouKnow106Engine::updateActiveDcoPeriod(
+    Dco& dco, DcoRange range) noexcept
+{
+    const double frequency = dcoQuantisedFrequency(dco.divider, range);
+    dco.periodSamples = frequency > 0.0
+                      ? oversampledRate_ / frequency : 1.0e6;
+}
+
+void YouKnow106Engine::programDcoCount(
+    Voice& voice, std::uint32_t count, bool writesControlWord) noexcept
+{
+    if (!writesControlWord)
     {
-        // Nothing from this cell has reached the delayed output timeline yet,
-        // so this is a true cold start rather than an audible discontinuity.
-        // That principle extends to the compensation hold: an unprimed card's
-        // hold carries an initialization value, not history, and a ratio
-        // taken against it fabricated a multi-volt, DC-shifted first cycle
-        // on every fresh low note. A cold start begins settled -- the hold
-        // adopts its target and the first cycle launches at unity scale.
-        dco.reset();
-        voice.dcoCv = voice.dcoCvTarget;
-        voice.pulseDutyPrimed = false;
+        voice.dco.stageMode3Count(count);
         return;
     }
 
-    const auto rampGeometry = [this](double periodSamples) {
-        const double safePeriod = std::max(periodSamples, 1.0e-9);
-        const auto resetAndRise = dcoResetAndRise(safePeriod);
-        return std::array { safePeriod, resetAndRise[0], resetAndRise[1] };
-    };
-    const auto oldGeometry = rampGeometry(previousPeriodSamples);
-    const auto newGeometry = rampGeometry(dco.periodSamples);
-    const double oldReset = oldGeometry[1];
-    const double oldRise = oldGeometry[2];
-    const double oldPhase = dco.phase;
-    // Both timelines are expressed in the scaled naive domain the track
-    // carries: the abandoned ramp with the ratio its cycle launched under,
-    // the restarted ramp with the ratio the CV holds right now. The restarted
-    // ramp starts at the rail, which every scale maps to itself.
-    const float oldScale = dco.renderScale;
-    const float newScale = dcoLaunchScale(voice);
-    const float oldSawUnit = oldPhase < oldRise
-        ? 2.0f * clamp01(static_cast<float>(oldPhase / oldRise)) - 1.0f
-        : 1.0f - 2.0f * static_cast<float>(
-              (oldPhase - oldRise) / oldReset);
-    const float oldSaw = oldSawUnit * oldScale + (oldScale - 1.0f);
-    constexpr float newSaw = -1.0f;
+    const bool coldStart = voice.dco.pitState == Dco::PitState::stopped;
+    if (coldStart)
+    {
+        // Engine construction has no earlier firmware scan from which to
+        // inherit a charged DCO hold. Retain the established deterministic
+        // initialization policy: the first programmed cell starts settled.
+        voice.dcoCv = voice.dcoCvTarget;
+    }
+    voice.dco.coldInitialLoadPending =
+        voice.dco.coldInitialLoadPending || coldStart;
 
-    const float oldSlope = (oldPhase < oldRise
-        ? 2.0f / static_cast<float>(oldRise * oldGeometry[0])
-        : -2.0f / static_cast<float>(oldReset * oldGeometry[0])) * oldScale;
-    const float newSlope =
-        2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]) * newScale;
-
-    // The write happens before the current naive sample enters the track. In
-    // this delayed-input residual convention that is offset zero: the track's
-    // own correction-half-width delay supplies the non-causal half of the
-    // symmetric correction. Offset one would advance the residual without
-    // advancing the delayed hard step and create a larger, double-sided
-    // discontinuity.
-    constexpr float currentNaiveTimestamp = 0.0f;
-    // renderVoice advances the normalized phase before it submits the next
-    // naive sample. Express the value discontinuity on that same event-side
-    // sample grid: both the abandoned and restarted ramps have advanced once
-    // by their respective slopes. Using only newSaw-oldSaw would leave the
-    // slope difference behind as a small hard step on wide/high retargets.
-    addStep(dco.saw, (newSaw + newSlope) - (oldSaw + oldSlope),
-            currentNaiveTimestamp);
-    addSlope(dco.saw, newSlope - oldSlope, currentNaiveTimestamp);
-    addStep(dco.pulse, -1.0f - dco.pulseState, currentNaiveTimestamp);
-    addStep(dco.sub, 1.0f - dco.subState, currentNaiveTimestamp);
-
-    dco.phase = 0.0;
-    dco.renderScale = newScale;
-    dco.pulseState = -1.0f;
-    dco.subState = 1.0f;
-    // The restart correction above owns the abandoned comparator timeline.
-    // The first sample on the new ramp starts a fresh moving-threshold solve
-    // rather than interpolating from a duty that belonged to the old phase.
-    voice.pulseDutyPrimed = false;
+    // Mode programming forces OUT high. That is a physical C54/sub event only
+    // when the previously stored output was low; an already-high output does
+    // not acquire a fabricated edge or a fabricated sub polarity.
+    if (voice.dco.programMode3(count))
+        beginDcoDischarge(voice, 1.0f, true);
 }
 
 void YouKnow106Engine::OtaCascade::reset() noexcept
@@ -3455,14 +3525,12 @@ void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
 
         // Residual kernels are measured in internal samples. The safety fade
         // has reached zero, so discard their old-rate tails and prime the new
-        // timeline at the oscillator's continuing physical phase.
-        const auto resetAndRise = dcoResetAndRise(voice.dco.periodSamples);
-        const double reset = resetAndRise[0];
-        const double rise = resetAndRise[1];
-        const double phase = voice.dco.phase;
-        const float saw = phase < rise
-            ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
-            : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
+        // timeline at the continuing capacitor voltage. PIT countdown is held
+        // in selected-clock periods and the ramp slope in volts per second, so
+        // neither physical state is retimed by this sample-grid rebuild.
+        const float saw = static_cast<float>(
+            voice.dco.rampValue * static_cast<double>(voice.dco.renderScale)
+            + (static_cast<double>(voice.dco.renderScale) - 1.0));
         voice.dco.saw.reset();
         voice.dco.pulse.reset();
         voice.dco.sub.reset();
@@ -3544,6 +3612,7 @@ void YouKnow106Engine::reset()
         voice.noiseState = hash32(static_cast<std::uint32_t>(index)
                                   * 2246822519u + 1u) | 1u;
     }
+    refreshVoiceRampCurrentScales();
     // `voice = Voice {}` above zeroed the offsets, and the cards outlive a
     // reset, so put them back before anything can render a symmetric filter.
     refreshVoiceCardStageTrims();
@@ -3746,6 +3815,8 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         || next.calibration != activeParameters_.calibration
         || next.enableSpatialThermalGradient
                != activeParameters_.enableSpatialThermalGradient;
+    const bool rampCurrentScalesChanged = startupSnapshot
+        || next.calibration != activeParameters_.calibration;
     const bool agingChanged = next.aging != activeParameters_.aging;
     // Before the first valid prepared audio interval, a host snapshot is the
     // power-up image rather than a timed panel move. `panelGlidePrimed_` is
@@ -3767,6 +3838,8 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         refreshVoiceCardStageTrims();
     if (thermalScalesChanged)
         refreshVoiceCardThermalScales();
+    if (rampCurrentScalesChanged)
+        refreshVoiceRampCurrentScales();
     if (agingChanged)
         refreshAgedUnitState();
     if (highPassChanged)
@@ -4120,8 +4193,8 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     // A running note timer takes the count-only path for a legato pitch message.
     // A different pitch on a free/releasing voice requests the Mode-3
     // control-word path, but the voice CPU consumes it only on that voice's
-    // next scan update. The current unconditional phase-zero action remains an
-    // OQ-08 compatibility policy because it does not yet track OUT polarity.
+    // next scan update. Explicit OUT polarity then decides whether forcing high
+    // produces the positive C54/sub edge.
     if (pitchChanged && !voiceWasRunning)
         voice.dcoResetPending = true;
 
@@ -4152,7 +4225,8 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
         // digital note/portamento memories below, but reconstruct the virtual
         // audio cell from silence next time it is used.
         voice.dco.reset();
-        voice.pulseDutyPrimed = false;
+        voice.dcoResetPending = true;
+        voice.pulseThresholdPrimed = false;
         voice.filter.reset();
         voice.moduleCoupling.reset();
         voice.vcaInputCoupling.reset();
@@ -4478,16 +4552,17 @@ void YouKnow106Engine::updateVoiceCardDrift(VoiceCard& card) noexcept
     card.driftValue = card.driftValue * 0.9992f + excitation * 0.004f;
 }
 
-void YouKnow106Engine::updateVoiceScan(Voice& voice,
-                                       const EngineParameters& parameters,
-                                       float lfoGated) noexcept
+std::uint32_t YouKnow106Engine::updateVoiceScan(
+    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
 {
-    updateVoiceEnvelopeAndPitch(voice, parameters, lfoGated);
+    const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+        voice, parameters, lfoGated);
     updateVoiceVcfTarget(voice, parameters, lfoGated);
     updateVoiceVcaTarget(voice, parameters);
+    return count;
 }
 
-void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
+std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
 {
 
@@ -4590,20 +4665,17 @@ void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     const double midi = static_cast<double>(voice.currentMidi)
                       + static_cast<double>(cents) / 100.0;
 
-    voice.dco.divider = dcoDivider(midiToHz(midi));
-    const double frequency = dcoQuantisedFrequency(voice.dco.divider, parameters.range);
-    voice.dco.periodSamples = frequency > 0.0 ? oversampledRate_ / frequency : 1.0e6;
-    // The compensation voltage the firmware writes for this pitch. The count
-    // currently changes the modelled period at this converter write. The
-    // published partial IC29 listing corroborates that a running voice receives
-    // a count-only Mode-3 write. The matching M82C53 documentation applies the
-    // new count after the next OUT transition. Roland maps the positive-going
-    // OUT edge to both C54 discharge and the sub clock, but this model has no
-    // PIT polarity/half-cycle state; the control-word path's analogue effect
-    // therefore remains OQ-08 work. This target reaches the
+    const std::uint32_t requestedDivider = dcoDivider(midiToHz(midi));
+    const double frequency = dcoQuantisedFrequency(
+        requestedDivider, parameters.range);
+    // The compensation voltage the firmware writes for this pitch. The
+    // requested count is staged below by the converter destination. A
+    // running M82C53 count-only write leaves the active CE/period untouched
+    // until the next OUT transition. This target still reaches the
     // integrator through the hold capacitor's slew, and the ratio of the two is
     // the momentary amplitude error every pitch step leaves.
     voice.dcoCvTarget = frequency > 0.0 ? static_cast<float>(frequency) : 1.0f;
+    return requestedDivider;
 }
 
 void YouKnow106Engine::updateVoiceVcfTarget(
@@ -4742,13 +4814,10 @@ void YouKnow106Engine::performConverterWrite(
             if (validPhysicalVoice())
             {
                 auto& voice = voices_[static_cast<std::size_t>(write.voice)];
-                const double previousPeriod = voice.dco.periodSamples;
-                updateVoiceEnvelopeAndPitch(voice, parameters, lfoGated);
-                if (voice.dcoResetPending)
-                {
-                    restartDcoBandlimited(voice, previousPeriod);
-                    voice.dcoResetPending = false;
-                }
+                const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+                    voice, parameters, lfoGated);
+                programDcoCount(voice, count, voice.dcoResetPending);
+                voice.dcoResetPending = false;
             }
             break;
         case ConverterDestination::Pwm:
@@ -5004,6 +5073,25 @@ float YouKnow106Engine::rampCurrentScaleFor(
     return 1.0f + card.rampCurrentError * 0.03f * calibration;
 }
 
+void YouKnow106Engine::refreshVoiceRampCurrentScales() noexcept
+{
+    for (auto& voice : voices_)
+    {
+        const auto& card =
+            cards_[static_cast<std::size_t>(voice.cardIndex)];
+        voice.rampCurrentScale =
+            rampCurrentScaleFor(card, activeParameters_.calibration);
+        if (voice.dco.positiveRailHeld)
+        {
+            const double totalScale =
+                static_cast<double>(voice.dco.renderScale)
+                * static_cast<double>(voice.rampCurrentScale);
+            voice.dco.rampValue = dcoPositiveBaseRail(totalScale);
+            voice.dco.rampSlopePerSecond = 0.0;
+        }
+    }
+}
+
 void YouKnow106Engine::updateVoiceAudio(Voice& voice,
                                         const EngineParameters& parameters) noexcept
 {
@@ -5075,9 +5163,7 @@ void YouKnow106Engine::updatePulseComparator(
     // which belongs to the next cycle's slope. Solving the duty against a
     // different amplitude than the rendered ramp put the solved edges on a
     // waveform that did not exist.
-    const float cardCurrent =
-        rampCurrentScaleFor(card, parameters.calibration);
-    voice.rampCurrentScale = cardCurrent;
+    const float cardCurrent = voice.rampCurrentScale;
     const float amplitudeScale = voice.dco.renderScale * cardCurrent;
     // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
     // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
@@ -5085,6 +5171,8 @@ void YouKnow106Engine::updatePulseComparator(
     const float threshold = static_cast<float>(pwmVolts_)
                           + card.comparatorOffset * 0.24f
                                 * parameters.calibration;
+    voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
+    voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
 }
 
@@ -5152,50 +5240,292 @@ float YouKnow106Engine::dynamicOtaHeadroomVolts(
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
 }
 
+void YouKnow106Engine::advanceDcoPitAndRamp(
+    Voice& voice, DcoRange range, float previousThresholdVolts,
+    float thresholdVolts, bool previousPinnedHigh, bool pinnedHigh,
+    bool addCorrections) noexcept
+{
+    auto& dco = voice.dco;
+    const double intervalSeconds = 1.0 / oversampledRate_;
+    // Treat analytically coincident ramp/PIT corners as one event. This is a
+    // billionth of an internal interval, many orders below the 1/64-sample
+    // correction-table grid, but large enough to absorb final-operation ULPs.
+    const double eventToleranceSeconds = std::max(
+        1.0e-15, intervalSeconds * 1.0e-9);
+    const double pitClockHz = rangeClockHz(range);
+    const double thresholdStart = std::isfinite(previousThresholdVolts)
+        ? static_cast<double>(previousThresholdVolts) : 6.0;
+    const double thresholdEnd = std::isfinite(thresholdVolts)
+        ? static_cast<double>(thresholdVolts) : thresholdStart;
+    const double thresholdSlope = intervalSeconds > 0.0
+        ? (thresholdEnd - thresholdStart) / intervalSeconds : 0.0;
+    const bool comparatorPinnedForInterval =
+        previousPinnedHigh && pinnedHigh;
+    if (addCorrections && comparatorPinnedForInterval)
+    {
+        // Both endpoints are below the zero-volt ramp, so their linear
+        // trajectory is below it for the whole interval. Do not synthesize
+        // crossings or accumulate a correction for Pulse Off's pinned level.
+        dco.pulseState = 1.0f;
+    }
+
+    // A supply-held capacitor stays at +15 V when Unit Character changes the
+    // scale used to express that voltage in the base-ramp coordinate. This is
+    // a coordinate reprojection, not a capacitor step, so it creates no BLEP.
+    const double initialTotalRampScale =
+        static_cast<double>(dco.renderScale)
+        * static_cast<double>(voice.rampCurrentScale);
+    if (dco.positiveRailHeld)
+    {
+        dco.rampValue = dcoPositiveBaseRail(initialTotalRampScale);
+        dco.rampSlopePerSecond = 0.0;
+    }
+
+    const auto eventSamplesAgo = [&](double elapsed) {
+        return intervalSeconds > 0.0
+            ? static_cast<float>(std::clamp(
+                  (intervalSeconds - elapsed) / intervalSeconds, 0.0, 1.0))
+            : 0.0f;
+    };
+
+    // A live card-current edit changes the physical interpretation of the
+    // retained base coordinate before this interval begins. Reconcile that
+    // left-boundary truth here; otherwise a stationary ramp can cross solely
+    // from the scale change and be repaired incorrectly at samplesAgo=0.
+    if (addCorrections && !comparatorPinnedForInterval)
+    {
+        const double rampVolts = 0.5 * rampAmplitudeVolts
+            * initialTotalRampScale * (dco.rampValue + 1.0);
+        const float stateAtStart = rampVolts >= thresholdStart
+            ? 1.0f : -1.0f;
+        if (stateAtStart != dco.pulseState)
+        {
+            addStep(dco.pulse, stateAtStart - dco.pulseState, 1.0f);
+            dco.pulseState = stateAtStart;
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
+#endif
+        }
+    }
+
+    double elapsed = 0.0;
+    // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
+    // can contain 126 OUT transitions plus 63 reset completions and 63 supply
+    // hits. 512 leaves a real guard margin over that 252-event supported worst
+    // case while still bounding malformed state without allocating anything.
+    constexpr int maximumEventsPerInterval = 512;
+    for (int eventIndex = 0;
+         eventIndex < maximumEventsPerInterval
+             && elapsed < intervalSeconds - eventToleranceSeconds;
+         ++eventIndex)
+    {
+        const double remaining = intervalSeconds - elapsed;
+        const double pitSeconds = dco.pitState == Dco::PitState::stopped
+            ? std::numeric_limits<double>::infinity()
+            : std::max(0.0, dco.pitClocksToEvent) / pitClockHz;
+        const double resetSeconds = dco.resetSecondsRemaining > 0.0
+            ? dco.resetSecondsRemaining
+            : std::numeric_limits<double>::infinity();
+        // The current-source ramp cannot charge beyond the ideal +15 V supply
+        // bound. A newly staged long count can otherwise leave the old
+        // high-note slope running through a hybrid half-cycle and produce
+        // hundreds of rails of impossible capacitor voltage before the next
+        // positive OUT edge.
+        const double totalRampScale =
+            static_cast<double>(dco.renderScale)
+            * static_cast<double>(voice.rampCurrentScale);
+        const double positiveBaseRail =
+            dcoPositiveBaseRail(totalRampScale);
+        const bool positiveRailNeedsValueClamp =
+            dco.rampValue > positiveBaseRail;
+        const double positiveRailSeconds = positiveRailNeedsValueClamp
+            ? 0.0
+            : (dco.rampSlopePerSecond > 0.0
+                   ? std::max(0.0, (positiveBaseRail - dco.rampValue)
+                                     / dco.rampSlopePerSecond)
+                   : std::numeric_limits<double>::infinity());
+        const double segment = std::min(
+            { remaining, pitSeconds, resetSeconds, positiveRailSeconds });
+
+        if (addCorrections && !comparatorPinnedForInterval && segment > 0.0)
+        {
+            // Solve the physical comparator directly. renderScale can change
+            // when a reset completes inside this interval; deriving ramp volts
+            // per segment gives the suffix its new scale without delaying the
+            // threshold remap to the next sample.
+            const double threshold = thresholdStart
+                + (thresholdEnd - thresholdStart)
+                    * (elapsed / intervalSeconds);
+            const double rampVolts = 0.5 * rampAmplitudeVolts
+                * totalRampScale * (dco.rampValue + 1.0);
+            const double rampSlopeVolts = 0.5 * rampAmplitudeVolts
+                * totalRampScale * dco.rampSlopePerSecond;
+            const double relativeSlope = rampSlopeVolts - thresholdSlope;
+            if (std::abs(relativeSlope) > 1.0e-14)
+            {
+                const double crossing = (threshold - rampVolts)
+                                      / relativeSlope;
+                if (crossing >= -eventToleranceSeconds
+                    && crossing <= segment + eventToleranceSeconds)
+                {
+                    const float state = relativeSlope > 0.0 ? 1.0f : -1.0f;
+                    if (state != dco.pulseState)
+                    {
+                        addStep(dco.pulse, state - dco.pulseState,
+                                eventSamplesAgo(elapsed + std::min(
+                                    std::max(0.0, crossing), segment)));
+                        dco.pulseState = state;
+#if defined(YOUKNOW106_WORK_AUDIT)
+                        YOUKNOW106_COUNT_DOMAIN_WORK(
+                            dcoComparatorTransitions, 1);
+#endif
+                    }
+                }
+            }
+        }
+
+        dco.rampValue += dco.rampSlopePerSecond * segment;
+        if (dco.resetSecondsRemaining > 0.0)
+            dco.resetSecondsRemaining = std::max(
+                0.0, dco.resetSecondsRemaining - segment);
+        if (dco.pitState != Dco::PitState::stopped)
+            dco.pitClocksToEvent = std::max(
+                0.0, dco.pitClocksToEvent - segment * pitClockHz);
+        elapsed += segment;
+
+        const bool resetComplete =
+            resetSeconds <= segment + eventToleranceSeconds;
+        const bool positiveRailHit =
+            positiveRailSeconds <= segment + eventToleranceSeconds;
+        const bool pitEvent =
+            pitSeconds <= segment + eventToleranceSeconds;
+        if (!resetComplete && !positiveRailHit && !pitEvent)
+            break;
+
+        // Complete an older C54 discharge before processing a coincident new
+        // OUT edge. The ordering is deterministic; the two events cannot
+        // coincide in the supported steady-state count range.
+        if (resetComplete)
+            beginDcoCharge(
+                voice, eventSamplesAgo(elapsed), addCorrections);
+
+        // If a scaled cycle reaches the supply bound exactly at the next
+        // positive OUT edge, preserve the incoming charge slope so discharge
+        // emits one direct BLAMP correction rather than two coincident table
+        // walks through an artificial zero-slope state. A genuinely early rail
+        // (or a coincident non-rising PIT event) still enters the hold above.
+        const bool railMeetsRisingOut = positiveRailHit && pitEvent
+            && dco.pitState == Dco::PitState::running && !dco.pitOutHigh;
+        if (positiveRailHit)
+        {
+            const double valueBeforeClamp = dco.rampValue;
+            const bool chargingIntoRail = dco.rampSlopePerSecond > 0.0;
+            const float oldSlope = static_cast<float>(
+                dco.rampSlopePerSecond
+                * static_cast<double>(dco.renderScale)
+                * intervalSeconds);
+            dco.rampValue = positiveBaseRail;
+            if (addCorrections && dco.saw.primed
+                && positiveRailNeedsValueClamp)
+            {
+                const float valueStep = static_cast<float>(
+                    (positiveBaseRail - valueBeforeClamp)
+                    * static_cast<double>(dco.renderScale));
+                addStep(dco.saw, valueStep, eventSamplesAgo(elapsed));
+            }
+
+            // Charging reaches a real supply hold. A falling reset discovered
+            // above a newly lowered coordinate rail is clamped at t=0 but
+            // keeps falling; a live calibration change must not pause it.
+            if (chargingIntoRail && !railMeetsRisingOut)
+            {
+                dco.rampSlopePerSecond = 0.0;
+                dco.positiveRailHeld = true;
+                if (addCorrections && dco.saw.primed)
+                    addSlope(dco.saw, -oldSlope, eventSamplesAgo(elapsed));
+            }
+            else if (dco.rampSlopePerSecond < 0.0
+                     && dco.resetSecondsRemaining > 0.0)
+            {
+                // The value clamp shortens the remaining fall. Retarget its
+                // slope so the unchanged reset deadline still lands exactly on
+                // -1 rather than carrying the old slope below the low rail.
+                dco.rampSlopePerSecond =
+                    (-1.0 - dco.rampValue) / dco.resetSecondsRemaining;
+                const float newSlope = static_cast<float>(
+                    dco.rampSlopePerSecond
+                    * static_cast<double>(dco.renderScale)
+                    * intervalSeconds);
+                if (addCorrections && dco.saw.primed)
+                    addSlope(dco.saw, newSlope - oldSlope,
+                             eventSamplesAgo(elapsed));
+            }
+        }
+
+        if (pitEvent)
+        {
+            const auto event = dco.consumePitEvent();
+            updateActiveDcoPeriod(dco, range);
+            if (event == Dco::PitEvent::initialLoad)
+            {
+                // Cold start has no recovered pre-program capacitor state. Hold
+                // the established low rail through one modelled reset interval,
+                // then launch the first rise. This is initialization policy, not
+                // a claim that loading CE generated an OUT edge.
+                if (dco.coldInitialLoadPending)
+                {
+                    dco.coldInitialLoadPending = false;
+                    dco.positiveRailHeld = false;
+                    dco.rampValue = -1.0;
+                    dco.rampSlopePerSecond = 0.0;
+                    const double periodSeconds = std::max(
+                        dco.periodSamples / oversampledRate_, 1.0e-12);
+                    dco.resetSecondsRemaining = static_cast<double>(
+                        resetFraction(periodSeconds)) * periodSeconds;
+                }
+            }
+            else if (event == Dco::PitEvent::risingEdge)
+            {
+                beginDcoDischarge(
+                    voice, eventSamplesAgo(elapsed), addCorrections);
+            }
+        }
+    }
+
+    if (addCorrections)
+    {
+        if (!comparatorPinnedForInterval)
+        {
+            const double totalRampScale =
+                static_cast<double>(dco.renderScale)
+                * static_cast<double>(voice.rampCurrentScale);
+            const double rampVolts = 0.5 * rampAmplitudeVolts
+                * totalRampScale * (dco.rampValue + 1.0);
+            const float comparatorAtEnd = pinnedHigh
+                ? 1.0f
+                : (rampVolts >= thresholdEnd ? 1.0f : -1.0f);
+            if (comparatorAtEnd != dco.pulseState)
+            {
+                addStep(dco.pulse, comparatorAtEnd - dco.pulseState, 0.0f);
+                dco.pulseState = comparatorAtEnd;
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
+#endif
+            }
+        }
+        voice.previousPulseThresholdVolts = static_cast<float>(thresholdEnd);
+        voice.previousPulsePinnedHigh = pinnedHigh;
+        voice.pulseThresholdPrimed = true;
+    }
+}
+
 void YouKnow106Engine::freewheelVoiceCard(Voice& voice) noexcept
 {
     voice.freewheeling = true;
-    auto& dco = voice.dco;
-
-    // The same lazy exact-key geometry memo the full render maintains, so
-    // dropping in and out of the freewheel never presents a stale increment.
-    const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
-    const auto inverseRateKey =
-        std::bit_cast<std::uint32_t>(inverseOversampledRate_);
-    auto& geometry = dco.geometry;
-    if (!geometry.valid || geometry.periodKey != periodKey
-        || geometry.inverseRateKey != inverseRateKey)
-    {
-        geometry.increment = dco.periodSamples > 1.0e-9
-                           ? 1.0 / dco.periodSamples : 0.0;
-        const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
-        geometry.reset = resetAndRise[0];
-        geometry.rise = resetAndRise[1];
-        geometry.periodKey = periodKey;
-        geometry.inverseRateKey = inverseRateKey;
-        geometry.valid = true;
-    }
-
-    const double previousPhase = dco.phase;
-    const double unwrapped = previousPhase + geometry.increment;
-    dco.phase = unwrapped >= 1.0
-              ? unwrapped - std::floor(unwrapped) : unwrapped;
-
-    // The divide-by-two sub clocks at the reset's start, exactly where the
-    // full render toggles it: count the base+rise points crossed this sample
-    // and flip on odd counts. Integers in (previousPhase - rise,
-    // unwrapped - rise] are those crossings.
-    const double rise = geometry.rise;
-    const long long crossings =
-        static_cast<long long>(std::floor(unwrapped - rise))
-        - static_cast<long long>(std::floor(previousPhase - rise));
-    if ((crossings & 1) != 0)
-        dco.subState = -dco.subState;
-
-    // Each wrap launches the next cycle on the slewing compensation's
-    // current ratio, as the full render does.
-    if (unwrapped >= 1.0)
-        dco.renderScale = dcoLaunchScale(voice);
+    advanceDcoPitAndRamp(
+        voice, activeParameters_.range,
+        voice.pulseThresholdVolts, voice.pulseThresholdVolts,
+        voice.pulsePinnedHigh, voice.pulsePinnedHigh, false);
 
     // The card-local microscopic noise source keeps running.
     voice.noiseState = xorshift32(voice.noiseState);
@@ -5235,306 +5565,33 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                 * card.thermalFilterOmegaScale));
     };
 
-    // Nothing thermal, and nothing per-card, reaches this increment. The note
-    // timer divides one crystal-derived clock by an integer, so a card's
-    // temperature has no term in its pitch: the count is the count. A revision
-    // did scale this by a per-card thermal factor, which spread the six cards
-    // over 13 cents and removed the one thing this architecture exists to
-    // guarantee -- see "No pitch drift and no inter-voice detune" under
-    // the README's "Known gaps".
-    const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
-    const auto inverseRateKey =
-        std::bit_cast<std::uint32_t>(inverseOversampledRate_);
-    auto& geometry = dco.geometry;
-    if (!geometry.valid || geometry.periodKey != periodKey
-        || geometry.inverseRateKey != inverseRateKey)
-    {
-        // Keep the original expression types and evaluation order: increment
-        // first, then resetFraction(period * inverseRate), then rise.
-        geometry.increment = dco.periodSamples > 1.0e-9
-                           ? 1.0 / dco.periodSamples : 0.0;
-        const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
-        geometry.reset = resetAndRise[0];
-        geometry.rise = resetAndRise[1];
-        geometry.periodKey = periodKey;
-        geometry.inverseRateKey = inverseRateKey;
-        geometry.valid = true;
-    }
-    const double increment = geometry.increment;
-    const double reset = geometry.reset;
-    const double rise = geometry.rise;
+    // One shared event walk owns the M82C53 half-cycles, C54 ramp and
+    // comparator. The timer runs from the selected crystal-derived clock; card
+    // temperature therefore has no pitch term.
+    const float thresholdVolts = voice.pulseThresholdVolts;
+    const float previousThresholdVolts = voice.pulseThresholdPrimed
+        ? voice.previousPulseThresholdVolts : thresholdVolts;
+    const bool previousPinnedHigh = voice.pulseThresholdPrimed
+        ? voice.previousPulsePinnedHigh : voice.pulsePinnedHigh;
+    advanceDcoPitAndRamp(
+        voice, parameters.range, previousThresholdVolts, thresholdVolts,
+        previousPinnedHigh, voice.pulsePinnedHigh, true);
 
-    const double previousPhase = dco.phase;
-    const double unwrapped = dco.phase + increment;
-    const bool wrapped = unwrapped >= 1.0;
-    dco.phase = wrapped ? unwrapped - std::floor(unwrapped) : unwrapped;
-    const double phase = dco.phase;
-
-    // How far back inside this sample an event at unwrapped position `p` sits.
-    const auto samplesAgo = [&](double p) {
-        return increment > 0.0
-            ? static_cast<float>(std::clamp((unwrapped - p) / increment, 0.0, 1.0))
-            : 0.0f;
-    };
-    const auto insideThisSample = [&](double p) {
-        return p > previousPhase && p <= unwrapped;
-    };
-
-    // A note timer can outrun the sample clock: the divider bottoms out at
-    // eight, so the top range reaches half a megahertz, and at the lowest host
-    // rate the model accepts that is some sixty cycles inside one sample. Each
-    // of them resets the ramp, works the comparator and clocks the divider, and
-    // collapsing them into one wrap would hold the pulse low for whole periods
-    // and drop the sub an octave. So every crossed cycle is walked. The bound
-    // is a runaway guard rather than a limit that is reached: sixty-four covers
-    // the fastest note the timer can be programmed for against the slowest rate
-    // the engine runs at.
-    constexpr int maximumWrapsPerSample = 64;
-    const double lastCycle =
-        std::min(std::floor(unwrapped), static_cast<double>(maximumWrapsPerSample));
-
-    // --- Ramp -------------------------------------------------------------
-    // The compensation voltage keeps the amplitude constant at 12 Vpp -- but
-    // it arrives through the hold capacitor while the timer count steps
-    // instantly, so every pitch step leaves a momentary amplitude error
-    // until the voltage catches up. The ratio of the slewed voltage to the
-    // one the current pitch calls for *is* that error -- and it expresses
-    // itself as the *slope of each rise*, because the integrator charges from
-    // the slewing current across the cycle. The rendered ramp therefore
-    // freezes each cycle's launch scale -- dcoLaunchScale, the ratio weighted
-    // to first order by the hold's tau against the period, standing in for
-    // the slew's integral -- and reshapes about the fixed bottom rail (the
-    // discharge always returns to the same rail): the
-    // affine map s*naive + (s - 1) keeps -1 at -1 and puts the peak at
-    // 2s - 1, which is also the geometry the duty law already assumes. A
-    // ratio taking effect only at a wrap, where both cycles share the rail,
-    // is what makes the ramp value-continuous through every pitch write; the
-    // previous outer multiply stepped the whole waveform mid-cycle, outside
-    // the bandlimited track -- a measured train of 2.9% single-sample steps
-    // at the 238 Hz scan cadence on every glide.
-    // From the parts' own tolerance classes, which is legitimate here because
-    // the ramp has no per-voice trimmer, so nothing removes their spread: the
-    // charging resistors are marked FX on the board -- metal-oxide film, 1% --
-    // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
-    // -2.93% to +3.07% of slope, which is the 3% used here. Being constant
-    // per card it commutes with the track, so it stays a plain gain.
-    // updatePulseComparator solves the comparator against this identical
-    // per-card scale a moment earlier in the same internal sample, so it is
-    // read from the voice rather than resolved a second time here.
+    // The compensation ratio is frozen when the discharge reaches the low rail.
+    // Mapping about that rail keeps the capacitor voltage continuous when the
+    // new charge slope is launched.
+    const float sawNaive = static_cast<float>(
+        dco.rampValue * static_cast<double>(dco.renderScale)
+        + (static_cast<double>(dco.renderScale) - 1.0));
     const float amplitude = sawMixVolts * voice.rampCurrentScale;
-
-    // The rise is straight, and carries no curvature term. The compensation
-    // voltage drives a resistor into an integrator's virtual ground, so the
-    // op-amp holds that node at 0 V and the charging current is constant
-    // whatever the source's own output resistance is; what curvature remains
-    // comes from finite open-loop gain, of order 1e-5. A straight rise is also
-    // the only shape consistent with the comparator's anchored 6 V / 50% duty
-    // point, which a bowed ramp would move.
-    float sawNaive = phase < rise
-        ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
-        : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
-
-    // Both reset corners are slope discontinuities, repaired with slope
-    // residuals whose amounts come from the waveform actually being rendered.
-    // That correspondence is the whole point: a residual computed for a
-    // different shape than the naive signal carries does not cancel, it just
-    // adds a different error.
-    const float slopeAtStart = 2.0f / static_cast<float>(rise);
-    const float slopeAtEnd = slopeAtStart;
-    const float fallSlope = -2.0f / static_cast<float>(reset);
-    const float incrementF = static_cast<float>(increment);
-
-    // Walk the corners with each cycle's own frozen ratio: the rise-end
-    // corner joins two segments of one cycle, and the wrap joins the old
-    // cycle's fall to the new cycle's rise -- the one place the ratio is
-    // allowed to change, because both waveforms sit on the shared rail there.
-    // Every wrap inside this sample lands on the same voice.dcoCv,
-    // voice.dcoCvTarget and voice.dco.periodSamples -- nothing this loop
-    // touches feeds back into them -- so dcoLaunchScale resolves to the same
-    // value at every wrap crossed here. An ordinary sample crosses at most
-    // one, but a note fast enough to outrun the sample clock can cross dozens
-    // in a row; solved lazily on the first wrap and cached, it is neither
-    // paid for on the (overwhelmingly common) no-wrap sample nor re-derived
-    // on every wrap after the first.
-    bool launchScaleResolved = false;
-    float launchScale = 0.0f;
-    float cycleScale = dco.renderScale;
-    for (double base = 0.0; base <= lastCycle; base += 1.0)
-    {
-        if (insideThisSample(base + rise))
-            addSlope(dco.saw, (fallSlope - slopeAtEnd) * cycleScale * incrementF,
-                     samplesAgo(base + rise));
-        if (insideThisSample(base + 1.0))
-        {
-#if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(dcoCycleWraps, 1);
-#endif
-            if (!launchScaleResolved)
-            {
-                launchScale = dcoLaunchScale(voice);
-                launchScaleResolved = true;
-            }
-            addSlope(dco.saw,
-                     (slopeAtStart * launchScale
-                      - fallSlope * cycleScale) * incrementF,
-                     samplesAgo(base + 1.0));
-            cycleScale = launchScale;
-        }
-    }
-    dco.renderScale = cycleScale;
-    sawNaive = sawNaive * cycleScale + (cycleScale - 1.0f);
-
     const float sawOut = dco.saw.advance(sawNaive) * amplitude;
 
-    // --- Pulse ------------------------------------------------------------
-    // The comparator flips when the ramp crosses the threshold on the way up
-    // and again when the reset drags it back down past it.  The threshold is a
-    // slewing analogue hold, so those crossing positions move *during* this
-    // sample.  Treating the current duty as if it had been fixed for the whole
-    // interval can move an edge behind the already-advanced ramp and skip it
-    // for a complete oscillator cycle -- the periodic blip heard on deep PWM.
-    const float duty = std::clamp(voice.pulseDuty, 0.0f, 1.0f);
-    const float previousDuty = voice.pulseDutyPrimed
-        ? std::clamp(voice.previousPulseDuty, 0.0f, 1.0f) : duty;
-    const double dutyDelta = static_cast<double>(duty - previousDuty);
-
-    struct ComparatorEvent
-    {
-        double time; // 0..1 across this internal sample
-        float state;
-    };
-    // Deliberately not value-initialised. The buffer is sized for the runaway
-    // case of sixty-four oscillator cycles inside one internal sample; a real
-    // note fills two or three entries, and nothing below reads past
-    // `eventCount`. Zero-filling it cost a two-kilobyte store on every voice
-    // on every internal sample -- some 2.4 GB/s at six voices and 192 kHz.
-    std::array<ComparatorEvent, maximumWrapsPerSample * 2 + 4> events;
-    int eventCount = 0;
-    const auto appendCrossing = [&events, &eventCount](double numerator,
-                                                       double denominator,
-                                                       float state) noexcept
-    {
-        if (std::abs(denominator) <= 1.0e-14)
-            return;
-        const double time = numerator / denominator;
-        // An event at zero belongs to the preceding interval.  Admit a tiny
-        // overrun at one for round-off, then clamp it onto this endpoint.
-        if (time > 1.0e-12 && time <= 1.0 + 1.0e-12
-            && eventCount < static_cast<int>(events.size()))
-            events[static_cast<std::size_t>(eventCount++)] = {
-                std::min(time, 1.0), state
-            };
-    };
-
-    // With d(t)=d0+t*(d1-d0), the rising boundary is
-    // base+rise*(1-d(t)) and the falling boundary is
-    // base+rise+reset*d(t).  Solve each against p(t)=p0+t*increment.
-    // The sign of the relative velocity says which side of the comparator the
-    // crossing enters; PWM can move a boundary faster than a very low DCO.
-    const double riseVelocity = increment + rise * dutyDelta;
-    const double fallVelocity = increment - reset * dutyDelta;
-    for (double base = 0.0; base <= lastCycle; base += 1.0)
-    {
-        appendCrossing(base + rise * (1.0 - previousDuty) - previousPhase,
-                       riseVelocity,
-                       riseVelocity > 0.0 ? 1.0f : -1.0f);
-        appendCrossing(base + rise + reset * previousDuty - previousPhase,
-                       fallVelocity,
-                       fallVelocity > 0.0 ? -1.0f : 1.0f);
-    }
-
-    // Usually there are zero or two events.  A fixed, allocation-free
-    // insertion sort also covers the bounded multi-cycle case at the timer's
-    // extreme divider values and preserves rise-before-fall ordering when two
-    // zero-width edges coincide.
-    for (int index = 1; index < eventCount; ++index)
-    {
-        const auto event = events[static_cast<std::size_t>(index)];
-        int insertion = index;
-        while (insertion > 0
-               && events[static_cast<std::size_t>(insertion - 1)].time
-                    > event.time)
-        {
-            events[static_cast<std::size_t>(insertion)] =
-                events[static_cast<std::size_t>(insertion - 1)];
-            --insertion;
-        }
-        events[static_cast<std::size_t>(insertion)] = event;
-    }
-
-    for (int index = 0; index < eventCount; ++index)
-    {
-        const auto& event = events[static_cast<std::size_t>(index)];
-        if (event.state == dco.pulseState)
-            continue;
-        addStep(dco.pulse, event.state - dco.pulseState,
-                static_cast<float>(1.0 - event.time));
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
-#endif
-        dco.pulseState = event.state;
-    }
-
-    // Clamping at the 0/100% limits makes the boundary piecewise rather than
-    // perfectly linear.  Reconcile the end point to the physical comparator's
-    // memoryless truth; in the ordinary 5..95% range the solved events already
-    // land here exactly, so this is only a numerical/pinned-state guard.
-    const auto edgePhases = pulseEdgePhases(duty, static_cast<float>(reset));
-    const double riseEdge = static_cast<double>(edgePhases.rise);
-    const double fallEdge = static_cast<double>(edgePhases.fall);
-    const float comparatorAtEnd = duty >= 1.0f
-        ? 1.0f
-        : (duty <= 0.0f
-               ? -1.0f
-               : (phase >= riseEdge && phase < fallEdge ? 1.0f : -1.0f));
-    if (comparatorAtEnd != dco.pulseState)
-    {
-        addStep(dco.pulse, comparatorAtEnd - dco.pulseState, 0.0f);
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
-#endif
-        dco.pulseState = comparatorAtEnd;
-    }
-    voice.previousPulseDuty = duty;
-    voice.pulseDutyPrimed = true;
-
-    // The ramp's momentary scale error reaches the pulse through its *edge
-    // times* -- pwmDutyCycle solves the threshold against the achieved ramp
-    // amplitude -- and through nothing else: the comparator's output swing is
-    // its own logic level, not a copy of the ramp's. A previous revision also
-    // multiplied the pulse's amplitude by the compensation ratio, a coupling
-    // no cited mechanism derives (the derivation chain covers the duty
-    // alone), which doubled the zipper's click energy on pulse patches.
-    const float pulseOut = dco.pulse.advance(dco.pulseState) * pulseMixVolts;
-
-    // --- Sub --------------------------------------------------------------
-    // A flip-flop halves the note clock, so the sub is an exact square one
-    // octave down and takes no part in pulse-width modulation. The terminal
-    // pulse that fires the ramp's discharge is also what clocks the divider,
-    // so the sub's edges land at the reset's *start*, not at the cycle
-    // boundary. Its level is the shared scanned SUB voltage consumed by every
-    // card; its amplitude is a logic square and takes no part in the ramp's
-    // compensation.
-    for (double base = 0.0; base <= lastCycle; base += 1.0)
-    {
-        if (!insideThisSample(base + rise))
-            continue;
-        const float target = -dco.subState;
-        addStep(dco.sub, target - dco.subState, samplesAgo(base + rise));
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(dcoSubTransitions, 1);
-#endif
-        dco.subState = target;
-    }
+    // Comparator and sub transitions were inserted at their PIT/ramp event
+    // timestamps above; their logic levels are independent of ramp amplitude.
+    const float pulseOut =
+        dco.pulse.advance(dco.pulseState) * pulseMixVolts;
     const float subGain = subMixVolts * static_cast<float>(subCv_)
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
-    // The divider's two levels are symmetric. A revision made them 0.3%
-    // unequal in *amplitude*, which is a DC offset and even harmonics at about
-    // -50 dBc -- and it was attributed to the 4013's unequal driver rise and
-    // fall times, which are an edge-*timing* effect, not a level one. That
-    // mechanism does exist, and it is inaudible: 10 ns of skew against the sub
-    // period is 3e-7 of a cycle at the bottom of the 16' range. Modelling it
-    // would mean moving the edge, and the amount to move it by is nothing.
     const float subOut = dco.sub.advance(dco.subState) * subGain;
 
     // --- Summing node --------------------------------------------------------
@@ -5957,16 +6014,13 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 for (int slot = hardwareVoices; slot < maxVoices; ++slot)
                 {
                     auto& voice = voices_[static_cast<std::size_t>(slot)];
-                    const double previousPeriod = voice.dco.periodSamples;
 #if defined(YOUKNOW106_WORK_AUDIT)
                     YOUKNOW106_COUNT_DOMAIN_WORK(extensionScanUpdates, 1);
 #endif
-                    updateVoiceScan(voice, parameters, converterPassLfoGated_);
-                    if (voice.dcoResetPending)
-                    {
-                        restartDcoBandlimited(voice, previousPeriod);
-                        voice.dcoResetPending = false;
-                    }
+                    const std::uint32_t count = updateVoiceScan(
+                        voice, parameters, converterPassLfoGated_);
+                    programDcoCount(voice, count, voice.dcoResetPending);
+                    voice.dcoResetPending = false;
                 }
             }
 

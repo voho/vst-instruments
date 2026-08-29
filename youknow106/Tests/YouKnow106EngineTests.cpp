@@ -44,11 +44,17 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].dcoResetPending;
     }
 
+    static void setDcoResetPending(YouKnow106Engine& engine, int slot,
+                                   bool pending) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(slot)].dcoResetPending = pending;
+    }
+
     static void updateVoiceScan(YouKnow106Engine& engine, int slot,
                                 const EngineParameters& parameters) noexcept
     {
-        engine.updateVoiceScan(engine.voices_[static_cast<std::size_t>(slot)],
-                               parameters, 0.0f);
+        (void) engine.updateVoiceScan(
+            engine.voices_[static_cast<std::size_t>(slot)], parameters, 0.0f);
     }
 
     static float filterOmegaStep(const YouKnow106Engine& engine,
@@ -114,29 +120,359 @@ struct YouKnow106TestAccess
         return engine.noiseCvTarget_;
     }
 
-    static double dcoPhase(const YouKnow106Engine& engine, int slot) noexcept
-    {
-        return engine.voices_[static_cast<std::size_t>(slot)].dco.phase;
-    }
-
-    static void setDcoPhase(YouKnow106Engine& engine, int slot,
-                            double phase) noexcept
-    {
-        engine.voices_[static_cast<std::size_t>(slot)].dco.phase = phase;
-    }
-
     static double dcoPeriodSamples(const YouKnow106Engine& engine,
                                    int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].dco.periodSamples;
     }
 
-    static float dcoResetFraction(const YouKnow106Engine& engine,
+    static double dcoRampValue(const YouKnow106Engine& engine,
+                               int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.rampValue;
+    }
+
+    static std::array<double, 4> dcoRampState(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        return { dco.rampValue, dco.rampSlopePerSecond,
+                 dco.resetSecondsRemaining,
+                 static_cast<double>(dco.renderScale) };
+    }
+
+    static double dcoPositiveBaseRail(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(slot)];
+        return YouKnow106Engine::dcoPositiveBaseRail(
+            static_cast<double>(voice.dco.renderScale)
+            * static_cast<double>(voice.rampCurrentScale));
+    }
+
+    static double dcoRampVolts(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(slot)];
+        const double totalScale =
+            static_cast<double>(voice.dco.renderScale)
+            * static_cast<double>(voice.rampCurrentScale);
+        return 0.5 * YouKnow106Engine::rampAmplitudeVolts
+             * totalScale * (voice.dco.rampValue + 1.0);
+    }
+
+    static std::uint32_t mode3HalfClocks(std::uint32_t count,
+                                         bool outHigh) noexcept
+    {
+        return YouKnow106Engine::Dco::mode3HalfClocks(count, outHigh);
+    }
+
+    static double eightFootClockHz() noexcept
+    {
+        return YouKnow106Engine::rangeClockHz(DcoRange::Eight);
+    }
+
+    static double internalIntervalSeconds(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return 1.0 / engine.oversampledRate_;
+    }
+
+    static void setMode3Running(YouKnow106Engine& engine, int slot,
+                                std::uint32_t count, bool outHigh,
+                                double clocksToEvent,
+                                DcoRange range = DcoRange::Eight) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.divider = count;
+        dco.pendingDivider = count;
+        dco.pendingDividerValid = false;
+        dco.pitState = YouKnow106Engine::Dco::PitState::running;
+        dco.pitOutHigh = outHigh;
+        dco.pitClocksToEvent = clocksToEvent;
+        engine.updateActiveDcoPeriod(dco, range);
+    }
+
+    static void stageMode3Count(YouKnow106Engine& engine, int slot,
+                                std::uint32_t count) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.stageMode3Count(count);
+    }
+
+    static int consumePitEvent(YouKnow106Engine& engine, int slot) noexcept
+    {
+        return static_cast<int>(engine.voices_[static_cast<std::size_t>(slot)]
+                                    .dco.consumePitEvent());
+    }
+
+    static int initialLoadEvent() noexcept
+    {
+        return static_cast<int>(YouKnow106Engine::Dco::PitEvent::initialLoad);
+    }
+
+    static int fallingPitEvent() noexcept
+    {
+        return static_cast<int>(YouKnow106Engine::Dco::PitEvent::fallingEdge);
+    }
+
+    static int risingPitEvent() noexcept
+    {
+        return static_cast<int>(YouKnow106Engine::Dco::PitEvent::risingEdge);
+    }
+
+    static void programDcoCount(YouKnow106Engine& engine, int slot,
+                                std::uint32_t count,
+                                bool controlWord) noexcept
+    {
+        engine.programDcoCount(
+            engine.voices_[static_cast<std::size_t>(slot)], count,
+            controlWord);
+    }
+
+    static void performPitchWrite(YouKnow106Engine& engine, int slot,
+                                  const EngineParameters& parameters) noexcept
+    {
+        engine.performConverterWrite(
+            { YouKnow106Engine::ConverterDestination::Pitch, slot },
+            parameters, 0.0f);
+    }
+
+    static float dcoCv(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dcoCv;
+    }
+
+    static float dcoCvTarget(const YouKnow106Engine& engine,
+                             int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dcoCvTarget;
+    }
+
+    static void advanceDcoPitAndRamp(YouKnow106Engine& engine, int slot,
+                                     bool corrections) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        engine.advanceDcoPitAndRamp(
+            voice, DcoRange::Eight,
+            voice.pulseThresholdVolts, voice.pulseThresholdVolts,
+            voice.pulsePinnedHigh, voice.pulsePinnedHigh, corrections);
+    }
+
+    static void advanceDcoPitAndRamp(
+        YouKnow106Engine& engine, int slot, float previousDuty, float duty,
+        bool corrections) noexcept
+    {
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(slot)];
+        const float totalScale =
+            voice.dco.renderScale * voice.rampCurrentScale;
+        const auto thresholdForDuty = [totalScale](float value) {
+            return 12.0f * totalScale
+                 * (1.0f - std::clamp(value, 0.0f, 1.0f));
+        };
+        engine.advanceDcoPitAndRamp(
+            engine.voices_[static_cast<std::size_t>(slot)], DcoRange::Eight,
+            thresholdForDuty(previousDuty), thresholdForDuty(duty),
+            previousDuty >= 1.0f, duty >= 1.0f, corrections);
+    }
+
+    static void advanceDcoPitAndRampThreshold(
+        YouKnow106Engine& engine, int slot, DcoRange range,
+        float previousThresholdVolts, float thresholdVolts,
+        bool previousPinnedHigh, bool pinnedHigh,
+        bool corrections) noexcept
+    {
+        engine.advanceDcoPitAndRamp(
+            engine.voices_[static_cast<std::size_t>(slot)], range,
+            previousThresholdVolts, thresholdVolts,
+            previousPinnedHigh, pinnedHigh, corrections);
+    }
+
+    static void setDcoRampState(YouKnow106Engine& engine, int slot,
+                                double value, double slope) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.rampValue = value;
+        dco.rampSlopePerSecond = slope;
+        dco.resetSecondsRemaining = 0.0;
+        dco.positiveRailHeld = false;
+    }
+
+    static void setDcoResetState(YouKnow106Engine& engine, int slot,
+                                 double value, double slope,
+                                 double secondsRemaining) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.rampValue = value;
+        dco.rampSlopePerSecond = slope;
+        dco.resetSecondsRemaining = secondsRemaining;
+        dco.positiveRailHeld = false;
+    }
+
+    static void setDcoRampScales(YouKnow106Engine& engine, int slot,
+                                 float renderScale,
+                                 float cardCurrentScale) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.dco.renderScale = renderScale;
+        voice.rampCurrentScale = cardCurrentScale;
+    }
+
+    static void setPositiveRailHeld(YouKnow106Engine& engine, int slot,
+                                    bool held) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.positiveRailHeld = held;
+    }
+
+    static bool positiveRailHeld(const YouKnow106Engine& engine,
+                                 int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.positiveRailHeld;
+    }
+
+    static void setDcoLaunchState(YouKnow106Engine& engine, int slot,
+                                  double periodSamples, float cv,
+                                  float target) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.dco.periodSamples = periodSamples;
+        voice.dcoCv = cv;
+        voice.dcoCvTarget = target;
+    }
+
+    static void setRampCurrentError(YouKnow106Engine& engine, int card,
+                                    float error) noexcept
+    {
+        engine.cards_[static_cast<std::size_t>(card)]
+            .rampCurrentError = error;
+    }
+
+    static float rampCurrentScale(const YouKnow106Engine& engine,
                                   int slot) noexcept
     {
-        return engine.resetFraction(
-            engine.voices_[static_cast<std::size_t>(slot)].dco.periodSamples
-            * engine.inverseOversampledRate_);
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .rampCurrentScale;
+    }
+
+    static void updatePulseComparator(
+        YouKnow106Engine& engine, int slot,
+        const EngineParameters& parameters) noexcept
+    {
+        engine.updatePulseComparator(
+            engine.voices_[static_cast<std::size_t>(slot)], parameters);
+    }
+
+    static void renderRetiredVoice(
+        YouKnow106Engine& engine, int slot,
+        const EngineParameters& parameters) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.active = false;
+        (void) engine.renderVoice<false>(voice, parameters, 0.0f);
+    }
+
+    static void primeSawTrack(YouKnow106Engine& engine, int slot) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        const float rendered = static_cast<float>(
+            dco.rampValue * static_cast<double>(dco.renderScale)
+            + (static_cast<double>(dco.renderScale) - 1.0));
+        dco.saw.reset();
+        dco.saw.prime(rendered);
+    }
+
+    static void primePulseTrack(YouKnow106Engine& engine, int slot,
+                                float state) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.pulseState = state;
+        dco.pulse.reset();
+        dco.pulse.prime(state);
+    }
+
+    static std::uint32_t activeDcoDivider(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.divider;
+    }
+
+    static std::uint32_t pendingDcoDivider(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.pendingDivider;
+    }
+
+    static bool pendingDcoDividerValid(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.pendingDividerValid;
+    }
+
+    static bool pitOutHigh(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.pitOutHigh;
+    }
+
+    static double pitClocksToEvent(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dco.pitClocksToEvent;
+    }
+
+    static int pitState(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return static_cast<int>(
+            engine.voices_[static_cast<std::size_t>(slot)].dco.pitState);
+    }
+
+    static int awaitingInitialLoadState() noexcept
+    {
+        return static_cast<int>(
+            YouKnow106Engine::Dco::PitState::awaitingInitialLoad);
+    }
+
+    static int stoppedPitState() noexcept
+    {
+        return static_cast<int>(YouKnow106Engine::Dco::PitState::stopped);
+    }
+
+    static void setDcoLogicStates(YouKnow106Engine& engine, int slot,
+                                  float pulse, float sub) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.pulseState = pulse;
+        dco.subState = sub;
+    }
+
+    static void primeDcoControlEdgeFixture(
+        YouKnow106Engine& engine, int slot) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        const double periodSeconds = std::max(
+            dco.periodSamples / engine.oversampledRate_, 1.0e-12);
+        const double resetSeconds = static_cast<double>(
+            YouKnow106Engine::resetFraction(periodSeconds)) * periodSeconds;
+        dco.rampValue = 0.25;
+        dco.rampSlopePerSecond = 2.0 / std::max(
+            periodSeconds - resetSeconds, periodSeconds * 1.0e-4);
+        dco.resetSecondsRemaining = 0.0;
+        dco.renderScale = 1.0f;
+        dco.pulseState = 1.0f;
+        dco.subState = -1.0f;
+        dco.saw.reset();
+        dco.pulse.reset();
+        dco.sub.reset();
+        dco.saw.prime(0.25f);
+        dco.pulse.prime(dco.pulseState);
+        dco.sub.prime(dco.subState);
     }
 
     static double chorusPhase(const YouKnow106Engine& engine) noexcept
@@ -155,18 +491,23 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].dco.pulseState;
     }
 
-    static bool pulseDutyHistoryIsPrimed(const YouKnow106Engine& engine,
-                                         int slot) noexcept
+    static bool pulseThresholdHistoryIsPrimed(const YouKnow106Engine& engine,
+                                              int slot) noexcept
     {
-        return engine.voices_[static_cast<std::size_t>(slot)].pulseDutyPrimed;
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .pulseThresholdPrimed;
     }
 
     static void primePulseDutyHistory(YouKnow106Engine& engine, int slot,
                                       float duty) noexcept
     {
         auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
-        voice.previousPulseDuty = duty;
-        voice.pulseDutyPrimed = true;
+        const float totalScale =
+            voice.dco.renderScale * voice.rampCurrentScale;
+        voice.previousPulseThresholdVolts = 12.0f * totalScale
+            * (1.0f - std::clamp(duty, 0.0f, 1.0f));
+        voice.previousPulsePinnedHigh = duty >= 1.0f;
+        voice.pulseThresholdPrimed = true;
     }
 
     static bool pulseMixEnabled(const YouKnow106Engine& engine, int slot,
@@ -719,6 +1060,55 @@ struct YouKnow106TestAccess
         return { track.ring, track.delay, track.base, track.primed };
     }
 
+    static BandlimitedTrackState expectedPulseStep(
+        YouKnow106Engine& engine, float initial, float height,
+        float samplesAgo) noexcept
+    {
+        YouKnow106Engine::BandlimitedTrack track;
+        track.prime(initial);
+        engine.addStep(track, height, samplesAgo);
+        return { track.ring, track.delay, track.base, track.primed };
+    }
+
+    static BandlimitedTrackState expectedSawSlope(
+        YouKnow106Engine& engine, float slopeStep,
+        float samplesAgo) noexcept
+    {
+        YouKnow106Engine::BandlimitedTrack track;
+        track.prime(0.0f);
+        engine.addSlope(track, slopeStep, samplesAgo);
+        return { track.ring, track.delay, track.base, track.primed };
+    }
+
+    static BandlimitedTrackState expectedSawStepAndSlope(
+        YouKnow106Engine& engine, float initial, float height,
+        float slopeStep, float samplesAgo) noexcept
+    {
+        YouKnow106Engine::BandlimitedTrack track;
+        track.prime(initial);
+        engine.addStep(track, height, samplesAgo);
+        engine.addSlope(track, slopeStep, samplesAgo);
+        return { track.ring, track.delay, track.base, track.primed };
+    }
+
+    static float nextPulseTrackSample(
+        const YouKnow106Engine& engine, int slot, float naive) noexcept
+    {
+        auto track = engine.voices_[static_cast<std::size_t>(slot)].dco.pulse;
+        return track.advance(naive);
+    }
+
+    static std::array<float, YouKnow106Engine::correctionRing + 2>
+    subTrackAfterControlEdge(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        auto track = engine.voices_[static_cast<std::size_t>(slot)].dco.sub;
+        std::array<float, YouKnow106Engine::correctionRing + 2> output {};
+        for (auto& sample : output)
+            sample = track.advance(1.0f);
+        return output;
+    }
+
     static std::array<float, 3> stepCorrectionEventSides(
         YouKnow106Engine& engine) noexcept
     {
@@ -738,53 +1128,6 @@ struct YouKnow106TestAccess
         };
     }
 
-    static void primeDcoRestartFixture(YouKnow106Engine& engine, int slot,
-                                       double phase) noexcept
-    {
-        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
-        const double reset = YouKnow106Engine::resetFraction(
-            dco.periodSamples * engine.inverseOversampledRate_);
-        const double rise = std::max(1.0 - reset, 1.0e-4);
-        const float saw = phase < rise
-            ? 2.0f * std::clamp(
-                  static_cast<float>(phase / rise), 0.0f, 1.0f) - 1.0f
-            : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
-        dco.phase = phase;
-        dco.pulseState = 1.0f;
-        dco.subState = -1.0f;
-        dco.saw.reset();
-        dco.pulse.reset();
-        dco.sub.reset();
-        dco.saw.prime(saw);
-        dco.pulse.prime(dco.pulseState);
-        dco.sub.prime(dco.subState);
-    }
-
-    static void performPitchWrite(YouKnow106Engine& engine, int slot,
-                                  const EngineParameters& parameters) noexcept
-    {
-        engine.performConverterWrite(
-            { YouKnow106Engine::ConverterDestination::Pitch, slot },
-            parameters, 0.0f);
-    }
-
-    static std::array<float, YouKnow106Engine::correctionRing + 2>
-    pulseTrackAfterRestart(
-        const YouKnow106Engine& engine, int slot) noexcept
-    {
-        auto track = engine.voices_[static_cast<std::size_t>(slot)].dco.pulse;
-        std::array<float, YouKnow106Engine::correctionRing + 2> output {};
-        for (auto& sample : output)
-            sample = track.advance(-1.0f);
-        return output;
-    }
-
-    static float dcoRenderScale(const YouKnow106Engine& engine,
-                                int slot) noexcept
-    {
-        return engine.voices_[static_cast<std::size_t>(slot)].dco.renderScale;
-    }
-
     static double numericalLatencyCentre(int factor) noexcept
     {
         return YouKnow106Engine::totalLatencySamples(factor);
@@ -793,80 +1136,6 @@ struct YouKnow106TestAccess
     static int latencyPadSamples(const YouKnow106Engine& engine) noexcept
     {
         return engine.latencyPadSamples_;
-    }
-
-    static double sawRestartEventSideError(
-        const YouKnow106Engine& engine, int slot,
-        double previousPeriodSamples, double previousPhase,
-        float previousScale) noexcept
-    {
-        const auto& dco =
-            engine.voices_[static_cast<std::size_t>(slot)].dco;
-        auto actual = dco.saw;
-        auto reference = actual;
-        reference.ring.fill(0.0f);
-
-        const auto geometry = [&engine](double periodSamples) {
-            const double safePeriod = std::max(periodSamples, 1.0e-9);
-            const double reset = YouKnow106Engine::resetFraction(
-                safePeriod * engine.inverseOversampledRate_);
-            const double rise = std::max(1.0 - reset, 1.0e-4);
-            return std::array { safePeriod, reset, rise };
-        };
-        const auto oldGeometry = geometry(previousPeriodSamples);
-        const auto newGeometry = geometry(dco.periodSamples);
-        // Both timelines in the scaled naive domain the track carries: the
-        // abandoned ramp under its own frozen ratio, the restarted ramp under
-        // the ratio the restart froze (readable from the post-restart state).
-        const float newScale = dco.renderScale;
-        const float oldSawUnit = previousPhase < oldGeometry[2]
-            ? 2.0f * std::clamp(
-                  static_cast<float>(previousPhase / oldGeometry[2]),
-                  0.0f, 1.0f) - 1.0f
-            : 1.0f - 2.0f * static_cast<float>(
-                  (previousPhase - oldGeometry[2]) / oldGeometry[1]);
-        const float oldSaw =
-            oldSawUnit * previousScale + (previousScale - 1.0f);
-        constexpr float newSaw = -1.0f;
-        const float oldSlope = (previousPhase < oldGeometry[2]
-            ? 2.0f / static_cast<float>(oldGeometry[2] * oldGeometry[0])
-            : -2.0f / static_cast<float>(oldGeometry[1] * oldGeometry[0]))
-            * previousScale;
-        const float newSlope =
-            2.0f / static_cast<float>(newGeometry[2] * newGeometry[0])
-            * newScale;
-
-        // Build an independent residual from the values renderVoice actually
-        // submits one interval after the converter write. Comparing advanced
-        // tracks, rather than mere ring energy, catches a phase-zero step that
-        // forgets the two ramps' different one-sample slope advances.
-        engine.addStep(reference,
-                       (newSaw + newSlope) - (oldSaw + oldSlope), 0.0f);
-        engine.addSlope(reference, newSlope - oldSlope, 0.0f);
-
-        double phase = 0.0;
-        double maximumError = 0.0;
-        for (int sample = 0; sample < 10; ++sample)
-        {
-            phase += 1.0 / newGeometry[0];
-            phase -= std::floor(phase);
-            const float naive = phase < newGeometry[2]
-                ? 2.0f * std::clamp(
-                      static_cast<float>(phase / newGeometry[2]),
-                      0.0f, 1.0f) - 1.0f
-                : 1.0f - 2.0f * static_cast<float>(
-                      (phase - newGeometry[2]) / newGeometry[1]);
-            maximumError = std::max(
-                maximumError,
-                std::abs(static_cast<double>(actual.advance(naive))
-                         - reference.advance(naive)));
-        }
-        return maximumError;
-    }
-
-    static float dcoCv(const YouKnow106Engine& engine, int slot) noexcept
-    {
-        return engine.voices_[static_cast<std::size_t>(slot)].dcoCv;
     }
 
     // The chassis warm-up clock and the exponential the voices read off it.
@@ -919,12 +1188,6 @@ struct YouKnow106TestAccess
                                   int cardIndex) noexcept
     {
         return engine.dynamicOtaHeadroomVolts(parameters, cardIndex);
-    }
-
-    static float dcoCvTarget(const YouKnow106Engine& engine,
-                             int slot) noexcept
-    {
-        return engine.voices_[static_cast<std::size_t>(slot)].dcoCvTarget;
     }
 
     static std::array<float, 2> dcoLogicStates(
@@ -1863,16 +2126,233 @@ void testHeldTransposeUpdatesVoiceCpuPitchHistory()
            "transpose change during release did not schedule DCO reset");
 }
 
-void testCompatibilityPitchWriteRestartIsBandlimited()
+void testMode3CountStagingAndControlPolarity()
 {
-    // This freezes the current phase-zero compatibility policy, not a settled
-    // hardware claim. An M82C53 mode write forces OUT high, so a physical C54
-    // reset and sub clock depend on the unmodelled previous OUT polarity
-    // (OQ-08). Until explicit PIT state replaces it, the provisional event
-    // must at least remain bandlimited and leave unrelated card state intact.
-    constexpr double sampleRate = 192000.0;
+    // OKI's Mode-3 split gives an odd count's extra clock to OUT high.
+    expect(YouKnow106TestAccess::mode3HalfClocks(8u, true) == 4u
+               && YouKnow106TestAccess::mode3HalfClocks(8u, false) == 4u,
+           "an even Mode-3 count did not split equally");
+    expect(YouKnow106TestAccess::mode3HalfClocks(9u, true) == 5u
+               && YouKnow106TestAccess::mode3HalfClocks(9u, false) == 4u,
+           "an odd Mode-3 count did not give its extra clock to OUT high");
+    expect(YouKnow106TestAccess::mode3HalfClocks(65535u, true) == 32768u
+               && YouKnow106TestAccess::mode3HalfClocks(65535u, false)
+                      == 32767u,
+           "the maximum programmed count lost its Mode-3 half lengths");
+
     YouKnow106Engine engine;
-    engine.prepare(sampleRate, blockSize, false);
+    engine.prepare(192000.0, blockSize, false);
+
+    // A running count-only write leaves the current high half alone. At its
+    // falling edge the latest complete pair enters CE and supplies the new low
+    // half; a falling edge is not a C54/sub event.
+    YouKnow106TestAccess::setMode3Running(engine, 0, 8u, true, 1.0);
+    YouKnow106TestAccess::stageMode3Count(engine, 0, 9u);
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 8u
+               && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+           "a count-only write changed CE before the current half-cycle ended");
+    expect(YouKnow106TestAccess::consumePitEvent(engine, 0)
+               == YouKnow106TestAccess::fallingPitEvent(),
+           "the running high half did not end with a falling OUT edge");
+    expect(!YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::activeDcoDivider(engine, 0) == 9u
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 4.0
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+           "the staged odd count did not supply the new low half");
+
+    // The mirror case loads after the old low half, then the physical positive
+    // edge starts a high half whose odd/even length belongs to the new count.
+    YouKnow106TestAccess::setMode3Running(engine, 0, 9u, false, 1.0);
+    YouKnow106TestAccess::stageMode3Count(engine, 0, 8u);
+    expect(YouKnow106TestAccess::consumePitEvent(engine, 0)
+               == YouKnow106TestAccess::risingPitEvent(),
+           "the running low half did not end with a rising OUT edge");
+    expect(YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::activeDcoDivider(engine, 0) == 8u
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 4.0,
+           "the staged even count did not supply the new high half");
+
+    // The count register has one value: the last full pair wins, and writing
+    // the active value must also replace an older pending change.
+    YouKnow106TestAccess::setMode3Running(engine, 0, 10u, true, 1.0);
+    YouKnow106TestAccess::stageMode3Count(engine, 0, 11u);
+    YouKnow106TestAccess::stageMode3Count(engine, 0, 13u);
+    (void) YouKnow106TestAccess::consumePitEvent(engine, 0);
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 13u,
+           "a later complete count did not replace the pending count register");
+    YouKnow106TestAccess::setMode3Running(engine, 0, 10u, true, 1.0);
+    YouKnow106TestAccess::stageMode3Count(engine, 0, 11u);
+    YouKnow106TestAccess::stageMode3Count(engine, 0, 10u);
+    (void) YouKnow106TestAccess::consumePitEvent(engine, 0);
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 10u,
+           "rewriting the active count did not cancel an older pending change");
+
+    // A control-word low-to-high OUT edge occurs at the converter timestamp,
+    // the left edge of the interval. Its correction rings must be identical to
+    // the same running-PIT rising edge consumed by the event walk at elapsed 0.
+    YouKnow106Engine programmedEdge;
+    YouKnow106Engine runningEdge;
+    programmedEdge.prepare(768000.0, blockSize, false);
+    runningEdge.prepare(768000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        programmedEdge, 0, 10000u, false, 3.25);
+    YouKnow106TestAccess::setMode3Running(
+        runningEdge, 0, 10000u, false, 0.0);
+    YouKnow106TestAccess::primeDcoControlEdgeFixture(programmedEdge, 0);
+    YouKnow106TestAccess::primeDcoControlEdgeFixture(runningEdge, 0);
+    YouKnow106TestAccess::programDcoCount(
+        programmedEdge, 0, 10000u, true);
+    YouKnow106TestAccess::advanceDcoPitAndRamp(runningEdge, 0, true);
+    const auto programmedSaw =
+        YouKnow106TestAccess::sawTrackState(programmedEdge, 0);
+    const auto runningSaw =
+        YouKnow106TestAccess::sawTrackState(runningEdge, 0);
+    const auto programmedSub =
+        YouKnow106TestAccess::subTrackState(programmedEdge, 0);
+    const auto runningSub =
+        YouKnow106TestAccess::subTrackState(runningEdge, 0);
+    expect(programmedSaw.ring == runningSaw.ring
+               && programmedSaw.delay == runningSaw.delay
+               && programmedSaw.base == runningSaw.base
+               && programmedSaw.primed == runningSaw.primed
+               && programmedSub.ring == runningSub.ring
+               && programmedSub.delay == runningSub.delay
+               && programmedSub.base == runningSub.base
+               && programmedSub.primed == runningSub.primed,
+           "the control-word OUT edge was shifted one sample from an "
+           "elapsed-zero PIT rising edge");
+
+    // A control word forces OUT high. Only a stored low level makes that a
+    // positive edge, so only that case clocks the sub; neither case fabricates
+    // a comparator state. The count then loads on the following input clock and
+    // begins with the new high half.
+    YouKnow106TestAccess::setMode3Running(engine, 0, 9u, false, 3.25);
+    YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
+    YouKnow106TestAccess::programDcoCount(engine, 0, 11u, true);
+    expect(YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::pitState(engine, 0)
+                      == YouKnow106TestAccess::awaitingInitialLoadState()
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 0.25
+               && YouKnow106TestAccess::dcoLogicStates(engine, 0)[0] == 1.0f
+               && YouKnow106TestAccess::dcoLogicStates(engine, 0)[1] == 1.0f,
+           "forcing a low OUT high did not make exactly the C54/sub edge");
+
+    const auto sawAfter = YouKnow106TestAccess::sawTrackState(engine, 0);
+    const auto pulseAfter = YouKnow106TestAccess::pulseTrackState(engine, 0);
+    const auto subAfter = YouKnow106TestAccess::subTrackState(engine, 0);
+    const auto ringEnergy = [](const auto& ring) {
+        double energy = 0.0;
+        for (const float value : ring)
+            energy += static_cast<double>(value) * value;
+        return energy;
+    };
+    expect(sawAfter.primed && pulseAfter.primed && subAfter.primed,
+           "a control-word OUT edge cleared bandlimited waveform histories");
+    expect(ringEnergy(sawAfter.ring) > 1.0e-8,
+           "the C54 discharge slope change received no BLAMP residual");
+    expect(ringEnergy(subAfter.ring) > 1.0e-8,
+           "the positive OUT edge's sub clock received no BLEP residual");
+    expect(ringEnergy(pulseAfter.ring) < 1.0e-14,
+           "the control word fabricated a comparator BLEP");
+
+    // Copying the sub track exposes the isolated logic transition. The
+    // symmetric BLEP preserves the event's old side, then reaches the new side
+    // after its finite residual support instead of emitting a full-band step.
+    const auto transition =
+        YouKnow106TestAccess::subTrackAfterControlEdge(engine, 0);
+    expectNear(transition.front(), -1.0, 0.02,
+               "bandlimited control edge changed a pre-event sub sample");
+    expectNear(transition.back(), 1.0, 0.02,
+               "bandlimited control edge did not settle on its new sub state");
+    expect(YouKnow106TestAccess::consumePitEvent(engine, 0)
+               == YouKnow106TestAccess::initialLoadEvent(),
+           "the control-word count did not load on the next PIT clock");
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 11u
+               && YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 6.0,
+           "initial Mode-3 load did not begin the odd count's high half");
+
+    YouKnow106TestAccess::setMode3Running(engine, 0, 9u, true, 2.75);
+    YouKnow106TestAccess::setDcoLogicStates(engine, 0, -1.0f, -1.0f);
+    YouKnow106TestAccess::programDcoCount(engine, 0, 8u, true);
+    expect(YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 0.75
+               && YouKnow106TestAccess::dcoLogicStates(engine, 0)[0] == -1.0f
+               && YouKnow106TestAccess::dcoLogicStates(engine, 0)[1] == -1.0f,
+           "forcing an already-high OUT fabricated an analogue or sub edge");
+    (void) YouKnow106TestAccess::consumePitEvent(engine, 0);
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 8u
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 4.0,
+           "even initial count did not begin with its four-clock high half");
+
+    // A warm charge already held at the positive supply bound is not a cold
+    // start merely because its slope and reset countdown are both zero. With
+    // OUT already high, mode programming and initial CE load make no C54 edge:
+    // the rail must hold until the next verified positive OUT transition.
+    YouKnow106Engine warm;
+    warm.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        warm, 0, 9u, true, 2.75);
+    const double warmRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(warm, 0);
+    YouKnow106TestAccess::setDcoRampState(warm, 0, warmRail, 0.0);
+    YouKnow106TestAccess::setPositiveRailHeld(warm, 0, true);
+    YouKnow106TestAccess::setDcoLogicStates(warm, 0, 1.0f, -1.0f);
+    YouKnow106TestAccess::programDcoCount(warm, 0, 10000u, true);
+    YouKnow106TestAccess::advanceDcoPitAndRamp(warm, 0, true);
+    expect(YouKnow106TestAccess::activeDcoDivider(warm, 0) == 10000u
+               && YouKnow106TestAccess::dcoRampState(warm, 0)[0] == warmRail
+               && YouKnow106TestAccess::dcoRampState(warm, 0)[1] == 0.0
+               && YouKnow106TestAccess::dcoRampState(warm, 0)[2] == 0.0
+               && YouKnow106TestAccess::dcoLogicStates(warm, 0)[1] == -1.0f,
+           "a warm positive-rail hold was misclassified as a cold initial load");
+    bool warmSawRisingOut = false;
+    for (int sample = 0; sample < 1200 && !warmSawRisingOut; ++sample)
+    {
+        YouKnow106TestAccess::advanceDcoPitAndRamp(warm, 0, true);
+        if (YouKnow106TestAccess::dcoLogicStates(warm, 0)[1] == -1.0f)
+        {
+            expect(YouKnow106TestAccess::dcoRampState(warm, 0)[0] == warmRail
+                       && YouKnow106TestAccess::dcoRampState(warm, 0)[1] == 0.0,
+                   "the warm ramp left its supply bound without positive OUT");
+        }
+        else
+        {
+            warmSawRisingOut = true;
+            expect(YouKnow106TestAccess::pitOutHigh(warm, 0)
+                       && YouKnow106TestAccess::dcoRampValue(warm, 0)
+                              < warmRail,
+                   "the next positive OUT edge did not begin warm discharge");
+        }
+    }
+    expect(warmSawRisingOut,
+           "the warm mode-write fixture never reached its next rising OUT");
+
+    YouKnow106Engine cold;
+    cold.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::programDcoCount(cold, 0, 10000u, true);
+    YouKnow106TestAccess::advanceDcoPitAndRamp(cold, 0, true);
+    expect(YouKnow106TestAccess::activeDcoDivider(cold, 0) == 10000u
+               && YouKnow106TestAccess::dcoRampValue(cold, 0) < -0.99
+               && YouKnow106TestAccess::dcoRampState(cold, 0)[1] > 0.0,
+           "cold initial load no longer held the low rail before first charge");
+
+    engine.reset();
+    expect(YouKnow106TestAccess::pitState(engine, 0)
+               == YouKnow106TestAccess::stoppedPitState()
+               && YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+           "hard reset did not restore the deterministic high/stopped PIT state");
+}
+
+void testControlWordConverterWritePreservesCardState()
+{
+    // Exercise the voice CPU's real converter destination, not only the narrow
+    // PIT seam above. A different pitch assigned to a releasing card consumes
+    // its pending control-word request without treating that write as a power
+    // cycle for the compensation hold, filter, noise source or delayed
+    // reconstruction histories.
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
     auto parameters = plainPatch();
     parameters.polyphony = 1;
     parameters.release = 1.0f;
@@ -1882,89 +2362,830 @@ void testCompatibilityPitchWriteRestartIsBandlimited()
     engine.noteOn(69, 1.0f);
     renderExact(engine, 2048);
     engine.noteOff(69);
-    // Retarget widely into the top register so forgetting the ramps' unequal
-    // one-sample advances leaves a clearly measurable hard saw step.
     engine.noteOn(120, 1.0f);
     expect(YouKnow106TestAccess::dcoResetPending(engine, 0),
            "different pitch on a releasing card did not request the "
            "control-word path");
 
-    YouKnow106TestAccess::primeDcoRestartFixture(engine, 0, 0.75);
-    const auto pulseBefore = YouKnow106TestAccess::pulseTrackState(engine, 0);
-    const auto filterBefore = YouKnow106TestAccess::filterState(engine, 0);
-    const auto noiseBefore =
-        YouKnow106TestAccess::microscopicNoiseState(engine, 0);
+    const std::uint32_t activeBefore =
+        YouKnow106TestAccess::activeDcoDivider(engine, 0);
+    YouKnow106TestAccess::setMode3Running(
+        engine, 0, activeBefore, false, 3.25);
+    YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
     const double periodBefore =
         YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
     const float cvBefore = YouKnow106TestAccess::dcoCv(engine, 0);
-    const float cvTargetBefore = YouKnow106TestAccess::dcoCvTarget(engine, 0);
-    const float scaleBefore = YouKnow106TestAccess::dcoRenderScale(engine, 0);
+    const float cvTargetBefore =
+        YouKnow106TestAccess::dcoCvTarget(engine, 0);
+    const auto filterBefore = YouKnow106TestAccess::filterState(engine, 0);
+    const auto noiseBefore =
+        YouKnow106TestAccess::microscopicNoiseState(engine, 0);
+    const auto sawBefore = YouKnow106TestAccess::sawTrackState(engine, 0);
+    const auto pulseBefore = YouKnow106TestAccess::pulseTrackState(engine, 0);
+    const auto subBefore = YouKnow106TestAccess::subTrackState(engine, 0);
 
     YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
     expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
            "the converter did not consume the pending control-word request");
-    expect(YouKnow106TestAccess::dcoPhase(engine, 0) == 0.0,
-           "the compatibility restart did not land at phase zero");
-    const auto logic = YouKnow106TestAccess::dcoLogicStates(engine, 0);
-    expect(logic[0] == -1.0f && logic[1] == 1.0f,
-           "the compatibility restart did not reset comparator/divider state");
-    expect(YouKnow106TestAccess::dcoPeriodSamples(engine, 0) != periodBefore,
-           "the pitch write restarted without programming the new period");
+    expect(YouKnow106TestAccess::pitState(engine, 0)
+                   == YouKnow106TestAccess::awaitingInitialLoadState()
+               && YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::activeDcoDivider(engine, 0)
+                      == activeBefore
+               && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
+                      == periodBefore
+               && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(engine, 0)
+                      != activeBefore
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 0.25,
+           "the converter bypassed the control-word/next-clock load path");
     expect(YouKnow106TestAccess::dcoCv(engine, 0) == cvBefore,
-           "the compatibility restart bypassed the physical compensation hold");
+           "the control-word write bypassed the physical compensation hold");
     expect(YouKnow106TestAccess::dcoCvTarget(engine, 0) != cvTargetBefore,
-           "the pitch write did not update the compensation target");
+           "the converter did not update the compensation target");
     expect(YouKnow106TestAccess::filterState(engine, 0) == filterBefore,
-           "the compatibility restart reset the continuously powered filter");
+           "the control-word write reset the continuously powered filter");
     expect(YouKnow106TestAccess::microscopicNoiseState(engine, 0) == noiseBefore,
-           "the compatibility restart reseeded the physical card");
+           "the control-word write reseeded the physical card");
 
-    const auto sawAfter = YouKnow106TestAccess::sawTrackState(engine, 0);
-    const auto pulseAfter = YouKnow106TestAccess::pulseTrackState(engine, 0);
-    const auto subAfter = YouKnow106TestAccess::subTrackState(engine, 0);
-    expect(sawAfter.primed && pulseAfter.primed && subAfter.primed,
-           "a physical restart cleared the bandlimited waveform histories");
-    expect(pulseAfter.base == pulseBefore.base
-               && pulseAfter.delay == pulseBefore.delay,
-           "a physical restart discarded the delayed pre-event pulse samples");
+    const auto historyPreserved = [](const auto& before, const auto& after) {
+        return after.primed && before.base == after.base
+            && before.delay == after.delay;
+    };
+    expect(historyPreserved(
+               sawBefore, YouKnow106TestAccess::sawTrackState(engine, 0))
+               && historyPreserved(
+                   pulseBefore,
+                   YouKnow106TestAccess::pulseTrackState(engine, 0))
+               && historyPreserved(
+                   subBefore, YouKnow106TestAccess::subTrackState(engine, 0)),
+           "the control-word edge discarded delayed waveform history");
+
+    const std::uint32_t requested =
+        YouKnow106TestAccess::pendingDcoDivider(engine, 0);
+    YouKnow106TestAccess::advanceDcoPitAndRamp(engine, 0, true);
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == requested
+               && YouKnow106TestAccess::pitState(engine, 0)
+                      != YouKnow106TestAccess::awaitingInitialLoadState()
+               && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+               && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
+                      != periodBefore,
+           "the converter's staged count did not load on the next PIT clock");
+
+    engine.reset();
+    expect(!YouKnow106TestAccess::sawTrackState(engine, 0).primed
+               && !YouKnow106TestAccess::pulseTrackState(engine, 0).primed
+               && !YouKnow106TestAccess::subTrackState(engine, 0).primed,
+           "hard engine reset no longer clears oscillator residual history");
+}
+
+void testWideDownwardRetargetStaysOnRampRails()
+{
+    struct RetargetCase
+    {
+        bool writesControlWord;
+        bool startsOutHigh;
+        const char* name;
+    };
+    constexpr std::array cases {
+        RetargetCase { false, true, "count-only/high OUT" },
+        RetargetCase { false, false, "count-only/low OUT" },
+        RetargetCase { true, true, "control-word/high OUT" },
+        RetargetCase { true, false, "control-word/low OUT" },
+    };
+
+    for (const auto& fixture : cases)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(192000.0, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.polyphony = 1;
+        parameters.release = 1.0f;
+        parameters.chorus = ChorusMode::Off;
+        parameters.chorusNoise = 0.0f;
+        engine.setParameters(parameters);
+
+        engine.noteOn(120, 1.0f);
+        renderExact(engine, 2048);
+        engine.noteOff(120);
+        engine.noteOn(12, 1.0f);
+        expect(YouKnow106TestAccess::dcoResetPending(engine, 0),
+               std::string(fixture.name)
+                   + " did not make the wide releasing-card retarget");
+
+        const std::uint32_t activeBefore =
+            YouKnow106TestAccess::activeDcoDivider(engine, 0);
+        YouKnow106TestAccess::setMode3Running(
+            engine, 0, activeBefore, fixture.startsOutHigh, 1.0);
+        YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
+        if (!fixture.writesControlWord)
+            YouKnow106TestAccess::setDcoResetPending(engine, 0, false);
+
+        const float subBefore =
+            YouKnow106TestAccess::dcoLogicStates(engine, 0)[1];
+        YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
+        const std::uint32_t requested =
+            YouKnow106TestAccess::pendingDcoDivider(engine, 0);
+        expect(requested > activeBefore
+                   && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+               std::string(fixture.name)
+                   + " did not stage the wide downward count");
+        expect(fixture.writesControlWord
+                   ? YouKnow106TestAccess::pitState(engine, 0)
+                         == YouKnow106TestAccess::awaitingInitialLoadState()
+                   : YouKnow106TestAccess::pitState(engine, 0)
+                         != YouKnow106TestAccess::awaitingInitialLoadState(),
+               std::string(fixture.name)
+                   + " took the wrong converter programming branch");
+
+        float subReference =
+            YouKnow106TestAccess::dcoLogicStates(engine, 0)[1];
+        if (fixture.writesControlWord && !fixture.startsOutHigh)
+        {
+            expect(subReference != subBefore
+                       && YouKnow106TestAccess::dcoRampState(engine, 0)[1] < 0.0,
+                   "a low-OUT control word did not make its immediate positive "
+                   "edge/discharge");
+        }
+        else
+        {
+            expect(subReference == subBefore,
+                   std::string(fixture.name)
+                       + " fabricated a positive edge at the converter write");
+        }
+
+        double maximumAudio = 0.0;
+        bool finiteAudio = true;
+        bool boundedRamp = true;
+        const auto processOne = [&] {
+            float left = 0.0f;
+            float right = 0.0f;
+            engine.process(&left, &right, 1);
+            finiteAudio = finiteAudio && std::isfinite(left)
+                        && std::isfinite(right);
+            maximumAudio = std::max(
+                maximumAudio,
+                std::max(std::abs(static_cast<double>(left)),
+                         std::abs(static_cast<double>(right))));
+            const double rampVolts =
+                YouKnow106TestAccess::dcoRampVolts(engine, 0);
+            boundedRamp = boundedRamp && std::isfinite(rampVolts)
+                       && rampVolts >= -1.0e-8 && rampVolts <= 15.0 + 1.0e-8;
+        };
+
+        if (!fixture.writesControlWord)
+        {
+            processOne();
+            expect(YouKnow106TestAccess::activeDcoDivider(engine, 0)
+                           == requested
+                       && YouKnow106TestAccess::pitOutHigh(engine, 0)
+                              != fixture.startsOutHigh,
+                   std::string(fixture.name)
+                       + " did not load CE at the old half-cycle transition");
+            if (fixture.startsOutHigh)
+            {
+                expect(YouKnow106TestAccess::dcoLogicStates(engine, 0)[1]
+                           == subReference,
+                       "the count-only falling-edge hybrid clocked the sub");
+            }
+            else
+            {
+                expect(YouKnow106TestAccess::dcoLogicStates(engine, 0)[1]
+                           != subReference,
+                       "the count-only rising transition did not clock the sub");
+                subReference =
+                    YouKnow106TestAccess::dcoLogicStates(engine, 0)[1];
+            }
+        }
+
+        bool sawRailHold = false;
+        bool heldExactly = false;
+        bool sawNextRisingDischarge = false;
+        for (int sample = 0; sample < 8000 && !sawNextRisingDischarge; ++sample)
+        {
+            processOne();
+            const auto ramp = YouKnow106TestAccess::dcoRampState(engine, 0);
+            const float sub =
+                YouKnow106TestAccess::dcoLogicStates(engine, 0)[1];
+            if (sub != subReference)
+            {
+                sawNextRisingDischarge = true;
+                expect(YouKnow106TestAccess::pitOutHigh(engine, 0)
+                           && (ramp[0]
+                                   < YouKnow106TestAccess::dcoPositiveBaseRail(
+                                       engine, 0)
+                               || ramp[1] < 0.0),
+                       std::string(fixture.name)
+                           + " sub edge was not the next rising-OUT discharge");
+                break;
+            }
+
+            const double positiveRail =
+                YouKnow106TestAccess::dcoPositiveBaseRail(engine, 0);
+            if (ramp[0] == positiveRail && ramp[1] == 0.0 && ramp[2] == 0.0)
+            {
+                if (sawRailHold)
+                    heldExactly = true;
+                sawRailHold = true;
+            }
+            else if (sawRailHold)
+            {
+                expect(false, std::string(fixture.name)
+                                  + " left the +15 V bound without rising OUT");
+                break;
+            }
+        }
+
+        expect(sawNextRisingDischarge,
+               std::string(fixture.name)
+                   + " never reached the next positive OUT edge");
+        if (fixture.startsOutHigh)
+            expect(sawRailHold && heldExactly,
+                   std::string(fixture.name)
+                       + " did not hold the old high-note slope at the supply "
+                         "bound through the staged long half-cycle");
+        expect(boundedRamp,
+               std::string(fixture.name)
+                   + " drove the C54 ramp outside its physical rails");
+        expect(finiteAudio && maximumAudio < 8.0,
+               std::string(fixture.name)
+                   + " produced non-finite or unbounded retarget audio");
+    }
+}
+
+void testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces()
+{
+    constexpr float renderScale = 1.6f;
+    constexpr float cardCurrentScale = 0.8f;
+    constexpr double totalScale =
+        static_cast<double>(renderScale)
+        * static_cast<double>(cardCurrentScale);
+
+    YouKnow106Engine held;
+    held.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        held, 0, 10000u, true, 1000.0);
+    YouKnow106TestAccess::setDcoRampScales(
+        held, 0, renderScale, cardCurrentScale);
+    const double positiveRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(held, 0);
+    const double expectedBaseRail = 2.5 / totalScale - 1.0;
+    const double interval =
+        YouKnow106TestAccess::internalIntervalSeconds(held);
+    const double risingSlope = 0.4 / interval;
+    YouKnow106TestAccess::setDcoRampState(
+        held, 0, positiveRail - 0.2, risingSlope);
+    YouKnow106TestAccess::primeSawTrack(held, 0);
+    YouKnow106TestAccess::primePulseTrack(held, 0, -1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        held, 0, DcoRange::Eight, 20.0f, 20.0f, false, false, true);
+
+    const auto heldRamp = YouKnow106TestAccess::dcoRampState(held, 0);
+    const auto heldSaw = YouKnow106TestAccess::sawTrackState(held, 0);
+    const auto heldPulse = YouKnow106TestAccess::pulseTrackState(held, 0);
     const auto ringEnergy = [](const auto& ring) {
         double energy = 0.0;
         for (const float value : ring)
             energy += static_cast<double>(value) * value;
         return energy;
     };
-    expect(ringEnergy(sawAfter.ring) > 1.0e-8,
-           "the off-phase saw restart received no BLEP/BLAMP residual");
-    expect(ringEnergy(pulseAfter.ring) > 1.0e-8,
-           "the comparator restart received no BLEP residual");
-    expect(ringEnergy(subAfter.ring) > 1.0e-8,
-           "the divider restart received no BLEP residual");
-    expect(YouKnow106TestAccess::sawRestartEventSideError(
-               engine, 0, periodBefore, 0.75, scaleBefore) < 1.0e-6,
-           "the saw restart residual ignored its rendered event-side slopes");
+    expectNear(positiveRail, expectedBaseRail, 1.0e-14,
+               "the +15 V bound ignored non-unity total ramp scale");
+    expect(heldRamp[0] == positiveRail && heldRamp[1] == 0.0
+               && heldRamp[2] == 0.0,
+           "the non-unity ramp did not enter an exact supply hold");
+    expect(YouKnow106TestAccess::positiveRailHeld(held, 0),
+           "a genuine +15 V charge hit did not latch the supply hold");
+    expectNear(YouKnow106TestAccess::dcoRampVolts(held, 0), 15.0, 1.0e-12,
+               "the base-coordinate plateau does not map to +15 V");
+    expect(ringEnergy(heldSaw.ring) > 1.0e-8,
+           "the early physical-rail slope stop received no BLAMP residual");
+    expect(ringEnergy(heldPulse.ring) == 0.0
+               && YouKnow106TestAccess::dcoLogicStates(held, 0)[0] == -1.0f,
+           "the supply plateau fabricated a pinned-comparator edge");
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        held, 0, DcoRange::Eight, 20.0f, 20.0f, false, false, true);
+    expect(YouKnow106TestAccess::dcoRampState(held, 0)[0] == positiveRail
+               && YouKnow106TestAccess::dcoRampState(held, 0)[1] == 0.0
+               && YouKnow106TestAccess::dcoRampVolts(held, 0)
+                      <= 15.0 + 1.0e-12,
+           "the physical ramp did not remain on its +15 V hold");
 
-    // A copied pulse track exposes the transition without the rest of the
-    // synth. A hard reset jumps from +1 to -1 immediately; the symmetric BLEP
-    // retains the pre-event side first, crosses in bounded increments and
-    // settles on the new side after its finite residual support.
-    const auto transition =
-        YouKnow106TestAccess::pulseTrackAfterRestart(engine, 0);
-    expectNear(transition.front(), 1.0, 0.02,
-               "bandlimited restart changed a pre-event pulse sample");
-    expectNear(transition.back(), -1.0, 0.02,
-               "bandlimited restart did not settle on its new pulse state");
-    double maximumStep = std::abs(static_cast<double>(transition.front()) - 1.0);
-    for (std::size_t sample = 1; sample < transition.size(); ++sample)
-        maximumStep = std::max(
-            maximumStep,
-            std::abs(static_cast<double>(transition[sample])
-                     - transition[sample - 1]));
-    expect(maximumStep / 2.0 < 0.65,
-           "physical restart retained a hard full-band pulse discontinuity");
+    // The held node remains physically +15 V as live card-current scale moves
+    // in either direction. Reprojecting its base coordinate is not a physical
+    // capacitor edge, so it must not add another residual walk.
+    const auto heldResidual =
+        YouKnow106TestAccess::sawTrackState(held, 0).ring;
+    YouKnow106TestAccess::setDcoRampScales(
+        held, 0, renderScale, 1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        held, 0, DcoRange::Eight, 20.0f, 20.0f, false, false, true);
+    const double increasedScaleRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(held, 0);
+    expectNear(YouKnow106TestAccess::dcoRampVolts(held, 0), 15.0, 1.0e-12,
+               "increasing total scale moved the held physical rail");
+    expect(YouKnow106TestAccess::dcoRampState(held, 0)[0]
+                   == increasedScaleRail
+               && YouKnow106TestAccess::positiveRailHeld(held, 0)
+               && YouKnow106TestAccess::sawTrackState(held, 0).ring
+                      == heldResidual,
+           "increasing total scale broke or fabricated an edge on a +15 V hold");
+    YouKnow106TestAccess::setDcoRampScales(
+        held, 0, renderScale, 0.6f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        held, 0, DcoRange::Eight, 20.0f, 20.0f, false, false, true);
+    const double decreasedScaleRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(held, 0);
+    expectNear(YouKnow106TestAccess::dcoRampVolts(held, 0), 15.0, 1.0e-12,
+               "decreasing total scale moved the held physical rail");
+    expect(YouKnow106TestAccess::dcoRampState(held, 0)[0]
+                   == decreasedScaleRail
+               && YouKnow106TestAccess::positiveRailHeld(held, 0)
+               && YouKnow106TestAccess::sawTrackState(held, 0).ring
+                      == heldResidual,
+           "decreasing total scale stopped tracking the physical +15 V hold");
 
-    engine.reset();
-    expect(!YouKnow106TestAccess::pulseTrackState(engine, 0).primed,
-           "hard engine reset no longer clears oscillator residual history");
+    // Parameter application can be followed immediately by a pitch/control
+    // write, before the next event walk. Reproject the held node during the
+    // calibration edit so that low-to-high OUT discharge launches from the new
+    // +15 V coordinate rather than the previous scale's stale x.
+    YouKnow106Engine editedControlEdge;
+    editedControlEdge.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setRampCurrentError(
+        editedControlEdge, 0, 1.0f);
+    auto editedParameters = plainPatch();
+    editedParameters.calibration = 0.0f;
+    editedControlEdge.setParameters(editedParameters);
+    YouKnow106TestAccess::setMode3Running(
+        editedControlEdge, 0, 10000u, false, 3.25);
+    YouKnow106TestAccess::setDcoRampScales(
+        editedControlEdge, 0, 1.5f, 1.0f);
+    const double oldEditedRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(editedControlEdge, 0);
+    YouKnow106TestAccess::setDcoRampState(
+        editedControlEdge, 0, oldEditedRail, 0.0);
+    YouKnow106TestAccess::setPositiveRailHeld(
+        editedControlEdge, 0, true);
+    YouKnow106TestAccess::primeSawTrack(editedControlEdge, 0);
+    editedParameters.calibration = 1.0f;
+    editedControlEdge.setParameters(editedParameters);
+    const double newEditedRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(editedControlEdge, 0);
+    expect(newEditedRail != oldEditedRail
+               && YouKnow106TestAccess::dcoRampState(editedControlEdge, 0)[0]
+                      == newEditedRail
+               && YouKnow106TestAccess::positiveRailHeld(
+                      editedControlEdge, 0),
+           "a calibration edit left the held ramp in its old coordinate");
+    YouKnow106TestAccess::programDcoCount(
+        editedControlEdge, 0, 10000u, true);
+    const auto editedDischarge =
+        YouKnow106TestAccess::dcoRampState(editedControlEdge, 0);
+    expect(editedDischarge[0] == newEditedRail
+               && editedDischarge[1] < 0.0 && editedDischarge[2] > 0.0
+               && !YouKnow106TestAccess::positiveRailHeld(
+                      editedControlEdge, 0),
+           "the control edge discharged from a stale pre-calibration rail");
+    expectNear(YouKnow106TestAccess::dcoRampVolts(editedControlEdge, 0),
+               15.0, 1.0e-12,
+               "the calibration/control edge did not start at +15 V");
+
+    // A scale increase can also discover an active falling reset above the new
+    // coordinate bound. Clamp its value at t=0 and retarget the fall to reach
+    // -1 at the existing deadline, bandlimiting both changed coordinates.
+    YouKnow106Engine falling;
+    falling.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        falling, 0, 10000u, true, 1000.0);
+    const double fallingInterval =
+        YouKnow106TestAccess::internalIntervalSeconds(falling);
+    const double fallingReset = 2.0 * fallingInterval;
+    const double fallingSlope = (-1.0 - 1.4) / fallingReset;
+    YouKnow106TestAccess::setDcoResetState(
+        falling, 0, 1.4, fallingSlope, fallingReset);
+    YouKnow106TestAccess::primeSawTrack(falling, 0);
+    YouKnow106TestAccess::setDcoRampScales(falling, 0, 1.0f, 1.25f);
+    const double fallingRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(falling, 0);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        falling, 0, DcoRange::Eight, 20.0f, 20.0f, false, false, true);
+    const auto fallingAfter =
+        YouKnow106TestAccess::dcoRampState(falling, 0);
+    const double retargetedSlope =
+        (-1.0 - fallingRail) / fallingReset;
+    const auto expectedClamp =
+        YouKnow106TestAccess::expectedSawStepAndSlope(
+            falling, 1.4f, static_cast<float>(fallingRail - 1.4),
+            static_cast<float>(retargetedSlope * fallingInterval)
+                - static_cast<float>(fallingSlope * fallingInterval),
+            1.0f);
+    expect(fallingAfter[0] >= -1.0 && fallingAfter[0] < fallingRail
+               && fallingAfter[1] == retargetedSlope
+               && !YouKnow106TestAccess::positiveRailHeld(falling, 0)
+               && YouKnow106TestAccess::dcoRampVolts(falling, 0) < 15.0
+               && YouKnow106TestAccess::sawTrackState(falling, 0).ring
+                      == expectedClamp.ring,
+           "a live scale clamp paused or mis-timestamped an active discharge: x="
+               + std::to_string(fallingAfter[0])
+               + " slope=" + std::to_string(fallingAfter[1])
+               + " expectedSlope=" + std::to_string(retargetedSlope)
+               + " ring=" + std::to_string(
+                   YouKnow106TestAccess::sawTrackState(falling, 0).ring
+                       == expectedClamp.ring));
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        falling, 0, DcoRange::Eight,
+        20.0f, 20.0f, false, false, true);
+    const auto fallingComplete =
+        YouKnow106TestAccess::dcoRampState(falling, 0);
+    expect(fallingComplete[0] == -1.0
+               && fallingComplete[1] > 0.0
+               && fallingComplete[2] == 0.0
+               && !YouKnow106TestAccess::positiveRailHeld(falling, 0),
+           "the retargeted discharge missed -1 at its original reset deadline");
+
+    // A supply hit and rising OUT that differ only by final-operation ULPs are
+    // one physical corner. The saw ring must equal one direct incoming-to-
+    // discharge slope correction, not two table walks via a fictitious hold.
+    YouKnow106Engine coincident;
+    coincident.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setDcoRampScales(
+        coincident, 0, renderScale, cardCurrentScale);
+    const double coincidentRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(coincident, 0);
+    const double coincidentInterval =
+        YouKnow106TestAccess::internalIntervalSeconds(coincident);
+    const double eventSeconds = 0.9 * coincidentInterval;
+    const double incomingSlope = 0.1 / eventSeconds;
+    YouKnow106TestAccess::setMode3Running(
+        coincident, 0, 1000u, false,
+        eventSeconds * YouKnow106TestAccess::eightFootClockHz());
+    YouKnow106TestAccess::setDcoRampState(
+        coincident, 0, coincidentRail - 0.1, incomingSlope);
+    YouKnow106TestAccess::primeSawTrack(coincident, 0);
+    YouKnow106TestAccess::setDcoLogicStates(
+        coincident, 0, -1.0f, -1.0f);
+    YouKnow106TestAccess::primePulseTrack(coincident, 0, -1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        coincident, 0, DcoRange::Eight,
+        20.0f, 20.0f, false, false, true);
+
+    const auto actual = YouKnow106TestAccess::sawTrackState(coincident, 0);
+    const auto after = YouKnow106TestAccess::dcoRampState(coincident, 0);
+    const float directSlopeStep = static_cast<float>(
+        (after[1] - incomingSlope) * static_cast<double>(renderScale)
+        * coincidentInterval);
+    const auto expected = YouKnow106TestAccess::expectedSawSlope(
+        coincident, directSlopeStep, 0.1f);
+    expect(actual.ring == expected.ring,
+           "a coincident rail/rising edge emitted more than one saw correction");
+    expect(YouKnow106TestAccess::pitOutHigh(coincident, 0)
+               && YouKnow106TestAccess::dcoLogicStates(coincident, 0)[1] == 1.0f
+               && after[1] < 0.0 && after[2] > 0.0
+               && YouKnow106TestAccess::dcoRampVolts(coincident, 0) < 15.0,
+           "the coalesced corner did not begin one rising-OUT discharge");
+}
+
+void testComparatorEndpointPinsAndTransitionTiming()
+{
+    const auto ringIsClean = [](const auto& ring) {
+        return std::all_of(ring.begin(), ring.end(),
+                           [](float value) { return value == 0.0f; });
+    };
+
+    // The actual negative Pulse-Off write is the sole pinned endpoint.
+    // Exercise many real PIT/ramp cycles so a rail touch cannot manufacture an
+    // opposite edge and an end-of-sample repair on every period.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(192000.0, blockSize, false);
+        YouKnow106TestAccess::setMode3Running(
+            engine, 0, 100u, true, 50.0);
+        YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
+        YouKnow106TestAccess::primePulseTrack(engine, 0, 1.0f);
+        for (int sample = 0; sample < 300; ++sample)
+            YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+                engine, 0, DcoRange::Eight,
+                -0.8f, -0.8f, true, true, true);
+
+        const auto track = YouKnow106TestAccess::pulseTrackState(engine, 0);
+        expect(YouKnow106TestAccess::dcoLogicStates(engine, 0)[0] == 1.0f
+                   && track.primed && ringIsClean(track.ring)
+                   && YouKnow106TestAccess::nextPulseTrackSample(
+                          engine, 0, 1.0f) == 1.0f,
+               "negative Pulse Off did not stay high with a clean residual track");
+    }
+
+    // pwmDutyCycle's diagnostic 0 clamp must not hide a real +6 V threshold.
+    // At total scale 0.25 it is x=3, below the +15 V x=9 rail. A count-only
+    // write transfers on the falling edge, then the old rising slope crosses
+    // that threshold during the new long low half.
+    YouKnow106Engine lowScale;
+    lowScale.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        lowScale, 0, 100u, true, 1.0);
+    YouKnow106TestAccess::stageMode3Count(lowScale, 0, 10000u);
+    YouKnow106TestAccess::setDcoRampScales(lowScale, 0, 0.5f, 0.5f);
+    const double lowScaleInterval =
+        YouKnow106TestAccess::internalIntervalSeconds(lowScale);
+    YouKnow106TestAccess::setDcoRampState(
+        lowScale, 0, 2.5, 1.0 / lowScaleInterval);
+    YouKnow106TestAccess::primePulseTrack(lowScale, 0, -1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        lowScale, 0, DcoRange::Eight,
+        6.0f, 6.0f, false, false, true);
+    const auto lowScalePulse =
+        YouKnow106TestAccess::pulseTrackState(lowScale, 0);
+    const auto expectedLowScalePulse =
+        YouKnow106TestAccess::expectedPulseStep(
+            lowScale, -1.0f, 2.0f, 0.5f);
+    expect(!YouKnow106TestAccess::pitOutHigh(lowScale, 0)
+               && YouKnow106TestAccess::activeDcoDivider(lowScale, 0)
+                      == 10000u
+               && YouKnow106TestAccess::dcoLogicStates(lowScale, 0)[0]
+                      == 1.0f
+               && YouKnow106TestAccess::dcoPositiveBaseRail(lowScale, 0)
+                      == 9.0
+               && lowScalePulse.ring == expectedLowScalePulse.ring,
+           "the raw +6 V comparator threshold was lost on a low-scale hybrid half");
+
+    // A live Unit Character edit can move a stationary physical ramp from one
+    // side of the comparator to the other before the interval starts. That
+    // edge belongs at samplesAgo=1, not the end-of-sample reconciliation.
+    YouKnow106Engine scaleFlip;
+    scaleFlip.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        scaleFlip, 0, 10000u, true, 1000.0);
+    YouKnow106TestAccess::setDcoRampScales(scaleFlip, 0, 1.0f, 0.99f);
+    YouKnow106TestAccess::setDcoRampState(scaleFlip, 0, 0.0, 0.0);
+    YouKnow106TestAccess::primePulseTrack(scaleFlip, 0, -1.0f);
+    YouKnow106TestAccess::setDcoRampScales(scaleFlip, 0, 1.0f, 1.01f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        scaleFlip, 0, DcoRange::Eight,
+        6.0f, 6.0f, false, false, true);
+    const auto expectedScaleFlip = YouKnow106TestAccess::expectedPulseStep(
+        scaleFlip, -1.0f, 2.0f, 1.0f);
+    expect(YouKnow106TestAccess::dcoLogicStates(scaleFlip, 0)[0] == 1.0f
+               && YouKnow106TestAccess::pulseTrackState(scaleFlip, 0).ring
+                      == expectedScaleFlip.ring,
+           "a scale-only comparator edge was repaired at the interval end");
+
+    // Reset completes halfway through the interval and launches the next rise
+    // at renderScale 2. The fixed +6 V threshold is therefore x=-0.5 in the
+    // suffix; retaining the old scale would place the edge 3/16 sample late.
+    YouKnow106Engine rescaledSuffix;
+    rescaledSuffix.prepare(192000.0, blockSize, false);
+    const double suffixInterval =
+        YouKnow106TestAccess::internalIntervalSeconds(rescaledSuffix);
+    YouKnow106TestAccess::setDcoRampScales(
+        rescaledSuffix, 0, 1.0f, 1.0f);
+    YouKnow106TestAccess::setDcoLaunchState(
+        rescaledSuffix, 0, 1.0, 2.0f, 1.0f);
+    YouKnow106TestAccess::setDcoResetState(
+        rescaledSuffix, 0, -0.5, -1.0 / suffixInterval,
+        0.5 * suffixInterval);
+    YouKnow106TestAccess::primePulseTrack(rescaledSuffix, 0, -1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        rescaledSuffix, 0, DcoRange::Eight,
+        6.0f, 6.0f, false, false, true);
+    const auto expectedSuffixPulse =
+        YouKnow106TestAccess::expectedPulseStep(
+            rescaledSuffix, -1.0f, 2.0f, 0.3125f);
+    const auto actualSuffixPulse =
+        YouKnow106TestAccess::pulseTrackState(rescaledSuffix, 0);
+    double suffixRingError = 0.0;
+    for (std::size_t index = 0; index < actualSuffixPulse.ring.size(); ++index)
+        suffixRingError = std::max(
+            suffixRingError,
+            std::abs(static_cast<double>(actualSuffixPulse.ring[index])
+                     - expectedSuffixPulse.ring[index]));
+    expect(YouKnow106TestAccess::dcoRampState(rescaledSuffix, 0)[3] == 2.0
+               && YouKnow106TestAccess::dcoLogicStates(rescaledSuffix, 0)[0]
+                      == 1.0f
+               && suffixRingError < 1.0e-6,
+           "a mid-interval launch used the previous cycle's comparator scale: scale="
+               + std::to_string(
+                   YouKnow106TestAccess::dcoRampState(rescaledSuffix, 0)[3])
+               + " logic=" + std::to_string(
+                   YouKnow106TestAccess::dcoLogicStates(rescaledSuffix, 0)[0])
+               + " ringError=" + std::to_string(suffixRingError));
+
+    struct EndpointTransition
+    {
+        float previousDuty;
+        float duty;
+        double ramp;
+        float initialState;
+        float finalState;
+        float samplesAgo;
+        const char* name;
+    };
+    constexpr std::array transitions {
+        EndpointTransition { 0.0f, 0.2f, 1.0, -1.0f, 1.0f, 1.0f,
+                             "duty 0 exit" },
+        EndpointTransition { 1.0f, 0.8f, -1.0, 1.0f, -1.0f, 1.0f,
+                             "duty 1 exit" },
+        EndpointTransition { 0.8f, 1.0f, -1.0, -1.0f, 1.0f, 0.0f,
+                             "duty 1 entry" },
+    };
+
+    for (const auto& transition : transitions)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(192000.0, blockSize, false);
+        YouKnow106TestAccess::setDcoRampState(
+            engine, 0, transition.ramp, 0.0);
+        YouKnow106TestAccess::primePulseTrack(
+            engine, 0, transition.initialState);
+        YouKnow106TestAccess::advanceDcoPitAndRamp(
+            engine, 0, transition.previousDuty, transition.duty, true);
+
+        const auto actual = YouKnow106TestAccess::pulseTrackState(engine, 0);
+        const auto expected = YouKnow106TestAccess::expectedPulseStep(
+            engine, transition.initialState,
+            transition.finalState - transition.initialState,
+            transition.samplesAgo);
+        expect(YouKnow106TestAccess::dcoLogicStates(engine, 0)[0]
+                       == transition.finalState
+                   && actual.ring == expected.ring
+                   && actual.delay == expected.delay
+                   && actual.base == expected.base,
+               std::string(transition.name)
+                   + " did not place its comparator edge at the endpoint time");
+    }
+
+
+    // Production Pulse Off retains its real -0.8 V endpoint. As the hold
+    // leaves it for +2.4 V over a zero-volt ramp, the edge belongs one quarter
+    // of the way into the interval, not at either diagnostic duty endpoint.
+    YouKnow106Engine offExit;
+    offExit.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setDcoRampState(offExit, 0, -1.0, 0.0);
+    YouKnow106TestAccess::primePulseTrack(offExit, 0, 1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        offExit, 0, DcoRange::Eight,
+        -0.8f, 2.4f, true, false, true);
+    const auto expectedOffExit = YouKnow106TestAccess::expectedPulseStep(
+        offExit, 1.0f, -2.0f, 0.75f);
+    expect(YouKnow106TestAccess::dcoLogicStates(offExit, 0)[0] == -1.0f
+               && YouKnow106TestAccess::pulseTrackState(offExit, 0).ring
+                      == expectedOffExit.ring,
+           "the physical Pulse-Off exit did not solve its zero-volt crossing");
+}
+
+void testPitEventBudgetCoversWorstCaseInterval()
+{
+    // Inclusive worst case: 8 kHz, 1x, the 4 MHz range clock and N=8 expose
+    // 500 input clocks in one sample. Starting on an OUT event puts both the
+    // left- and right-edge events in the walk while scale 4 adds one supply
+    // hit to every charge.
+    YouKnow106Engine engine;
+    engine.prepare(8000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        engine, 0, 8u, false, 0.0, DcoRange::Four);
+    YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
+    YouKnow106TestAccess::setDcoRampScales(engine, 0, 4.0f, 1.0f);
+    YouKnow106TestAccess::setDcoLaunchState(
+        engine, 0, YouKnow106TestAccess::dcoPeriodSamples(engine, 0),
+        4.0f, 1.0f);
+    YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+        engine, 0, DcoRange::Four,
+        20.0f, 20.0f, false, false, true);
+
+    const auto ramp = YouKnow106TestAccess::dcoRampState(engine, 0);
+    expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == 8u
+               && !YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0) == 4.0
+               && ramp[0]
+                      == YouKnow106TestAccess::dcoPositiveBaseRail(engine, 0)
+               && ramp[1] == 0.0 && ramp[2] == 0.0
+               && YouKnow106TestAccess::positiveRailHeld(engine, 0),
+           "the 252-event interval stopped before its 500-clock right edge: out="
+               + std::to_string(YouKnow106TestAccess::pitOutHigh(engine, 0))
+               + " clocks=" + std::to_string(
+                   YouKnow106TestAccess::pitClocksToEvent(engine, 0))
+               + " x=" + std::to_string(ramp[0])
+               + " rail=" + std::to_string(
+                   YouKnow106TestAccess::dcoPositiveBaseRail(engine, 0))
+               + " slope=" + std::to_string(ramp[1])
+               + " reset=" + std::to_string(ramp[2])
+               + " held=" + std::to_string(
+                   YouKnow106TestAccess::positiveRailHeld(engine, 0)));
+}
+
+void testPitStateMatchesFastFreewheel()
+{
+    YouKnow106Engine rendered;
+    YouKnow106Engine freewheeled;
+    rendered.prepare(192000.0, blockSize, false);
+    freewheeled.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        rendered, 0, 100u, true, 50.0);
+    YouKnow106TestAccess::setMode3Running(
+        freewheeled, 0, 100u, true, 50.0);
+
+    for (int sample = 0; sample < 200; ++sample)
+    {
+        YouKnow106TestAccess::advanceDcoPitAndRamp(rendered, 0, true);
+        YouKnow106TestAccess::advanceDcoPitAndRamp(freewheeled, 0, false);
+    }
+
+    expect(YouKnow106TestAccess::activeDcoDivider(rendered, 0)
+               == YouKnow106TestAccess::activeDcoDivider(freewheeled, 0)
+               && YouKnow106TestAccess::pitOutHigh(rendered, 0)
+                      == YouKnow106TestAccess::pitOutHigh(freewheeled, 0)
+               && std::abs(YouKnow106TestAccess::pitClocksToEvent(rendered, 0)
+                           - YouKnow106TestAccess::pitClocksToEvent(
+                               freewheeled, 0)) < 1.0e-12
+               && YouKnow106TestAccess::dcoRampState(rendered, 0)
+                      == YouKnow106TestAccess::dcoRampState(freewheeled, 0)
+               && YouKnow106TestAccess::dcoLogicStates(rendered, 0)[1]
+                      == YouKnow106TestAccess::dcoLogicStates(freewheeled, 0)[1],
+           "the fast freewheel diverged from rendered PIT/ramp/sub state");
+
+    // Fast retired cards deliberately skip updatePulseComparator. A live Unit
+    // Character edit must therefore refresh their card-current scale at the
+    // edit, not wait for a per-sample calculation they do not run. Compare an
+    // Exact retired card with that fast path through a staged long half-cycle.
+    YouKnow106Engine exact;
+    YouKnow106Engine fast;
+    exact.prepare(192000.0, blockSize, false);
+    fast.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setRampCurrentError(exact, 0, 1.0f);
+    YouKnow106TestAccess::setRampCurrentError(fast, 0, 1.0f);
+    auto exactParameters = plainPatch();
+    auto fastParameters = exactParameters;
+    exactParameters.vcfTanhMode = VcfTanhMode::Exact;
+    fastParameters.vcfTanhMode = VcfTanhMode::ZonedHermite;
+    exactParameters.calibration = 0.0f;
+    fastParameters.calibration = 0.0f;
+    exact.setParameters(exactParameters);
+    fast.setParameters(fastParameters);
+
+    constexpr float launchRenderScale = 1.5f;
+    YouKnow106TestAccess::setDcoRampScales(
+        exact, 0, launchRenderScale, 1.0f);
+    YouKnow106TestAccess::setDcoRampScales(
+        fast, 0, launchRenderScale, 1.0f);
+    const double launchRail =
+        YouKnow106TestAccess::dcoPositiveBaseRail(exact, 0);
+    const double launchInterval =
+        YouKnow106TestAccess::internalIntervalSeconds(exact);
+    for (auto* engine : { &exact, &fast })
+    {
+        YouKnow106TestAccess::setMode3Running(
+            *engine, 0, 100u, true, 1.0);
+        YouKnow106TestAccess::stageMode3Count(*engine, 0, 10000u);
+        YouKnow106TestAccess::setDcoRampState(
+            *engine, 0, launchRail - 0.1, 0.3 / launchInterval);
+        YouKnow106TestAccess::setDcoLogicStates(*engine, 0, -1.0f, -1.0f);
+        YouKnow106TestAccess::primeSawTrack(*engine, 0);
+        YouKnow106TestAccess::primePulseTrack(*engine, 0, -1.0f);
+    }
+
+    exactParameters.calibration = 1.0f;
+    fastParameters.calibration = 1.0f;
+    exact.setParameters(exactParameters);
+    fast.setParameters(fastParameters);
+    // This is the work Exact performs before render; the fast retired path
+    // intentionally skips it and must already have the same scale.
+    YouKnow106TestAccess::updatePulseComparator(exact, 0, exactParameters);
+    expect(YouKnow106TestAccess::rampCurrentScale(exact, 0) == 1.03f
+               && YouKnow106TestAccess::rampCurrentScale(fast, 0) == 1.03f,
+           "a live calibration edit left the fast retired card's ramp scale stale");
+
+    bool sawHeldRail = false;
+    bool sawNextRising = false;
+    for (int sample = 0; sample < 600 && !sawNextRising; ++sample)
+    {
+        YouKnow106TestAccess::renderRetiredVoice(
+            exact, 0, exactParameters);
+        YouKnow106TestAccess::renderRetiredVoice(
+            fast, 0, fastParameters);
+        expect(YouKnow106TestAccess::activeDcoDivider(exact, 0)
+                   == YouKnow106TestAccess::activeDcoDivider(fast, 0)
+                   && YouKnow106TestAccess::pitOutHigh(exact, 0)
+                          == YouKnow106TestAccess::pitOutHigh(fast, 0)
+                   && YouKnow106TestAccess::pitClocksToEvent(exact, 0)
+                          == YouKnow106TestAccess::pitClocksToEvent(fast, 0)
+                   && YouKnow106TestAccess::dcoRampState(exact, 0)
+                          == YouKnow106TestAccess::dcoRampState(fast, 0)
+                   && YouKnow106TestAccess::dcoLogicStates(exact, 0)[1]
+                          == YouKnow106TestAccess::dcoLogicStates(fast, 0)[1]
+                   && YouKnow106TestAccess::positiveRailHeld(exact, 0)
+                          == YouKnow106TestAccess::positiveRailHeld(fast, 0),
+               "fast retired calibration diverged from Exact PIT/ramp state");
+        sawHeldRail = sawHeldRail
+            || YouKnow106TestAccess::positiveRailHeld(exact, 0);
+        sawNextRising =
+            YouKnow106TestAccess::dcoLogicStates(exact, 0)[1] == 1.0f;
+    }
+    expect(sawHeldRail && sawNextRising
+               && !YouKnow106TestAccess::positiveRailHeld(exact, 0),
+           "the matched retired-card fixture missed its hold or next rising OUT");
+
+    fast.reset();
+    expect(YouKnow106TestAccess::rampCurrentScale(fast, 0) == 1.03f,
+           "reset discarded the live calibration's fast-card ramp scale");
 }
 
 void testRescanGateOffReachesTheVoiceCpu()
@@ -2582,7 +3803,8 @@ void testPhysicalCardStateSurvivesVoiceAssignments()
         engine, extensionSlot);
     YouKnow106TestAccess::setFilterState(
         engine, extensionSlot, filterMarker);
-    YouKnow106TestAccess::setDcoPhase(engine, extensionSlot, 0.375);
+    YouKnow106TestAccess::setMode3Running(
+        engine, extensionSlot, 123u, false, 17.5);
     YouKnow106TestAccess::setMicroscopicNoiseState(
         engine, extensionSlot, noiseMarker);
     YouKnow106TestAccess::primePulseDutyHistory(engine, extensionSlot, 0.9f);
@@ -2593,9 +3815,15 @@ void testPhysicalCardStateSurvivesVoiceAssignments()
     expect(std::all_of(clearedExtension.begin(), clearedExtension.end(),
                        [](float value) { return value == 0.0f; }),
            "an idle extension slot retained a frozen resonant-filter state");
-    expect(YouKnow106TestAccess::dcoPhase(engine, extensionSlot) == 0.0,
-           "an idle extension slot retained a frozen oscillator phase");
-    expect(!YouKnow106TestAccess::pulseDutyHistoryIsPrimed(
+    expect(YouKnow106TestAccess::pitState(engine, extensionSlot)
+                   == YouKnow106TestAccess::stoppedPitState()
+               && YouKnow106TestAccess::pitOutHigh(engine, extensionSlot)
+               && YouKnow106TestAccess::pitClocksToEvent(
+                      engine, extensionSlot) == 0.0
+               && YouKnow106TestAccess::dcoRampValue(
+                      engine, extensionSlot) == -1.0,
+           "an idle extension slot retained frozen PIT/ramp state");
+    expect(!YouKnow106TestAccess::pulseThresholdHistoryIsPrimed(
                engine, extensionSlot),
            "an idle extension slot retained a stale PWM comparator timeline");
     expect(YouKnow106TestAccess::microscopicNoiseState(engine, extensionSlot)
@@ -3226,6 +4454,10 @@ void testPitchAndNoiseRemainSampleGridWrites()
     auto pitchParameters = plainPatch();
     pitch.setParameters(pitchParameters);
     pitch.noteOn(60, 1.0f);
+    YouKnow106TestAccess::setMode3Running(
+        pitch, 0, YouKnow106TestAccess::activeDcoDivider(pitch, 0),
+        true, 1000.0);
+    YouKnow106TestAccess::setDcoResetPending(pitch, 0, false);
     const double oldPeriod = YouKnow106TestAccess::dcoPeriodSamples(pitch, 0);
     pitchParameters.masterTuneCents = 47.0f;
     pitch.setParameters(pitchParameters);
@@ -3250,8 +4482,18 @@ void testPitchAndNoiseRemainSampleGridWrites()
     expect(YouKnow106TestAccess::nextConverterWrite(pitch)
                == pitchOrdinal + 1u
                && YouKnow106TestAccess::dcoPeriodSamples(pitch, 0)
-                      != oldPeriod,
-           "the ordinary DCO pitch poll no longer commits exactly one write");
+                      == oldPeriod
+               && YouKnow106TestAccess::pendingDcoDividerValid(pitch, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(pitch, 0)
+                      != YouKnow106TestAccess::activeDcoDivider(pitch, 0),
+           "the ordinary DCO pitch poll did not stage exactly one count write");
+    for (int sample = 0; sample < 4
+         && YouKnow106TestAccess::dcoPeriodSamples(pitch, 0) == oldPeriod;
+         ++sample)
+        pitch.process(&left, &right, 1);
+    expect(YouKnow106TestAccess::dcoPeriodSamples(pitch, 0) != oldPeriod
+               && !YouKnow106TestAccess::pendingDcoDividerValid(pitch, 0),
+           "the staged pitch count did not enter CE at the next OUT transition");
 
     YouKnow106Engine noise;
     noise.prepare(sampleRate, blockSize, false);
@@ -3352,10 +4594,16 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
                "Pulse Off did not hold the running comparator high");
     expect(peakOf(offAudio.left, offAudio.left.size() / 2) < 0.001,
            "the provisional pulse-off audio gate leaked the pinned leg");
-    const double before = YouKnow106TestAccess::dcoPhase(engine, 0);
+    const bool outBefore = YouKnow106TestAccess::pitOutHigh(engine, 0);
+    const double clocksBefore =
+        YouKnow106TestAccess::pitClocksToEvent(engine, 0);
+    const double rampBefore = YouKnow106TestAccess::dcoRampValue(engine, 0);
     renderExact(engine, 1);
-    const double after = YouKnow106TestAccess::dcoPhase(engine, 0);
-    expect(after != before, "Pulse Off stopped the free-running DCO");
+    expect(YouKnow106TestAccess::pitOutHigh(engine, 0) != outBefore
+               || YouKnow106TestAccess::pitClocksToEvent(engine, 0)
+                      != clocksBefore
+               || YouKnow106TestAccess::dcoRampValue(engine, 0) != rampBefore,
+           "Pulse Off stopped the free-running DCO/PIT cell");
 
     parameters.pulseEnabled = true;
     engine.setParameters(parameters);
@@ -3420,14 +4668,14 @@ void testMovingPwmComparatorDoesNotMissThresholdCrossings()
             engine.process(&left, &right, 1);
 
             const float duty = YouKnow106TestAccess::pulseDuty(engine, 0);
-            const double phase = YouKnow106TestAccess::dcoPhase(engine, 0);
-            const float reset =
-                YouKnow106TestAccess::dcoResetFraction(engine, 0);
-            const float rise = YouKnow106Engine::pulseRisePhase(duty, reset);
-            const float fall = YouKnow106Engine::pulseFallPhase(duty, reset);
+            const double ramp = YouKnow106TestAccess::dcoRampValue(engine, 0);
             const float state = YouKnow106TestAccess::pulseLogicState(engine, 0);
             const float expected = duty >= 1.0f
-                ? 1.0f : (phase >= rise && phase < fall ? 1.0f : -1.0f);
+                ? 1.0f
+                : (duty <= 0.0f
+                       ? -1.0f
+                       : (ramp >= 1.0 - 2.0 * static_cast<double>(duty)
+                              ? 1.0f : -1.0f));
             if (state != expected)
                 ++mismatches;
 
@@ -3780,12 +5028,13 @@ void testUnisonUsesEveryVoiceWithoutDetuning()
 
     // Equal-frequency DCOs do not beat, but their ordered writes must not be
     // collapsed onto one sample: that would force a false coherent phase lock.
-    const double firstPhase = YouKnow106TestAccess::dcoPhase(engine, 0);
-    const double sixthPhase = YouKnow106TestAccess::dcoPhase(engine, 5);
-    const double phaseDistance = std::min(std::abs(firstPhase - sixthPhase),
-                                          1.0 - std::abs(firstPhase - sixthPhase));
-    expect(phaseDistance > 1.0e-4,
-           "normalized converter timing phase-locked the unison DCOs");
+    const bool firstOut = YouKnow106TestAccess::pitOutHigh(engine, 0);
+    const bool sixthOut = YouKnow106TestAccess::pitOutHigh(engine, 5);
+    const double countdownDistance = std::abs(
+        YouKnow106TestAccess::pitClocksToEvent(engine, 0)
+        - YouKnow106TestAccess::pitClocksToEvent(engine, 5));
+    expect(firstOut != sixthOut || countdownDistance > 1.0e-4,
+           "ordered converter writes phase-locked the unison PIT outputs");
     const std::size_t quarter = rendered.left.size() / 4;
     const double early = peakOf({ rendered.left.begin() + static_cast<long>(quarter),
                                   rendered.left.begin() + static_cast<long>(quarter * 2) },
@@ -4395,7 +5644,12 @@ void testFixedOutputBoundaryCorpus()
         // ceiling is documented as a bound and not as a guarantee.
         Baseline { 0.0970109, 0.197019, 0.199779, 0, 0 },
         Baseline { 0.248126, 0.703106, 0.706815, 0, 0 },
-        Baseline { 0.532455, 1.0161, 1.01754, 90, 362 },
+        // Re-pinned after replacing the phase-zero timer restart with explicit
+        // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
+        // physical C54/comparator event walk. Only this six-card Unison
+        // headroom probe moved outside its existing guard; the other five
+        // fixtures retain their previous product boundaries.
+        Baseline { 0.504946, 1.01722, 1.01898, 68, 266 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
@@ -5926,10 +7180,14 @@ void testQualityChangePreservesFreeRunningClocks()
         const double distance = std::abs(first - second);
         return std::min(distance, 1.0 - distance);
     };
-    expect(circularError(YouKnow106TestAccess::dcoPhase(switched, 0),
-                         YouKnow106TestAccess::dcoPhase(reference, 0))
-               < 2.0e-8,
-           "an HQ rebuild restarted or displaced a free-running DCO");
+    expect(YouKnow106TestAccess::activeDcoDivider(switched, 0)
+               == YouKnow106TestAccess::activeDcoDivider(reference, 0)
+               && YouKnow106TestAccess::pitOutHigh(switched, 0)
+                      == YouKnow106TestAccess::pitOutHigh(reference, 0)
+               && std::abs(YouKnow106TestAccess::pitClocksToEvent(switched, 0)
+                           - YouKnow106TestAccess::pitClocksToEvent(reference, 0))
+                      < 1.0e-7,
+           "an HQ rebuild changed the physical PIT count, OUT or half-cycle");
     expect(circularError(YouKnow106TestAccess::chorusPhase(switched),
                          YouKnow106TestAccess::chorusPhase(reference))
                < 2.0e-8,
@@ -8848,6 +10106,25 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW106_PIT_TESTS_ONLY") != nullptr)
+    {
+        testMode3CountStagingAndControlPolarity();
+        testControlWordConverterWritePreservesCardState();
+        testWideDownwardRetargetStaysOnRampRails();
+        testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();
+        testComparatorEndpointPinsAndTransitionTiming();
+        testPitEventBudgetCoversWorstCaseInterval();
+        testPitStateMatchesFastFreewheel();
+        testPitchAndNoiseRemainSampleGridWrites();
+        if (failures != 0)
+        {
+            std::cerr << failures << " PIT check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All M82C53 PIT checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW106_STARTUP_HOLD_TESTS_ONLY") != nullptr)
     {
         testIdleSnapshotPrimesEverySharedHold();
@@ -8905,7 +10182,13 @@ int main()
     testHeldKeyRescanRunsHighToLow();
     testRescanPreservesVoiceCpuPitchHistory();
     testHeldTransposeUpdatesVoiceCpuPitchHistory();
-    testCompatibilityPitchWriteRestartIsBandlimited();
+    testMode3CountStagingAndControlPolarity();
+    testControlWordConverterWritePreservesCardState();
+    testWideDownwardRetargetStaysOnRampRails();
+    testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();
+    testComparatorEndpointPinsAndTransitionTiming();
+    testPitEventBudgetCoversWorstCaseInterval();
+    testPitStateMatchesFastFreewheel();
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
     testMidNoteSustainSnapsUpAndDecaysDown();
