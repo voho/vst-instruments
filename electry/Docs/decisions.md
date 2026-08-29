@@ -4,6 +4,41 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-08-29 — measure ringing repicks before adding another mechanism
+
+The new plectrum-contact search converged on the same passive reciprocal
+two-port already pinned by the engine tests. The source audit also found that
+the existing evaluation had already tried that topology against public rapid
+repetitions: it is structurally sound, but public six-string performances do
+not identify contact depth, duration, force or pre-contact phase. Repeating the
+same proxy with another conventional-guitar corpus would add player, pickup and
+stroke confounds rather than an eight-string coefficient.
+
+Decision: make phase-conditioned same-string repicking the first measurement
+target, but make no sound-changing commit from the public data. The minimum
+falsification session uses one fixed exact-eight rig, open E1/E2, one hard force
+and 32 independent stroke pairs per string. Four measured plectrum-normal H1
+phase quadrants each balance four Down and four Up second strokes; at least
+three TRAIN and exactly two untouched HOLDOUT performance clusters stay on the
+same rig. A synchronized sensor, rather than the DI attack, owns contact time,
+and all phase/onset/SNR rules are frozen before decode.
+
+If the real phase-conditioned response first clears within-cell repeatability
+on both strings and both holdouts, test only one default-off normalized adjoint
+gather/scatter contact. Its delay-line Euclidean norm cannot grow, but that does
+not prove whole-engine passivity; its dimensionless amount must have explicit
+sample-rate-independent total or rate semantics and be derived on TRAIN. Do
+not reuse the current whole-loop retention as a local coefficient. Additional
+forces, strings and rigs follow only after this smallest gate is informative.
+
+Keep pickup-magnet back-action second. Its minimum experiment is a static
+two-axis first-mode stiffness correction with zero per-sample cost, but every
+nonzero stiffness must come from the target pickup/string geometry; published
+specimen values are arithmetic fixtures only. Keep full energy-stable FDTD as
+an offline oracle rather than replacing the current low-CPU runtime. This is a
+research-priority decision, not a listening verdict or a claim of captured-rig
+parity.
+
 ## 2026-08-28 — promote force-decoupled exact pick release
 
 In the sealed, whole-file-RMS-matched comparison the hidden mapping was A =

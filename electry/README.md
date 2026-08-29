@@ -1966,6 +1966,88 @@ matched multi-velocity exact-eight calibration or holdout evidence, include a
 user blind verdict, authorize enabling the flag, or establish market
 superiority.
 
+#### Phase-conditioned repick research
+
+The next-ranked metal-specific mechanism is the plectrum touching a string
+that is already moving. Electry correctly keeps the ringing loop through a
+same-string repick, but its short Contact phase still applies one scalar loss
+to both loop polarisations at the commuted seam. It is not a local contact at
+the pick position. The existing
+[repick audit](Docs/evaluation.md#repick-contact-mechanism-audit) found that
+this loss changes the full E1/E2 state by only about -0.002/-0.004 dB and also
+proved an integer-position reciprocal two-port reference. A stronger local
+junction failed the public rapid-mute proxy, so topology alone is not a licence
+to tune it.
+
+[Evangelista and Smith's passive pluck junction](https://www.dafx.de/paper-archive/2010/DAFx10/EvangelistaSmith_DAFx10_P21.pdf)
+supplies the useful integer-position, low-cost structure. Electry's derived
+fractional extension uses a signed interpolation vector `w`, loop state `x`
+and dimensionless contact amount `0 <= gamma <= 1`. Its normalized adjoint
+gather/scatter
+`c = w^T x; x' = x - gamma w c / (w^T w)` changes squared state energy by
+`-gamma (2 - gamma) c^2 / (w^T w)`, which cannot be positive. This proves the
+delay-line Euclidean norm only, not passivity of moving delays and filter
+states in the full engine. The extension reduces to the tested two-port at an
+integer pick position, requires no allocation or filter bank and runs only
+during the existing 0.55-3 ms Contact phase. The current whole-loop
+`contactRetention` is not a measured local reflectance and must not be reused
+as `gamma`. Repeated application also makes a raw per-sample `gamma` depend on
+contact duration and sample rate, so any later experiment must freeze it as a
+one-shot total amount or convert a measured rate to per-step amounts.
+
+The physical evidence explains why the missing coefficient matters.
+[Pluta, Tokarczyk and Wiciak's robotic re-excitation](https://www.mdpi.com/2076-3417/12/3/1659)
+shows that simply adding a fresh initial condition misses pre-release damping,
+ringing and lasting spectral change, while a moving one-sided boundary follows
+their measured direction more closely. [Brauchler et al.'s measured string and
+plectrum motion](https://acta-acustica.edpsciences.org/articles/aacus/pdf/2020/03/aacus200019.pdf)
+shows that detachment phase contributes both displacement and velocity to the
+two-axis release. A newer robotic
+[192-micrometre depth sweep](https://arxiv.org/abs/2606.24356) finds shallow
+plateaus or thresholds in several amplitude and spectral features whose depth
+depends on plectrum material, but its acoustic six-string rig and remounted
+plectra prevent transfer of an absolute depth to Electry.
+
+The first falsification gate is therefore a separate commissioned 96 kHz
+exact-eight session, not another conventional-guitar fit or a mutation of the
+validated 44.1 kHz Palm/Dead capture contract. On one fixed measured rig it
+records E1 and E2 at one hard intended force as 32 independent two-stroke pairs
+per string. Four cue phases receive eight randomized pairs each; every phase
+balances four Down and four Up second strokes, with the opposite first stroke.
+At least three disconnected TRAIN and exactly two untouched HOLDOUT performance
+clusters use that same rig; other rigs are external-validity tests, not mixed
+into its coefficient fit.
+
+The cue phase is only scheduling metadata. A synchronized contact-onset channel
+and nonmagnetic two-axis LDV or equivalent motion reference measure the actual
+state. The frozen primary phase is plectrum-normal H1 displacement at contact,
+with zero fixed at its positive-real crossing and four fixed +/-45-degree
+quadrants; it is never rotated after decoding. Tangential H1 phase remains a
+recorded covariate. Pickup/gap, gauge, pick geometry, grip and pick point stay
+fixed or measured. A magnetic DI is already spatially filtered; the
+[electric-guitar measurement comparison](https://pmc.ncbi.nlm.nih.gov/articles/PMC12609871/)
+also warns that microphones do not recover an exact string waveform and that
+an LDV target can mass-load a thin string.
+
+Before any waveform is decoded, the gate freezes contact/onset uncertainty,
+phase and local-frequency estimators, sideband/SNR exclusions, exact files and
+hashes, fixed quadrants, renderer/build/preset/seed and TRAIN/HOLDOUT split.
+Its one primary response is H1-H4 energy gain from 48 ms Hann projections in
+`[-55, -7] ms` and `[+7, +55] ms` around measured contact; 0-12 ms remains a
+broadband attack window, not an identifiable E1 complex-partial estimate. Each
+string/direction/quadrant must retain at least three eligible pairs. A real
+phase effect clears the gate only when the quadrant span of cell medians
+exceeds pooled within-cell MAD on both strings and both HOLDOUT clusters and
+the centred four-quadrant profiles have positive dot product between holdouts.
+
+Only then may one default-off fractional junction derive its sample-rate-
+independent contact amount on TRAIN. Promotion requires at least 50% lower
+median absolute real/model cell error in each HOLDOUT with no worse maximum
+cell, plus identity, energy, lifecycle, tuning and stability rails and below
+1% median overhead at 96 kHz and 3% worst case at 384 kHz. The permissible
+result is narrower than “realistic plectrum”: more accurate phase-dependent
+open E1/E2 repicks on the captured rig and protocol.
+
 #### Pickup-magnet back-action research
 
 The second-ranked low-CPU direction is the force a pickup magnet applies back
@@ -1984,18 +2066,29 @@ establishes the programme's provenance, and its 2025
 [ISMRA abstract](https://ismra2025.org/wp-content/uploads/2025/05/ISMRA-2025-Final-1.3.pdf)
 reports pickup-height measurements and a single-recursion realtime model.
 
-The first Electry experiment should remain default-off and control-rate: fit
-measured `delta-f(vertical, amplitude, pickup gap)` and
-`delta-f(horizontal, amplitude, pickup gap)` backbone curves, then feed their
-bounded offsets into the two existing phase-compensated delay targets. The
-existing summed retirement follower is too delayed and loses axis identity, so
-this needs two small, release-seeded axis-amplitude states or an equivalently
-validated pickup-local displacement coordinate. Pickup selection must not gate
-the mechanical force: both magnets remain beside the string when one electrical
-tap is deselected. Sub-0.1% of the physical-string engine is the benchmark
-hypothesis, not a promised cost. A later conservative cubic spring at live
-pickup displacement is plausible, but pays per sample and is not the minimum
-experiment.
+The smallest defensible Electry experiment is static, diagonal and first-mode,
+not an invented amplitude law. Its first-order Rayleigh reduction evaluates
+the signed stiffness `k_a,p = -dF_a/du_a` at static equilibrium. For axis `a`,
+sounding length `L`, tension `T` and pickup-row positions `x_p`, use
+`r_a = 2 L sum(k_a,p sin^2(pi x_p/L)) / (T pi^2)` and
+`f_a = f0 sqrt(1 + r_a)`. Cache the two mode-shape sums at note/pitch geometry
+changes, evaluate each axis's existing phase compensation at its corrected
+frequency, and feed the two delay targets through their current smoothing.
+Stationary notes add no render-loop work; 0.25% of the physical-string engine
+is the preregistered CPU ceiling, not a promised result. Summing point rows is
+an approximation too and requires target measurements to verify additivity.
+
+The mechanical correction must remain active for both physical magnets even
+when the selector culls one electrical pickup path, must not relabel or remove
+Electry's existing small polarisation split, and must not add damping. A string
+centered over a suitably symmetric field makes the cross-axis terms zero; an
+off-centre target would require the measured symmetric 2x2 stiffness matrix.
+The necessary scalar-modal condition is `1 + r_a > 0`; the matrix form requires
+every eigenvalue of `I + R` to be positive, and neither condition proves
+moving-delay passivity. Harazono et al. report negative-stiffness magnitudes
+0.8/1.3 N/m for one two-row specimen. Mapping those to Electry's signed
+`k = -0.8/-1.3 N/m` convention produces a useful -1.752574-cent arithmetic
+fixture in this reduction, but does not calibrate Electry.
 
 No published coefficient transfers to a high-output eight-string humbucker or
 its wound .080 string. Promotion requires force-versus-displacement grids in
@@ -2003,7 +2096,9 @@ both axes for the actual pickups, per-string gaps at open and high frets,
 synchronised two-axis motion plus dry DI over several velocities, and a
 magnet-removed or very-low-pickup control. The evidence supports evolving
 stiffness, polarisation split and beating; it does not justify inventing extra
-sustain loss.
+sustain loss. Only after those curves exist should a control-rate amplitude
+backbone replace the static first mode; Electry's summed retirement follower
+cannot supply it because it loses axis identity.
 
 A third, cheaper measured residual is pickup-localised partial warping.
 [Harazono et al.](https://www.jstage.jst.go.jp/article/ast/33/5/33_E1148/_article)
