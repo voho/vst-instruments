@@ -149,6 +149,7 @@ private:
     int selectedString = -1;
     int hoveredString = -1;
 
+    void updateAccessibilityTitle();
     void selectString (int stringIndex);
     int stringAtY (float y) const noexcept;
 };

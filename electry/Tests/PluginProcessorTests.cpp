@@ -4634,6 +4634,101 @@ void testEditorRendering()
                         + knob->getName().toStdString());
     }
 
+    // The painted state is also the selected row's accessible name. Exercise
+    // it through the processor so the wording cannot drift from the actual
+    // physical-string assignment, articulation or bridge-coupled ring state.
+    {
+        ElectryAudioProcessor semanticProcessor;
+        semanticProcessor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (semanticProcessor,
+                           electry::parameters::sympathetic, 0.0f);
+        ElectryFretboardDisplay semanticDisplay;
+        expect (semanticDisplay.getTitle().contains ("physical string 8")
+                    && semanticDisplay.getTitle().contains ("silent"),
+                "the fretboard's initial accessible title is not silent");
+
+        juce::AudioBuffer<float> semanticAudio;
+        juce::MidiBuffer semanticMidi;
+        semanticMidi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote,
+            (juce::uint8) 110), 0);
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
+        expect (semanticDisplay.getTitle().contains ("physical string 8")
+                    && semanticDisplay.getTitle().contains ("open E1")
+                    && semanticDisplay.getTitle().contains ("downstroke")
+                    && semanticDisplay.getTitle().contains ("sounding"),
+                "an open downstroke did not reach the fretboard's accessible title");
+
+        semanticMidi.addEvent (juce::MidiMessage::noteOff (
+            1, electry::ElectryEngine::lowestPlayableNote), 0);
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
+        expect (semanticDisplay.getTitle().contains ("open E1")
+                    && semanticDisplay.getTitle().contains ("releasing"),
+                "a released string was not described as releasing");
+
+        semanticProcessor.requestPanic();
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticProcessor.triggerArticulation (
+            static_cast<int> (electry::PickStyle::Up));
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticMidi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote + 1,
+            (juce::uint8) 110), 0);
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
+        expect (semanticDisplay.getTitle().contains ("physical string 8")
+                    && semanticDisplay.getTitle().contains ("fret 1 F1")
+                    && semanticDisplay.getTitle().contains ("upstroke")
+                    && semanticDisplay.getTitle().contains ("sounding"),
+                "a fretted upstroke did not reach the fretboard's accessible title");
+
+        semanticProcessor.requestPanic();
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        setParameterValue (semanticProcessor,
+                           electry::parameters::sympathetic, 1.0f);
+        renderSeconds (semanticProcessor, semanticAudio, 0.10);
+        semanticMidi.addEvent (
+            juce::MidiMessage::noteOn (1, 45, (juce::uint8) 121), 0);
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        renderSeconds (semanticProcessor, semanticAudio, 0.10);
+        semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
+
+        int sympatheticString = -1;
+        electry::StringVisualState sympatheticState {};
+        for (int stringIndex = 0;
+             stringIndex < electry::ElectryEngine::stringCount; ++stringIndex)
+        {
+            const auto state = semanticProcessor.getStringVisualState (stringIndex);
+            if (state.sympathetic)
+            {
+                sympatheticString = stringIndex;
+                sympatheticState = state;
+                break;
+            }
+        }
+        expect (sympatheticString >= 0,
+                "the accessibility probe produced no sympathetic string");
+        if (sympatheticString >= 0)
+        {
+            const int physicalString = electry::ElectryEngine::stringCount
+                                     - sympatheticString;
+            semanticDisplay.keyPressed (juce::KeyPress {
+                static_cast<juce::juce_wchar> ('0' + physicalString) });
+            const auto title = semanticDisplay.getTitle();
+            expect (title.contains ("physical string "
+                                    + juce::String (physicalString))
+                        && title.contains ("open "
+                            + juce::MidiMessage::getMidiNoteName (
+                                sympatheticState.midiNote, true, true, 4))
+                        && title.contains ("sympathetic ring"),
+                    "a coupled open string did not reach the fretboard's "
+                    "accessible title");
+        }
+        semanticProcessor.releaseResources();
+    }
+
     const auto* pickStrip = findControl ("pickStyleStrip");
     const auto* styleStrip = findControl ("playStyleStrip");
     const auto* styleKeyMode = findControl ("playStyleKeyMode");

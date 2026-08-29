@@ -851,13 +851,49 @@ void ElectryFretboardDisplay::selectString (int stringIndex)
         return;
 
     selectedString = next;
-    setTitle (juce::String ("Live fretboard: physical string ")
-              + juce::String (electry::ElectryEngine::stringCount - selectedString)
-              + " selected. Use Up and Down or number keys 1 through 8 to "
-                "select; Space or Return repicks");
+    updateAccessibilityTitle();
+    repaint();
+}
+
+void ElectryFretboardDisplay::updateAccessibilityTitle()
+{
+    if (selectedString < 0
+        || selectedString >= electry::ElectryEngine::stringCount)
+        return;
+
+    const auto& state = rows[static_cast<std::size_t> (selectedString)].state;
+    juce::String title = juce::String ("Live fretboard: physical string ")
+                       + juce::String (
+                           electry::ElectryEngine::stringCount - selectedString)
+                       + " selected, ";
+    if (state.sounding)
+    {
+        if (state.fret == 0)
+            title += "open ";
+        else if (state.fret > 0)
+            title += "fret " + juce::String (state.fret) + " ";
+        if (state.midiNote >= 0)
+            title += juce::MidiMessage::getMidiNoteName (
+                state.midiNote, true, true, 4) + ", ";
+        title += (state.strokeUp ? "upstroke, " : "downstroke, ");
+        title += (state.releasing ? "releasing" : "sounding");
+    }
+    else if (state.sympathetic)
+    {
+        if (state.midiNote >= 0)
+            title += "open " + juce::MidiMessage::getMidiNoteName (
+                state.midiNote, true, true, 4) + ", ";
+        title += "sympathetic ring";
+    }
+    else
+    {
+        title += "silent";
+    }
+    title += ". Use Up and Down or number keys 1 through 8 to select; "
+             "Space or Return repicks";
+    setTitle (title);
     if (auto* handler = getAccessibilityHandler())
         handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
-    repaint();
 }
 
 int ElectryFretboardDisplay::stringAtY (float y) const noexcept
@@ -961,6 +997,7 @@ bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
                                        float frameSeconds)
 {
     bool moving = false;
+    bool selectedStateChanged = false;
     for (int stringIndex = 0;
          stringIndex < electry::ElectryEngine::stringCount; ++stringIndex)
     {
@@ -970,7 +1007,10 @@ bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
                           || next.fret != row.state.fret
                           || next.sounding != row.state.sounding
                           || next.sympathetic != row.state.sympathetic
-                          || next.releasing != row.state.releasing;
+                          || next.releasing != row.state.releasing
+                          || next.strokeUp != row.state.strokeUp;
+        selectedStateChanged = selectedStateChanged
+                            || (stringIndex == selectedString && changed);
         row.state = next;
 
         const float previousLevel = row.level;
@@ -997,6 +1037,8 @@ bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
 
         moving = moving || changed;
     }
+    if (selectedStateChanged)
+        updateAccessibilityTitle();
     return moving;
 }
 
