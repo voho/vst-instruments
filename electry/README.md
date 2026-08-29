@@ -1558,6 +1558,93 @@ that response into the same minimum-phase loop filter. The public F# previews
 contain neither the impedance measurement nor repeated held/free conditions,
 so no player-conditioned loss is added here.
 
+#### Measured two-axis fret-termination plan
+
+The strongest actionable follow-on is now directly measured rather than a
+smoother version of the Gaussian dead-spot guess. [Yudasaka, Scavone, Rau and
+Ishizaka (2025)](https://doi.org/10.1121/2.0002142) measured 24 termination
+locations—all 22 frets, the nut and the bridge—in vertical, horizontal and
+cross-axis configurations, five times per location. Their
+[author manuscript](https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Ayudasaka_ismra2025.pdf)
+reports vertical-admittance changes exceeding 40 dB and neck-side admittance
+equal to or greater than bridge admittance. Importing the measured
+fret-specific reflection functions into a coupled digital waveguide reproduced
+the measured locations of partial-decay changes. In the demonstrated 175 Hz,
+fret-1/fret-13 comparison, omitting neck reflection made the synthesized decay
+rates nearly identical. Above 700 Hz the real string decayed faster than the
+model, plausibly because its capo added a soft termination, and the authors
+explicitly leave human finger/neck contact for future work.
+
+That result supplies a plausible, testable mechanism for the lawful exact-eight
+mismatch above: Electry's upper partials decay too slowly and too smoothly
+while its current `deadSpotFactor()` is one frequency-independent Gaussian per
+string. It does not supply transferable coefficients. The production
+experiment therefore starts with the actual target eight-string in playing
+orientation. An automated impact hammer and two-axis LDV measure the same 24
+locations in both direct axes and both cross directions, with at least five
+accepted repeats in
+free, repeatable capo and normal-grip conditions. Repeatable wire-break plucks
+then record string and bridge motion with the magnetic pickup removed; a
+separate registered-height installation records synchronized DI for pickup-path
+validation. Gauge, tension, fret action, hand force, support and temperature
+are frozen with the audio and calibration receipts.
+
+Offline fitting compares the present scalar loss with passive two- and
+four-mode 2×2 termination-admittance candidates; modal frequencies remain
+shared while fret-specific residues vary. At runtime that admittance is
+converted to a reflection matrix using the active string's characteristic
+impedance and live tension. The existing intrinsic termination loss is jointly
+refitted or subtracted so the measured neck loss is not counted twice.
+Stability and contractivity are verified for the complete matrix over
+frequency, supported tensions and sample rates. A cross-axis section is
+admitted only if it improves the alternating-fret model-selection folds beyond
+the diagonal model; the complete measurement-repeat holdout and later remount
+session remain unopened for final validation. The candidate reuses Electry's
+two existing polarisation loops and updates coefficients only when the physical
+fret coordinate or quantized live tension changes, at the existing control
+rate and never per sample. It replaces rather than stacks the Gaussian loss.
+Model order and fret interpolation are chosen with alternating frets hidden.
+Promotion requires at least 50% lower held-out H1-H12 median decay-rate error
+than shipping, no worse maximum error, improved polarisation-beating error, stable
+44.1-384 kHz stress renders and less than 2% eight-string CPU overhead at a
+96 kHz host. Only then may all frets be refitted for a default-off listening
+candidate.
+
+#### Ranked measurement-backed follow-ons
+
+1. Capture-fit the existing wound-string dispersion cascade. [Murray and
+   Whitfield (2022)](https://doi.org/10.1119/5.0064373) found good agreement
+   between theoretical and measured inharmonicity for monofilament strings but
+   poor agreement for wound guitar strings. H1-H20 measurements from two
+   installed exact-eight string sets can refit Electry's existing eight
+   allpasses, retaining live-tension scaling and adding no render-loop work.
+   Odd frets and the second string set remain holdout; promotion needs at least
+   50% lower median cents error, no worse maximum error and unchanged
+   fundamental tuning.
+2. Measure the target pickup as a genuinely bivariate transducer. [Novak et
+   al. (2020)](https://doi.org/10.17743/jaes.2020.0002) measured distinct
+   two-dimensional nonlinear functions for single-coil, pole-piece humbucker
+   and rail-humbucker geometries. The first candidate is only a compact fitted
+   `flux(vertical, horizontal)` map in place of Electry's scalar mixed-axis
+   polynomial. [Giampiccolo, Bernardini and Sarti
+   (2023)](https://re.public.polimi.it/handle/11311/1236166)
+   show an explicit, non-iterative wave-digital pickup/tone/volume/cable/load
+   circuit, but that larger replacement is considered only if impedance and
+   clean-DI measurements first falsify Electry's current loaded circuit. The
+   bivariate stage must halve held-out normalized complex H1-H5 error across
+   registered heights, amplitudes and elliptical trajectories, with no worse
+   worst-case condition and below 1% CPU overhead.
+3. Keep transverse/longitudinal coupling exploratory. [Lee et al.'s
+   differentiable planar-string model](https://papers.nips.cc/paper_files/paper/2024/hash/0232cafe8d1909a01019abe8af32f3e1-Abstract-Conference.html)
+   and [Bank and Sujbert's reduced longitudinal-resonator
+   method](https://www.dafx.de/paper-archive/2004/P_089.PDF) offer an offline
+   nonlinear teacher and a compact resonator reduction for pitch glide and
+   phantom partials, but neither establishes an exact-eight residual. No
+   runtime candidate is permitted until repeated three-axis motion and
+   synchronized clean-DI captures show level-dependent longitudinal motion,
+   pitch glide or phantom components above noise, and a coupled model improves
+   unopened captures beyond the fixed dispersion/polarisation/pickup null.
+
 Most importantly, fret and frequency are confounded. A robust fit of loss to
 log partial frequency plus fret gives a direct fret coefficient of +0.1348
 dB/s/fret for the real files and +0.0207 for Electry; their difference is
