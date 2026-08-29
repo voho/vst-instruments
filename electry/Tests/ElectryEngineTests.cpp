@@ -5922,9 +5922,24 @@ void testPullOffLegatoDirection()
            "ascending hammer-on voicing changed");
     expect(pullOff.voice.horizontalWeight > pullOff.voice.verticalWeight,
            "descending legato did not use a lateral release");
-    expect(std::abs(pullOff.voice.excitationAmplitude
-                    - hammer.voice.excitationAmplitude) < 1.0e-6f,
-           "pull-off velocity mapping diverged from the hammer-on");
+    const float expectedProjectionRatio = hammer.voice.lastCompensatedPeriod
+                                        / pullOff.voice.lastCompensatedPeriod;
+    const float actualProjectionRatio = hammer.voice.excitationAmplitude
+                                      / pullOff.voice.excitationAmplitude;
+    expect(std::abs(actualProjectionRatio / expectedProjectionRatio - 1.0f)
+               < 2.0e-5f,
+           "hammer/pull modal projection did not follow the settled source "
+           "target period (ratio " + std::to_string(actualProjectionRatio)
+               + ", expected " + std::to_string(expectedProjectionRatio)
+               + ")");
+#if ! ELECTRY_ENERGY_ATTACK_PITCH
+    const float expectedMidiRatio = static_cast<float>(
+        midiHz(pullOffStart) / midiHz(hammerStart));
+    expect(std::abs(expectedProjectionRatio / expectedMidiRatio - 1.0f)
+               < 2.0e-5f,
+           "settled hammer/pull source periods diverged from their MIDI "
+           "ratio");
+#endif
     expect(std::abs(pullOff.voice.excitationCombDelay
                     - pullOff.voice.lastCompensatedPeriod)
                < 1.0e-6f * pullOff.voice.lastCompensatedPeriod,
@@ -7980,11 +7995,14 @@ void testMaterialAndControlAudibility()
         engine.setParameters(bent);
         engine.setPitchBend(bend);
         engine.reset();
-        engine.noteOn(45, 0.8f);
+        engine.noteOn(ElectryEngine::lowestPlayableNote, 0.8f);
         const auto voice = TestAccess::snapshot(
-            engine, TestAccess::stringForNote(engine, 45));
+            engine, TestAccess::stringForNote(
+                engine, ElectryEngine::lowestPlayableNote));
         return std::pair { voice, unfilteredDisplacement(voice) };
     };
+    const auto [centreBendVoice, centreBendDisplacement] =
+        bentDisplacement(0.6f, 0.0f);
     for (const float bend : { -1.0f, 1.0f })
     {
         const auto [bentSoftVoice, bentSoft] = bentDisplacement(0.0f, bend);
@@ -7993,6 +8011,18 @@ void testMaterialAndControlAudibility()
                    && std::abs(bentHard / bentSoft - 1.0f) < 2.0e-5f,
                "bent Pick Hardness changes force-normalised displacement (ratio "
                    + std::to_string(bentHard / std::max(bentSoft, 1.0e-12f))
+                   + ")");
+
+        const auto [bentVoice, bent] = bentDisplacement(0.6f, bend);
+        const float expectedPeriodRatio = std::exp2(-2.0f * bend / 12.0f);
+        const float actualDisplacementRatio = bent / centreBendDisplacement;
+        expect(centreBendVoice.valid && bentVoice.valid
+                   && centreBendDisplacement > 0.0f
+                   && std::abs(actualDisplacementRatio / expectedPeriodRatio
+                                   - 1.0f) < 2.0e-5f,
+               "pre-bent modal projection did not follow the target period "
+               "(ratio " + std::to_string(actualDisplacementRatio)
+                   + ", expected " + std::to_string(expectedPeriodRatio)
                    + ")");
     }
     engine.setPitchBend(0.0f);

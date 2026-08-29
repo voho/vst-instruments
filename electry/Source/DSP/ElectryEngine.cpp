@@ -4575,11 +4575,25 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // Referencing the projection to the high open E keeps equal player effort
     // at a comparable *string displacement* throughout the eight-string
     // range.  This is the normalization that a full triangular delay-line
-    // initial condition would obtain automatically.
+    // initial condition would obtain automatically. At a settled-source legato
+    // contact the written note is already the destination while the loop target
+    // still has the source period; a pre-bent fresh note likewise has a target
+    // period different from its written pitch. Form the correction as an
+    // exact-unity scale on ordinary unbent attacks so their established
+    // arithmetic stays unchanged.
+    // The upper safety bound covers open E1 through the standard two-semitone
+    // wheel range; more extreme MPE transpositions remain deliberately bounded.
     constexpr float projectionReferenceHz = 329.62756f; // open E4
+    const float nominalPeriod =
+        sampleRate / std::max(voice.baseFrequency, 20.0f);
+    const float projectionPeriod = finitef(voice.lastCompensatedPeriod)
+                                   && voice.lastCompensatedPeriod > 0.0f
+        ? voice.lastCompensatedPeriod : nominalPeriod;
+    const float projectionPeriodScale = projectionPeriod / nominalPeriod;
     const float modalProjectionGain = clampf(
-        projectionReferenceHz / std::max(voice.baseFrequency, 20.0f),
-        0.24f, 8.25f);
+        projectionReferenceHz / std::max(voice.baseFrequency, 20.0f)
+            * projectionPeriodScale,
+        0.24f, 9.0f);
     voice.excitationAmplitude = amplitude * displacementGain
                               * modalProjectionGain;
     voice.excitationTransientAmplitude = amplitude * transientGain
@@ -4818,9 +4832,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // independent force/contact axes above, this keeps the pole from supplying
     // a second hardness-dependent displacement gain while leaving the separate
     // broad plectrum edge alone.
-    // configureVoicePitch() has already stored the live period, including a
-    // wheel/MPE bend present when the pick arrives. Normalising a plectrum at
-    // the MIDI note instead would reintroduce a level change for bent attacks.
+    // configureVoicePitch() has already stored the live target period,
+    // including a wheel/MPE bend present when the pick arrives. Normalising a
+    // plectrum at the MIDI note instead would reintroduce a level change for
+    // bent attacks.
     // Finger contacts retain their established base-note reference so a
     // legato glide does not turn the hammer/pull velocity law into a level
     // modulation.
