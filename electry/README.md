@@ -1609,6 +1609,64 @@ tick. The flag therefore remains off only pending repeated licensed exact-eight
 captures and phrase-level blind listening. No harmonic bank, neural network or
 FDTD solver enters the realtime path.
 
+### Conventional-E2 post-fit falsification check
+
+After the coefficients and odd-fret result above were frozen, a no-refit
+adjacent-domain audit compared the candidate with all five EGFxSet clean
+`6-0.wav` open-E2 takes. This asks whether the fitted loss can transfer merely
+because another string has the same pitch; it is not another calibration set.
+The files were recovered from the 431,036,829-byte Zenodo archive with five
+single-range requests totalling 3,428,190 bytes, then checked against both the
+ZIP CRCs and mirdata MD5 values. The source receipt SHA-256 is
+`edca2335844399ba54ea7c8635a2a0639399daf114325e1cc21322757d849e2a`;
+no third-party audio is committed.
+
+Before rendering or reading a decay result, the audit froze the existing five
+real files, the string-8 fret-12 OFF and ON E2 renders, a fresh shipping-OFF
+renderer for physical string 3 open E2, and the exact estimator used above.
+The preregistration and final eight-input manifest have SHA-256
+`85695336c6671cc16883dcd0e89373b9017a48f3a0c763181ee0145a7db3b72d`
+and `9bf8e2ef53f986e8f3db3d6222db88b444a577da59f257896ac97f42f34dcea3`.
+The fresh role-matched WAV is MIDI 40 on physical string index 2, open fret,
+velocity 0.95, 48 kHz/256 frames, Mono/default build with sympathy, bridge hand
+and acoustic return disabled; its SHA-256 is
+`9005acb7949786116014b87fdb9f13feabc575b367a2d8de0b892580475ae993`.
+
+The frozen H2-H8 gates were intersected across all five real takes and all
+three model renders. Exactly H4-H7 survived, meeting the predeclared four-track
+minimum without relaxing a threshold. A first attempt stopped before onset or
+spectral analysis because SciPy could not decode the EGFxSet PCM24 container.
+The disclosed decoder-only amendment, SHA-256
+`0b89834deb970e947894d08e5d2b818e1a3d563676f30f825f2283d79be9e055`,
+added a signed little-endian PCM24 reader; every numerical rule remained
+unchanged.
+
+| common H4-H7 comparison | median loss | median signed error | MAE | RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| five real pickup takes | 4.586 dB/s (3.701..7.696) | - | - | - |
+| string 8 / fret 12, candidate OFF | 7.105 dB/s | -0.055 dB/s | 3.808 dB/s | 4.496 dB/s |
+| string 8 / fret 12, candidate ON | 30.783 dB/s | +23.193 dB/s | 23.917 dB/s | 24.405 dB/s |
+| string 3 / open, shipping OFF | 7.816 dB/s | +0.630 dB/s | 3.935 dB/s | 4.728 dB/s |
+
+Errors aggregate the five pickups by four common partials. Turning the
+candidate on worsens MAE for every pickup by 16.974..21.542 dB/s and aggregate
+MAE by 20.109 dB/s. The result rejects pitch-only transfer of the exact-eight
+F# correction to a conventional Strat low E2 and reinforces keeping the flag
+off. It does not refute the frozen exact-eight F# holdout: string construction,
+scale position and fret geometry differ, while the EGFxSet pickup files are
+separate normalised plucks. The OFF result is directionally much closer, not a
+claim that either mapping is capture-fitted. The intersection only meets its
+minimum, so it says nothing about H2, H3 or H8. Its 0.20-1.20-second slopes end
+before the dataset's forced fade at 3 seconds, although that fade makes the
+final-frame headroom gate permissive for the real files.
+
+The read-only final receipt and result have SHA-256
+`eb740fadf6fd7499f2703cd5f3e335b28e13ea791af0b2fc08ad46f690eacc6c`
+and `d5b10c339563f1511365bcf68885013e90a4c9b55ac497aeead8022402fef84f`;
+the partial and comparison CSV hashes are
+`43321623cdbc174fd6259f5278a26e646b8bcce35248b98532c31ad93435d7c1`
+and `6529050170f35f067803b8c94a0799d727d33d2f96c5579075e21689959e1079`.
+
 ### Remaining realism gates
 
 Engineering tests and public datasets do not replace licensed Drop-E hardware
@@ -1636,9 +1694,10 @@ gate. [EGFxSet](https://egfxset.github.io/) and its
 [CC-BY-4.0 Zenodo deposit](https://zenodo.org/records/7044411) provide 690
 five-second clean-DI captures: all 138 string/fret positions of a standard
 six-string Strat at five pickup settings, made with one 2.0 mm pick and one
-documented instrument-input chain. They are a strong adjacent-fret,
-pickup-invariance and conventional-E2 sustain control, but their normalisation
-precludes absolute-level fitting and they contain no Palm or Dead notes.
+documented instrument-input chain. They are a strong adjacent-fret and
+conventional-E2 sustain check across separately played pickup settings, but
+their normalisation precludes absolute-level fitting and they contain no Palm
+or Dead notes.
 [GuitarJam](https://huggingface.co/datasets/Julian-br/GuitarJam/blob/main/README.md)
 adds 580 CC0 raw-DI monophonic phrases for timing, dynamics and incidental-noise
 listening, but has no string, fret, tuning or technique labels. Neither source
