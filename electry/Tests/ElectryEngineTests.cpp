@@ -5428,6 +5428,125 @@ void testPitchWheelUsesUniformSemitoneInterval()
     }
 }
 
+void testStiffnessFollowsLiveTension()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int note = 47; // stopped B2 on the A string
+    constexpr ElectryEngine::ExpressionId expressionId = 5;
+
+    const auto stiffnessAt = [&] (bool memberExpression, float semitones)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        if (memberExpression)
+            engine.setExpressionPitchBend(expressionId, semitones);
+        else
+            engine.setPitchBend(0.5f * semitones);
+        engine.reset();
+        engine.noteOn(note, 0.8f, memberExpression
+            ? expressionId : ElectryEngine::legacyExpressionId);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        expect(stringIndex == 3,
+               "the live-tension stiffness fixture missed the A string");
+        return stringIndex >= 0
+            ? TestAccess::snapshot(engine, stringIndex).inharmonicity : 0.0f;
+    };
+
+    const float unbentGlobal = stiffnessAt(false, 0.0f);
+    const float unbentMember = stiffnessAt(true, 0.0f);
+    for (const float semitones : { -2.0f, 2.0f })
+    {
+        const float expectedRatio = std::exp2(-semitones / 6.0f);
+        const float global = stiffnessAt(false, semitones);
+        const float member = stiffnessAt(true, semitones);
+        expect(unbentGlobal > 0.0f && unbentMember > 0.0f
+                   && std::abs(global / unbentGlobal - expectedRatio) < 2.0e-5f
+                   && std::abs(member / unbentMember - expectedRatio) < 2.0e-5f,
+               "global/MPE bend left stiffness outside the live 1/T law at "
+                   + std::to_string(semitones) + " semitones");
+    }
+
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // The attack-pitch experiment moves the compensated period but is
+    // deliberately not part of the static construction fit. Keep a live
+    // attack factor present while a member bend actually re-fits B, so using
+    // the experiment's f0 here cannot pass as an unchanged-cache result.
+    {
+        ElectryEngine energy;
+        energy.prepare(sampleRate, 512);
+        energy.setParameters(EngineParameters {});
+        energy.reset();
+        energy.noteOn(note, 0.8f, expressionId);
+        const int energyString = TestAccess::stringForNote(energy, note);
+        expect(energyString == 3,
+               "the energy live-tension fixture missed the A string");
+        const int safeEnergyString = std::max(energyString, 0);
+        const float before = TestAccess::snapshot(
+            energy, safeEnergyString).inharmonicity;
+        energy.setExpressionPitchBend(expressionId, 2.0f);
+        energy.snapExpressionPitchBendToTarget(expressionId);
+        TestAccess::setAttackPitchAfterLoopCacheAdvanced(
+            energy, safeEnergyString, 1.003f);
+        const auto after = TestAccess::snapshot(energy, safeEnergyString);
+        const auto attack = TestAccess::attackPitchState(
+            energy, safeEnergyString);
+        expect(attack.frequencyFactor > 1.002f
+                   && std::abs(after.inharmonicity / before
+                                   - std::exp2(-2.0f / 6.0f)) < 2.0e-5f,
+               "energy attack pitch leaked into the static stiffness fit");
+    }
+#endif
+
+    // Fretting-hand vibrato reaches the same tension coordinate through its
+    // own public gesture. Score only ticks that actually re-fit the quantised
+    // dispersion grid, where B and the sampled excursion are synchronous.
+    ElectryEngine vibrato;
+    vibrato.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.vibratoDepth = 1.0f;
+    vibrato.setParameters(parameters);
+    vibrato.reset();
+    vibrato.noteOn(note, 0.8f);
+    const int stringIndex = TestAccess::stringForNote(vibrato, note);
+    expect(stringIndex == 3,
+           "the vibrato-stiffness fixture missed the A string");
+    const float resting = stringIndex >= 0
+        ? TestAccess::snapshot(vibrato, stringIndex).inharmonicity : 0.0f;
+    float previous = resting;
+    float deepest = resting;
+    float widestSemitones = 0.0f;
+    float worstRatioError = 0.0f;
+    int refits = 0;
+    vibrato.setVibrato(1.0f);
+    const int tickFrames = TestAccess::hostFramesPerControlPeriod(vibrato);
+    StereoBuffer tick(tickFrames);
+    for (int rendered = 0; rendered < static_cast<int>(1.0 * sampleRate);
+         rendered += tickFrames)
+    {
+        renderInto(vibrato, tick, tickFrames);
+        const auto voice = TestAccess::snapshot(vibrato, stringIndex);
+        deepest = std::min(deepest, voice.inharmonicity);
+        widestSemitones = std::max(widestSemitones, voice.vibratoSemitones);
+        if (voice.inharmonicity == previous)
+            continue;
+        ++refits;
+        const float expectedRatio = std::exp2(-voice.vibratoSemitones / 6.0f);
+        worstRatioError = std::max(
+            worstRatioError,
+            std::abs(voice.inharmonicity / resting / expectedRatio - 1.0f));
+        previous = voice.inharmonicity;
+    }
+    expect(resting > 0.0f && refits >= 3 && widestSemitones > 0.25f
+               && deepest < 0.97f * resting && worstRatioError < 2.0e-4f,
+           "fretting-hand vibrato did not carry stiffness through live tension");
+}
+
 void testPitchWheelGlideFollowsBendTime()
 {
     // The strings travel to the wheel over the Bend Time parameter: shortly
@@ -10236,14 +10355,20 @@ void testSlideArticulation()
         cancelledPitch.noteOn(47, 0.84f);
         // Cache the contact state with +2 semitones cancelling the slide's
         // -2-semitone source offset, then move the finger one fret while +1
-        // cancels its -1-semitone midpoint offset. Combined pitch and f0 are
-        // identical at both fits, leaving live fret as the only changed key.
+        // cancels its -1-semitone midpoint offset. Combined pitch is identical
+        // at both fits. Holding it there requires tension proportional to L^2,
+        // so B follows 1/L^4 rather than the pure slide's fixed-tension 1/L^2.
         TestAccess::setLegatoWithOpposingBend(
             cancelledPitch, stringIndex, 0.0f);
-        expect(TestAccess::snapshot(cancelledPitch, stringIndex)
-                   .inharmonicity == sourceB,
-               "the opposing-bend fixture did not cache source stiffness at "
-               "contact");
+        const float cancelledBasePitch = static_cast<float>(midiHz(47));
+        const float cancelledContactB = TestAccess::snapshot(
+            cancelledPitch, stringIndex).inharmonicity;
+        const float cancelledContactExpectedB = sourceB
+            * sourcePitch * sourcePitch
+            / (cancelledBasePitch * cancelledBasePitch);
+        expect(std::abs(cancelledContactB / cancelledContactExpectedB - 1.0f)
+                   < 0.01f,
+               "the opposing bend left contact stiffness at unbent tension");
         TestAccess::setLegatoWithOpposingBend(
             cancelledPitch, stringIndex, 0.5f);
         const float cancelledB = TestAccess::snapshot(
@@ -10251,12 +10376,12 @@ void testSlideArticulation()
         const float cancelledLivePitch = TestAccess::programmedLegatoFrequency(
             cancelledPitch, stringIndex);
         const float cancelledExpectedB = sourceB
-            * cancelledLivePitch * cancelledLivePitch
-            / (sourcePitch * sourcePitch);
+            * std::pow(cancelledLivePitch / sourcePitch, 4.0f)
+            * sourcePitch * sourcePitch
+            / (cancelledBasePitch * cancelledBasePitch);
         expect(std::abs(cancelledB / cancelledExpectedB - 1.0f) < 0.01f
-                   && cancelledB > sourceB * 1.10f,
-               "an opposing bend hid live-fret movement from the stiffness "
-               "cache key");
+                   && cancelledB > cancelledContactB * 1.20f,
+               "an opposing bend left stiffness outside its live T/L law");
 
         const int traceFrames = TestAccess::hostFramesPerControlPeriod(engine);
         StereoBuffer trace(traceFrames);
@@ -18123,6 +18248,7 @@ int main()
     testDelayedRepickPreservesFrozenExpressionPitch();
     testSamePitchExpressionOwnersReleaseIndependently();
     testPitchWheelUsesUniformSemitoneInterval();
+    testStiffnessFollowsLiveTension();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
     testHammerOnLegatoContinuity();

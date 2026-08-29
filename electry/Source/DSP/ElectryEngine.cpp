@@ -3373,7 +3373,8 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         voice.lastConfiguredLiveFret = liveFret;
 
         // Stiffness inharmonicity from the string's physical make-up. Wound
-        // strings bend with their core, not their full winding diameter.
+        // strings use an empirical effective flexural diameter rather than
+        // the full winding diameter.
         const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
         const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
                                       smoothedParameters_.stringGauge);
@@ -3389,17 +3390,28 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                                * 0.25f * diameter * diameter;
         const float waveSpeed = 2.0f * soundingLength * liveUnbentFrequency;
         const float tension = linearMass * waveSpeed * waveSpeed;
-#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
-        const float attackPitchRatio = configuredF0
+        // Kemp's stiff-string derivation gives
+        // B = pi^2 E S kappa^2 / (T L^2)
+        // and f0 = sqrt(T / mu) / (2 L), so a bend or fretting-hand
+        // vibrato at fixed L scales T by the square of its pitch ratio and
+        // B by the inverse square. A pure fret/slide move keeps
+        // L * f constant and therefore leaves this tension ratio at one.
+        // Equations 3--5:
+        // https://link.springer.com/article/10.1007/s42452-020-2391-2
+        // The default-off energy-attack experiment remains outside this
+        // static construction fit; configuredF0 deliberately excludes it.
+        const float tensionPitchRatio = configuredF0
             / std::max(liveUnbentFrequency, 20.0f);
-        voice.stringTensionNewtons = tension
-                                   * attackPitchRatio * attackPitchRatio;
+        const float liveTension = tension
+            * tensionPitchRatio * tensionPitchRatio;
+#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
+        voice.stringTensionNewtons = liveTension;
 #endif
         const float bendingStiffness = pi * pi * pi * steelYoungModulus
                                      * bendingDiameter * bendingDiameter
                                      * bendingDiameter * bendingDiameter / 64.0f;
         float inharmonicity = bendingStiffness
-            / std::max(tension * soundingLength * soundingLength, 1.0e-9f);
+            / std::max(liveTension * soundingLength * soundingLength, 1.0e-9f);
         inharmonicity = clampf(inharmonicity, 0.0f, 3.0e-3f);
 
         // Eight cascaded first-order sections are fitted in factored form:
