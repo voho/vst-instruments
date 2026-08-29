@@ -236,6 +236,25 @@ constexpr float steelYoungModulus = 2.0e11f; // Pa
 // It converts the fret-clearance controls below into the loop's units.
 constexpr float waveguideDisplacementMetresPerUnit = 0.040f;
 
+#if ELECTRY_ENERGY_ATTACK_PITCH
+// Default-off tension experiment. Bank's quasistatic store gives
+//
+//     dT / T = E A_core y^2 / (4 T L^2 p (1-p)),
+//     f / f0 = sqrt(1 + dT / T).
+//
+// The 4.8 N anchor is the existing documented full-force contact reference in
+// makeVelocityProfile(), not a value fitted to the EG-IPT result. Bank's square
+// root and the independent seven-cent bound prevent it from reviving the
+// former approximately 30-cent E1 extrapolation. The experiment must remain
+// chord-safe before listening and none of these values is a shipping fit.
+constexpr float attackPitchFullForceNewtons = 4.8f;
+constexpr float maximumAttackPitchTensionRatio = 0.00811950292f; // +7 cents
+// Lee measured this normalised-frequency time constant on one hard-plucked
+// open high-E string. Reusing it across this candidate is an explicit bounded
+// extrapolation, not an eight-string material constant.
+constexpr float attackPitchRelaxationSeconds = 0.3049f;
+#endif
+
 // A low eight-string is commonly set near 1.75 mm at the upper frets. Let a
 // forceful, artifact-heavy stroke close a little under that nominal action and
 // a gentler one require a little more travel, then convert through the loop's
@@ -648,16 +667,18 @@ ElectryEngine::stringSpecs() noexcept
     // what left the low register sounding hollow - the fundamental faded while
     // the upper partials were still going.
     static constexpr std::array<StringSpec, stringCount> specs {{
-        // The flexural core is the dispersion fit. A winding can slip under
-        // bending, so it need not share the string's full diameter.
-        { 28, true, 2.0320f, 0.22f, 20.0f }, // E1, wound (.080)
-        { 35, true, 1.5240f, 0.25f, 19.0f }, // B1, wound (.060)
-        { 40, true, 1.0668f, 0.28f, 18.0f }, // E2, wound
-        { 45, true, 0.8128f, 0.30f, 16.5f }, // A2, wound
-        { 50, true, 0.6096f, 0.32f, 15.0f }, // D3, wound
-        { 55, false, 0.4064f, 1.0f, 12.0f }, // G3, plain
-        { 59, false, 0.2794f, 1.0f, 10.0f }, // B3, plain
-        { 64, false, 0.2286f, 1.0f, 8.5f },  // E4, plain
+        // Flexural and axial cores are separate coordinates: the winding can
+        // slip differently under bending and longitudinal loading. The axial
+        // values are candidate construction estimates used only by the
+        // default-off energy-pitch experiment.
+        { 28, true, 2.0320f, 0.22f, 0.22f, 20.0f }, // E1, wound (.080)
+        { 35, true, 1.5240f, 0.25f, 0.25f, 19.0f }, // B1, wound (.060)
+        { 40, true, 1.0668f, 0.28f, 0.28f, 18.0f }, // E2, wound
+        { 45, true, 0.8128f, 0.30f, 0.30f, 16.5f }, // A2, wound
+        { 50, true, 0.6096f, 0.32f, 0.32f, 15.0f }, // D3, wound
+        { 55, false, 0.4064f, 1.0f, 1.0f, 12.0f }, // G3, plain
+        { 59, false, 0.2794f, 1.0f, 1.0f, 10.0f }, // B3, plain
+        { 64, false, 0.2286f, 1.0f, 1.0f, 8.5f },  // E4, plain
     }};
     return specs;
 }
@@ -1160,6 +1181,11 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // literal it would give the hand a different physical response time at
     // every host rate.
     handEnvelopeCoefficient_ = rateAdjustedCoefficient(0.0015f, internalRate);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    attackPitchTensionRatioRetention_ = std::exp(
+        -static_cast<float>(controlPeriod)
+        / (attackPitchRelaxationSeconds * internalRate));
+#endif
     retireAttackCoefficient_ = rateAdjustedCoefficient(0.01f, internalRate);
     retireReleaseCoefficient_ = rateAdjustedCoefficient(0.0009f, internalRate);
     artifactBandCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
@@ -3077,8 +3103,23 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const float semitones = legatoOffset
                           + bend
                           + vibrato;
-    const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
-                            20.0f, 0.24f * static_cast<float>(sampleRate_));
+    const float configuredF0 = clampf(
+        voice.baseFrequency * std::exp2(semitones / 12.0f),
+        20.0f, 0.24f * static_cast<float>(sampleRate_));
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    float attackPitchTensionRatio = voice.attackPitchTensionRatio;
+    if (! std::isfinite(attackPitchTensionRatio))
+        attackPitchTensionRatio = 0.0f;
+    attackPitchTensionRatio = clampf(
+        attackPitchTensionRatio, 0.0f, maximumAttackPitchTensionRatio);
+    voice.attackPitchFrequencyFactor = std::sqrt(
+        1.0f + attackPitchTensionRatio);
+    const float f0 = clampf(
+        configuredF0 * voice.attackPitchFrequencyFactor,
+        20.0f, 0.24f * static_cast<float>(sampleRate_));
+#else
+    const float f0 = configuredF0;
+#endif
     const float liveFret = clampf(static_cast<float>(voice.fret)
                                       + legatoOffset,
                                   0.0f, static_cast<float>(fretCount));
@@ -3167,12 +3208,28 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const bool fitMoved = forceDelayJump
         || std::abs(semitones - voice.lastConfiguredSemitones) > 0.06f
         || std::abs(liveFret - voice.lastConfiguredLiveFret) > 0.06f
-        || std::abs(f0 - voice.lastConfiguredFrequency)
-               > 3.5e-3f * std::max(f0, 20.0f);
+        || std::abs(configuredF0 - voice.lastConfiguredFrequency)
+               > 3.5e-3f * std::max(configuredF0, 20.0f);
     const bool pitchMoved =
-        std::abs(semitones - voice.lastCompensatedSemitones) > 8.0e-4f;
+        std::abs(semitones - voice.lastCompensatedSemitones) > 8.0e-4f
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        || std::abs(voice.attackPitchFrequencyFactor
+                    - voice.lastAttackPitchFrequencyFactor) > 4.6e-5f
+#endif
+        ;
     const float omega = twoPi * f0 * inverseSampleRate_;
     const float period = static_cast<float>(sampleRate_) / f0;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // Dispersion remains the static string construction. The common energy
+    // glide moves only the compensated sounding period; it must not run the
+    // 520-candidate stiffness fit on every decaying control tick.
+    const float dispersionOmega = twoPi * configuredF0 * inverseSampleRate_;
+    const float dispersionPeriod = static_cast<float>(sampleRate_)
+                                 / configuredF0;
+#else
+    const float dispersionOmega = omega;
+    const float dispersionPeriod = period;
+#endif
     const auto dampingPhaseDelay = [&] (const PolarisationLoop& loop,
                                          float phaseOmega)
     {
@@ -3255,7 +3312,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     if (fitMoved)
     {
         voice.lastConfiguredSemitones = semitones;
-        voice.lastConfiguredFrequency = f0;
+        voice.lastConfiguredFrequency = configuredF0;
         voice.lastConfiguredLiveFret = liveFret;
 
         // Stiffness inharmonicity from the string's physical make-up. Wound
@@ -3275,8 +3332,8 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                                * 0.25f * diameter * diameter;
         const float waveSpeed = 2.0f * soundingLength * liveUnbentFrequency;
         const float tension = linearMass * waveSpeed * waveSpeed;
-#if ELECTRY_ANALYTIC_RELEASE_IC
-        const float attackPitchRatio = f0
+#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
+        const float attackPitchRatio = configuredF0
             / std::max(liveUnbentFrequency, 20.0f);
         voice.stringTensionNewtons = tension
                                    * attackPitchRatio * attackPitchRatio;
@@ -3293,7 +3350,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         // bounded two-pass grid minimises relative phase-delay error at both
         // reference partials. This is done only at note/control setup.
         const float highPartial = clampf(
-            std::floor(0.30f * static_cast<float>(sampleRate_) / f0),
+            std::floor(0.30f * static_cast<float>(sampleRate_) / configuredF0),
             4.0f, 16.0f);
         const float lowPartial = std::min(
             4.0f, std::max(2.0f, std::floor(0.5f * highPartial)));
@@ -3305,7 +3362,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
             const float stretch =
                 std::sqrt((1.0f + inharmonicity * partial * partial)
                           / (1.0f + inharmonicity));
-            return period * (1.0f - 1.0f / stretch);
+            return dispersionPeriod * (1.0f - 1.0f / stretch);
         };
         // allpassPhaseDelay(coefficient, omega) - the term at the sounding
         // fundamental itself, as opposed to the reference partial - depends on
@@ -3322,7 +3379,8 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         const auto pairDeficitFromBase = [&] (float base, float coefficient,
                                               float partial)
         {
-            const float omegaRef = std::min(omega * partial, pi * 0.95f);
+            const float omegaRef = std::min(
+                dispersionOmega * partial, pi * 0.95f);
             return 2.0f * (base - allpassPhaseDelay(coefficient, omegaRef));
         };
         if (inharmonicity > 1.0e-8f)
@@ -3348,12 +3406,14 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                 {
                     const float candidateLow = lowMinimum
                         + lowStep * static_cast<float>(lowIndex);
-                    const float lowBase = allpassPhaseDelay(candidateLow, omega);
+                    const float lowBase = allpassPhaseDelay(
+                        candidateLow, dispersionOmega);
                     for (int highIndex = 0; highIndex <= divisions; ++highIndex)
                     {
                         const float candidateHigh = highMinimum
                             + highStep * static_cast<float>(highIndex);
-                        const float highBase = allpassPhaseDelay(candidateHigh, omega);
+                        const float highBase = allpassPhaseDelay(
+                            candidateHigh, dispersionOmega);
                         const float actualLow =
                             2.0f * pairDeficitFromBase(lowBase, candidateLow, lowPartial)
                             + 2.0f * pairDeficitFromBase(highBase, candidateHigh, lowPartial);
@@ -3396,6 +3456,10 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     if (pitchMoved || voice.compensationDirty)
     {
         voice.lastCompensatedSemitones = semitones;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        voice.lastAttackPitchFrequencyFactor =
+            voice.attackPitchFrequencyFactor;
+#endif
         // The dispersion fit above always assigns the same lowCoefficient/
         // highCoefficient pair to both polarisations in one stroke, so their
         // allpass phase-delay contribution is identical for vertical and
@@ -4610,6 +4674,55 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.noiseRemaining = voice.noiseLength;
     voice.releaseNoiseDone = false;
     updateStyleWeights(voice, legato);
+
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    if (plectrumContact)
+        voice.pendingAttackPitchClearOnRelease =
+            voice.playStyle != PlayStyle::Sustain;
+    // The frozen real comparison supports only ordinary ringing plucks.
+    // EG-IPT's muted and snap-pizzicato cells decayed before the registered
+    // estimator had enough windows, so extending this seed to Palm, Dead,
+    // harmonic or pinch articulations would outrun the evidence.
+    if (plectrumContact && voice.playStyle == PlayStyle::Sustain)
+    {
+        // Latch the candidate seed at physical contact, but do not apply it
+        // until the pick actually enters Release. This keeps a delayed or
+        // cancelled strum from moving the pitch of the string already ringing
+        // underneath it. The force coordinate removes the legacy projection,
+        // hardness and age gains; player effort, stroke variation and the
+        // articulation's real displacement gain remain.
+        voice.pendingAttackPitchEnergyJoules = 0.0f;
+        voice.pendingAttackPitchElasticScalePerJoule = 0.0f;
+        const float relativeForce = amplitude
+            / std::max(0.48f * hardnessGain * ageAmplitudeGain, 1.0e-6f)
+            * (displacementGain / 1.55f);
+        const float forceNewtons = attackPitchFullForceNewtons
+                                 * std::max(relativeForce, 0.0f);
+        const float tension = voice.stringTensionNewtons;
+        const float positionProduct = combFraction * (1.0f - combFraction);
+        const float peakMetres = forceNewtons * positionProduct
+                               * soundingMetres / std::max(tension, 1.0e-6f);
+        const float axisEnergy = voice.verticalWeight * voice.verticalWeight
+                               + voice.horizontalWeight * voice.horizontalWeight;
+        const float energy = tension * peakMetres * peakMetres * axisEnergy
+            / std::max(2.0f * soundingMetres * positionProduct, 1.0e-12f);
+
+        const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
+                                      parameters.stringGauge);
+        const float axialDiameter = spec.plainDiameterMm * 1.0e-3f
+                                  * gaugeScale * spec.axialCoreScale;
+        const float axialArea = pi * 0.25f
+                              * axialDiameter * axialDiameter;
+        const float elasticScale = steelYoungModulus * axialArea
+            / std::max(2.0f * soundingMetres * tension * tension, 1.0e-12f);
+        if (std::isfinite(energy) && energy > 0.0f
+            && std::isfinite(elasticScale) && elasticScale > 0.0f)
+        {
+            voice.pendingAttackPitchEnergyJoules = energy;
+            voice.pendingAttackPitchElasticScalePerJoule = elasticScale;
+        }
+    }
+#endif
 }
 
 void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
@@ -4768,6 +4881,21 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     }
 
     voice.pendingRepick.active = false;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // A genuinely fresh physical string has no energy-derived tension
+    // coordinate. A repick retains the old decaying coordinate until the new
+    // pick releases;
+    // its pending seed is replaced only when that contact really begins.
+    if (! wasRinging)
+    {
+        voice.attackPitchTensionRatio = 0.0f;
+        voice.attackPitchFrequencyFactor = 1.0f;
+        voice.lastAttackPitchFrequencyFactor = 1.0f;
+    }
+    voice.pendingAttackPitchEnergyJoules = 0.0f;
+    voice.pendingAttackPitchElasticScalePerJoule = 0.0f;
+    voice.pendingAttackPitchClearOnRelease = false;
+#endif
 #if ELECTRY_ANALYTIC_RELEASE_IC
     voice.analyticReleaseAmplitude = 0.0f;
     voice.analyticReleaseFreshContact = (! wasRinging || freshDelayedContact)
@@ -4905,6 +5033,10 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
             constexpr float retainedEnergy =
                 retainedAmplitude * retainedAmplitude;
             voice.outputEnergy *= retainedEnergy;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+            voice.attackPitchTensionRatio *= retainedEnergy;
+            configureVoicePitch(voice, false);
+#endif
             voice.vertical.currentDelay = voice.vertical.targetDelay;
             voice.horizontal.currentDelay = voice.horizontal.targetDelay;
         }
@@ -4930,6 +5062,15 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     // a fresh string released from rest.
     voice.analyticReleaseAmplitude = 0.0f;
     voice.analyticReleaseFreshContact = false;
+#endif
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // A finger that lands during plectrum Contact cancels that contact; its
+    // own Release is not the pick's physical release and must never commit (or
+    // clear) the interrupted pick's pending tension seed. Existing live q is
+    // retained and continues to decay through the legato gesture.
+    voice.pendingAttackPitchEnergyJoules = 0.0f;
+    voice.pendingAttackPitchElasticScalePerJoule = 0.0f;
+    voice.pendingAttackPitchClearOnRelease = false;
 #endif
     if (expressionId > maximumExpressionId)
         expressionId = legacyExpressionId;
@@ -5288,6 +5429,15 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.analyticReleaseHalfWidthFraction = 0.0f;
     voice.analyticReleaseFreshContact = false;
 #endif
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    voice.stringTensionNewtons = 80.0f;
+    voice.attackPitchTensionRatio = 0.0f;
+    voice.pendingAttackPitchEnergyJoules = 0.0f;
+    voice.pendingAttackPitchElasticScalePerJoule = 0.0f;
+    voice.pendingAttackPitchClearOnRelease = false;
+    voice.attackPitchFrequencyFactor = 1.0f;
+    voice.lastAttackPitchFrequencyFactor = 1.0f;
+#endif
     voice.excitationTailLength = 0;
     voice.contactFeedbackGain = 1.0f;
     voice.noiseRemaining = 0;
@@ -5561,6 +5711,17 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     if (! voice.active)
         return;
 
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // Lee's measured common pitch component relaxes exponentially. The
+    // additional control-rate work is one multiply plus the bounded pitch
+    // solve below; compensation runs only after the accumulated change
+    // exceeds its existing sub-cent quantum.
+    voice.attackPitchTensionRatio *= attackPitchTensionRatioRetention_;
+    if (! std::isfinite(voice.attackPitchTensionRatio)
+        || voice.attackPitchTensionRatio < 1.0e-12f)
+        voice.attackPitchTensionRatio = 0.0f;
+#endif
+
     // A real palm mute is not one fixed amount of loss for the whole note. The
     // heel is already touching the string when it is picked, then the grip
     // slackens as the string stops pressing into it, so the tail opens back up
@@ -5671,6 +5832,44 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 {
     auto& vertical = voice.vertical;
     auto& horizontal = voice.horizontal;
+
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    if (voice.excitationPhase == ExcitationPhase::Release
+        && (voice.pendingAttackPitchClearOnRelease
+            || voice.pendingAttackPitchElasticScalePerJoule > 0.0f))
+    {
+        // Contact can last several milliseconds and can be cancelled before
+        // release. Commit energy and its scale atomically only on the first
+        // released sample. A repick conservatively retains whichever bounded
+        // tension ratio is larger instead of summing phase-unknown work.
+        if (voice.pendingAttackPitchClearOnRelease)
+        {
+            // The real muted cells were inconclusive, so an unsupported
+            // plectrum articulation leaves the experiment exactly here. It
+            // clears only at physical release, never during delayed pre-roll.
+            voice.attackPitchTensionRatio = 0.0f;
+        }
+        else
+        {
+            float liveTensionRatio = voice.attackPitchTensionRatio;
+            const float pendingTensionRatio =
+                voice.pendingAttackPitchElasticScalePerJoule
+                    * voice.pendingAttackPitchEnergyJoules;
+            if (! std::isfinite(liveTensionRatio))
+                liveTensionRatio = 0.0f;
+            if (std::isfinite(pendingTensionRatio)
+                && pendingTensionRatio > std::max(liveTensionRatio, 0.0f))
+            {
+                voice.attackPitchTensionRatio = std::min(
+                    pendingTensionRatio, maximumAttackPitchTensionRatio);
+            }
+        }
+        voice.pendingAttackPitchEnergyJoules = 0.0f;
+        voice.pendingAttackPitchElasticScalePerJoule = 0.0f;
+        voice.pendingAttackPitchClearOnRelease = false;
+        configureVoicePitch(voice, false);
+    }
+#endif
 
     // The touching finger, if there is one. It is held while the note forms
     // and then lifts: by then the partials it removed have gone and cannot be

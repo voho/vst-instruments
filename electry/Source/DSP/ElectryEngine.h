@@ -25,6 +25,14 @@
 //     Fleischer, "Investigating Dead Spots of Electric Guitars",
 //     https://www.researchgate.net/publication/233653803_Investigating_Dead_Spots_of_Electric_Guitars
 //
+//   Energy-derived tension modulation (default-off experiment)
+//     Bank, "Physics-Based Sound Synthesis of the Piano",
+//     https://dafx.de/paper-archive/2009/papers/paper_76.pdf
+//     Lee et al., "Analysis of the Nonlinear Tension Modulation in Guitar
+//     Strings", https://www.dafx.de/paper-archive/2009/papers/paper_86.pdf
+//     Kemp et al., "A Method for Determining the Material Properties of
+//     String Windings", https://doi.org/10.1371/journal.pone.0184803
+//
 //   Plectrum and finger excitation, touch and collisions
 //     Germain and Evangelista, WASPAA 2009,
 //     https://ieeexplore.ieee.org/document/5346502/
@@ -122,6 +130,10 @@
 
 #ifndef ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
 #define ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2 0
+#endif
+
+#ifndef ELECTRY_ENERGY_ATTACK_PITCH
+#define ELECTRY_ENERGY_ATTACK_PITCH 0
 #endif
 
 namespace electry
@@ -999,10 +1011,11 @@ private:
         // The pitch the analytic phase compensation was last evaluated at;
         // this one tracks every sub-cent move so tuning stays exact.
         float lastCompensatedSemitones { -999.0f };
-        // The corresponding nominal period. Unlike the semitone offset it
+        // The corresponding sounding period. Unlike the semitone offset it
         // remains valid when a ringing string is assigned a new base note, so
         // a damping-filter refit can translate only its phase-coordinate move
-        // without folding a real bend or refret into currentDelay.
+        // without folding a real bend, refret or candidate energy glide into
+        // currentDelay.
         float lastCompensatedPeriod { 0.0f };
         // Set whenever the loop filters move without the pitch moving, so the
         // analytic phase compensation is refreshed without paying for the
@@ -1045,8 +1058,24 @@ private:
         float analyticReleaseAmplitude { 0.0f };
         float analyticReleasePluckFraction { 0.18f };
         float analyticReleaseHalfWidthFraction { 0.0f };
-        float stringTensionNewtons { 80.0f };
         bool analyticReleaseFreshContact { false };
+#endif
+#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
+        float stringTensionNewtons { 80.0f };
+#endif
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        // Candidate-only normalised tension increment q = dT/T. Physical
+        // transverse-string energy and the Bank elastic scale derive its seed
+        // at pick release; after that q is the bounded empirical coordinate
+        // that relaxes with Lee's measured common pitch component. Preserving
+        // q through a refret is therefore explicit phenomenology, not a claim
+        // that transverse joules are conserved while the finger moves.
+        float attackPitchTensionRatio { 0.0f };
+        float pendingAttackPitchEnergyJoules { 0.0f };
+        float pendingAttackPitchElasticScalePerJoule { 0.0f };
+        bool pendingAttackPitchClearOnRelease { false };
+        float attackPitchFrequencyFactor { 1.0f };
+        float lastAttackPitchFrequencyFactor { 1.0f };
 #endif
         // The principal release component is shaped with two string-scaled
         // low-pass sections so its modal envelope approximates the 1/n^2
@@ -1240,6 +1269,10 @@ private:
         bool wound { true };
         float plainDiameterMm { 0.4064f }; // light-set reference gauge
         float bendingCoreScale { 0.30f };  // empirical flexural-core fraction
+        // Axial load is carried by the steel core, not the winding. Kept
+        // separate from the flexural fit so measured construction data can
+        // later move either coordinate without silently changing the other.
+        float axialCoreScale { 0.30f };
         float t60Seconds { 6.0f };
     };
 
@@ -1681,6 +1714,9 @@ private:
     // every rendered sample of every string. They depend only on the internal
     // clock, so prepare() is their only correct home.
     float handEnvelopeCoefficient_ { 0.0015f };
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    float attackPitchTensionRatioRetention_ { 0.999f };
+#endif
     float retireAttackCoefficient_ { 0.01f };
     float retireReleaseCoefficient_ { 0.0009f };
     float artifactBandCoefficient_ { 0.12f };

@@ -39,6 +39,8 @@ option(ELECTRY_MEASURED_MODERN_CABINET
     "Build the default-off measured-IR Modern cabinet candidate" OFF)
 option(ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
     "Build the default-off fitted order-2 lowest-string loss correction" OFF)
+option(ELECTRY_ENERGY_ATTACK_PITCH
+    "Build the default-off energy-derived common attack-pitch experiment" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -67,6 +69,11 @@ set_target_properties(ElectryDSP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2)
     target_compile_definitions(ElectryDSP PUBLIC
         ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2=1)
+endif()
+
+if(ELECTRY_ENERGY_ATTACK_PITCH)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_ENERGY_ATTACK_PITCH=1)
 endif()
 
 if(ELECTRY_MEASURED_MODERN_CABINET)

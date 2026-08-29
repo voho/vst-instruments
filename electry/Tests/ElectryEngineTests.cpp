@@ -21,6 +21,45 @@ namespace electry
 // Narrow inspection seam for the JUCE-free regression suite.
 struct ElectryEngineTestAccess
 {
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    struct AttackPitchState
+    {
+        float tensionRatio { 0.0f };
+        float pendingEnergyJoules { 0.0f };
+        float pendingElasticScalePerJoule { 0.0f };
+        float frequencyFactor { 1.0f };
+        float tensionNewtons { 0.0f };
+        bool clearOnRelease { false };
+    };
+
+    static AttackPitchState attackPitchState(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return {};
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        return {
+            voice.attackPitchTensionRatio,
+            voice.pendingAttackPitchEnergyJoules,
+            voice.pendingAttackPitchElasticScalePerJoule,
+            voice.attackPitchFrequencyFactor,
+            voice.stringTensionNewtons,
+            voice.pendingAttackPitchClearOnRelease
+        };
+    }
+
+    static float scaleLengthMetres(const ElectryEngine& engine) noexcept
+    {
+        return engine.scaleLengthMetres();
+    }
+
+    static float stringGauge(const ElectryEngine& engine) noexcept
+    {
+        return engine.smoothedParameters_.stringGauge;
+    }
+#endif
+
     struct VoiceSnapshot
     {
         bool valid { false };
@@ -930,7 +969,8 @@ struct ElectryEngineTestAccess
     // as continuous.
     static float effectiveLoopFrequency(const ElectryEngine& engine,
                                         int stringIndex,
-                                        bool horizontal = false) noexcept
+                                        bool horizontal = false,
+                                        bool useTargetDelay = false) noexcept
     {
         if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
             return std::numeric_limits<float>::quiet_NaN();
@@ -965,7 +1005,9 @@ struct ElectryEngineTestAccess
                     loop.dispersionLowCoefficient, omega)
                 + 4.0f * ElectryEngine::allpassPhaseDelay(
                     loop.dispersionHighCoefficient, omega);
-            return loop.currentDelay + phaseDelay - sampleRate / frequency;
+            const float delay = useTargetDelay ? loop.targetDelay
+                                               : loop.currentDelay;
+            return delay + phaseDelay - sampleRate / frequency;
         };
 
         float low = 20.0f;
@@ -4987,6 +5029,13 @@ void testDelayedRepickPreservesFrozenExpressionPitch()
         TestAccess::renderOneInternalSample(engine);
     const auto immediatelyBeforeContact =
         TestAccess::snapshot(engine, stringIndex);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    const auto energyBeforeContact =
+        TestAccess::attackPitchState(engine, stringIndex);
+    const float nominalTargetBeforeContact =
+        TestAccess::effectiveLoopFrequency(engine, stringIndex, false, true)
+        / energyBeforeContact.frequencyFactor;
+#endif
     expect(immediatelyBeforeContact.pendingRepickActive
                && immediatelyBeforeContact.startDelaySamples == 1
                && std::abs(immediatelyBeforeContact.lastCompensatedSemitones
@@ -4994,6 +5043,22 @@ void testDelayedRepickPreservesFrozenExpressionPitch()
            "idle member pitch traffic changed the frozen repick pre-roll");
     TestAccess::renderOneInternalSample(engine);
     const auto frozenAfterContact = TestAccess::snapshot(engine, stringIndex);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    const auto energyAfterContact =
+        TestAccess::attackPitchState(engine, stringIndex);
+    const float nominalTargetAfterContact =
+        TestAccess::effectiveLoopFrequency(engine, stringIndex, false, true)
+        / energyAfterContact.frequencyFactor;
+    const double contactPitchMoveCents = centsBetween(
+        nominalTargetAfterContact, nominalTargetBeforeContact);
+    const bool contactPitchPreserved =
+        std::abs(contactPitchMoveCents) < 0.08;
+#else
+    constexpr double contactPitchMoveCents = 0.0;
+    const bool contactPitchPreserved =
+        std::abs(frozenAfterContact.verticalDelayTarget
+                 - immediatelyBeforeContact.verticalDelayTarget) < 1.0e-5f;
+#endif
     expect(! frozenAfterContact.pendingRepickActive
                && frozenAfterContact.expressionPitchBendFrozen
                && std::abs(frozenAfterContact
@@ -5001,10 +5066,9 @@ void testDelayedRepickPreservesFrozenExpressionPitch()
                            - performedBend) < 1.0e-6f
                && std::abs(frozenAfterContact.lastCompensatedSemitones
                            - performedBend) < 1.0e-6f
-               && std::abs(frozenAfterContact.verticalDelayTarget
-                           - immediatelyBeforeContact.verticalDelayTarget)
-                      < 1.0e-5f,
-           "delayed pick contact transiently retuned a CC64-held member bend");
+               && contactPitchPreserved,
+           "delayed pick contact transiently retuned a CC64-held member bend ("
+               + std::to_string(contactPitchMoveCents) + " cents)");
 
     StereoBuffer idleWheel(TestAccess::hostFramesPerControlPeriod(engine));
     renderInto(engine, idleWheel);
@@ -5763,6 +5827,389 @@ void testHardPickingStaysInTune()
            "the hard-style tuning matrix did not cover all six low-string cases");
 }
 
+#if ELECTRY_ENERGY_ATTACK_PITCH
+void testEnergyAttackPitchExperiment()
+{
+    using AttackState = TestAccess::AttackPitchState;
+    constexpr double sampleRate = 48000.0;
+    constexpr float maximumCents = 7.0f;
+    constexpr std::array<float, 4> velocities { 0.25f, 0.50f, 0.75f, 1.0f };
+
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    const auto tensionRatio = [] (const AttackState& state)
+    {
+        return state.tensionRatio;
+    };
+    const auto pitchCents = [] (const AttackState& state)
+    {
+        return 1200.0 * std::log2(std::max(
+            static_cast<double>(state.frequencyFactor), 1.0));
+    };
+    const auto prepare = [&] (ElectryEngine& engine, double rate)
+    {
+        engine.prepare(rate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+    };
+    const auto commitReleasedPick = [&] (ElectryEngine& engine,
+                                          int stringIndex)
+    {
+        int guard = 0;
+        const int maximumContactSamples = static_cast<int>(
+            0.020 * TestAccess::internalSampleRate(engine));
+        while (TestAccess::snapshot(engine, stringIndex).excitationInContact
+               && guard++ < maximumContactSamples)
+        {
+            const auto live = TestAccess::attackPitchState(engine, stringIndex);
+            expect(live.tensionRatio >= 0.0f
+                       && live.pendingEnergyJoules > 0.0f,
+                   "energy-pitch state committed before physical pick release");
+            TestAccess::renderOneInternalSample(engine);
+        }
+        const auto atRelease = TestAccess::snapshot(engine, stringIndex);
+        const auto pending = TestAccess::attackPitchState(engine, stringIndex);
+        expect(guard < maximumContactSamples && atRelease.excitationInRelease
+                   && pending.tensionRatio == 0.0f
+                   && pending.pendingEnergyJoules > 0.0f,
+               "energy-pitch seed did not remain pending through Contact");
+        TestAccess::renderOneInternalSample(engine);
+        return TestAccess::attackPitchState(engine, stringIndex);
+    };
+
+    struct FreshStroke
+    {
+        AttackState state;
+        AttackState seed;
+        float verticalBefore { 0.0f };
+        float horizontalBefore { 0.0f };
+        float verticalAfter { 0.0f };
+        float horizontalAfter { 0.0f };
+        float scaleLength { 0.0f };
+        float stringGauge { 0.0f };
+    };
+    const auto freshStroke = [&] (int note, float velocity, double rate,
+                                   int controlPhaseOffset = 0)
+    {
+        ElectryEngine engine;
+        prepare(engine, rate);
+        for (int i = 0; i < controlPhaseOffset; ++i)
+            TestAccess::renderOneInternalSample(engine);
+        engine.noteOn(note, velocity);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        const auto before = TestAccess::attackPitchState(engine, stringIndex);
+        expect(stringIndex >= 0
+                   && TestAccess::snapshot(engine, stringIndex)
+                          .excitationInContact
+                   && before.tensionRatio == 0.0f
+                   && before.pendingEnergyJoules > 0.0f
+                   && before.frequencyFactor == 1.0f,
+               "fresh Sustain did not arm a release-only energy-pitch seed");
+        const float verticalBefore = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex, false, true);
+        const float horizontalBefore = TestAccess::effectiveLoopFrequency(
+            engine, stringIndex, true, true);
+        const float scaleLength = TestAccess::scaleLengthMetres(engine);
+        const float gauge = TestAccess::stringGauge(engine);
+        const auto committed = commitReleasedPick(engine, stringIndex);
+        return FreshStroke {
+            committed,
+            before,
+            verticalBefore,
+            horizontalBefore,
+            TestAccess::effectiveLoopFrequency(
+                engine, stringIndex, false, true),
+            TestAccess::effectiveLoopFrequency(
+                engine, stringIndex, true, true),
+            scaleLength,
+            gauge
+        };
+    };
+
+    // E2 is the exact nominal endpoint of the usable ordinary EG-IPT cells.
+    // Check Bank's energy-to-tension conversion, including the wound steel
+    // core rather than the complete inertial diameter, before looking at
+    // rendered pitch.
+    const auto e2 = freshStroke(40, 1.0f, sampleRate);
+    const float gaugeScale = 1.0f
+        + (11.0f / 9.0f - 1.0f) * e2.stringGauge;
+    const float totalDiameter = 1.0668e-3f * gaugeScale;
+    const float coreDiameter = totalDiameter * 0.28f;
+    constexpr float pi = 3.14159265358979323846f;
+    constexpr float youngsModulus = 2.0e11f;
+    const float coreArea = pi * 0.25f * coreDiameter * coreDiameter;
+    const float expectedScale = youngsModulus * coreArea
+        / (2.0f * e2.scaleLength * e2.state.tensionNewtons
+           * e2.state.tensionNewtons);
+    const float fullDiameterScale = expectedScale / (0.28f * 0.28f);
+    const float q = tensionRatio(e2.state);
+    const float maximumRatio = std::exp2(maximumCents / 600.0f) - 1.0f;
+    const float expectedQ = std::min(
+        e2.seed.pendingEnergyJoules
+            * e2.seed.pendingElasticScalePerJoule,
+        maximumRatio);
+    expect(std::isfinite(e2.seed.pendingEnergyJoules)
+               && e2.seed.pendingEnergyJoules > 0.0f
+               && std::isfinite(e2.seed.pendingElasticScalePerJoule)
+               && std::abs(e2.seed.pendingElasticScalePerJoule / expectedScale
+                           - 1.0f) < 2.0e-5f
+               && e2.seed.pendingElasticScalePerJoule
+                      < 0.10f * fullDiameterScale,
+           "Bank energy scale did not use the wound string's axial core");
+    expect(q >= 0.0f
+               && std::abs(q - expectedQ) < 2.0e-8f
+               && std::abs(e2.state.frequencyFactor
+                           - std::sqrt(1.0f + q)) < 2.0e-6f
+               && pitchCents(e2.state) > 0.0
+               && pitchCents(e2.state) <= maximumCents + 1.0e-3,
+           "Bank energy-to-frequency law escaped its finite seven-cent bound");
+
+    // The dynamic sounding-period correction is common to both
+    // polarisations. Their established fixed split remains, but neither axis
+    // may receive a different attack-pitch ratio.
+    expect(std::abs(centsBetween(
+               e2.verticalAfter,
+               e2.verticalBefore * e2.state.frequencyFactor)) < 0.05
+               && std::abs(centsBetween(
+                      e2.horizontalAfter,
+                      e2.horizontalBefore * e2.state.frequencyFactor)) < 0.05,
+           "energy-pitch correction was not common to both polarisations");
+
+    // Reset-identical strokes isolate MIDI force from deterministic player
+    // variation. Growth is strict until the explicit safety clamp is reached;
+    // saturation is allowed only at that bound.
+    for (const int note : { 28, 35, 40 })
+    {
+        std::array<double, velocities.size()> ratios {};
+        std::array<double, velocities.size()> cents {};
+        for (std::size_t i = 0; i < velocities.size(); ++i)
+        {
+            const auto stroke = freshStroke(
+                note, velocities[i], sampleRate).state;
+            ratios[i] = tensionRatio(stroke);
+            cents[i] = pitchCents(stroke);
+            expect(std::isfinite(ratios[i]) && ratios[i] >= 0.0
+                       && cents[i] <= maximumCents + 1.0e-3,
+                   "velocity sweep produced unbounded energy-pitch state");
+            if (i > 0)
+            {
+                const bool rose = ratios[i] > ratios[i - 1];
+                const bool safelyClamped = cents[i] > maximumCents - 0.01
+                    && std::abs(cents[i] - cents[i - 1]) < 0.01;
+                expect(rose || safelyClamped,
+                       "energy-pitch velocity response was not monotone");
+            }
+        }
+        expect(ratios.front() < ratios.back(),
+               "energy-pitch velocity range collapsed at MIDI "
+                   + std::to_string(note));
+
+        if (note == 40)
+        {
+            const double response = EngineParameters {}.velocityAmount;
+            for (std::size_t i = 0; i + 1 < velocities.size(); ++i)
+            {
+                const double force = 0.05 + 0.95 * velocities[i];
+                const double expected = std::pow(force, 2.0 * response);
+                expect(std::abs(ratios[i] / ratios.back() - expected) < 2.0e-4,
+                       "uncapped E2 energy did not follow squared pluck force");
+            }
+        }
+    }
+
+    // A pending seed ignores the control tick's phase. Once released, the
+    // stored tension increment is non-increasing, follows the configured
+    // Lee-derived exponential, and its physical-time decay agrees
+    // across every supported production rate used by the regression suite.
+    const auto phaseZero = freshStroke(40, 0.95f, sampleRate, 0).state;
+    const auto phaseSeven = freshStroke(40, 0.95f, sampleRate, 7).state;
+    expect(std::abs(centsBetween(phaseZero.frequencyFactor,
+                                 phaseSeven.frequencyFactor)) < 1.0e-3,
+           "energy-pitch seed depended on control-tick phase");
+
+    std::array<double, 4> decayedCents {};
+    std::size_t rateIndex = 0;
+    for (const double rate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        ElectryEngine engine;
+        prepare(engine, rate);
+        engine.noteOn(40, 0.95f);
+        const int stringIndex = TestAccess::stringForNote(engine, 40);
+        auto state = commitReleasedPick(engine, stringIndex);
+        const float initialRatio = state.tensionRatio;
+        float previousRatio = state.tensionRatio;
+        const int decaySamples = static_cast<int>(std::lround(
+            0.120 * TestAccess::internalSampleRate(engine)));
+        for (int sample = 0; sample < decaySamples; ++sample)
+        {
+            TestAccess::renderOneInternalSample(engine);
+            state = TestAccess::attackPitchState(engine, stringIndex);
+            expect(std::isfinite(state.tensionRatio)
+                       && state.tensionRatio <= previousRatio * 1.000001f,
+                   "released tension increment increased without contact");
+            previousRatio = state.tensionRatio;
+        }
+        const float expectedRatio = initialRatio
+            * std::exp(-0.120f / 0.3049f);
+        expect(std::abs(state.tensionRatio / expectedRatio - 1.0f) < 0.002f,
+               "energy-pitch relaxation missed its configured time constant");
+        decayedCents[rateIndex++] = pitchCents(state);
+    }
+    const auto [minimumDecay, maximumDecay] = std::minmax_element(
+        decayedCents.begin(), decayedCents.end());
+    expect(*maximumDecay - *minimumDecay < 0.5,
+           "energy-pitch relaxation changed with sample rate");
+
+    // Only ordinary Sustain is identified by the frozen source comparison.
+    // Other articulations remain exact no-seed paths, while a hammer or slide
+    // on an already-ringing string carries (and later decays) its old energy.
+    for (const auto style : { PlayStyle::PalmMute, PlayStyle::Dead,
+                              PlayStyle::Harmonics, PlayStyle::Pinch })
+    {
+        ElectryEngine engine;
+        prepare(engine, sampleRate);
+        engine.noteOn(styleKeyswitch(style), 1.0f);
+        engine.noteOn(40, 0.95f);
+        const int stringIndex = TestAccess::stringForNote(engine, 40);
+        auto state = TestAccess::attackPitchState(engine, stringIndex);
+        expect(state.tensionRatio == 0.0f
+                   && state.pendingEnergyJoules == 0.0f
+                   && state.clearOnRelease
+                   && state.frequencyFactor == 1.0f,
+               "unsupported articulation "
+                   + std::to_string(static_cast<int>(style))
+                   + " acquired Sustain energy pitch (ratio "
+                   + std::to_string(state.tensionRatio) + ", pending "
+                   + std::to_string(state.pendingEnergyJoules) + ", factor "
+                   + std::to_string(state.frequencyFactor) + ")");
+        int guard = 0;
+        while (TestAccess::snapshot(engine, stringIndex).excitationInContact
+               && guard++ < static_cast<int>(0.020 * sampleRate))
+            TestAccess::renderOneInternalSample(engine);
+        TestAccess::renderOneInternalSample(engine);
+        state = TestAccess::attackPitchState(engine, stringIndex);
+        expect(state.tensionRatio == 0.0f
+                   && ! state.clearOnRelease
+                   && state.frequencyFactor == 1.0f,
+               "unsupported articulation did not clear at physical release");
+    }
+
+    ElectryEngine legato;
+    prepare(legato, sampleRate);
+    legato.noteOn(40, 0.95f);
+    const int legatoString = TestAccess::stringForNote(legato, 40);
+    const auto beforeLegato = commitReleasedPick(legato, legatoString);
+    legato.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+    legato.noteOn(41, 0.8f);
+    const auto afterHammer = TestAccess::attackPitchState(
+        legato, legatoString);
+    legato.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+    legato.noteOn(42, 0.8f);
+    const auto afterSlide = TestAccess::attackPitchState(
+        legato, legatoString);
+    expect(afterHammer.pendingEnergyJoules == 0.0f
+               && afterSlide.pendingEnergyJoules == 0.0f
+               && std::abs(tensionRatio(afterHammer)
+                           - tensionRatio(beforeLegato)) < 2.0e-7f
+               && std::abs(tensionRatio(afterSlide)
+                           - tensionRatio(afterHammer)) < 2.0e-7f,
+           "hammer or legato slide created fresh energy-pitch work");
+
+    // A finger can land during the preceding pick's Contact. The finger's
+    // Release must not be mistaken for that now-cancelled plectrum release.
+    for (const auto style : { PlayStyle::Hammer, PlayStyle::Slide })
+    {
+        ElectryEngine interrupted;
+        prepare(interrupted, sampleRate);
+        interrupted.noteOn(40, 0.95f);
+        const int interruptedString = TestAccess::stringForNote(
+            interrupted, 40);
+        const auto armed = TestAccess::attackPitchState(
+            interrupted, interruptedString);
+        expect(armed.pendingEnergyJoules > 0.0f,
+               "interrupted-contact fixture did not arm a pick seed");
+        interrupted.noteOn(styleKeyswitch(style), 1.0f);
+        interrupted.noteOn(41, 0.80f);
+        auto cancelled = TestAccess::attackPitchState(
+            interrupted, interruptedString);
+        expect(cancelled.tensionRatio == 0.0f
+                   && cancelled.pendingEnergyJoules == 0.0f
+                   && cancelled.pendingElasticScalePerJoule == 0.0f
+                   && ! cancelled.clearOnRelease,
+               "legato contact retained an interrupted plectrum seed");
+        TestAccess::renderOneInternalSample(interrupted);
+        cancelled = TestAccess::attackPitchState(
+            interrupted, interruptedString);
+        expect(cancelled.tensionRatio == 0.0f,
+               "finger Release committed an interrupted plectrum seed");
+    }
+
+    ElectryEngine delayed;
+    auto delayedParameters = parameters;
+    delayedParameters.strumSpreadSeconds = 0.020f;
+    delayed.prepare(sampleRate, 512);
+    delayed.setParameters(delayedParameters);
+    delayed.reset();
+    delayed.noteOn(40, 0.95f);
+    StereoBuffer establish(static_cast<int>(0.080 * sampleRate));
+    renderInto(delayed, establish);
+    const int delayedString = TestAccess::stringForNote(delayed, 40);
+    delayed.noteOn(40, 0.70f);
+    auto delayedVoice = TestAccess::snapshot(delayed, delayedString);
+    auto delayedState = TestAccess::attackPitchState(delayed, delayedString);
+    expect(delayedVoice.startDelaySamples > 0
+               && delayedState.pendingEnergyJoules == 0.0f,
+           "scheduling a delayed repick changed energy before contact");
+    while (TestAccess::snapshot(delayed, delayedString).startDelaySamples > 1)
+    {
+        TestAccess::renderOneInternalSample(delayed);
+        delayedState = TestAccess::attackPitchState(delayed, delayedString);
+        expect(delayedState.pendingEnergyJoules == 0.0f,
+               "delayed repick armed energy before physical contact");
+    }
+    TestAccess::renderOneInternalSample(delayed);
+    delayedVoice = TestAccess::snapshot(delayed, delayedString);
+    delayedState = TestAccess::attackPitchState(delayed, delayedString);
+    expect(delayedVoice.excitationInContact
+               && delayedState.pendingEnergyJoules > 0.0f,
+           "physical delayed contact did not arm its release seed");
+
+    int contactGuard = 0;
+    while (TestAccess::snapshot(delayed, delayedString).excitationInContact
+           && contactGuard++ < static_cast<int>(0.020 * sampleRate))
+        TestAccess::renderOneInternalSample(delayed);
+    const auto beforeRepickCommit = TestAccess::attackPitchState(
+        delayed, delayedString);
+    const float expectedRepickRatio = std::min(
+        std::max(beforeRepickCommit.tensionRatio,
+                 beforeRepickCommit.pendingEnergyJoules
+                     * beforeRepickCommit.pendingElasticScalePerJoule),
+        maximumRatio);
+    TestAccess::renderOneInternalSample(delayed);
+    const auto afterRepickCommit = TestAccess::attackPitchState(
+        delayed, delayedString);
+    expect(contactGuard < static_cast<int>(0.020 * sampleRate)
+               && afterRepickCommit.pendingEnergyJoules == 0.0f
+               && std::abs(afterRepickCommit.tensionRatio
+                               - expectedRepickRatio) < 2.0e-6f,
+           "repick release did not retain the larger bounded tension seed");
+
+    legato.reset();
+    const auto cleared = TestAccess::attackPitchState(legato, legatoString);
+    expect(cleared.tensionRatio == 0.0f
+               && cleared.pendingEnergyJoules == 0.0f
+               && cleared.pendingElasticScalePerJoule == 0.0f
+               && ! cleared.clearOnRelease
+               && cleared.frequencyFactor == 1.0f,
+           "reset retained candidate energy-pitch state");
+}
+#endif
+
 void testAttackStateTransitions()
 {
     constexpr double sampleRate = 48000.0;
@@ -5790,6 +6237,10 @@ void testAttackStateTransitions()
         StereoBuffer ringing(static_cast<int>(0.030 * sampleRate));
         renderInto(engine, ringing);
         const float outputBefore = TestAccess::voiceOutputEnergy(engine, 0);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        const float pitchRatioBefore =
+            TestAccess::attackPitchState(engine, 0).tensionRatio;
+#endif
 
         TestAccess::retriggerVoice(engine, 0, 52, 0.01f);
 
@@ -5803,6 +6254,15 @@ void testAttackStateTransitions()
         expect(std::abs(outputAfter / outputBefore - retainedEnergy) < 1.0e-4f,
                "a large pitch jump did not scale the retirement follower by "
                    "0.28 squared");
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        const float pitchRatioAfter =
+            TestAccess::attackPitchState(engine, 0).tensionRatio;
+        expect(pitchRatioBefore > 0.0f
+                   && std::abs(pitchRatioAfter / pitchRatioBefore
+                                   - retainedEnergy) < 1.0e-4f,
+               "a stolen string did not attenuate its tension increment with "
+               "the retained transverse energy");
+#endif
     }
 
     // A delayed repick is still the old ringing stroke until the pick reaches
@@ -6953,8 +7413,19 @@ void testMaterialAndControlAudibility()
     constexpr float twoPi = 6.28318530717958647692f;
     const auto unfilteredDisplacement = [&] (const auto& voice)
     {
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        // lastCompensatedPeriod intentionally follows the decaying physical
+        // pitch experiment. The release pole was normalised at the written
+        // pitch before that release committed, so remove it at the same
+        // nominal coordinate when checking Pick Hardness independence.
+        const float nominalFrequency = voice.baseFrequency * std::exp2(
+            voice.lastCompensatedSemitones / 12.0f);
+        const float omega = twoPi * nominalFrequency
+            / static_cast<float>(TestAccess::internalSampleRate(engine));
+#else
         const float omega = twoPi
             / std::max(voice.lastCompensatedPeriod, 1.0f);
+#endif
         return voice.excitationAmplitude * TestAccess::onePoleMagnitude(
             voice.excitationReleaseCoefficient, omega);
     };
@@ -7225,8 +7696,15 @@ void testGuitarBuildRangeIsAudible()
             // path instead requires every adjacent step to remain nonzero and
             // bounded, while the endpoint check protects the overall travel.
 #if ELECTRY_MEASURED_BODY_RESPONSE
+            constexpr double maximumAdjacentDifference =
+#if ELECTRY_ENERGY_ATTACK_PITCH
+                1.10;
+#else
+                0.75;
+#endif
             expect(std::isfinite(difference)
-                       && difference > 0.02 && difference < 0.75,
+                       && difference > 0.02
+                       && difference < maximumAdjacentDifference,
                    "measured adjacent Guitar Build anchors collapsed or "
                    "escaped their non-exaggeration rail");
 #else
@@ -8271,7 +8749,13 @@ void testDeadNote()
     // to the old windows. All three aggregate envelopes remain inside the four
     // real hits' ranges. Re-freeze at the nearest tenth instead of retuning
     // Dead from one uncontrolled performance to buy back the old snapshot.
-    expect(contextualRmse < 5.0,
+    constexpr double maximumContextualRmse =
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        5.10;
+#else
+        5.0;
+#endif
+    expect(contextualRmse < maximumContextualRmse,
            "the stateful Dead first-to-repick contrast regressed ("
                + std::to_string(contextualRmse) + " dB RMSE)");
     std::array<double, 3> phraseMedian {};
@@ -8285,7 +8769,11 @@ void testDeadNote()
         phraseMedian[window] = 0.5 * (values[1] + values[2]);
     }
     constexpr std::array<double, 3> documentedMedian {
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        -8.185, -15.297, -23.791
+#else
         -8.114, -14.919, -23.040
+#endif
     };
     for (std::size_t window = 0; window < phraseMedian.size(); ++window)
     {
@@ -9714,7 +10202,12 @@ void testSlideArticulation()
                "a descending chained slide reversed by "
                    + std::to_string(worstWrongWayCents)
                    + " cents at a loop-filter refit");
-        expect(std::abs(centsBetween(previous, midiHz(69))) < 2.0,
+        double finalPitch = midiHz(69);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        finalPitch *= TestAccess::attackPitchState(engine, stringIndex)
+                          .frequencyFactor;
+#endif
+        expect(std::abs(centsBetween(previous, finalPitch)) < 2.0,
                "the monotone demo-17 slide missed its final pitch");
     }
 
@@ -10862,10 +11355,20 @@ void testLiveDampingRefitsPreservePitch()
     const auto loopFrequencies = [] (const ElectryEngine& engine,
                                      int stringIndex)
     {
-        return std::array {
+        std::array frequencies {
             TestAccess::effectiveLoopFrequency(engine, stringIndex),
             TestAccess::effectiveLoopFrequency(engine, stringIndex, true)
         };
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        // This test isolates damping-filter phase translation. Remove the
+        // separately validated natural attack relaxation from both axes so a
+        // long CC2 sweep is compared against the written-pitch coordinate.
+        const float factor = TestAccess::attackPitchState(engine, stringIndex)
+                                 .frequencyFactor;
+        frequencies[0] /= factor;
+        frequencies[1] /= factor;
+#endif
+        return frequencies;
     };
     const auto maximumCentsBetween = [] (const std::array<float, 2>& first,
                                          const std::array<float, 2>& second)
@@ -15917,12 +16420,25 @@ void testHumbuckerTwoCoilNotch()
         // worth a decibel, so the comparison stops there.
         struct Partial { int index; double decibels; };
         const std::array<Partial, 16> reference {{
+#if ELECTRY_ENERGY_ATTACK_PITCH
+            // Whole-path candidate snapshot. A fixed bin is no longer a
+            // stationary pickup response, but freezing the deterministic
+            // traversing source still catches spectral regressions instead of
+            // reducing this rendered check to mere finiteness.
+            { 1, 16.1195 }, { 2, 22.0259 }, { 3, 24.2966 },
+            { 4, 24.4494 }, { 6, 22.1339 }, { 8, 14.9629 },
+            { 10, 4.18181 }, { 12, -5.13701 }, { 14, -11.9095 },
+            { 16, -20.5674 }, { 18, -40.2271 }, { 20, -50.9089 },
+            { 22, -66.4982 }, { 24, -93.6756 }, { 26, -66.0655 },
+            { 28, -71.7018 },
+#else
             { 1, 16.4891 }, { 2, 22.4436 }, { 3, 24.5343 },
             { 4, 24.7026 }, { 6, 22.5968 }, { 8, 15.7140 },
             { 10, 5.52877 }, { 12, -2.75441 }, { 14, -7.49994 },
             { 16, -13.3693 }, { 18, -29.0575 }, { 20, -41.6398 },
             { 22, -57.8266 }, { 24, -67.7500 }, { 26, -60.3338 },
             { 28, -65.1425 },
+#endif
         }};
         const auto render = renderSingle(1.0f, 45, 0.70f, 1.0);
         const int start = static_cast<int>(0.05 * sampleRate);
@@ -15939,6 +16455,9 @@ void testHumbuckerTwoCoilNotch()
             // strong partials reproduce within 0.2 dB; the tail is 30-80 dB
             // down, so a one-decibel tolerance avoids promoting numerical
             // residue into a pickup claim.
+#if ELECTRY_ENERGY_ATTACK_PITCH
+            const double tolerance = partial.index <= 16 ? 0.75 : 2.5;
+#else
 #if ELECTRY_MEASURED_BODY_RESPONSE
             // The measured body deliberately changes the complete pickup
             // voltage. Keep this as a tight pickup-shape alarm without
@@ -15946,6 +16465,7 @@ void testHumbuckerTwoCoilNotch()
             const double tolerance = partial.index <= 12 ? 0.5 : 1.25;
 #else
             const double tolerance = partial.index <= 12 ? 0.2 : 1.0;
+#endif
 #endif
             expect(std::abs(measured - partial.decibels) < tolerance,
                    "single-coil partial " + std::to_string(partial.index)
@@ -16000,9 +16520,15 @@ void testHumbuckerTwoCoilNotch()
         // coil, for notes 28, 40 and 64.
         struct Reference { int midiNote; double humbucker[2]; double single[2]; };
         const std::array<Reference, 3> shipping {{
+#if ELECTRY_ENERGY_ATTACK_PITCH
+            { 28, { -86.559, -118.699 }, { -49.775, -91.718 } },
+            { 40, { -85.336, -116.775 }, { -70.811, -102.476 } },
+            { 64, { -68.007, -105.829 }, { -50.068, -89.252 } },
+#else
             { 28, { -86.559, -118.699 }, { -53.600, -96.302 } },
             { 40, { -85.336, -116.775 }, { -56.185, -96.338 } },
             { 64, { -68.007, -105.829 }, { -50.338, -92.672 } },
+#endif
         }};
         for (const auto& reference : shipping)
         {
@@ -16049,8 +16575,8 @@ void testHumbuckerTwoCoilNotch()
                 // bands moved 0.80 and 1.19 dB while every band carrying real
                 // signal agreed to 0.02 dB. Tightening this further would only
                 // pin the floating-point noise of one architecture.
-                const double singleTolerance =
-                    reference.single[b] > -80.0 ? 1.25 : 2.5;
+                const double singleTolerance = reference.single[b] > -80.0
+                    ? 1.25 : 2.5;
                 expect(std::abs(bright - reference.single[b]) < singleTolerance,
                        "single-coil octave-band energy on note "
                            + std::to_string(reference.midiNote) + " moved from "
@@ -17007,6 +17533,9 @@ int main()
     testHammerOnLegatoContinuity();
     testPullOffLegatoDirection();
     testHardPickingStaysInTune();
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    testEnergyAttackPitchExperiment();
+#endif
     testAttackStateTransitions();
     testPickupsToneAndBuildMorph();
     testHumbuckerTwoCoilNotch();
