@@ -769,7 +769,13 @@ void ElectryStatusDisplay::setStatus (int activeVoices, int sympatheticStrings,
     mutePressure = midiMutePressure;
     vibrato = vibratoGesture;
     tremolo = tremoloGesture;
-    setTitle (getStatusText());
+    const auto status = getStatusText();
+    if (status != getTitle())
+    {
+        setTitle (status);
+        if (auto* handler = getAccessibilityHandler())
+            handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
+    }
     if (scheduleRepaint)
         repaint();
 }

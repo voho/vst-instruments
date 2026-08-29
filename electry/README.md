@@ -2256,6 +2256,18 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-29 live status accessibility announcements
+
+- The live engine status now sends a JUCE accessibility `titleChanged` event
+  whenever its displayed text actually changes. Accessibility clients can
+  therefore discover current voice and sympathetic-string counts, engine
+  readiness, sample rate, MIDI mute pressure and vibrato/tremolo gestures
+  without rediscovering the component. Comparing the formatted title suppresses
+  redundant notifications when hidden fields change or adjacent controller
+  values round to the same percentage, while optional repaint scheduling stays
+  independent. This changes metadata only on status transitions; audio, layout
+  and steady render CPU are unchanged.
+
 ### 2026-08-29 physical-period touch geometry
 
 - Natural- and pinch-harmonic contacts now place their extra loop tap at `p`
