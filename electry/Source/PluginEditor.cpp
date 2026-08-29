@@ -646,11 +646,10 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
         button->setTitle (choiceContext + ": " + choices[index]);
         button->setClickingTogglesState (true);
         button->setRadioGroupId (1, juce::dontSendNotification);
-        button->setWantsKeyboardFocus (true);
         button->setHasFocusOutline (true);
         button->onClick = [this, index]
         {
-            activateChoice (index, false);
+            activateChoice (index);
         };
         button->onNavigation = [this, index] (const juce::KeyPress& key)
         {
@@ -667,7 +666,7 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
                 next = (next + direction + count) % count;
                 if (buttons[static_cast<std::size_t> (next)]->isEnabled())
                 {
-                    activateChoice (next, true);
+                    activateChoice (next);
                     return true;
                 }
             }
@@ -677,10 +676,10 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
         buttons.push_back (std::move (button));
     }
     if (! buttons.empty())
-        buttons.front()->setToggleState (true, juce::dontSendNotification);
+        setSelectedIndex (0);
 }
 
-void ElectryChoiceStrip::activateChoice (int index, bool moveFocus)
+void ElectryChoiceStrip::activateChoice (int index)
 {
     if (index < 0 || index >= static_cast<int> (buttons.size()))
         return;
@@ -690,7 +689,7 @@ void ElectryChoiceStrip::activateChoice (int index, bool moveFocus)
         return;
 
     setSelectedIndex (index);
-    if (moveFocus && target.isShowing())
+    if (target.isShowing())
         target.grabKeyboardFocus();
     if (onChoice != nullptr)
         onChoice (index);
@@ -700,8 +699,12 @@ void ElectryChoiceStrip::setSelectedIndex (int newIndex)
 {
     selectedIndex = juce::jlimit (0, static_cast<int> (buttons.size()) - 1, newIndex);
     for (int index = 0; index < static_cast<int> (buttons.size()); ++index)
-        buttons[static_cast<std::size_t> (index)]->setToggleState (
-            index == selectedIndex, juce::dontSendNotification);
+    {
+        auto& button = *buttons[static_cast<std::size_t> (index)];
+        const bool selected = index == selectedIndex;
+        button.setToggleState (selected, juce::dontSendNotification);
+        button.setWantsKeyboardFocus (selected);
+    }
 }
 
 void ElectryChoiceStrip::setTooltipText (const juce::String& text)

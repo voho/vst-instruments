@@ -87,7 +87,7 @@ public:
     void resized() override;
 
 private:
-    void activateChoice (int index, bool moveFocus);
+    void activateChoice (int index);
 
     juce::String titleText;
     std::vector<std::unique_ptr<ElectryTextButton>> buttons;

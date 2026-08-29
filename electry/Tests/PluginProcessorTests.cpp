@@ -4112,26 +4112,46 @@ void testTextButtonKeyboardActivation()
     if (first == nullptr || second == nullptr || third == nullptr)
         return;
 
+    const auto expectOnlyTabStop = [&choices, first, second, third] (
+                                       ElectryTextButton* expected,
+                                       const char* action)
+    {
+        auto traverser = choices.createKeyboardFocusTraverser();
+        const auto tabOrder = traverser->getAllComponents (&choices);
+        expect (tabOrder.size() == 1u && tabOrder.front() == expected
+                    && first->getWantsKeyboardFocus() == (first == expected)
+                    && second->getWantsKeyboardFocus() == (second == expected)
+                    && third->getWantsKeyboardFocus() == (third == expected),
+                std::string (action)
+                    + " did not leave only the selected choice in Tab order");
+    };
+    expectOnlyTabStop (first, "choice-strip construction");
+
     expect (first->keyPressed (right)
                 && choices.getSelectedIndex() == 1
                 && callbackIndex == 1 && callbackCount == 1,
             "Right did not select the next choice");
+    expectOnlyTabStop (second, "Right");
     expect (second->keyPressed (juce::KeyPress { juce::KeyPress::downKey })
                 && choices.getSelectedIndex() == 2
                 && callbackIndex == 2 && callbackCount == 2,
             "Down did not select the next choice");
+    expectOnlyTabStop (third, "Down");
     expect (third->keyPressed (right)
                 && choices.getSelectedIndex() == 0
                 && callbackIndex == 0 && callbackCount == 3,
             "Right did not wrap to the first choice");
+    expectOnlyTabStop (first, "wrapped Right");
     expect (first->keyPressed (left)
                 && choices.getSelectedIndex() == 2
                 && callbackIndex == 2 && callbackCount == 4,
             "Left did not wrap to the last choice");
+    expectOnlyTabStop (third, "wrapped Left");
     expect (third->keyPressed (juce::KeyPress { juce::KeyPress::upKey })
                 && choices.getSelectedIndex() == 1
                 && callbackIndex == 1 && callbackCount == 5,
             "Up did not select the previous choice");
+    expectOnlyTabStop (second, "Up");
 
     second->setEnabled (false);
     callbackIndex = -1;
@@ -4141,10 +4161,22 @@ void testTextButtonKeyboardActivation()
                 && callbackIndex == -1 && callbackCount == 0,
             "a disabled choice consumed an arrow key");
     choices.setSelectedIndex (0);
+    expect (choices.getSelectedIndex() == 0
+                && callbackIndex == -1 && callbackCount == 0,
+            "programmatic selection triggered a user activation callback");
+    expectOnlyTabStop (first, "programmatic selection");
     expect (first->keyPressed (right)
                 && choices.getSelectedIndex() == 2
                 && callbackIndex == 2 && callbackCount == 1,
             "arrow navigation did not skip a disabled choice");
+    expectOnlyTabStop (third, "disabled-choice skip");
+
+    second->setEnabled (true);
+    second->onClick();
+    expect (choices.getSelectedIndex() == 1
+                && callbackIndex == 1 && callbackCount == 2,
+            "click did not select the requested choice");
+    expectOnlyTabStop (second, "click");
 }
 
 void testEditorRendering()
@@ -4222,6 +4254,25 @@ void testEditorRendering()
                 return child;
         return nullptr;
     };
+    auto editorFocusTraverser = editor->createKeyboardFocusTraverser();
+    const auto editorTabOrder = editorFocusTraverser->getAllComponents (editor.get());
+    const auto editableKnobValueStops = static_cast<std::size_t> (
+        std::count_if (editorTabOrder.begin(), editorTabOrder.end(),
+                       [] (juce::Component* component)
+                       {
+                           return dynamic_cast<juce::Label*> (component) != nullptr
+                               && dynamic_cast<juce::Slider*> (
+                                      component->getParentComponent()) != nullptr;
+                       }));
+    // JUCE exposes each editable knob value as a second native stop. Counting
+    // each knob/value pair once leaves 35 logical controls across the editor.
+    expect (editorTabOrder.size() == 60u
+                && editableKnobValueStops == knobs.size()
+                && editorTabOrder.size() - editableKnobValueStops == 35u,
+            "editor exposed " + std::to_string (editorTabOrder.size())
+                + " native and "
+                + std::to_string (editorTabOrder.size() - editableKnobValueStops)
+                + " logical Tab stops instead of 60 and 35");
     const auto expectAccessibleChoiceStrip = [&] (const char* componentId)
     {
         auto* strip = findControl (componentId);
@@ -4234,6 +4285,7 @@ void testEditorRendering()
                 std::string (componentId) + " has no accessibility context");
         int buttonCount = 0;
         int selectedCount = 0;
+        int tabStopCount = 0;
         for (auto* child : strip->getChildren())
         {
             auto* button = dynamic_cast<juce::TextButton*> (child);
@@ -4241,7 +4293,12 @@ void testEditorRendering()
                 continue;
 
             ++buttonCount;
-            selectedCount += button->getToggleState() ? 1 : 0;
+            const bool selected = button->getToggleState();
+            const bool inEditorTabOrder = std::find (
+                editorTabOrder.begin(), editorTabOrder.end(), button)
+                    != editorTabOrder.end();
+            selectedCount += selected ? 1 : 0;
+            tabStopCount += inEditorTabOrder ? 1 : 0;
             const auto expectedTitle = strip->getTitle() + ": "
                                      + button->getButtonText();
             expect (button->isToggleable()
@@ -4249,10 +4306,11 @@ void testEditorRendering()
                         && button->getRadioGroupId() != 0,
                     std::string (componentId)
                         + " choice is not an exclusive toggle button");
-            expect (button->getWantsKeyboardFocus()
+            expect (button->getWantsKeyboardFocus() == selected
+                        && inEditorTabOrder == selected
                         && button->hasFocusOutline(),
                     std::string (componentId)
-                        + " choice is not visibly keyboard-focusable");
+                        + " did not expose its selected choice as its only Tab stop");
             expect (dynamic_cast<ElectryTextButton*> (button) != nullptr,
                     std::string (componentId)
                         + " choice does not activate with Space");
@@ -4260,9 +4318,9 @@ void testEditorRendering()
                     std::string (componentId)
                         + " choice has no contextual accessibility title");
         }
-        expect (buttonCount > 0 && selectedCount == 1,
+        expect (buttonCount > 0 && selectedCount == 1 && tabStopCount == 1,
                 std::string (componentId)
-                    + " does not expose exactly one selected choice");
+                    + " does not expose one selected choice and one Tab stop");
     };
     for (const auto* componentId : {
              "pickStyleStrip", "playStyleStrip", "playStyleKeyMode",

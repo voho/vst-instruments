@@ -2490,6 +2490,27 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 roving focus for exclusive choices
+
+- The [WAI-ARIA radio-group pattern](https://www.w3.org/WAI/ARIA/apg/patterns/radio/)
+  sends Tab to the checked radio and uses arrow keys to move focus and selection
+  within the group. Electry's six exclusive-choice strips already provided
+  wrapping arrow navigation, but all 21 buttons were separate Tab stops. Each
+  strip now exposes only its selected option to Tab; arrows, clicks and host or
+  timer selection updates move that roving stop with the selection.
+- This reduces the strips from 21 Tab stops to six and the editor from 50 to 35
+  logical controls. JUCE's raw traversal contains 75 entries before and 60
+  after because each of the 25 knobs also exposes an editable numeric value
+  field; those deliberate direct-entry stops remain unchanged. Native JUCE
+  focus traverser tests cover construction, all four arrow directions, wrapping,
+  disabled-choice skipping, clicks, programmatic selection and all six shipped
+  strips.
+- A click selects the option before explicitly taking focus, while
+  `setSelectedIndex()` only changes the roving stop and never steals focus from
+  another control. Every button retains its native focus outline, and the
+  same-renderer editor PNG is byte-identical because no layout or painting code
+  changed.
+
 ### 2026-08-30 contact-period finger release makeup
 
 - Finger-contact modal projection already follows the period sounding at
