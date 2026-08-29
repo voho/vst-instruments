@@ -185,7 +185,8 @@ struct YouKnow106TestAccess
                                 double clocksToEvent,
                                 DcoRange range = DcoRange::Eight) noexcept
     {
-        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        auto& dco = voice.dco;
         dco.divider = count;
         dco.pendingDivider = count;
         dco.pendingDividerValid = false;
@@ -195,6 +196,9 @@ struct YouKnow106TestAccess
         dco.pitWriteState = YouKnow106Engine::Dco::PitWriteState::idle;
         dco.pitWriteDivider = count;
         dco.cpuStatesToWrite = 0.0;
+        voice.dcoPitchTransactionValid = false;
+        voice.dcoPitchTransactionColdStart = false;
+        voice.dcoPitchTransactionCvTarget = voice.dcoCvTarget;
         const double fraction = clocksToEvent - std::floor(clocksToEvent);
         engine.rangeClockClocksToEdge_ = fraction > 1.0e-12
             ? fraction : 1.0;
@@ -528,6 +532,12 @@ struct YouKnow106TestAccess
             YouKnow106Engine::Dco::PitWriteState::idle);
     }
 
+    static int awaitingPitchPrestageWriteState() noexcept
+    {
+        return static_cast<int>(
+            YouKnow106Engine::Dco::PitWriteState::awaitingPitchPrestage);
+    }
+
     static int awaitingLsbWriteState() noexcept
     {
         return static_cast<int>(
@@ -552,6 +562,43 @@ struct YouKnow106TestAccess
     {
         return engine.voices_[static_cast<std::size_t>(slot)]
             .dco.cpuStatesToWrite;
+    }
+
+    static bool dcoPitchTransactionValid(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dcoPitchTransactionValid;
+    }
+
+    static bool dcoPitchTransactionColdStart(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dcoPitchTransactionColdStart;
+    }
+
+    static float dcoPitchTransactionCvTarget(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .dcoPitchTransactionCvTarget;
+    }
+
+    static std::uint16_t envelopeLevel(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].envelope.level;
+    }
+
+    static bool forceQualitySwitchAtZero(
+        YouKnow106Engine& engine, int factor) noexcept
+    {
+        engine.oversamplingRequested_ = factor;
+        engine.oversamplingIdleSamples_ = engine.oversamplingQuietSamples_;
+        engine.rateTransition_ = YouKnow106Engine::RateTransition::FadingOut;
+        engine.rateTransitionGain_ = 0.0f;
+        return engine.applyPendingOversamplingIfIdle();
     }
 
     static int stoppedPitState() noexcept
@@ -1022,6 +1069,14 @@ struct YouKnow106TestAccess
     {
         engine.controlScanPhase_ = phase;
         engine.nextConverterWrite_ = nextWrite;
+    }
+
+    static void scheduleUpcomingDcoPitchPrestages(
+        YouKnow106Engine& engine) noexcept
+    {
+        engine.scheduleUpcomingDcoPitchPrestages(
+            engine.controlScanPhase_,
+            engine.processingCoefficients_.scanPhasePerInternalSample);
     }
 
     static float cutoffHeld(
@@ -2868,6 +2923,469 @@ void testPitByteTimingIsProcessingGridInvariant()
            "or HQ grids");
 }
 
+void testConverterAnchoredPitchPrestageTimelineAndAtomicCommit()
+{
+    constexpr double sampleRate = 192000.0;
+    constexpr std::uint32_t active = 0x1234u;
+    constexpr std::uint32_t oldPending = 0x2345u;
+
+    for (const bool coldReset : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.attack = 0.63f;
+        engine.setParameters(parameters);
+        engine.noteOn(72, 1.0f);
+        if (!coldReset)
+        {
+            YouKnow106TestAccess::setMode3Running(
+                engine, 0, active, true, 10000.25);
+            YouKnow106TestAccess::setDcoResetPending(engine, 0, false);
+        }
+
+        const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
+        const double phaseStep =
+            YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+        const double eventPhase =
+            YouKnow106TestAccess::converterEventPhase(engine, ordinal);
+        // At 192 kHz one interval is 20 5/6 CPU states. The first interval is
+        // still too early; the following one owns T-389 at 6 5/6 states.
+        YouKnow106TestAccess::setConverterScheduler(
+            engine, eventPhase - 19.5 * phaseStep, ordinal);
+        const auto processOne = [&engine] {
+            float left = 0.0f;
+            float right = 0.0f;
+            engine.process(&left, &right, 1);
+        };
+
+        const float oldCvTarget =
+            YouKnow106TestAccess::dcoCvTarget(engine, 0);
+        const float oldCv = YouKnow106TestAccess::dcoCv(engine, 0);
+        const std::uint16_t oldEnvelope =
+            YouKnow106TestAccess::envelopeLevel(engine, 0);
+        processOne();
+        expect(!YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                          == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::envelopeLevel(engine, 0)
+                          == oldEnvelope,
+               "the pitch transaction began before T-389");
+
+        YouKnow106TestAccess::scheduleUpcomingDcoPitchPrestages(engine);
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                   == YouKnow106TestAccess::awaitingPitchPrestageWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 41.0 / 6.0) < 1.0e-9,
+               "the converter anchor did not place T-389 fractionally inside "
+               "the expected interval");
+        auto resetBeforePrestage =
+            std::make_unique<YouKnow106Engine>(engine);
+        resetBeforePrestage->reset();
+        expect(YouKnow106TestAccess::pitWriteState(
+                   *resetBeforePrestage, 0)
+                       == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::cpuStatesToWrite(
+                          *resetBeforePrestage, 0) == 0.0
+                   && !YouKnow106TestAccess::dcoPitchTransactionValid(
+                          *resetBeforePrestage, 0),
+               "reset retained an armed T-389 pitch prestage");
+
+        if (!coldReset)
+            YouKnow106TestAccess::stageMode3Count(engine, 0, oldPending);
+        processOne();
+        const std::uint32_t capturedDivider =
+            YouKnow106TestAccess::pitWriteDivider(engine, 0);
+        const float capturedCv =
+            YouKnow106TestAccess::dcoPitchTransactionCvTarget(engine, 0);
+        const std::uint16_t capturedEnvelope =
+            YouKnow106TestAccess::envelopeLevel(engine, 0);
+        const std::string context = coldReset ? "cold reset" : "running";
+        expect(YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+                   && YouKnow106TestAccess::dcoPitchTransactionColdStart(
+                          engine, 0) == coldReset
+                   && capturedDivider != active
+                   && capturedCv != oldCvTarget
+                   && capturedEnvelope != oldEnvelope
+                   && YouKnow106TestAccess::dcoCvTarget(engine, 0)
+                          == oldCvTarget
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                          == YouKnow106TestAccess::awaitingLsbWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 41.0) < 1.0e-9
+                   && !YouKnow106TestAccess::dcoResetPending(engine, 0),
+               context + " pitch prestage did not atomically capture count/CV "
+                         "at T-389");
+        expect(coldReset
+                   ? (YouKnow106TestAccess::pitState(engine, 0)
+                          == YouKnow106TestAccess::awaitingCountState()
+                      && YouKnow106TestAccess::pitOutHigh(engine, 0))
+                   : (YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+                      && YouKnow106TestAccess::pendingDcoDivider(engine, 0)
+                             == oldPending),
+               context + " prestage applied the wrong control/count policy");
+
+        auto resetAfterPrestage = std::make_unique<YouKnow106Engine>(engine);
+        resetAfterPrestage->reset();
+        expect(!YouKnow106TestAccess::dcoPitchTransactionValid(
+                   *resetAfterPrestage, 0)
+                   && !YouKnow106TestAccess::dcoPitchTransactionColdStart(
+                          *resetAfterPrestage, 0)
+                   && YouKnow106TestAccess::pitWriteState(
+                          *resetAfterPrestage, 0)
+                          == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::cpuStatesToWrite(
+                          *resetAfterPrestage, 0) == 0.0,
+               "reset retained a captured pitch transaction");
+
+        // Host changes after the common capture belong to the following pass.
+        // In particular, T must not clear a fresh reset request.
+        parameters.masterTuneCents = 50.0f;
+        engine.setParameters(parameters);
+        YouKnow106TestAccess::setDcoResetPending(engine, 0, true);
+
+        processOne();
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                   == YouKnow106TestAccess::awaitingLsbWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 121.0 / 6.0) < 1.0e-9,
+               context + " LSB moved away from T-334");
+        processOne();
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                   == YouKnow106TestAccess::awaitingMsbWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 31.0 / 3.0) < 1.0e-9
+                   && (coldReset
+                       || (YouKnow106TestAccess::pendingDcoDividerValid(
+                               engine, 0)
+                           && YouKnow106TestAccess::pendingDcoDivider(
+                                  engine, 0) == oldPending)),
+               context + " LSB fabricated a complete count before T-323");
+        processOne();
+        expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                   == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::pitWriteDivider(engine, 0)
+                          == capturedDivider,
+               context + " MSB did not complete at T-323");
+
+        for (int frame = 0; frame < 15; ++frame)
+            processOne();
+        expect(YouKnow106TestAccess::nextConverterWrite(engine) == ordinal
+                   && YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+                   && YouKnow106TestAccess::dcoCvTarget(engine, 0)
+                          == oldCvTarget
+                   && YouKnow106TestAccess::dcoPitchTransactionCvTarget(
+                          engine, 0) == capturedCv
+                   && YouKnow106TestAccess::envelopeLevel(engine, 0)
+                          == capturedEnvelope
+                   && YouKnow106TestAccess::dcoResetPending(engine, 0),
+               context + " payload changed between prestage and T");
+
+        processOne();
+        expect(YouKnow106TestAccess::nextConverterWrite(engine)
+                       == ordinal + 1u
+                   && !YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && YouKnow106TestAccess::dcoCvTarget(engine, 0)
+                          == capturedCv
+                   && YouKnow106TestAccess::envelopeLevel(engine, 0)
+                          == capturedEnvelope
+                   && YouKnow106TestAccess::dcoResetPending(engine, 0),
+               context + " T recomputed or failed to commit its captured "
+                         "pitch payload");
+        if (coldReset)
+            expect(YouKnow106TestAccess::dcoCv(engine, 0) == capturedCv
+                       && oldCv != capturedCv,
+                   "cold T did not settle the compensation hold from its "
+                   "captured payload");
+    }
+}
+
+void testConverterAnchoredPitchPrestageIsWallClockInvariant()
+{
+    struct Fixture
+    {
+        std::unique_ptr<YouKnow106Engine> engine;
+        int hostFramesPer48kFrame;
+    };
+    std::array<Fixture, 3> fixtures {{
+        { std::make_unique<YouKnow106Engine>(), 1 },
+        { std::make_unique<YouKnow106Engine>(), 1 },
+        { std::make_unique<YouKnow106Engine>(), 4 },
+    }};
+    fixtures[0].engine->prepare(48000.0, blockSize, 1);
+    fixtures[1].engine->prepare(48000.0, blockSize, 4);
+    fixtures[2].engine->prepare(192000.0, blockSize, 1);
+
+    for (auto& fixture : fixtures)
+    {
+        auto parameters = plainPatch();
+        parameters.attack = 0.63f;
+        fixture.engine->setParameters(parameters);
+        fixture.engine->noteOn(72, 1.0f);
+        YouKnow106TestAccess::setMode3Running(
+            *fixture.engine, 0, 0x1234u, true, 10000.25);
+        YouKnow106TestAccess::setDcoResetPending(*fixture.engine, 0, false);
+        const std::size_t ordinal =
+            YouKnow106TestAccess::pitchOrdinal(0);
+        const double phaseStep =
+            YouKnow106TestAccess::scanPhasePerInternalSample(*fixture.engine);
+        const double internalFramesToT = 20.0
+            / (48000.0 * YouKnow106TestAccess::internalIntervalSeconds(
+                *fixture.engine));
+        YouKnow106TestAccess::setConverterScheduler(
+            *fixture.engine,
+            YouKnow106TestAccess::converterEventPhase(
+                *fixture.engine, ordinal) - internalFramesToT * phaseStep,
+            ordinal);
+    }
+
+    const auto advanceWallFrames = [&fixtures](int framesAt48k) {
+        for (auto& fixture : fixtures)
+        {
+            const int frames = framesAt48k * fixture.hostFramesPer48kFrame;
+            for (int frame = 0; frame < frames; ++frame)
+            {
+                float left = 0.0f;
+                float right = 0.0f;
+                fixture.engine->process(&left, &right, 1);
+            }
+        }
+    };
+    const auto all = [&fixtures](const auto& predicate) {
+        return std::all_of(
+            fixtures.begin(), fixtures.end(),
+            [&predicate](const Fixture& fixture) {
+                return predicate(*fixture.engine);
+            });
+    };
+
+    advanceWallFrames(15);
+    expect(all([](const YouKnow106Engine& engine) {
+               return !YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                          == YouKnow106TestAccess::idlePitWriteState();
+           }),
+           "equal wall time reached T-389 early on one processing grid");
+
+    advanceWallFrames(1);
+    const std::uint32_t capturedDivider =
+        YouKnow106TestAccess::pitWriteDivider(*fixtures[0].engine, 0);
+    const float capturedCv = YouKnow106TestAccess::
+        dcoPitchTransactionCvTarget(*fixtures[0].engine, 0);
+    const std::uint16_t capturedEnvelope =
+        YouKnow106TestAccess::envelopeLevel(*fixtures[0].engine, 0);
+    expect(all([capturedDivider, capturedCv,
+                capturedEnvelope](const YouKnow106Engine& engine) {
+               return YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                          == YouKnow106TestAccess::awaitingMsbWriteState()
+                   && std::abs(
+                       YouKnow106TestAccess::cpuStatesToWrite(engine, 0)
+                       - 31.0 / 3.0) < 1.0e-8
+                   && YouKnow106TestAccess::pitWriteDivider(engine, 0)
+                          == capturedDivider
+                   && YouKnow106TestAccess::dcoPitchTransactionCvTarget(
+                          engine, 0) == capturedCv
+                   && YouKnow106TestAccess::envelopeLevel(engine, 0)
+                          == capturedEnvelope;
+           }),
+           "T-389/T-334 timing changed across equal 48 kHz wall time");
+
+    advanceWallFrames(1);
+    expect(all([](const YouKnow106Engine& engine) {
+               return YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                          == YouKnow106TestAccess::idlePitWriteState();
+           }),
+           "T-323 changed across 48 kHz 1x, 48 kHz 4x and 192 kHz grids");
+
+    advanceWallFrames(3);
+    expect(all([](const YouKnow106Engine& engine) {
+               return YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && YouKnow106TestAccess::nextConverterWrite(engine)
+                          == YouKnow106TestAccess::pitchOrdinal(0);
+           }),
+           "one processing grid committed the captured CV before T");
+    advanceWallFrames(1);
+    expect(all([capturedCv](const YouKnow106Engine& engine) {
+               return !YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && YouKnow106TestAccess::dcoCvTarget(engine, 0)
+                          == capturedCv
+                   && YouKnow106TestAccess::nextConverterWrite(engine)
+                          == YouKnow106TestAccess::pitchOrdinal(0) + 1u;
+           }),
+           "the converter T commit changed across equal wall-clock grids");
+}
+
+void testPitchPrestageConsumesResetDiscoveredByItsOwnScan()
+{
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.polyphony = 1;
+    parameters.release = 1.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+    YouKnow106TestAccess::updateVoiceScan(engine, 0, parameters);
+    YouKnow106TestAccess::setDcoResetPending(engine, 0, false);
+    engine.noteOff(60);
+    parameters.keyTranspose = 12;
+    engine.setParameters(parameters);
+
+    YouKnow106TestAccess::setMode3Running(
+        engine, 0, 0x1234u, false, 10000.25);
+    // The retained IC35 reload lands before the fractional T-389 control
+    // store. Mode programming must use the analytically advanced shared TP5
+    // phase, not the interval's stale left-boundary value.
+    YouKnow106TestAccess::setRangeClockTransition(engine, 0.75);
+    YouKnow106TestAccess::setDcoResetPending(engine, 0, false);
+    const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
+    const double phaseStep =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    YouKnow106TestAccess::setConverterScheduler(
+        engine,
+        YouKnow106TestAccess::converterEventPhase(engine, ordinal)
+            - 18.5 * phaseStep,
+        ordinal);
+    YouKnow106TestAccess::scheduleUpcomingDcoPitchPrestages(engine);
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+
+    expect(YouKnow106TestAccess::lastVoiceMidi(engine, 0) == 72
+               && YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+               && !YouKnow106TestAccess::dcoPitchTransactionColdStart(
+                      engine, 0)
+               && YouKnow106TestAccess::pitState(engine, 0)
+                      == YouKnow106TestAccess::awaitingCountState()
+               && YouKnow106TestAccess::pitOutHigh(engine, 0)
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::awaitingLsbWriteState()
+               && std::abs(
+                      YouKnow106TestAccess::pitClocksToEvent(engine, 0)
+                      - YouKnow106TestAccess::rangeClockClocksToEdge(engine))
+                      < 1.0e-10
+               && !YouKnow106TestAccess::dcoResetPending(engine, 0),
+           "T-389 did not apply the reset discovered by its own releasing "
+           "transpose scan");
+}
+
+void testQualitySwitchWaitsForConverterAnchoredPitchTransaction()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    engine.setParameters(plainPatch());
+    expect(engine.getOversamplingFactor() == 4,
+           "the pitch/rate fixture did not start on the 4x grid");
+    YouKnow106TestAccess::setMode3Running(
+        engine, 0, 0x1234u, true, 10000.25);
+    YouKnow106TestAccess::setDcoResetPending(engine, 0, false);
+
+    const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
+    const double phaseStep =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    YouKnow106TestAccess::setConverterScheduler(
+        engine,
+        YouKnow106TestAccess::converterEventPhase(engine, ordinal)
+            - 21.5 * phaseStep,
+        ordinal);
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1); // four internal frames; P is in frame 4
+    expect(YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+               && YouKnow106TestAccess::pitWriteState(engine, 0)
+                      == YouKnow106TestAccess::awaitingLsbWriteState(),
+           "the live-rate fixture did not stop inside the pitch transaction");
+    expect(!YouKnow106TestAccess::forceQualitySwitchAtZero(engine, 1)
+               && engine.getOversamplingFactor() == 4,
+           "a quality rebuild moved the grid while PIT bytes were in flight");
+
+    engine.process(&left, &right, 1);
+    expect(YouKnow106TestAccess::pitWriteState(engine, 0)
+                   == YouKnow106TestAccess::idlePitWriteState()
+               && YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0),
+           "the rate fixture did not isolate the post-MSB/pre-T window");
+    expect(!YouKnow106TestAccess::forceQualitySwitchAtZero(engine, 1)
+               && engine.getOversamplingFactor() == 4,
+           "a quality rebuild moved T while its captured CV latch was valid");
+
+    for (int sample = 0; sample < 4; ++sample)
+        engine.process(&left, &right, 1);
+    expect(!YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+               && YouKnow106TestAccess::nextConverterWrite(engine)
+                      == ordinal + 1u,
+           "the captured pitch transaction did not retire at T");
+    expect(YouKnow106TestAccess::forceQualitySwitchAtZero(engine, 1)
+               && engine.getOversamplingFactor() == 1,
+           "the quality rebuild remained blocked after T retired the "
+           "transaction");
+}
+
+void testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension()
+{
+    using Profile = YouKnow106Engine::ConverterTimingProfile;
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
+    engine.selectConverterTimingProfile(Profile::PhaseZeroDiagnostic);
+    engine.reset();
+    engine.setParameters(plainPatch());
+    for (int slot = 0; slot < YouKnow106Engine::hardwareVoices; ++slot)
+    {
+        YouKnow106TestAccess::setMode3Running(
+            engine, slot, 0x1234u, true, 10000.25);
+        YouKnow106TestAccess::setDcoResetPending(engine, slot, false);
+    }
+
+    const double phaseStep =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    YouKnow106TestAccess::setConverterScheduler(
+        engine, 1.0 - 18.5 * phaseStep,
+        YouKnow106TestAccess::converterWriteCount());
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+
+    bool allPhysicalCapturedTogether = true;
+    for (int slot = 0; slot < YouKnow106Engine::hardwareVoices; ++slot)
+        allPhysicalCapturedTogether = allPhysicalCapturedTogether
+            && YouKnow106TestAccess::dcoPitchTransactionValid(engine, slot)
+            && YouKnow106TestAccess::pitWriteState(engine, slot)
+                   == YouKnow106TestAccess::awaitingLsbWriteState()
+            && std::abs(YouKnow106TestAccess::cpuStatesToWrite(engine, slot)
+                        - 41.0) < 1.0e-9;
+    constexpr int extensionSlot = YouKnow106Engine::hardwareVoices;
+    expect(allPhysicalCapturedTogether,
+           "Phase Zero did not prestage all six physical cards together");
+    expect(!YouKnow106TestAccess::dcoPitchTransactionValid(
+                   engine, extensionSlot)
+               && YouKnow106TestAccess::pitWriteState(engine, extensionSlot)
+                      == YouKnow106TestAccess::idlePitWriteState()
+               && YouKnow106TestAccess::cpuStatesToWrite(
+                      engine, extensionSlot) == 0.0,
+           "Phase Zero invented a physical prestage for an extension voice");
+
+    for (int frame = 0; frame < 19; ++frame)
+        engine.process(&left, &right, 1);
+    bool allPhysicalCommittedTogether = true;
+    for (int slot = 0; slot < YouKnow106Engine::hardwareVoices; ++slot)
+        allPhysicalCommittedTogether = allPhysicalCommittedTogether
+            && !YouKnow106TestAccess::dcoPitchTransactionValid(engine, slot);
+    expect(allPhysicalCommittedTogether
+               && YouKnow106TestAccess::nextConverterWrite(engine)
+                      == YouKnow106TestAccess::converterWriteCount(),
+           "Phase Zero did not commit the six captured cards at its shared T");
+}
+
 void testRangeDividerCompletesItsCurrentSynchronousCount()
 {
     // Module-board IC35 is not a mux between three clock taps. PF7/PF6 set
@@ -4030,8 +4548,19 @@ void testPitStateMatchesFastFreewheel()
         freewheeled, 0, 100u, true, 50.0);
     YouKnow106TestAccess::setRangeClockTransition(rendered, 0.75);
     YouKnow106TestAccess::setRangeClockTransition(freewheeled, 0.75);
-    YouKnow106TestAccess::programDcoCount(rendered, 0, 101u, true);
-    YouKnow106TestAccess::programDcoCount(freewheeled, 0, 101u, true);
+    const auto armPhysicalPrestage = [](YouKnow106Engine& engine) {
+        const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
+        const double phaseStep =
+            YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+        YouKnow106TestAccess::setConverterScheduler(
+            engine,
+            YouKnow106TestAccess::converterEventPhase(engine, ordinal)
+                - 18.5 * phaseStep,
+            ordinal);
+        YouKnow106TestAccess::scheduleUpcomingDcoPitchPrestages(engine);
+    };
+    armPhysicalPrestage(rendered);
+    armPhysicalPrestage(freewheeled);
 
     bool transactionMatched = true;
     for (int sample = 0; sample < 200; ++sample)
@@ -4059,6 +4588,15 @@ void testPitStateMatchesFastFreewheel()
                    == YouKnow106TestAccess::pitWriteDivider(freewheeled, 0)
             && YouKnow106TestAccess::cpuStatesToWrite(rendered, 0)
                    == YouKnow106TestAccess::cpuStatesToWrite(freewheeled, 0)
+            && YouKnow106TestAccess::dcoPitchTransactionValid(rendered, 0)
+                   == YouKnow106TestAccess::dcoPitchTransactionValid(
+                       freewheeled, 0)
+            && YouKnow106TestAccess::dcoPitchTransactionColdStart(rendered, 0)
+                   == YouKnow106TestAccess::dcoPitchTransactionColdStart(
+                       freewheeled, 0)
+            && YouKnow106TestAccess::dcoPitchTransactionCvTarget(rendered, 0)
+                   == YouKnow106TestAccess::dcoPitchTransactionCvTarget(
+                       freewheeled, 0)
             && YouKnow106TestAccess::pendingDcoDividerValid(rendered, 0)
                    == YouKnow106TestAccess::pendingDcoDividerValid(
                        freewheeled, 0)
@@ -6884,11 +7422,13 @@ void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
 
 void testNoteOnPlayingLatencyAcrossConverterPhases()
 {
-    // At 48 kHz, one 4.2 ms converter pass is 201.6 host samples. The host
-    // boundary and scan phase therefore realign after five passes, giving
-    // 1,008 distinct event phases. Advance a live, silent engine through that
-    // whole cycle rather than injecting private phase state: this keeps the
-    // converter cursor, free-running DCOs and analogue histories coherent.
+    // At 48 kHz, one 4.2 ms converter pass is 201.6 host samples. A new note
+    // must arrive before its T-389 preparation, so its paired converter write
+    // can lie another 4-5 samples beyond that pass. The host boundary and scan
+    // phase realign after five passes, giving 1,008 distinct event phases.
+    // Advance a live, silent engine through that whole cycle rather than
+    // injecting private phase state: this keeps the converter cursor,
+    // free-running DCOs and analogue histories coherent.
     constexpr double sampleRate = 48000.0;
     constexpr int phaseCycleSamples = 1008;
     constexpr int preRollSamples = 96000;
@@ -6904,6 +7444,7 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
 
     struct Observation
     {
+        int pitPrestage { -1 };
         int pitchWrite { -1 };
         int vcaPhysicalWrite { -1 };
         int vcaTargetWrite { -1 };
@@ -6967,6 +7508,9 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                        "Note On bypassed the scheduled voice-VCA path");
 
                 Observation measured;
+                const float pitchCvBefore =
+                    YouKnow106TestAccess::dcoCvTarget(
+                        *probe, measuredSlot);
                 const std::size_t voiceVcaOrdinal =
                     YouKnow106TestAccess::passiveHoldOrdinal(
                         YouKnow106TestAccess::PassiveHoldDestination::VoiceVca,
@@ -6980,9 +7524,16 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                         std::abs(static_cast<double>(left)),
                         std::abs(static_cast<double>(right)));
 
-                    if (measured.pitchWrite < 0
+                    if (measured.pitPrestage < 0
                         && !YouKnow106TestAccess::dcoResetPending(
                             *probe, measuredSlot))
+                        measured.pitPrestage = sample;
+                    if (measured.pitchWrite < 0
+                        && measured.pitPrestage >= 0
+                        && !YouKnow106TestAccess::dcoPitchTransactionValid(
+                            *probe, measuredSlot)
+                        && YouKnow106TestAccess::dcoCvTarget(
+                               *probe, measuredSlot) != pitchCvBefore)
                         measured.pitchWrite = sample;
                     const auto passiveLatch =
                         YouKnow106TestAccess::passiveHoldLatch(*probe);
@@ -7017,7 +7568,8 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                         && outputPeak > outputOnsetThreshold)
                         measured.outputOnsetProxy = sample;
 
-                    if (measured.pitchWrite >= 0
+                    if (measured.pitPrestage >= 0
+                        && measured.pitchWrite >= 0
                         && measured.vcaPhysicalWrite >= 0
                         && measured.vcaTargetWrite >= 0
                         && measured.firstVcaGain >= 0
@@ -7030,8 +7582,13 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                     " (HQ " + std::string(oversampled ? "on" : "off")
                     + ", card " + std::to_string(measuredSlot)
                     + ", phase " + std::to_string(eventPhase) + ")";
+                expect(measured.pitPrestage >= 0,
+                       "no PIT pitch prestage was observed" + context);
                 expect(measured.pitchWrite >= 0,
-                       "no pitch write was observed" + context);
+                       "no pitch-converter write was observed" + context);
+                expect(measured.pitchWrite - measured.pitPrestage >= 4
+                           && measured.pitchWrite - measured.pitPrestage <= 5,
+                       "the nominal T-389 pitch prestage moved" + context);
                 expect(measured.vcaPhysicalWrite >= measured.pitchWrite,
                        "the physical ENV-mode VCA write preceded its envelope tick"
                            + context);
@@ -7060,8 +7617,8 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                 expect(measured.outputOnsetProxy >= measured.firstVcaGain,
                        "the output threshold preceded nonzero VCA gain"
                            + context);
-                expect(measured.pitchWrite <= 201,
-                       "the pitch write exceeded one 48 kHz scan pass"
+                expect(measured.pitchWrite <= 206,
+                       "the pitch write exceeded one scan pass plus T-389"
                            + context);
                 const int pitchToVca =
                     measured.vcaTargetWrite - measured.pitchWrite;
@@ -7136,27 +7693,33 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
         expect(values.size() == 6 * phaseCycleSamples,
                "the playing-latency matrix is incomplete");
         const std::string mode = quality != 0 ? "HQ-on" : "HQ-off";
+        expectSummary(summary(values, &Observation::pitPrestage),
+                      { 0.0, 100.0, 201.0 }, 0.0,
+                      mode + " PIT-prestage");
         expectSummary(summary(values, &Observation::pitchWrite),
-                      { 0.0, 100.0, 201.0 }, 0.0, mode + " Pitch-write");
+                      quality != 0
+                          ? std::array<double, 3> { 4.0, 105.0, 206.0 }
+                          : std::array<double, 3> { 5.0, 105.0, 206.0 },
+                      0.0, mode + " Pitch-write");
         expectSummary(summary(values, &Observation::vcaTargetWrite),
-                      { 70.0, 192.0, 315.0 }, 0.0,
+                      { 75.0, 197.0, 320.0 }, 0.0,
                       mode + " VoiceVca-write");
         expectSummary(summary(values, &Observation::vcaPhysicalWrite),
                       quality != 0
-                          ? std::array<double, 3> { 70.0, 192.0, 315.0 }
-                          : std::array<double, 3> { 69.0, 191.0, 314.0 },
+                          ? std::array<double, 3> { 74.0, 197.0, 319.0 }
+                          : std::array<double, 3> { 74.0, 196.0, 319.0 },
                       0.0,
                       mode + " VoiceVca-physical-write");
         expectSummary(summary(values, &Observation::firstVcaGain),
                       quality != 0
-                          ? std::array<double, 3> { 70.0, 192.0, 315.0 }
-                          : std::array<double, 3> { 69.0, 191.0, 314.0 },
+                          ? std::array<double, 3> { 74.0, 197.0, 319.0 }
+                          : std::array<double, 3> { 74.0, 196.0, 319.0 },
                       0.0,
                       mode + " first-VCA-gain");
         expectSummary(summary(values, &Observation::heldOneTimeConstant),
                       quality != 0
-                          ? std::array<double, 3> { 102.0, 225.0, 348.0 }
-                          : std::array<double, 3> { 102.0, 224.0, 347.0 },
+                          ? std::array<double, 3> { 107.0, 230.0, 352.0 }
+                          : std::array<double, 3> { 107.0, 229.0, 352.0 },
                       0.0, mode + " held-63.2-percent");
         const auto outputOnset =
             summary(values, &Observation::outputOnsetProxy);
@@ -7170,6 +7733,8 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
             };
             printSummary("pitch-write",
                          summary(values, &Observation::pitchWrite));
+            printSummary("pit-prestage",
+                         summary(values, &Observation::pitPrestage));
             printSummary("voice-vca-physical-write",
                          summary(values, &Observation::vcaPhysicalWrite));
             printSummary("voice-vca-target-commit",
@@ -7181,13 +7746,12 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
             printSummary("output-onset-proxy", outputOnset);
         }
         // Unlike the converter/VCA milestones above, this threshold also sees
-        // DCO phase. The recovered 55+11-state control/count writes therefore
-        // move only its extrema while leaving the Pitch and VoiceVca scan
-        // ordinals fixed.
+        // DCO phase. Its wider HQ split remains expected even though every
+        // milestone now honours the earlier T-389 transaction boundary.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 105.0, 228.0, 350.0 }
-                          : std::array<double, 3> { 86.0, 209.0, 332.0 },
+                          ? std::array<double, 3> { 110.0, 233.0, 355.0 }
+                          : std::array<double, 3> { 91.0, 214.0, 337.0 },
                       0.0, mode + " output-onset-proxy");
     }
     int maximumOnsetDifference = 0;
@@ -11134,6 +11698,11 @@ int main()
         testMode3CountStagingAndControlPolarity();
         testPitByteTransactionsFollowRecoveredCpuTiming();
         testPitByteTimingIsProcessingGridInvariant();
+        testConverterAnchoredPitchPrestageTimelineAndAtomicCommit();
+        testConverterAnchoredPitchPrestageIsWallClockInvariant();
+        testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
+        testQualitySwitchWaitsForConverterAnchoredPitchTransaction();
+        testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -11211,6 +11780,11 @@ int main()
     testMode3CountStagingAndControlPolarity();
     testPitByteTransactionsFollowRecoveredCpuTiming();
     testPitByteTimingIsProcessingGridInvariant();
+    testConverterAnchoredPitchPrestageTimelineAndAtomicCommit();
+    testConverterAnchoredPitchPrestageIsWallClockInvariant();
+    testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
+    testQualitySwitchWaitsForConverterAnchoredPitchTransaction();
+    testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();

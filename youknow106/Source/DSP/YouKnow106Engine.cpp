@@ -2044,6 +2044,21 @@ void YouKnow106Engine::advanceRangeClock(DcoRange range) noexcept
     rangeClockClocksToEdge_ = phase;
 }
 
+void YouKnow106Engine::writeDcoMode3Control(
+    Voice& voice, double clocksToNextInputEdge, float samplesAgo,
+    bool addCorrections) noexcept
+{
+    auto& dco = voice.dco;
+    const bool coldStart = dco.pitState == Dco::PitState::stopped;
+    dco.coldInitialLoadPending = dco.coldInitialLoadPending || coldStart;
+
+    // Mode programming forces OUT high. That is a physical C54/sub event only
+    // when the previously stored output was low; an already-high output does
+    // not acquire a fabricated edge or a fabricated sub polarity.
+    if (dco.programMode3(clocksToNextInputEdge))
+        beginDcoDischarge(voice, samplesAgo, addCorrections);
+}
+
 void YouKnow106Engine::programDcoCount(
     Voice& voice, std::uint32_t count, bool writesControlWord) noexcept
 {
@@ -2051,9 +2066,10 @@ void YouKnow106Engine::programDcoCount(
     dco.pitWriteDivider = count;
     if (!writesControlWord)
     {
-        // Compatibility policy anchors the LSB to this converter timestamp;
-        // the recovered B-2 path reaches the MSB store 11 states (2.75 us)
-        // later. The absolute converter/CPU anchor remains open in OQ-08.
+        // Direct calls serve extension slots and the construction-only first
+        // PhaseZeroDiagnostic pitch event, neither of which has a preceding
+        // physical pre-stage. Preserve their established fallback anchor: LSB
+        // now, then the recovered 11-state (2.75 us) spacing to MSB.
         // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
         dco.pitWriteState = Dco::PitWriteState::awaitingMsb;
         dco.cpuStatesToWrite = pitLsbToMsbStates;
@@ -2068,18 +2084,13 @@ void YouKnow106Engine::programDcoCount(
         // initialization policy: the first programmed cell starts settled.
         voice.dcoCv = voice.dcoCvTarget;
     }
-    dco.coldInitialLoadPending = dco.coldInitialLoadPending || coldStart;
+    writeDcoMode3Control(
+        voice, rangeClockClocksToEdge_, 1.0f, true);
 
-    // Mode programming forces OUT high. That is a physical C54/sub event only
-    // when the previously stored output was low; an already-high output does
-    // not acquire a fabricated edge or a fabricated sub polarity.
-    if (dco.programMode3(rangeClockClocksToEdge_))
-        beginDcoDischarge(voice, 1.0f, true);
-
-    // Compatibility policy anchors the control store here. IC29 B-2's reset
-    // branch then reaches LSB after 55 CPU states, and both paths take 11 more
-    // states to MSB. These are NEC instruction-cycle sums, not inferred
-    // converter-slot fractions; the absolute anchor remains open in OQ-08:
+    // Direct cold-start fallback anchors the control store here. IC29 B-2's
+    // reset branch then reaches LSB after 55 CPU states, and both paths take
+    // 11 more states to MSB. Ordinary physical transactions use their
+    // recovered T-389/T-334/T-323 positions instead.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
     // https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17
     dco.pitWriteState = Dco::PitWriteState::awaitingLsb;
@@ -3839,6 +3850,20 @@ bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
     if (rateTransitionGain_ > 0.0f)
         return false;
 
+    // A physical pitch transaction is anchored to the current internal grid:
+    // its PIT preparation starts at T-389 CPU states and its paired converter
+    // hold is committed at T. Let that sub-sample transaction retire before a
+    // quality rebuild moves T to a different grid. The physical transaction
+    // itself spans at most 97.25 us; because this guard is polled at process
+    // boundaries, the already-muted rebuild can occur at the next host block.
+    for (int slot = 0; slot < hardwareVoices; ++slot)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(slot)];
+        if (voice.dcoPitchTransactionValid
+            || voice.dco.pitWriteState != Dco::PitWriteState::idle)
+            return false;
+    }
+
     oversamplingApplied_ = oversamplingRequested_;
     updateProcessingRate(true);
     rebuildRateDependentVoiceState();
@@ -5218,10 +5243,27 @@ void YouKnow106Engine::performConverterWrite(
             if (validPhysicalVoice())
             {
                 auto& voice = voices_[static_cast<std::size_t>(write.voice)];
-                const std::uint32_t count = updateVoiceEnvelopeAndPitch(
-                    voice, parameters, lfoGated);
-                programDcoCount(voice, count, voice.dcoResetPending);
-                voice.dcoResetPending = false;
+                if (voice.dcoPitchTransactionValid)
+                {
+                    voice.dcoCvTarget =
+                        voice.dcoPitchTransactionCvTarget;
+                    if (voice.dcoPitchTransactionColdStart)
+                        voice.dcoCv = voice.dcoCvTarget;
+                    voice.dcoPitchTransactionValid = false;
+                    voice.dcoPitchTransactionColdStart = false;
+                }
+                else
+                {
+                    // The first PhaseZeroDiagnostic T has no preceding
+                    // modelled pass in which T-389 could exist. Keep that
+                    // construction-only/direct-test fallback deterministic;
+                    // every subsequent physical transaction is pre-staged.
+                    const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+                        voice, parameters, lfoGated);
+                    programDcoCount(
+                        voice, count, voice.dcoResetPending);
+                    voice.dcoResetPending = false;
+                }
             }
             break;
         case ConverterDestination::Pwm:
@@ -5330,6 +5372,55 @@ float YouKnow106Engine::passiveHoldWriteTarget(
             break;
     }
     return 0.0f;
+}
+
+void YouKnow106Engine::scheduleUpcomingDcoPitchPrestages(
+    double phase, double phasePerInternalSample) noexcept
+{
+    if (!(phasePerInternalSample > 0.0))
+        return;
+
+    constexpr std::size_t firstPitchOrdinal = 3u;
+    const double cpuStatesPerInterval = voiceCpuStateHz / oversampledRate_;
+    const double stateTolerance = std::max(
+        1.0e-9, cpuStatesPerInterval * 1.0e-9);
+
+    for (int slot = 0; slot < hardwareVoices; ++slot)
+    {
+        auto& voice = voices_[static_cast<std::size_t>(slot)];
+        auto& dco = voice.dco;
+        if (voice.dcoPitchTransactionValid
+            || dco.pitWriteState != Dco::PitWriteState::idle)
+            continue;
+
+        const std::size_t ordinal = firstPitchOrdinal
+                                  + static_cast<std::size_t>(slot);
+        const bool remainsInCurrentPass =
+            nextConverterWrite_ < converterWritesPerPass
+            && ordinal >= nextConverterWrite_;
+        const double nominalEventPhase = converterEventPhases_[ordinal]
+                                       + (remainsInCurrentPass ? 0.0 : 1.0);
+
+        // T is the converter event's actual left-boundary poll, rather than
+        // the policy profile's ideal phase. Count those exact internal
+        // boundaries ahead, then place the recovered preparation 389 CPU
+        // states before T. Subtracting the converter poll's own aperture makes
+        // a phase lying within 1e-12 of a boundary belong to that boundary,
+        // exactly as the queue comparison does.
+        const double intervalsToT = std::max(
+            1.0, std::ceil(
+                (nominalEventPhase - phase - 1.0e-12)
+                / phasePerInternalSample));
+        const double statesToPrestage =
+            intervalsToT * cpuStatesPerInterval - dcoPitchPrestageStates;
+        if (statesToPrestage < -stateTolerance
+            || statesToPrestage > cpuStatesPerInterval + stateTolerance)
+            continue;
+
+        dco.pitWriteState = Dco::PitWriteState::awaitingPitchPrestage;
+        dco.cpuStatesToWrite = std::clamp(
+            statesToPrestage, 0.0, cpuStatesPerInterval);
+    }
 }
 
 bool YouKnow106Engine::latchUpcomingPassiveHoldEvent(
@@ -5585,8 +5676,19 @@ float YouKnow106Engine::dcoCompensationRatio(const Voice& voice) noexcept
     // The ratio of the slewed compensation voltage to the one the current
     // pitch calls for -- the momentary amplitude error a pitch step leaves
     // until the 522 us hold catches up.
+    // A construction-only cold transaction has no earlier physical hold to
+    // inherit. Preserve the existing deterministic initialization policy if
+    // its freshly loaded count launches before T: that first cell is nominal,
+    // then T installs the captured hold as both live target and settled value.
+    if (voice.dcoPitchTransactionValid
+        && voice.dcoPitchTransactionColdStart
+        && voice.dco.pitWriteState == Dco::PitWriteState::idle)
+        return 1.0f;
+    const float requestedCv = voice.dcoPitchTransactionValid
+        && voice.dco.pitWriteState == Dco::PitWriteState::idle
+        ? voice.dcoPitchTransactionCvTarget : voice.dcoCvTarget;
     return std::clamp(
-        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+        voice.dcoCv / std::max(requestedCv, 1.0e-3f), 0.25f, 4.0f);
 }
 
 float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
@@ -5693,6 +5795,22 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                   (intervalSeconds - elapsed) / intervalSeconds, 0.0, 1.0))
             : 0.0f;
     };
+    const auto sharedClocksToNextEdge = [&](double atElapsed,
+                                             double transitionClocks) {
+        const double clockTolerance = eventToleranceSeconds * pitClockHz;
+        if (rangeClockTransitionPending_
+            && transitionClocks > clockTolerance)
+            return transitionClocks;
+
+        double clocks = std::fmod(
+            rangeClockClocksToEdge_ - atElapsed * pitClockHz, 1.0);
+        if (clocks < 0.0)
+            clocks += 1.0;
+        if (clocks <= clockTolerance
+            || 1.0 - clocks <= clockTolerance)
+            clocks = 1.0;
+        return clocks;
+    };
 
     // A live card-current edit changes the physical interpretation of the
     // retained base coordinate before this interval begins. Reconcile that
@@ -5717,8 +5835,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
     double elapsed = 0.0;
     // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
     // can contain 126 OUT transitions plus 63 reset completions and 63 supply
-    // hits. The fixed byte transaction adds at most two scheduled events, so
-    // A range handoff can add one divider-reload boundary. 512 leaves a real
+    // hits. A fixed pitch transaction adds one pre-stage and two byte events;
+    // a range handoff can add one divider-reload boundary. 512 leaves a real
     // margin over the 255-event supported worst case while
     // still bounding malformed state without allocating anything.
     constexpr int maximumEventsPerInterval = 512;
@@ -5964,7 +6082,42 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
 
         if (cpuWriteEvent)
         {
-            if (dco.pitWriteState == Dco::PitWriteState::awaitingLsb)
+            if (dco.pitWriteState
+                == Dco::PitWriteState::awaitingPitchPrestage)
+            {
+                // T is the existing converter boundary poll and the start of
+                // ANI PA,$EF. The recovered no-interrupt paths place reset
+                // control at T-389 states, running LSB at T-334, and both MSBs
+                // at T-323. Compute pitch once at the common earliest point;
+                // this is also where release-time transpose can request reset.
+                // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
+                // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
+                const float previousCvTarget = voice.dcoCvTarget;
+                const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+                    voice, activeParameters_, converterPassLfoGated_);
+                const float cvTarget = voice.dcoCvTarget;
+                voice.dcoCvTarget = previousCvTarget;
+
+                const bool writesControlWord = voice.dcoResetPending;
+                voice.dcoResetPending = false;
+                voice.dcoPitchTransactionValid = true;
+                voice.dcoPitchTransactionColdStart = writesControlWord
+                    && dco.pitState == Dco::PitState::stopped;
+                voice.dcoPitchTransactionCvTarget = cvTarget;
+                dco.pitWriteDivider = count;
+
+                if (writesControlWord)
+                {
+                    writeDcoMode3Control(
+                        voice,
+                        sharedClocksToNextEdge(
+                            elapsed, rangeClockTransitionClocks),
+                        eventSamplesAgo(elapsed), addCorrections);
+                }
+                dco.pitWriteState = Dco::PitWriteState::awaitingLsb;
+                dco.cpuStatesToWrite = pitControlToLsbStates;
+            }
+            else if (dco.pitWriteState == Dco::PitWriteState::awaitingLsb)
             {
                 dco.pitWriteState = Dco::PitWriteState::awaitingMsb;
                 dco.cpuStatesToWrite = pitLsbToMsbStates;
@@ -6633,6 +6786,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 if (nextConverterWrite_ == writes.size())
                     converterPassCompleted = true;
             }
+
+            scheduleUpcomingDcoPitchPrestages(
+                controlScanPhase_, coefficients.scanPhasePerInternalSample);
 
             if (!physicalHoldEvent.active
                 && latchUpcomingPassiveHoldEvent(

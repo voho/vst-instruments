@@ -900,6 +900,11 @@ private:
     // below are timed in these states, independently of the selected DCO clock.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8
     static constexpr double voiceCpuStateHz = 4000000.0;
+    // T is the existing DCO-converter boundary poll, treated as the start of
+    // ANI PA,$EF. Both recovered paths have completed their MSB store 323
+    // states before it: reset control is T-389, then both paths share the
+    // 55-state LSB and 11-state MSB spacing.
+    static constexpr double dcoPitchPrestageStates = 389.0;
     static constexpr double pitControlToLsbStates = 55.0;
     static constexpr double pitLsbToMsbStates = 11.0;
     static constexpr std::uint32_t minimumDivider = 8u;
@@ -1174,6 +1179,7 @@ private:
         enum class PitWriteState : std::uint8_t
         {
             idle,
+            awaitingPitchPrestage,
             awaitingLsb,
             awaitingMsb
         };
@@ -1186,9 +1192,9 @@ private:
         bool pendingDividerValid { false };
         PitState pitState { PitState::stopped };
         bool pitOutHigh { true };
-        // One voice CPU can have only its current M82C53 byte sequence in
-        // flight. The LSB latch becomes a complete count register on the MSB;
-        // no general CPU/event queue is needed for this fixed firmware path.
+        // One voice CPU can have only its current fixed pitch transaction in
+        // flight. Its pre-stage latches pitch state, then the LSB latch becomes
+        // a complete count register on the MSB; no general CPU queue is needed.
         PitWriteState pitWriteState { PitWriteState::idle };
         std::uint32_t pitWriteDivider { 4545u };
         double cpuStatesToWrite { 0.0 };
@@ -1689,6 +1695,12 @@ private:
         // the comparator's edge times.
         float dcoCvTarget { 261.6f };
         float dcoCv { 261.6f };
+        // A physical card computes one paired PIT/CV transaction at T-389.
+        // The PIT bytes then run independently; only this captured hold target
+        // is committed when the converter cursor reaches T.
+        bool dcoPitchTransactionValid { false };
+        bool dcoPitchTransactionColdStart { false };
+        float dcoPitchTransactionCvTarget { 261.6f };
         std::uint16_t attackIncrement { envelopePeak };
         std::uint16_t decayMultiplier { 0x8000u };
         std::uint16_t releaseMultiplier { 0x8000u };
@@ -1781,6 +1793,9 @@ private:
                            bool addCorrections) noexcept;
     void beginDcoCharge(Voice& voice, float samplesAgo,
                         bool addCorrections) noexcept;
+    void writeDcoMode3Control(Voice& voice, double clocksToNextInputEdge,
+                              float samplesAgo,
+                              bool addCorrections) noexcept;
     void programDcoCount(Voice& voice, std::uint32_t count,
                          bool writesControlWord) noexcept;
     void beginRangeClockTransition(DcoRange previous,
@@ -1909,6 +1924,8 @@ private:
     [[nodiscard]] bool latchUpcomingPassiveHoldEvent(
         double phase, double phasePerInternalSample,
         const EngineParameters& parameters) noexcept;
+    void scheduleUpcomingDcoPitchPrestages(
+        double phase, double phasePerInternalSample) noexcept;
     // Shared converter destinations are computed once per pass. Their proven
     // ownership is modelled; their individual RC constants and physical write
     // offsets are not yet known.
