@@ -4631,10 +4631,11 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
                                           0.05f);
     // Where the touching hand is, if either hand is touching. The natural
-    // harmonic is the fretting hand on the midpoint node: every odd partial
-    // has an antinode under it and goes, every even one has a node there and
-    // is left exactly alone in magnitude and phase, so the octave is what the
-    // string does rather than a transposition of it.
+    // harmonic is the fretting hand on the midpoint node: in the ideal
+    // nondispersive law every odd partial has an antinode under it and goes,
+    // while every even one has a node there. The temporal tap targets that
+    // selection without transposing the string; its cubic interpolation and
+    // the stiff string's inharmonic spatial modes remain approximations.
     //
     // The pinch harmonic is the picking hand's thumb catching the string
     // immediately after the pick, so it touches at the pick's own position -
@@ -6075,7 +6076,6 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         }
     }
     const float touchWeight = 0.5f * voice.touchDepth;
-    const float touchDelayScale = 1.0f + voice.touchFraction;
 
 #if ELECTRY_ANALYTIC_RELEASE_IC
     bool analyticReleaseSeeded = false;
@@ -6137,7 +6137,9 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 #endif
 
     // Loop reads and the damping/dispersion chain.
-    const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback
+    const auto advanceLoop = [&] (PolarisationLoop& loop,
+                                  float compensatedPeriod,
+                                  float extraFeedback
 #if ELECTRY_POSITIONED_FRET_COLLISION
                                   , bool applyFretCollision
 #endif
@@ -6163,8 +6165,15 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 #endif
         if (touchWeight > 0.0f)
         {
+            // The two reads must be separated by p times the complete live
+            // sounding period. Raw currentDelay excludes damping/dispersion
+            // phase, so multiplying it by p made String Age and a planted Palm
+            // move the apparent finger and shifted the ideal harmonic nodes.
+            // Adding that phase back also preserves bend smoothing and the
+            // horizontal polarisation's intentional detune. This remains one
+            // extra cubic read only while a finger/thumb is touching.
             const float touched = loop.readFractional(
-                loop.currentDelay * touchDelayScale);
+                touchReadDelay(voice, loop, compensatedPeriod));
             sample += touchWeight * (touched - sample);
         }
         sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);
@@ -6206,12 +6215,14 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     const float contactChoke = voice.excitationPhase == ExcitationPhase::Contact
         ? voice.contactFeedbackGain : 1.0f;
 
-    float verticalSample = advanceLoop(vertical, contactChoke
+    float verticalSample = advanceLoop(
+        vertical, voice.compensatedPeriodVertical, contactChoke
 #if ELECTRY_POSITIONED_FRET_COLLISION
                                        , true
 #endif
                                        );
-    float horizontalSample = advanceLoop(horizontal, contactChoke
+    float horizontalSample = advanceLoop(
+        horizontal, voice.compensatedPeriodHorizontal, contactChoke
 #if ELECTRY_POSITIONED_FRET_COLLISION
                                          , false
 #endif

@@ -466,30 +466,35 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
 - **Touch harmonics:** a light finger on the string is a point loss, and mode
   `n`'s displacement under it goes as `sin(n pi p)`, so the energy the contact
   removes per round trip goes as `sin^2(n pi p)`. Condensed into the single
-  delay loop that is exactly a one-tap FIR, `(1 - d/2) + (d/2) z^-M` with
-  `M = p * period` — unity where the touch sits on a node, `1 - d` where it
-  sits on an antinode. Both coefficients are positive and sum to one, so it
-  can never exceed unity gain inside the string's feedback loop. The natural
-  harmonic rests that finger on the midpoint, which removes every odd partial
-  including the fundamental and leaves every even one alone in magnitude *and*
-  phase, so the octave arises from the string instead of from retuning the
-  loop: the string keeps its own length, inharmonicity, decay targets and
-  pickup comb. The finger lifts once the note has formed — the partials it
-  removed cannot be re-excited — which stops paying for the two extra delay
-  reads and lets the harmonic ring as long as the string does. The clamp that
-  used to stand in for the finger cost the open A2's octave partial 16 dB per
-  second of loss nothing physical was asking for. The pinch harmonic is the
-  same filter driven by the other hand: the thumb catches the string at the
-  pick's own position, so Pick Position chooses which partial squeals. Measured
-  on a fretted E3 with the pick near the bridge, the surviving partial is the
-  eighth and it gains about 6.43 dB on the fundamental against the ordinary
-  pick stroke; with the picking hand over the neck the touch sits near the
-  midpoint and the squeal is the octave. It is a firmer, longer contact than
-  the fretting finger's because the mode-shape law gives a touch that close to
-  the bridge little purchase on the low partials — the fundamental loses about
-  seven per cent of its energy per round trip where a midpoint touch takes
-  nearly all of it — and that asymmetry is the technique rather than a
-  shortcoming of the model.
+  delay loop as `(1 - d/2) + (d/2) z^-M`, with `M` equal to the touch fraction
+  times each polarisation's complete live fundamental period. For an ideal
+  nondispersive string this is unity at a node and `1 - d` at an antinode; its
+  positive mix coefficients sum to one, so the ideal contact law is
+  contractive. Adding the damping and dispersion filters' phase back to the
+  raw line delay keeps the apparent finger fixed through String Age, Mute
+  Pressure, bends and the existing pitch smoother. The natural harmonic rests
+  that finger on the midpoint, removing the odd series so the octave arises
+  from the string instead of from retuning the loop: the string keeps its own
+  length, inharmonicity, decay targets and pickup comb. A single temporal tap
+  cannot reproduce every spatial node of a dispersive stiff string exactly;
+  that would require a local bidirectional contact model. The finger lifts once
+  the note has formed — the partials it removed cannot be re-excited — which
+  stops paying for the two extra delay reads and lets the harmonic ring as long
+  as the string does. The clamp that used to stand in for the finger cost the
+  open A2's octave partial 16 dB per second of loss nothing physical was asking
+  for. The pinch harmonic is the same filter driven by the other hand: the
+  thumb catches the string at the pick's own position, so Pick Position chooses
+  which partial squeals. Near the bridge it selects a high partial; over the
+  neck, co-locating the pick and thumb near 49% leaves a low even partial rather
+  than guaranteeing the octave, because modes at the touch node also begin
+  near the pluck's own null. The current E3 regression selects partial eight at
+  the bridge and four over the neck, moves the tracked mean from 6.03 to 4.78
+  and lifts the bridge squeal 9.23 dB against an ordinary stroke. It is a
+  firmer, longer contact than the fretting finger's because the mode-shape law
+  gives a touch that close to the bridge little purchase on the low partials —
+  the fundamental loses about seven per cent of its energy per round trip where
+  a midpoint touch takes nearly all of it — and that asymmetry is the technique
+  rather than a shortcoming of the model.
 - **Slide:** the finger stays down and travels, so the sounding length moves
   continuously through every intermediate fret and the loop state is preserved
   the whole way. It does not inject another pluck at the destination: only the
@@ -1147,8 +1152,8 @@ High-Gain.
 | Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store; Lee et al.'s measured common partial glide | Shipping keeps its compensated fundamental delay independent of pick velocity. The compile-time default-off experiment converts the resolved two-axis release energy through the steel core's axial `E A`, clamps the shared tension ratio to a seven-cent ceiling, and moves the complete compensated period without refitting static dispersion | A bounded research candidate that passes a frozen conventional-E2 descriptive compatibility gate with under 1% measured CPU overhead; not enabled shipping behavior, an exact-eight calibration, a causal identification, or evidence of market superiority |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; its fixed-metre position and asymmetric 0.5-1.5 mm contact patch map through the complete sounding period rather than filter-phase-shortened raw delay, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; pull-off release position uses the same physical-period coordinate, and legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling; [Poirot et al.'s perceptual study of collision location](https://doi.org/10.1109/TASLP.2023.3284515) | Shipping uses the Artifacts path's decaying collision window, whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise. The compile-time default-off positioned-loss candidate instead compares the unfiltered return with a following-fret tap at `D * 2^(-1/12)`, retaining the old zero-slope knee while giving the loss a `sin^2(n pi p)` modal location cue; distributed Dead contact keeps the shipping law | Shipping is bounded collision-informed contact behavior. The candidate is a one-read longitudinal loss surrogate that deliberately retains shipping's bilateral absolute-value barrier for an isolated A/B; it is not a unilateral fretboard obstacle, reciprocal two-rail junction, passive nonlinear contact proof, measured action/fret geometry, or FDTD distributed-contact simulation |
-| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
-| Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
+| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the spectral region; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials. The co-located ideal pick/touch product tends to `abs(sin(2 pi n p))`, so a hand near the midpoint selects a low even partial without promising the octave | Position-dependent high-versus-low harmonic selection with the technique's own asymmetry preserved; not a measured thumb/pick separation, thumb geometry, pick grip, or exact contact-area model |
+| Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap contact `(1 - d/2) + (d/2) z^-M` inside each polarisation loop. `M` is `p` times the complete live fundamental period—raw current delay plus its cached damping/dispersion phase—so build damping cannot move a fixed finger and the existing bend smoother and horizontal detune remain continuous. The ideal nondispersive response is unity at a node and `1 - d` at an antinode. The natural harmonic touches the midpoint, so its octave comes from the string's own series, inharmonicity, decay and pickup comb; the finger lifts once the note has formed | A low-cost fundamental-period realization that targets the ideal nondispersive node law subject to cubic fractional-delay interpolation; additionally approximate for a stiff string's inharmonic spatial modes, and not a distributed finger-force or local bidirectional contact solve |
 | Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, moves stiffness with the live `1/L^2` coordinate, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position-, stiffness- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. A mid-glide Hammer takes its source and direction from the live fractional fret while phase-compensated delay translation preserves effective pitch. Neither gesture moves a planted Palm hand or rewrites sibling damping | Pitch-continuous, direction-aware legato with conservatively voiced finger attacks; not a velocity-continuous spline or a distributed or capture-fitted finger-force model |
 | Pickups | [Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling](https://research.aalto.fi/en/publications/acoustics-and-modeling-of-pickups/); low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Played and sympathetically ringing idle strings use distinct neck/bridge position combs, with each delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite; O(1) fractional moving averages implement the rectangular apertures and factored two-coil sums. Position, aperture and coil spacing share the live transverse wave speed during wheel/MPE bend and finger vibrato. Played strings then use bounded flux nonlinearity plus shallow string-mass/pole balance, while the low-level one-polarisation idle path stays linear; both are differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear played-string flux, induced voltage, electrical resonance) with one geometry-derived live-tension correction and datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
@@ -1220,13 +1225,13 @@ bit-identical hammered note under either latched stroke and across the full
 Pick Position/Hardness/Noise endpoints, with no Strum Spread delay or
 plectrum-contact phase; a node touch that
 removes the odd partials by more than 20 dB while leaving the even ones, a
-touch filter whose closed-form magnitude never exceeds one at any depth, an
+touch law whose ideal closed-form magnitude never exceeds one at any depth, an
 exactly absent touch on every other articulation, a finger that lifts, and a
 harmonic whose octave partial decays within 2 dB of the same partial of the
 ordinarily picked note - the direct evidence that the loop is no longer
 retuned; a pinch harmonic whose energy-weighted mean partial index sits well
 above an ordinary pick stroke's, whose strongest partial is at least the sixth
-near the bridge and exactly the octave with the hand over the neck, which gains
+near the bridge and a low even partial with the hand over the neck, which gains
 more than 6 dB on the fundamental, and which renders as neither a pick stroke
 nor a natural harmonic; palm-mute decay
 contraction; the same ±2 semitone wheel ratio on played voices and a ringing
@@ -2251,6 +2256,40 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-29 physical-period touch geometry
+
+- Natural- and pinch-harmonic contacts now place their extra loop tap at `p`
+  times each polarisation's complete live fundamental period. The former
+  `p * currentDelay` separation omitted damping and dispersion phase: on open
+  E1, raw/full ratios are 0.87470 with fresh strings and 0.79329 with old
+  strings, so String Age visibly moved a nominal midpoint finger. The new
+  production helper is pinned against an independent per-axis oracle, both age
+  extremes, a two-semitone pre-bend and a 64-sample in-flight bend where raw
+  delay has not yet reached its target. It retains the horizontal mode's
+  detune, the existing smoother and every filter-phase continuity translation.
+  Ordinary notes remain on the exact zero-touch branch; an active touch keeps
+  the same one extra cubic read and adds only the phase-restoration arithmetic,
+  then the existing lift envelope removes that work. One local whole-engine
+  96 kHz run measured 0.1208x realtime in the hostile Both/Stereo eight-string
+  case, below the unchanged portable guard.
+- Correcting the coordinate exposed one over-specific historical regression:
+  with pick and thumb co-located at the 49% clamp, their ideal modal product is
+  `abs(sin(2 pi n p))`, making the fourth start about 5.95 dB above the octave.
+  The raw-delay error had accidentally reversed that ordering. The revised
+  mechanism gate requires a low even partial (two or four) at the neck extreme,
+  a bridge partial of at least six, a lower spectral mean toward the neck and
+  more than 6 dB of squeal lift. Shipping currently selects eight/four, moves
+  its tracked mean 6.03 -> 4.78 and measures 9.23 dB of lift. No arbitrary thumb
+  offset was introduced to preserve the old snapshot; a measured fixed-metre
+  thumb/pick separation remains capture-gated.
+- This is corrected fundamental-period geometry, not an exact spatial contact
+  for every inharmonic partial: a single temporal tap cannot represent all
+  stiff-string nodes. The correction and that claim boundary are decided
+  analytically, so no A--Z preference gate selects them.
+- The five canonical demonstrations containing natural or pinch harmonics were
+  regenerated from the validated engine; their rounded peak-normalisation
+  table entries remain unchanged.
+
 ### 2026-08-29 physical-period pick geometry
 
 - Pick-comb centre, 0.5-1.5 mm plectrum contact width and pull-off release
@@ -2970,7 +3009,7 @@ Standalone:
   hand with per-stroke contact variation and constant-velocity strum travel;
   two independent latching keyswitch banks, so any of three pick strokes can
   drive any of seven play styles.
-- Point-touch harmonics as an exact first-order contact loss inside the loop —
+- Point-touch harmonics as a bounded low-cost temporal contact surrogate —
   natural, pinch and touch — plus slides, hammer-ons and pull-offs, dead notes,
   palm muting as an additive absorber, and incidental fret collisions.
 - A uniform ±2 semitone legacy MIDI pitch wheel plus lower/upper-zone MPE

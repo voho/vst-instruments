@@ -26,6 +26,43 @@ struct ElectryEngineTestAccess
         return engine.scaleLengthMetres();
     }
 
+    struct TouchGeometry
+    {
+        bool valid { false };
+        float fraction { 0.0f };
+        float soundingPeriod { 0.0f };
+        float verticalRawPeriod { 0.0f };
+        float horizontalRawPeriod { 0.0f };
+        float verticalRawTarget { 0.0f };
+        float verticalCompensatedPeriod { 0.0f };
+        float horizontalCompensatedPeriod { 0.0f };
+        float verticalReadDelay { 0.0f };
+        float horizontalReadDelay { 0.0f };
+    };
+
+    static TouchGeometry touchGeometry(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return {};
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        return {
+            true,
+            voice.touchFraction,
+            voice.lastCompensatedPeriod,
+            voice.vertical.currentDelay,
+            voice.horizontal.currentDelay,
+            voice.vertical.targetDelay,
+            voice.compensatedPeriodVertical,
+            voice.compensatedPeriodHorizontal,
+            ElectryEngine::touchReadDelay(
+                voice, voice.vertical, voice.compensatedPeriodVertical),
+            ElectryEngine::touchReadDelay(
+                voice, voice.horizontal, voice.compensatedPeriodHorizontal)
+        };
+    }
+
 #if ELECTRY_POSITIONED_FRET_COLLISION
     static constexpr float followingFretDelayScale() noexcept
     {
@@ -8958,11 +8995,10 @@ void testTouchHarmonics()
     parameters.releaseNoise = 0.0f;
     engine.setParameters(parameters);
 
-    // The touch filter is (1 - d/2) + (d/2) z^-M. Both coefficients are
-    // non-negative and sum to one, so its magnitude is bounded by one at every
-    // frequency and every depth - which is what makes it safe inside the
-    // string's feedback loop. Checked here against the closed form because the
-    // loop has no other guard against a gain above unity.
+    // The ideal touch law is (1 - d/2) + (d/2) z^-M. Both mix coefficients are
+    // non-negative and sum to one, so its closed-form magnitude is bounded by
+    // one at every frequency and depth. The complete render tests below own the
+    // cubic fractional-read implementation and decay behavior separately.
     double worstMagnitude = 0.0;
     for (int depthStep = 0; depthStep <= 20; ++depthStep)
     {
@@ -8999,6 +9035,109 @@ void testTouchHarmonics()
                            - 0.5f) < 1.0e-6f,
            "the harmonic did not place a finger on the midpoint node");
     {
+        const auto geometry = TestAccess::touchGeometry(
+            engine, harmonicString);
+        const float expectedVerticalPeriod = geometry.verticalRawPeriod
+            + geometry.soundingPeriod - geometry.verticalCompensatedPeriod;
+        const float expectedHorizontalPeriod = geometry.horizontalRawPeriod
+            + geometry.soundingPeriod - geometry.horizontalCompensatedPeriod;
+        expect(geometry.valid
+                   && std::abs(geometry.verticalReadDelay
+                               - geometry.verticalRawPeriod
+                               - geometry.fraction * expectedVerticalPeriod)
+                          < 1.0e-6f * expectedVerticalPeriod
+                   && std::abs(geometry.horizontalReadDelay
+                               - geometry.horizontalRawPeriod
+                               - geometry.fraction * expectedHorizontalPeriod)
+                          < 1.0e-6f * expectedHorizontalPeriod,
+               "the touch tap did not use each polarisation's complete live "
+               "sounding period");
+    }
+
+    // Loop-filter phase changes the raw delay but cannot move a finger planted
+    // at the midpoint. The previous p*raw-delay mapping misses this invariant
+    // by more than a hundred samples on an aged open E1.
+    const auto lowTouchGeometry = [] (float stringAge, float pitchBend)
+    {
+        ElectryEngine low;
+        low.prepare(sampleRate, 512);
+        EngineParameters lowParameters;
+        lowParameters.stringAge = stringAge;
+        lowParameters.artifactAmount = 0.0f;
+        lowParameters.bodyResonance = 0.0f;
+        lowParameters.pickNoise = 0.0f;
+        lowParameters.fingerNoise = 0.0f;
+        lowParameters.releaseNoise = 0.0f;
+        low.setParameters(lowParameters);
+        low.setPitchBend(pitchBend);
+        low.reset();
+        low.noteOn(styleKeyswitch(PlayStyle::Harmonics), 1.0f);
+        low.noteOn(28, 0.8f);
+        const int stringIndex = TestAccess::stringForNote(low, 28);
+        expect(stringIndex >= 0, "the low touch fixture was not allocated");
+        return TestAccess::touchGeometry(low, stringIndex);
+    };
+    const auto freshLowTouch = lowTouchGeometry(0.0f, 0.0f);
+    const auto oldLowTouch = lowTouchGeometry(1.0f, 0.0f);
+    const auto bentLowTouch = lowTouchGeometry(0.0f, 1.0f);
+    const auto touchSeparation = [] (const auto& geometry)
+    {
+        return geometry.verticalReadDelay - geometry.verticalRawPeriod;
+    };
+    expect(std::abs(freshLowTouch.verticalRawPeriod
+                    - oldLowTouch.verticalRawPeriod) > 1.0f,
+           "the touch String Age fixture did not move loop-filter phase");
+    expect(std::abs(touchSeparation(freshLowTouch)
+                    - 0.5f * freshLowTouch.soundingPeriod)
+                   < 1.0e-6f * freshLowTouch.soundingPeriod
+               && std::abs(touchSeparation(oldLowTouch)
+                           - 0.5f * oldLowTouch.soundingPeriod)
+                   < 1.0e-6f * oldLowTouch.soundingPeriod
+               && std::abs(touchSeparation(freshLowTouch)
+                           - touchSeparation(oldLowTouch))
+                   < 1.0e-6f * freshLowTouch.soundingPeriod,
+           "String Age moved the physical midpoint touch");
+    const float expectedBendScale = std::exp2(-2.0f / 12.0f);
+    expect(std::abs(touchSeparation(bentLowTouch)
+                        / touchSeparation(freshLowTouch)
+                        - expectedBendScale) < 2.0e-5f,
+           "a two-semitone pre-bend did not move the touch tap with 1/c");
+
+    // A wheel move after contact exercises the other half of the formula:
+    // currentDelay is deliberately between its old and new targets. The touch
+    // must follow that live period, not jump to the target and not fall back to
+    // a fraction of raw delay.
+    ElectryEngine gliding;
+    gliding.prepare(sampleRate, 512);
+    gliding.setParameters(parameters);
+    gliding.reset();
+    gliding.noteOn(styleKeyswitch(PlayStyle::Harmonics), 1.0f);
+    gliding.noteOn(28, 0.8f);
+    const int glidingString = TestAccess::stringForNote(gliding, 28);
+    gliding.setPitchBend(1.0f);
+    StereoBuffer bendStart(64);
+    renderInto(gliding, bendStart);
+    const auto glidingTouch = TestAccess::touchGeometry(
+        gliding, glidingString);
+    const float glidingPhysicalPeriod = glidingTouch.verticalRawPeriod
+        + glidingTouch.soundingPeriod
+        - glidingTouch.verticalCompensatedPeriod;
+    expect(std::abs(glidingTouch.verticalRawPeriod
+                    - glidingTouch.verticalRawTarget) > 1.0e-3f,
+           "the in-flight touch fixture did not leave the delay smoother live");
+    expect(std::abs(touchSeparation(glidingTouch)
+                    - glidingTouch.fraction * glidingPhysicalPeriod)
+                   < 1.0e-6f * glidingPhysicalPeriod
+               && std::abs(glidingPhysicalPeriod
+                           - glidingTouch.soundingPeriod) > 1.0e-3f,
+           "the touch jumped away from the in-flight physical period");
+    std::cout << "PROBE touch raw/full ratios: fresh E1 "
+              << freshLowTouch.verticalRawPeriod
+                    / freshLowTouch.soundingPeriod
+              << ", old E1 "
+              << oldLowTouch.verticalRawPeriod / oldLowTouch.soundingPeriod
+              << '\n';
+    {
         // The finger lifts and the extra reads stop; the harmonic keeps
         // ringing because the partials it removed cannot come back.
         StereoBuffer settle(static_cast<int>(0.5 * sampleRate));
@@ -9021,9 +9160,10 @@ void testTouchHarmonics()
                             f0 * n);
     };
 
-    // Odd partials have an antinode under the midpoint finger and go; even
-    // ones have a node there and are left alone. That is the whole mechanism,
-    // and it is the reason the octave appears at all.
+    // The ideal midpoint law puts odd partials at an antinode and even ones at
+    // a node. The cubic temporal surrogate must still produce that strong
+    // selection on the dispersive rendered string, which is why the octave
+    // appears without retuning the loop.
     const double harmonicSecond = partial(harmonic, 2);
     for (const int odd : { 1, 3, 5 })
     {
@@ -10933,15 +11073,19 @@ void testPinchHarmonic()
                + std::to_string(neckMean) + ")");
 
     // The touch sits at the pick, so the surviving partial is the one with a
-    // node there: around the eighth near the bridge, the octave with the hand
-    // over the neck where the touch is at nearly half the string.
+    // node there: around the eighth near the bridge, and a low even partial
+    // with the hand over the neck where the touch is at nearly half the string.
+    // With pick and thumb co-located at 49%, the ideal octave is also barely
+    // excited; requiring exactly partial two used to pin the filter-phase-
+    // shortened raw delay rather than a physical node coordinate.
     const int bridgeSquealPartial = strongestPartial(pinchedPartials);
     const int neckSquealPartial = strongestPartial(neckPartials);
     expect(bridgeSquealPartial >= 6,
            "the near-bridge pinch did not select a high partial (strongest "
                + std::to_string(bridgeSquealPartial) + ")");
-    expect(neckSquealPartial == 2,
-           "the pinch with the hand over the neck did not select the octave "
+    expect((neckSquealPartial == 2 || neckSquealPartial == 4)
+               && neckSquealPartial < bridgeSquealPartial,
+           "the pinch with the hand over the neck did not select a low even partial "
            "(strongest " + std::to_string(neckSquealPartial) + ")");
 
     // Measured against the ordinary pick stroke, the squeal partial gains a
@@ -10954,13 +11098,9 @@ void testPinchHarmonic()
             magnitudes[static_cast<std::size_t>(n)]
             / std::max(magnitudes[1], 1.0e-15));
     };
-    // The squeal is a pair of neighbours, not a single line: the eighth and
-    // ninth partials of this pinch sit within 0.06 dB of each other, so which
-    // one `strongestPartial` returns is decided by rounding and swaps under
-    // changes that leave the effect itself alone - the ninth reads 15.12 dB
-    // both before and after the velocity work of the 2026-08-07 pass, but the
-    // reported partial moved from the ninth to the eighth. Score the squeal
-    // over every partial within 1 dB of the pinched peak instead.
+    // A squeal peak can straddle neighbouring tracked partials, so score its
+    // lift over every partial within 1 dB of the pinched peak instead of
+    // letting a rounding-level winner swap own the articulation.
     const double pinchedPeak =
         pinchedPartials[static_cast<std::size_t>(bridgeSquealPartial)];
     double gain = -1.0e9;
@@ -10982,6 +11122,11 @@ void testPinchHarmonic()
            "the pinch did not lift its partial against the fundamental (gain "
                + std::to_string(gain) + " dB at partial "
                + std::to_string(gainPartial) + ")");
+    std::cout << "PROBE pinch picked/pinched/neck means "
+              << pickedMean << '/' << pinchedMean << '/' << neckMean
+              << ", strongest bridge/neck " << bridgeSquealPartial << '/'
+              << neckSquealPartial << ", gain " << gain << " dB at partial "
+              << gainPartial << '\n';
 
     // It is its own articulation, not a relabelled one.
     const auto natural = renderAt(0.18f, PlayStyle::Harmonics);

@@ -1289,20 +1289,23 @@ private:
         // goes as
         // sin(n pi p), so the energy a light contact removes per round trip
         // goes as sin^2(n pi p) = (1 - cos(2 pi n p)) / 2. Condensed into the
-        // single delay loop that is exactly a one-tap FIR
+        // single delay loop as a one-tap FIR
         //
         //     H(z) = (1 - d/2) + (d/2) z^-M,   M = p * period,
         //
-        // whose magnitude is 1 where the touch sits on a node and 1 - d where
-        // it sits on an antinode - the mode-shape weighting itself rather than
-        // an approximation of it. Both coefficients are non-negative and sum
-        // to one for d in [0, 1], so |H| <= 1 everywhere and the loop cannot
-        // be destabilised at any depth.
+        // whose ideal nondispersive magnitude is 1 where the touch sits on a
+        // node and 1 - d where it sits on an antinode. Both mix coefficients
+        // are non-negative and sum to one for d in [0, 1], so the ideal
+        // contact law is contractive.
         //
-        // At an exact node position p = 1/k the filter is exactly unity in
-        // magnitude *and* phase at every surviving partial, so the harmonic
-        // series above the node is untouched and no tuning compensation is
-        // needed. That is why the harmonic is produced this way rather than by
+        // The tap uses the complete live fundamental period, including the
+        // loop filters' phase rather than only the raw delay line. At an ideal
+        // string node p = 1/k, it therefore targets an untouched surviving
+        // harmonic series without retuning. Cubic fractional-delay
+        // interpolation and the single temporal tap are still approximations;
+        // representing every inharmonic spatial node of a dispersive stiff
+        // string exactly would require a local bidirectional contact model.
+        // This is why the harmonic is produced by contact rather than by
         // retuning the loop an octave up: the string keeps its own length,
         // inharmonicity, decay targets and pickup-comb geometry.
         //
@@ -1424,6 +1427,20 @@ private:
                                     double& a1, double& a2) noexcept;
     static void applyDipDepth(PolarisationLoop& loop, float depth) noexcept;
     static float allpassPhaseDelay(float coefficient, float omega) noexcept;
+    // Convert a touch's sounding-length fraction to the live delay coordinate
+    // of one polarisation. `compensatedPeriod` is the cached full period minus
+    // that loop's filter phase. Adding the phase back to currentDelay keeps the
+    // finger fixed through damping/dispersion refits and follows the existing
+    // pitch smoother and horizontal detune without another state.
+    [[nodiscard]] static float touchReadDelay(
+        const Voice& voice, const PolarisationLoop& loop,
+        float compensatedPeriod) noexcept
+    {
+        const float physicalPeriod = loop.currentDelay
+                                   + voice.lastCompensatedPeriod
+                                   - compensatedPeriod;
+        return loop.currentDelay + voice.touchFraction * physicalPeriod;
+    }
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;
