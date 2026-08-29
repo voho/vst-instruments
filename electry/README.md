@@ -1667,6 +1667,61 @@ the partial and comparison CSV hashes are
 `43321623cdbc174fd6259f5278a26e646b8bcce35248b98532c31ad93435d7c1`
 and `6529050170f35f067803b8c94a0799d727d33d2f96c5579075e21689959e1079`.
 
+### Attack-pitch and resolvable-beating audit
+
+A second no-refit audit asked whether the same lawful recordings expose a
+missing pitch trajectory or a resolvable modal doublet. Its protocol and input
+manifest were SHA-256 frozen as
+`ffa0c7c4d19eca02de0f742f49810a4b8b42bec532d64d7ca36833578cc5a27e`
+and `0539cc3eb280ef04ecacc26b249933b88caac25eff724802179e5773a365e506`
+before any sample-derived pitch, phase, envelope or modulation result was read.
+The same 13 exact-eight previews were paired by fret with shipping-OFF and
+loss-candidate-ON renders; the five EGFxSet open-E2 DIs and shipping string-6
+open-E2 role control remained descriptive robustness checks.
+
+After a 2 ms RMS onset, the frozen estimator tracked H1-H6 independently from
+unwrapped analytic phase, using an 80 ms phase line every 10 ms. Each partial
+was expressed relative to its own 0.75-1.20 s reference before a quality-gated
+cross-partial median formed the 60-180 ms attack excess and 80-500 ms Theil-Sen
+relaxation slope. A detection required at least +2 cents at attack, at most
+-3 cents/s thereafter, a near-zero late residual and fixed frame/dispersion
+coverage. This avoids treating a changing broadband spectral centroid as
+pitch, although it still cannot isolate the physical cause.
+
+| cohort | sufficient / files | detections | median attack excess | median slope | frozen support |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| exact-eight real | 5 / 13 | 5 | +6.218 c | -7.670 c/s | no: coverage below 10 / 13 |
+| Electry shipping OFF | 13 / 13 | 0 | +0.007 c | +0.003 c/s | no |
+| loss candidate ON | 13 / 13 | 0 | +0.004 c | -0.007 c/s | no |
+| EGFxSet real E2 | 5 / 5 | 5 | +7.550 c | -14.282 c/s | yes |
+
+All 13 exact-eight previews had a positive descriptive attack excess and a
+negative slope, including the eight excluded from the formal cohort. That sign
+agreement and the independent EGFxSet pass make Electry's stationary attack a
+high-priority realism discrepancy, but the strict cross-dataset result remains
+false. On the five sufficient exact-eight triplets, candidate attack MAE was
+8.594 cents against shipping's 8.608 cents and therefore failed the frozen
+at-least-1-cent and 20% improvement gate. The loss experiment neither fixes nor
+materially changes pitch motion.
+
+The companion detector required coherent 1-12 Hz periodic envelope and pitch
+motion in at least two partials, with at least three observable cycles. No
+exact-eight real/OFF/ON file passed and only one of five EGFxSet takes passed,
+below its 4/5 gate. Median best-case H6 resolution floors were 8.712 cents for
+the short exact-eight previews, 6.150 cents for their model renders and 4.879
+cents for EGFxSet. Thus no fast modal doublet is supported, while Electry's
+slow sub-cent polarisation beating is explicitly below this audit's resolution
+and is not rejected.
+
+The byte-deterministic rerun produced an identical result. Its read-only result
+and final receipt have SHA-256
+`e836d01e7c5ad96aa45c211916bbb60df11aa930474b284c2be24b02b2c2bc0b`
+and `3b196778284f2d7d39c6b3743fe2c96d29a739fba3c4263ea0481f5d0b4e00c7`;
+no third-party audio is committed. These unmatched recordings support testing
+a bounded amplitude-dependent attack-pitch mechanism, not choosing tension,
+fret/contact motion or pickup-magnet back-action, fitting a coefficient, or
+changing the shipping path.
+
 ### Remaining realism gates
 
 Engineering tests and public datasets do not replace licensed Drop-E hardware
