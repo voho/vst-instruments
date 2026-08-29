@@ -17006,6 +17006,31 @@ void testHumbuckerTwoCoilNotch()
                   << " dB\n";
     }
 
+    // Live automation has to reach the same structural endpoint as reset().
+    // Otherwise an asymptotic residue keeps the second coil rendering forever.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        auto parameters = pickupReference();
+        parameters.pickupType = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.8f);
+        const int stringIndex = TestAccess::stringForNote(engine, 45);
+        expect(stringIndex >= 0, "live pickup automation did not allocate A2");
+        if (stringIndex >= 0)
+            expect(TestAccess::coilPairActive(engine, stringIndex),
+                   "the live pickup automation fixture did not start paired");
+
+        parameters.pickupType = 1.0f;
+        engine.setParameters(parameters);
+        StereoBuffer travel(static_cast<int>(0.2 * sampleRate));
+        renderInto(engine, travel, 17);
+        if (stringIndex >= 0)
+            expect(! TestAccess::coilPairActive(engine, stringIndex),
+                   "live pickup automation never reached one coil");
+    }
+
     // 3. The low-frequency recovery the pickup comb's weight was fitted for
     // must survive. Measured on the shipping engine: 30.6608 dB.
     {

@@ -3645,8 +3645,14 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
                            || moved(palmMuteBlend_, appliedPalmMute_);
     const bool geometryDirty = moved(s.stringGauge, a.stringGauge)
                             || moved(s.scaleLength, a.scaleLength);
+    // Exact anchors are structural states: at one, the second coil is bypassed.
+    // Do not let the coarser voicing refresh quantum swallow the final snap.
+    const bool pickupAtEndpoint = s.pickupType == 0.0f
+                               || s.pickupType == 1.0f;
     const bool pickupDirty = moved(s.pickupType, a.pickupType)
-                          || moved(s.scaleLength, a.scaleLength);
+                          || moved(s.scaleLength, a.scaleLength)
+                          || (pickupAtEndpoint
+                              && s.pickupType != a.pickupType);
     if (! dampingDirty && ! geometryDirty && ! pickupDirty)
         return;
 
@@ -6675,7 +6681,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         };
         auto& s = smoothedParameters_;
         const auto& t = targetParameters_;
-        const bool pickupDirty =
+        bool pickupDirty =
             s.pickupSelector != t.pickupSelector
             || std::abs(s.pickupType - t.pickupType) > 1.0e-4f
             || std::abs(s.toneKnob - t.toneKnob) > 1.0e-4f;
@@ -6694,6 +6700,16 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         smoothTowards(s.construction, t.construction);
         smoothTowards(s.scaleLength, t.scaleLength);
         smoothTowards(s.pickupType, t.pickupType);
+        // Zero and one are more than display values: one removes the second
+        // coil's delayed read entirely. Land on either anchor once the normal
+        // pickup deadband is reached, then solve every dependent stage once.
+        if (s.pickupType != t.pickupType
+            && (t.pickupType == 0.0f || t.pickupType == 1.0f)
+            && std::abs(s.pickupType - t.pickupType) < 1.0e-4f)
+        {
+            s.pickupType = t.pickupType;
+            pickupDirty = true;
+        }
         smoothTowards(s.toneKnob, t.toneKnob);
         smoothTowards(s.bodyResonance, t.bodyResonance);
 #if ELECTRY_MEASURED_BODY_RESPONSE
