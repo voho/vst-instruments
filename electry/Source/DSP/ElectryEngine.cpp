@@ -118,8 +118,6 @@ constexpr float handDipQ = 0.70f;
 constexpr float fittedLossDipCentreHz = 441.418112f;
 constexpr float fittedLossDipQ = 0.40618486f;
 constexpr float fittedLossPeakDbPerSecond = 22.9327503f;
-constexpr float fittedLossMinimumFundamentalHz = 46.0f;
-constexpr float fittedLossMaximumFundamentalHz = 93.0f;
 #endif
 
 // The fretting hand's calibrated Dead-note contact. The played string and the
@@ -2904,24 +2902,6 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     shape.dipQ = handDipQ;
     shape.dipFullDepthDb = handDipFullDepthDb;
 
-#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
-    HandLossShape fittedLossShape {};
-    const bool fittedLossInFitDomain =
-        voice.stringIndex == 0
-        && f0 >= fittedLossMinimumFundamentalHz
-        && f0 <= fittedLossMaximumFundamentalHz;
-    const float fittedLossDepth = fittedLossInFitDomain ? 1.0f : 0.0f;
-    if (fittedLossDepth > 0.0f)
-    {
-        fittedLossShape.dipOmega = twoPi * clampf(
-            fittedLossDipCentreHz, 40.0f, 0.40f * sampleRate)
-            * inverseSampleRate_;
-        fittedLossShape.dipQ = fittedLossDipQ;
-        fittedLossShape.dipFullDepthDb =
-            fittedLossPeakDbPerSecond / std::max(f0, 20.0f);
-    }
-#endif
-
     const auto configureLoop = [&] (PolarisationLoop& loop, float t60Scale)
     {
         const float t60Fundamental = std::max(0.02f, t60 * t60Scale);
@@ -3049,23 +3029,6 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
 
         loop.handLossSolvedDepth = depth;
         applyDipDepth(loop, depth);
-#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
-        loop.fittedLossShape = fittedLossShape;
-        loop.fittedLossDepth = fittedLossDepth;
-        double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-        handDipCoefficients(fittedLossDepth, fittedLossShape,
-                            b0, b1, b2, a1, a2);
-        loop.fittedLossDip.b0 = b0;
-        loop.fittedLossDip.b1 = b1;
-        loop.fittedLossDip.b2 = b2;
-        loop.fittedLossDip.a1 = a1;
-        loop.fittedLossDip.a2 = a2;
-        const bool fittedActive = b1 != 0.0 || b2 != 0.0
-                               || a1 != 0.0 || a2 != 0.0;
-        if (! fittedActive)
-            loop.fittedLossDip.reset();
-        loop.fittedLossDipActive = fittedActive;
-#endif
         loop.loopDampingCoefficient = coefficient;
         loop.loopGain = clampf(gain, 0.0f, 0.99999f);
     };
@@ -3119,6 +3082,78 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const float liveFret = clampf(static_cast<float>(voice.fret)
                                       + legatoOffset,
                                   0.0f, static_cast<float>(fretCount));
+
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    // The fit covers frets 2--14 of the lowest physical string. A legato
+    // retarget used to install the destination filter before its glide began,
+    // so crossing fret 1/2 or 14/15 switched loop topology while the string was
+    // still sounding at the source pitch. Follow the finger coordinate that
+    // already drives the glide instead. These one-fret smoothsteps are C1 at
+    // both ends, exact bypasses at settled frets 1/15 and exact unity over the
+    // measured 2--14 range. At contact, retain the current section exactly;
+    // wheel bend and vibrato do not move the fret gate.
+    const bool retainFittedLossAtContact = voice.legatoFromFrequency > 0.0f
+        && ! (voice.legatoBlend > 0.0f);
+    if (voice.stringIndex == 0 && ! retainFittedLossAtContact)
+    {
+        const bool fractionalFinger = voice.legatoFromFrequency > 0.0f
+            && voice.legatoBlend < 1.0f;
+        const float fadeIn = fractionalFinger
+            ? smoothStep(clampf(liveFret - 1.0f, 0.0f, 1.0f))
+            : (voice.fret >= 2 ? 1.0f : 0.0f);
+        const float fadeOut = fractionalFinger
+            ? smoothStep(clampf(15.0f - liveFret, 0.0f, 1.0f))
+            : (voice.fret <= 14 ? 1.0f : 0.0f);
+        const float liveUnbentFrequency = fractionalFinger
+            ? voice.baseFrequency * std::exp2(legatoOffset / 12.0f)
+            : voice.baseFrequency;
+        const float targetPeakDb = fadeIn * fadeOut
+            * fittedLossPeakDbPerSecond
+            / std::max(liveUnbentFrequency, 20.0f);
+        const bool exactBypassNeeded = ! (targetPeakDb > 0.0f)
+            && (voice.vertical.fittedLossDipActive
+                || voice.horizontal.fittedLossDipActive);
+        const bool fittedLossMoved = exactBypassNeeded
+            || std::abs(voice.vertical.fittedLossShape.dipFullDepthDb
+                         - targetPeakDb) > 1.0e-8f
+            || std::abs(voice.horizontal.fittedLossShape.dipFullDepthDb
+                            - targetPeakDb) > 1.0e-8f;
+        if (fittedLossMoved)
+        {
+            HandLossShape fittedShape {};
+            const float fittedDepth = targetPeakDb > 0.0f ? 1.0f : 0.0f;
+            if (fittedDepth > 0.0f)
+            {
+                fittedShape.dipOmega = twoPi * clampf(
+                    fittedLossDipCentreHz, 40.0f,
+                    0.40f * static_cast<float>(sampleRate_))
+                    * inverseSampleRate_;
+                fittedShape.dipQ = fittedLossDipQ;
+                fittedShape.dipFullDepthDb = targetPeakDb;
+            }
+
+            double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+            handDipCoefficients(fittedDepth, fittedShape,
+                                b0, b1, b2, a1, a2);
+            const bool fittedActive = b1 != 0.0 || b2 != 0.0
+                                   || a1 != 0.0 || a2 != 0.0;
+            for (auto* loop : { &voice.vertical, &voice.horizontal })
+            {
+                loop->fittedLossShape = fittedShape;
+                loop->fittedLossDepth = fittedDepth;
+                loop->fittedLossDip.b0 = b0;
+                loop->fittedLossDip.b1 = b1;
+                loop->fittedLossDip.b2 = b2;
+                loop->fittedLossDip.a1 = a1;
+                loop->fittedLossDip.a2 = a2;
+                if (! fittedActive)
+                    loop->fittedLossDip.reset();
+                loop->fittedLossDipActive = fittedActive;
+            }
+            voice.compensationDirty = true;
+        }
+    }
+#endif
 
     // The full dispersion grid search is only re-fitted once the sounding
     // pitch or live fret has moved beyond a small quantum. Re-fitting on every

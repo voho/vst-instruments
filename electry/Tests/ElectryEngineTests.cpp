@@ -391,29 +391,36 @@ struct ElectryEngineTestAccess
     }
 
 #if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
-    static void fittedLossDip(const ElectryEngine& engine, int stringIndex,
-                              double& b0, double& b1, double& b2,
-                              double& a1, double& a2,
-                              bool& active,
-                              bool horizontal = false) noexcept
+    struct FittedLossState
+    {
+        double b0, b1, b2, a1, a2;
+        float peakDb;
+        bool active;
+
+        bool operator==(const FittedLossState&) const = default;
+    };
+
+    static FittedLossState fittedLossState(
+        const ElectryEngine& engine, int stringIndex,
+        bool horizontal = false) noexcept
     {
         const auto& voice =
             engine.voices_[static_cast<std::size_t>(stringIndex)];
         const auto& loop = horizontal ? voice.horizontal : voice.vertical;
-        b0 = loop.fittedLossDip.b0;
-        b1 = loop.fittedLossDip.b1;
-        b2 = loop.fittedLossDip.b2;
-        a1 = loop.fittedLossDip.a1;
-        a2 = loop.fittedLossDip.a2;
-        active = loop.fittedLossDipActive;
+        return { loop.fittedLossDip.b0, loop.fittedLossDip.b1,
+                 loop.fittedLossDip.b2, loop.fittedLossDip.a1,
+                 loop.fittedLossDip.a2,
+                 loop.fittedLossDepth * loop.fittedLossShape.dipFullDepthDb,
+                 loop.fittedLossDipActive };
     }
 
     static void legatoRetargetVoice(ElectryEngine& engine, int stringIndex,
-                                    int midiNote) noexcept
+                                    int midiNote,
+                                    PlayStyle style = PlayStyle::Slide) noexcept
     {
         engine.legatoRetarget(
             engine.voices_[static_cast<std::size_t>(stringIndex)], midiNote,
-            0.85f, PlayStyle::Slide);
+            0.85f, style);
     }
 #endif
 
@@ -14771,31 +14778,24 @@ void testLowestStringLossCorrection()
             engine.reset();
             TestAccess::retriggerVoice(engine, 0, note, 0.9f);
 
-            double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-            bool active = false;
-            TestAccess::fittedLossDip(
-                engine, 0, b0, b1, b2, a1, a2, active);
-            expect(active,
+            const auto loss = TestAccess::fittedLossState(engine, 0);
+            expect(loss.active,
                    "the fitted lowest-string correction was not active at note "
                        + std::to_string(note));
-            bool horizontalActive = false;
-            double hb0 = 1.0, hb1 = 0.0, hb2 = 0.0;
-            double ha1 = 0.0, ha2 = 0.0;
-            TestAccess::fittedLossDip(
-                engine, 0, hb0, hb1, hb2, ha1, ha2,
-                horizontalActive, true);
-            expect(horizontalActive,
+            const auto horizontal = TestAccess::fittedLossState(
+                engine, 0, true);
+            expect(horizontal.active,
                    "the horizontal polarisation omitted the loss correction");
-            expect(hb0 == b0 && hb1 == b1 && hb2 == b2
-                       && ha1 == a1 && ha2 == a2,
+            expect(horizontal == loss,
                    "the two polarisations received different loss filters");
 
             // Both poles and both zeros remain inside the unit circle. These
             // are the real-coefficient Jury conditions for z^2+c1*z+c2.
-            const double z1 = b1 / b0;
-            const double z2 = b2 / b0;
-            expect(std::abs(a2) < 1.0 && 1.0 + a1 + a2 > 0.0
-                       && 1.0 - a1 + a2 > 0.0,
+            const double z1 = loss.b1 / loss.b0;
+            const double z2 = loss.b2 / loss.b0;
+            expect(std::abs(loss.a2) < 1.0
+                       && 1.0 + loss.a1 + loss.a2 > 0.0
+                       && 1.0 - loss.a1 + loss.a2 > 0.0,
                    "the fitted loss correction is not stable");
             expect(std::abs(z2) < 1.0 && 1.0 + z1 + z2 > 0.0
                        && 1.0 - z1 + z2 > 0.0,
@@ -14808,7 +14808,8 @@ void testLowestStringLossCorrection()
                                    * static_cast<double>(bin) / 4096.0;
                 peakMagnitude = std::max(
                     peakMagnitude,
-                    responseMagnitude(b0, b1, b2, a1, a2, omega));
+                    responseMagnitude(loss.b0, loss.b1, loss.b2,
+                                      loss.a1, loss.a2, omega));
             }
             expect(peakMagnitude <= 1.0 + 2.0e-10,
                    "the fitted loss correction can add loop energy (peak "
@@ -14819,13 +14820,13 @@ void testLowestStringLossCorrection()
             std::array<double, 7> upperLoss {};
             const double fundamentalLoss = -20.0 * std::log10(
                 std::max(responseMagnitude(
-                    b0, b1, b2, a1, a2,
+                    loss.b0, loss.b1, loss.b2, loss.a1, loss.a2,
                     2.0 * 3.14159265358979323846 * f0 / internalRate),
                          1.0e-30)) * f0;
             for (int partial = 2; partial <= 8; ++partial)
             {
                 const double magnitude = responseMagnitude(
-                    b0, b1, b2, a1, a2,
+                    loss.b0, loss.b1, loss.b2, loss.a1, loss.a2,
                     2.0 * 3.14159265358979323846 * f0 * partial
                         / internalRate);
                 upperLoss[static_cast<std::size_t>(partial - 2)] =
@@ -14859,23 +14860,21 @@ void testLowestStringLossCorrection()
         engine.prepare(48000.0, 512);
         engine.reset();
         TestAccess::retriggerVoice(engine, stringIndex, note, 0.9f);
-        double b0 = 0.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-        bool active = true;
-        TestAccess::fittedLossDip(
-            engine, stringIndex, b0, b1, b2, a1, a2, active);
-        expect(! active,
+        expect(! TestAccess::fittedLossState(engine, stringIndex).active,
                "the F#-string fit leaked outside its evidence domain");
     }
 
-    // The hard evidence gate changes topology at its two note boundaries.
-    // Legato keeps the old sounding period when that happens, and the passive
-    // feedback insertion/removal must not create a hard output discontinuity.
+    // The evidence gate follows the same continuous finger coordinate as a
+    // Hammer or Slide. It must be unchanged at retarget, follow the exact C1
+    // one-fret taper, remain passive, and land on an exact endpoint bypass/full
+    // response without a pitch or output step.
     struct BoundaryMove { int from, to; bool fromActive, toActive; };
+    for (const auto style : { PlayStyle::Hammer, PlayStyle::Slide })
     for (const auto move : {
-             BoundaryMove { 29, 30, false, true },
-             BoundaryMove { 30, 29, true, false },
-             BoundaryMove { 42, 43, true, false },
-             BoundaryMove { 43, 42, false, true } })
+        BoundaryMove { 29, 30, false, true },
+        BoundaryMove { 30, 29, true, false },
+        BoundaryMove { 42, 43, true, false },
+        BoundaryMove { 43, 42, false, true } })
     {
         ElectryEngine engine;
         engine.prepare(48000.0, 512);
@@ -14891,38 +14890,216 @@ void testLowestStringLossCorrection()
         StereoBuffer before(5760);
         renderInto(engine, before);
 
-        const auto isActive = [&] ()
+        const auto dipState = [&] (bool horizontal = false)
         {
-            double b0 = 0.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-            bool active = false;
-            TestAccess::fittedLossDip(
-                engine, 0, b0, b1, b2, a1, a2, active);
-            return active;
+            return TestAccess::fittedLossState(engine, 0, horizontal);
         };
-        expect(isActive() == move.fromActive,
+
+        const auto source = dipState();
+        expect(source.active == move.fromActive,
                "invalid fitted-loss legato boundary fixture");
         const float frequencyBefore = TestAccess::effectiveLoopFrequency(
             engine, 0);
 
-        TestAccess::legatoRetargetVoice(engine, 0, move.to);
-        expect(isActive() == move.toActive,
-               "legato missed a fitted-loss evidence boundary");
+        TestAccess::legatoRetargetVoice(engine, 0, move.to, style);
+        const auto atRetarget = dipState();
+        expect(atRetarget == source,
+               "legato changed fitted loss before the finger moved");
         const float frequencyAfter = TestAccess::effectiveLoopFrequency(
             engine, 0);
         expect(std::abs(centsBetween(frequencyAfter, frequencyBefore)) < 2.0,
                "fitted-loss topology changed pitch at a legato boundary");
 
-        StereoBuffer after(960);
-        renderInto(engine, after);
-        float maximumStep = std::abs(after.left.front() - before.left.back());
-        for (std::size_t i = 1; i < after.left.size(); ++i)
+        float previousLossRate = source.peakDb * midiHz(move.from);
+        float previousSample = before.left.back();
+        float maximumStep = 0.0f;
+        bool transitionFinite = true;
+        bool checkedFractionalPassivity = false;
+        int ticks = 0;
+        while (TestAccess::legatoBlend(engine, 0) < 1.0f && ticks < 512)
+        {
+            StereoBuffer tick(8);
+            renderInto(engine, tick);
+            transitionFinite = transitionFinite && allFinite(tick);
             maximumStep = std::max(
-                maximumStep, std::abs(after.left[i] - after.left[i - 1]));
+                maximumStep, std::abs(tick.left.front() - previousSample));
+            for (std::size_t i = 1; i < tick.left.size(); ++i)
+                maximumStep = std::max(
+                    maximumStep,
+                    std::abs(tick.left[i] - tick.left[i - 1]));
+            previousSample = tick.left.back();
+
+            const float liveFrequency =
+                TestAccess::programmedLegatoFrequency(engine, 0);
+            const float liveFret = 12.0f * std::log2(
+                liveFrequency / midiHz(28));
+            const auto smooth = [] (float value)
+            {
+                const float x = std::clamp(value, 0.0f, 1.0f);
+                return x * x * (3.0f - 2.0f * x);
+            };
+            const float expectedPeakDb =
+                smooth(liveFret - 1.0f) * smooth(15.0f - liveFret)
+                * 22.9327503f / liveFrequency;
+            const auto current = dipState();
+            const auto horizontal = dipState(true);
+            expect(std::abs(current.peakDb - expectedPeakDb) < 2.0e-5f,
+                   "fitted loss did not follow the continuous fret gate");
+            expect(current.active == (current.peakDb > 0.0f)
+                       && horizontal == current,
+                   "fitted-loss polarisations diverged during legato (peak "
+                       + std::to_string(current.peakDb) + "/"
+                       + std::to_string(horizontal.peakDb) + ", active "
+                       + std::to_string(current.active) + "/"
+                       + std::to_string(horizontal.active) + ")");
+            const bool rising = move.toActive && ! move.fromActive;
+            const float currentLossRate = current.peakDb * liveFrequency;
+            expect(rising
+                       ? currentLossRate + 1.0e-5f >= previousLossRate
+                       : currentLossRate <= previousLossRate + 1.0e-5f,
+                   "fitted loss rate was not monotone through its boundary "
+                   "taper (" + std::to_string(previousLossRate) + " -> "
+                       + std::to_string(currentLossRate) + ")");
+            previousLossRate = currentLossRate;
+
+            if (! checkedFractionalPassivity
+                && TestAccess::legatoBlend(engine, 0) >= 0.45f)
+            {
+                double peakMagnitude = 0.0;
+                for (int bin = 0; bin <= 4096; ++bin)
+                    peakMagnitude = std::max(
+                        peakMagnitude,
+                        responseMagnitude(
+                            current.b0, current.b1, current.b2,
+                            current.a1, current.a2,
+                            3.14159265358979323846
+                                * static_cast<double>(bin) / 4096.0));
+                expect(peakMagnitude <= 1.0 + 2.0e-10,
+                       "fractional fitted-loss taper added loop energy");
+                checkedFractionalPassivity = true;
+            }
+            ++ticks;
+        }
+
+        const auto destination = dipState();
+        expect(ticks > 1 && ticks < 512
+                   && destination.active == move.toActive,
+               "fitted-loss legato taper missed its exact endpoint (ticks "
+                   + std::to_string(ticks) + ", peak "
+                   + std::to_string(destination.peakDb) + ", active "
+                   + std::to_string(destination.active) + ")");
+        const float destinationPeakDb = move.toActive
+            ? 22.9327503f / midiHz(move.to) : 0.0f;
+        expect(std::abs(destination.peakDb - destinationPeakDb) < 1.0e-6f,
+               "fitted-loss legato taper ended at the wrong depth");
+        StereoBuffer destinationSettle(2400);
+        renderInto(engine, destinationSettle);
+        expect(std::abs(centsBetween(
+                   TestAccess::effectiveLoopFrequency(engine, 0),
+                   midiHz(move.to))) < 2.0,
+               "fitted-loss legato taper ended detuned");
         const float scale = peakAbs(before.left);
-        expect(allFinite(after)
+        expect(transitionFinite && std::isfinite(maximumStep)
                    && maximumStep < std::max(0.05f, 1.2f * scale),
                "fitted-loss legato boundary produced a hard discontinuity");
     }
+
+    // Hold sounding pitch fixed while the finger crosses the lower boundary.
+    // Only filter phase and the compensating raw-delay translation may move;
+    // without that translation the fitted section alone shifts F#1 by several
+    // cents.
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0,
+                                     192000.0, 384000.0 })
+    {
+        ElectryEngine phaseCompensated;
+        phaseCompensated.prepare(sampleRate, 512);
+        phaseCompensated.reset();
+        TestAccess::retriggerVoice(phaseCompensated, 0, 29, 0.85f);
+        StereoBuffer phaseSettle(static_cast<int>(0.12 * sampleRate));
+        renderInto(phaseCompensated, phaseSettle);
+        TestAccess::legatoRetargetVoice(phaseCompensated, 0, 30);
+        TestAccess::setLegatoWithOpposingBend(phaseCompensated, 0, 0.0f);
+        const std::array phaseBefore {
+            TestAccess::effectiveLoopFrequency(phaseCompensated, 0),
+            TestAccess::effectiveLoopFrequency(phaseCompensated, 0, true)
+        };
+        TestAccess::setLegatoWithOpposingBend(phaseCompensated, 0, 0.5f);
+        for (int polarisation = 0; polarisation < 2; ++polarisation)
+            expect(std::abs(centsBetween(
+                       TestAccess::effectiveLoopFrequency(
+                           phaseCompensated, 0, polarisation != 0),
+                       phaseBefore[static_cast<std::size_t>(polarisation)]))
+                       < 0.25,
+                   "fitted-loss taper moved stationary effective pitch at "
+                       + std::to_string(sampleRate) + " Hz");
+    }
+
+    // A new target reached before the old glide finishes must start from the
+    // live filter, not either stale endpoint.
+    ElectryEngine chained;
+    chained.prepare(48000.0, 512);
+    chained.reset();
+    TestAccess::retriggerVoice(chained, 0, 29, 0.85f);
+    StereoBuffer chainedSettle(5760);
+    renderInto(chained, chainedSettle);
+    TestAccess::legatoRetargetVoice(chained, 0, 30);
+    int chainedTicks = 0;
+    while (TestAccess::legatoBlend(chained, 0) < 0.40f
+           && chainedTicks < 512)
+    {
+        StereoBuffer tick(8);
+        renderInto(chained, tick);
+        ++chainedTicks;
+    }
+    const auto chainedState = TestAccess::fittedLossState(chained, 0);
+    TestAccess::legatoRetargetVoice(chained, 0, 29);
+    expect(chainedTicks < 512 && chainedState.active
+               && TestAccess::fittedLossState(chained, 0) == chainedState,
+           "chained legato restarted the fitted-loss taper");
+    int reversedTicks = 0;
+    while (TestAccess::legatoBlend(chained, 0) < 1.0f
+           && reversedTicks < 512)
+    {
+        StereoBuffer tick(8);
+        renderInto(chained, tick);
+        ++reversedTicks;
+    }
+    const auto reversedEndpoint = TestAccess::fittedLossState(chained, 0);
+    expect(reversedTicks < 512 && ! reversedEndpoint.active
+               && reversedEndpoint.peakDb == 0.0f,
+           "chained fitted-loss reversal missed its exact bypass");
+
+    // Eligibility is fret based. Wheel pitch cannot switch an unsupported
+    // note on or change the full correction of a supported note.
+    struct BentNote { int note; float bend; };
+    for (const auto bentNote : {
+        BentNote { 29, 1.0f }, BentNote { 30, -1.0f },
+        BentNote { 42, 1.0f }, BentNote { 43, -1.0f } })
+    {
+        ElectryEngine bent;
+        bent.prepare(48000.0, 512);
+        bent.reset();
+        TestAccess::retriggerVoice(bent, 0, bentNote.note, 0.85f);
+        const auto before = TestAccess::fittedLossState(bent, 0);
+        bent.setPitchBend(bentNote.bend);
+        StereoBuffer bendSettle(16800);
+        renderInto(bent, bendSettle);
+        expect(TestAccess::fittedLossState(bent, 0) == before,
+               "pitch wheel moved the fitted-loss evidence gate");
+    }
+
+    constexpr ElectryEngine::ExpressionId expressionId = 2;
+    ElectryEngine expressed;
+    expressed.prepare(48000.0, 512);
+    expressed.reset();
+    expressed.noteOn(30, 0.85f, expressionId);
+    const auto memberBefore = TestAccess::fittedLossState(expressed, 0);
+    expressed.setExpressionPitchBend(expressionId, -2.0f);
+    StereoBuffer memberBendSettle(16800);
+    renderInto(expressed, memberBendSettle);
+    expect(memberBefore.active
+               && TestAccess::fittedLossState(expressed, 0) == memberBefore,
+           "MPE member bend moved the fitted-loss evidence gate");
 
     // Idle strings are open and therefore outside this fretted-data candidate.
     // Bending unsupported open E1 across F#1 must not carry the played filter
@@ -14937,11 +15114,8 @@ void testLowestStringLossCorrection()
     sympathetic.noteOn(45, 0.9f);
     StereoBuffer settle(24000);
     renderInto(sympathetic, settle);
-    double b0 = 0.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-    bool active = false;
-    TestAccess::fittedLossDip(
-        sympathetic, 0, b0, b1, b2, a1, a2, active);
-    expect(TestAccess::snapshot(sympathetic, 0).sympatheticReady && ! active,
+    expect(TestAccess::snapshot(sympathetic, 0).sympatheticReady
+               && ! TestAccess::fittedLossState(sympathetic, 0).active,
            "pitch bend switched the unsupported sympathetic E1 correction on");
 }
 #endif
