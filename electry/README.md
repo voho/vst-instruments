@@ -1370,7 +1370,8 @@ keyswitch triggering of both banks, panic, output-gain and APVTS
 output-mode effects, three visible non-overlapping mode buttons, three visible
 non-overlapping Amp Voice buttons, Modern default and missing-field migration,
 Space activation for every keyboard-focusable PANIC and exclusive-choice
-button with disabled controls rejecting it,
+button with disabled controls rejecting it, plus wrapping arrow-key selection
+across every exclusive-choice strip,
 all 25 knob accessibility handlers exposing their canonical full parameter
 names while retaining the compact visible captions,
 deterministic
@@ -2351,6 +2352,21 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 choice-strip arrow navigation
+
+- Left/Up and Right/Down now move to the previous or next option in every
+  exclusive-choice strip, wrapping at both ends and moving keyboard focus with
+  the selection. The target button enters the same choice-action path as a
+  click exactly once, so the highlight, callback and bound parameter cannot
+  diverge. Disabled options are skipped; PANIC remains an ordinary action
+  button and does not consume arrows.
+- The plug-in regression covers all four arrow keys, both wrap directions,
+  single-callback delivery, disabled-option skipping, and rejection by disabled
+  or non-radio buttons. Space and Return retain their established activation
+  paths. This adds no layout,
+  painting, parameter, audio or steady-CPU work; it runs only for a focused
+  button's key event.
 
 ### 2026-08-29 sounding-period attack projection
 

@@ -615,6 +615,13 @@ void ElectryKeyboardComponent::drawBlackNote (
 
 bool ElectryTextButton::keyPressed (const juce::KeyPress& key)
 {
+    if (isEnabled() && onNavigation != nullptr
+        && (key.isKeyCode (juce::KeyPress::leftKey)
+            || key.isKeyCode (juce::KeyPress::rightKey)
+            || key.isKeyCode (juce::KeyPress::upKey)
+            || key.isKeyCode (juce::KeyPress::downKey)))
+        return onNavigation (key);
+
     return juce::TextButton::keyPressed (
         key.isKeyCode (juce::KeyPress::spaceKey)
             ? juce::KeyPress { juce::KeyPress::returnKey }
@@ -643,15 +650,50 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
         button->setHasFocusOutline (true);
         button->onClick = [this, index]
         {
-            setSelectedIndex (index);
-            if (onChoice != nullptr)
-                onChoice (index);
+            activateChoice (index, false);
+        };
+        button->onNavigation = [this, index] (const juce::KeyPress& key)
+        {
+            const auto count = static_cast<int> (buttons.size());
+            if (count < 2)
+                return false;
+
+            const int direction = key.isKeyCode (juce::KeyPress::leftKey)
+                               || key.isKeyCode (juce::KeyPress::upKey)
+                ? -1 : 1;
+            int next = index;
+            for (int attempt = 1; attempt < count; ++attempt)
+            {
+                next = (next + direction + count) % count;
+                if (buttons[static_cast<std::size_t> (next)]->isEnabled())
+                {
+                    activateChoice (next, true);
+                    return true;
+                }
+            }
+            return false;
         };
         addAndMakeVisible (*button);
         buttons.push_back (std::move (button));
     }
     if (! buttons.empty())
         buttons.front()->setToggleState (true, juce::dontSendNotification);
+}
+
+void ElectryChoiceStrip::activateChoice (int index, bool moveFocus)
+{
+    if (index < 0 || index >= static_cast<int> (buttons.size()))
+        return;
+
+    auto& target = *buttons[static_cast<std::size_t> (index)];
+    if (! target.isEnabled())
+        return;
+
+    setSelectedIndex (index);
+    if (moveFocus && target.isShowing())
+        target.grabKeyboardFocus();
+    if (onChoice != nullptr)
+        onChoice (index);
 }
 
 void ElectryChoiceStrip::setSelectedIndex (int newIndex)

@@ -31,14 +31,16 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
-// JUCE's text button activates on Return but not Space. Electry advertises
-// these controls as keyboard-focusable, so give its action and radio buttons
-// the conventional second activation key through the same JUCE click path.
+// JUCE's text button activates on Return but not Space, and its radio buttons
+// do not navigate with arrows. Electry advertises these controls as keyboard-
+// focusable, so add those conventional keyboard paths without duplicating the
+// buttons' existing click actions.
 class ElectryTextButton final : public juce::TextButton
 {
 public:
     using juce::TextButton::TextButton;
 
+    std::function<bool (const juce::KeyPress&)> onNavigation;
     bool keyPressed (const juce::KeyPress&) override;
 };
 
@@ -85,6 +87,8 @@ public:
     void resized() override;
 
 private:
+    void activateChoice (int index, bool moveFocus);
+
     juce::String titleText;
     std::vector<std::unique_ptr<ElectryTextButton>> buttons;
     int maxColumns;

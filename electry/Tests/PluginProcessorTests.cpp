@@ -4083,6 +4083,68 @@ void testTextButtonKeyboardActivation()
     expect (! disabled.keyPressed (
                  juce::KeyPress { juce::KeyPress::spaceKey }),
             "a disabled Electry button consumed Space");
+
+    const auto left = juce::KeyPress { juce::KeyPress::leftKey };
+    const auto right = juce::KeyPress { juce::KeyPress::rightKey };
+    expect (! enabled.keyPressed (right),
+            "a non-radio Electry button consumed an arrow key");
+    expect (! disabled.keyPressed (left),
+            "a disabled Electry button consumed an arrow key");
+
+    ElectryChoiceStrip choices { "TEST", { "ONE", "TWO", "THREE" } };
+    int callbackIndex = -1;
+    int callbackCount = 0;
+    choices.onChoice = [&callbackIndex, &callbackCount] (int index)
+    {
+        callbackIndex = index;
+        ++callbackCount;
+    };
+    const auto button = [&choices] (int index)
+    {
+        return dynamic_cast<ElectryTextButton*> (
+            choices.getChildComponent (index));
+    };
+    auto* first = button (0);
+    auto* second = button (1);
+    auto* third = button (2);
+    expect (first != nullptr && second != nullptr && third != nullptr,
+            "choice-strip keyboard test could not find all buttons");
+    if (first == nullptr || second == nullptr || third == nullptr)
+        return;
+
+    expect (first->keyPressed (right)
+                && choices.getSelectedIndex() == 1
+                && callbackIndex == 1 && callbackCount == 1,
+            "Right did not select the next choice");
+    expect (second->keyPressed (juce::KeyPress { juce::KeyPress::downKey })
+                && choices.getSelectedIndex() == 2
+                && callbackIndex == 2 && callbackCount == 2,
+            "Down did not select the next choice");
+    expect (third->keyPressed (right)
+                && choices.getSelectedIndex() == 0
+                && callbackIndex == 0 && callbackCount == 3,
+            "Right did not wrap to the first choice");
+    expect (first->keyPressed (left)
+                && choices.getSelectedIndex() == 2
+                && callbackIndex == 2 && callbackCount == 4,
+            "Left did not wrap to the last choice");
+    expect (third->keyPressed (juce::KeyPress { juce::KeyPress::upKey })
+                && choices.getSelectedIndex() == 1
+                && callbackIndex == 1 && callbackCount == 5,
+            "Up did not select the previous choice");
+
+    second->setEnabled (false);
+    callbackIndex = -1;
+    callbackCount = 0;
+    expect (! second->keyPressed (right)
+                && choices.getSelectedIndex() == 1
+                && callbackIndex == -1 && callbackCount == 0,
+            "a disabled choice consumed an arrow key");
+    choices.setSelectedIndex (0);
+    expect (first->keyPressed (right)
+                && choices.getSelectedIndex() == 2
+                && callbackIndex == 2 && callbackCount == 1,
+            "arrow navigation did not skip a disabled choice");
 }
 
 void testEditorRendering()
