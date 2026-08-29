@@ -2275,39 +2275,72 @@ Beausoleil](https://doi.org/10.1121/10.0026483) separately decompose classical-
 guitar intonation into resonant length, density, tension and bending stiffness,
 with [open model and experiment data](https://github.com/beausol/classical-guitar).
 Those results establish the mechanism; neither instrument supplies coefficients
-for a 27.625-inch high-output eight-string with a wound .080.
+for Electry's preferred 27.625-inch/.098 extended-range anchor or its
+28-inch/.080 endpoint.
 
 Electry currently commands exact nominal 12-TET note targets and ideal
 `L = L0 2^(-fret/12)` speaking lengths. Stiffness dispersion therefore bends
 partials without giving a fretted fundamental the deterministic residual of one
-installed setup. This missing mechanism is not random detune. The lowest-cost
-candidate precomputes, whenever Guitar Build or gauge changes, one 8-by-23 table
-of fundamental cents, physical speaking-length ratio and fretting-tension ratio
-(about 2.2 kB as floats). Note allocation multiplies frequency by
-`2^(cents/1200)`; geometry consumes length and the dispersion/tension paths
-consume tension separately. Log-domain control-rate interpolation keeps slides
-continuous. No oscillator, filter, delay read or sample-loop branch is added;
-the preregistered 96 kHz eight-string ceiling is 0.25% CPU.
+installed setup. This missing mechanism is not random detune. The first
+identification experiment deliberately freezes one real guitar, string set and
+setup; it does not infer a continuous Guitar Build/gauge law from that one
+instrument. An Anderson-style low-dimensional static model is evaluated offline
+into one 8-by-23 table of fundamental cents for each independently measured
+setup: 736 bytes per table as floats, or about 4.3 KiB for all six curated build
+anchors. Separate measured speaking length, elongation, unit mass, bending
+stiffness, load-extension and open-tension inputs identify the physical model;
+the DI pitch is its outcome, not enough data to identify those terms by itself.
 
-Promotion is capture-gated on the actual target guitar, installed string set
-and setup. Record mechanically repeated raw DI at every string/fret while
+The existing live-fret control-rate pitch solve, not note allocation alone,
+interpolates the table in cents and multiplies the target by
+`2^(cents/1200)`, so slides and legato consume the same continuous residual.
+The first runtime candidate corrects only the fundamental: ideal speaking-length
+pickup geometry remains explicit, rather than pretending that a cents residual
+separately identified length and tension. The residual moves only the compensated
+total-period target and is explicitly excluded from the nominal construction,
+tension and inharmonicity coordinates, which retain their ideal unbent-fret
+inputs. It is bypassed away from its measured setup. Production interpolation
+across Guitar Build is forbidden until every curated scale/gauge anchor has its
+own capture, the interpolation law is frozen on training anchors and one
+complete setup is held out. No oscillator, filter, delay read or sample-loop
+branch is added; the preregistered 96 kHz eight-string ceiling is 0.25% CPU.
+
+Promotion is capture-gated on the actual target guitars, installed string sets
+and setups. Record mechanically repeated raw DI at every string/fret while
 logging scale, each saddle setback, nut position, action, relief, fret crown,
-gauge and temperature, retuning and recording the adjacent open string before
-each block. Use at least five accepted jig repetitions for identification and
-human-fretted repeats for external validity; fit even frets only, hold out odd
-frets, then hold out a later remove/reinstall session. Existing public DIs do
-not document or repeat that geometry, so their pitch offsets cannot identify
-this table.
+gauge and temperature. At each stopped fret, optically measure speaking length
+and total extension under a preregistered jig contact position and normal force;
+matched string samples supply unit-mass, flexural-rigidity and load-extension
+data.
+Record the tested string's own open fundamental immediately before and after
+each block, with an adjacent open only as a secondary drift check. Freeze jig
+acceptance and exclusion rules before capture. Use at least five accepted jig
+repetitions for identification and human-fretted repeats for external validity.
+
+Fit the low-dimensional physical model to even-fret pitch outcomes only and
+score its predicted odd frets unopened. If that gate passes, refit the same
+model on all frets, freeze its table, and reserve a later remove/reinstall
+session for final validation. Multi-anchor interpolation additionally leaves
+one complete guitar/setup unopened. This makes the odd cells predictions of a
+named model rather than fitting a direct lookup and then calling its missing
+entries holdout. Existing public DIs do not document or repeat these inputs, so
+their pitch offsets cannot identify the table.
 
 The residual itself must repeat above a two-cent practical floor or the feature
 is rejected. Every string must show at least 50% lower held-out median absolute
 cents error than exact 12-TET, with no worse p95 or maximum and at least 80%
-correct residual signs. Hidden distorted chord voicings must also reduce
+correct residual signs among cells whose repeated residual clears that floor.
+Hidden distorted chord voicings must also reduce
 inter-string beat-frequency error and win an RMS-matched blind A/B. Open strings
-stay exact, alternate string assignments retain their own deterministic setup,
-bends and MPE compose multiplicatively, and 44.1--384 kHz tuning/stability plus
-the CPU ceiling remain hard rails. Until that capture passes, importing the
-published sonometer or classical-guitar residuals would be invented realism.
+stay exact and alternate string assignments retain their own deterministic
+setup. The initial candidate adds only a static unbent offset in cents; it does
+not claim that bending leaves tension and stiffness unchanged. Preregistered
+low/middle/high-fret physical bends and equivalent wheel/MPE trajectories must
+show no pitch-error regression before that approximation may ship, otherwise a
+separately identified bent-state correction is required. The 44.1--384 kHz
+tuning/stability and CPU ceilings remain hard rails. Until these captures pass,
+importing published sonometer or classical-guitar residuals would be invented
+realism.
 
 The frozen perceptual gate scores ten real/model cells plus three hidden repeats
 with exactly 30 listeners: 15 extended-range guitarists and 15 metal producers.
