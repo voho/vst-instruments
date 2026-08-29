@@ -1786,6 +1786,61 @@ does not prove that order or standard-tuned open E2. Released-WAV normalization
 is also unstated. Pitch must therefore establish note identity before analysis,
 and even a confirmed E2 remains a controlled conventional six-string
 technique/pickup check rather than licensed Drop-E calibration data.
+
+#### Frozen EG-IPT conventional-E2 result
+
+The partial-frequency protocol was SHA-256 frozen as
+`09fb828a5f8d4326227f24061f63a610e9c6dfb42fb596671f44aff5a254324c`
+before any waveform sample was decoded. Its synthetic suite rejected silence,
+clipping, a neighbouring note and a static-inharmonicity/unequal-decay false
+positive, while detecting a shared H1-H6 glide. The analyzer and exact 23-file
+code freeze have SHA-256
+`fc03d69007edfb99a1f74b1a9fa58019fa44e169e6d8b811683cb6e4be025c17`
+and
+`cc5eed5fe93c7c7bc00e778fca995f76aa1054692054e5f5b0595ef2c8c28a76`.
+No threshold, file, window, mapping or model control changed after that freeze.
+
+All three `ordinario` files pass the note and coverage rails. Their late H1
+references are 82.318251, 82.973623 and 82.525740 Hz (-1.863, +11.865 and
++2.495 cents from E2), establishing the E2-like endpoint for this stratum
+without claiming that identifier `02` means open E2 throughout the corpus.
+The frozen result is:
+
+| source / pickup | aggregate attack | aggregate slope | H1 attack | H1 slope | coherent |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| EG-IPT / bridge | +2.368 c | -9.596 c/s | +2.686 c | -11.053 c/s | yes, H1-H6 |
+| EG-IPT / couple | +2.110 c | -9.097 c/s | +2.199 c | -10.036 c/s | yes, H1-H4 |
+| EG-IPT / neck | +1.045 c | -4.970 c/s | +1.198 c | -5.545 c/s | no; below the 2-cent/four-partial rails |
+| Electry / Bridge | +0.0049 c | -0.0193 c/s | +0.0090 c | +0.0033 c/s | no |
+| Electry / Both | +0.0048 c | -0.0194 c/s | +0.0091 c | +0.0282 c/s | no |
+| Electry / Neck | +0.0060 c | -0.0265 c/s | +0.0168 c | +0.0129 c/s | no |
+
+Thus `ordinario` passes its preregistered real-trajectory gate: 3/3 files are
+sufficient, 2/3 share a positive attack offset followed by negative
+relaxation, and the cohort median attack magnitude is +2.110 cents. Shipping
+Electry is effectively stationary and fails four of five compatibility rails.
+Its median/max aggregate-attack errors are 2.105/2.363 cents, median/max slope
+errors are 9.078/9.577 cents/s, and median H1-attack error is 2.190 cents; only
+the four-cent maximum-attack bound passes.
+
+The negative controls matter. Electry PalmMute shows only a rejected
+upper-partial spectral drift: its aggregate attack is about +0.65 cent, while
+H1 moves by -0.030..-0.045 cent with a positive slope. All three real `muted`
+files decay before the frozen tracker can form the required 300-440 ms late H1
+reference, and both `snap-pizz` files lack common partial coverage. Those
+strata are inconclusive, not evidence of a wrong note or a stationary attack.
+
+This is one separately played take per pickup/technique cell on a conventional
+six-string SG. It supports a bounded, default-off common amplitude-pitch
+experiment; it does not identify tension, magnet or contact causality, fit an
+exact-eight coefficient, or authorize a shipping change. Two complete runs
+produced byte-identical JSON and CSV with SHA-256
+`c82e6cb447f27f2fb4258f5b93b42f39cf6cbf733ce1d1373a8f80b57f13e5b2`
+and
+`74a4806f195780ecee57bef20e76df1b046c1a4547b5834edb8a3cc8f461b866`;
+the read-only final receipt is
+`2760dd5c9248aca031afc7d1281471e8f2725493c1ea5affd8a20af6e1c7a5cf`.
+
 [GOAT](https://zenodo.org/records/15690894),
 [IDMT-SMT-Guitar](https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html)
 and the [pitx muted pack](https://freesound.org/people/pitx/packs/898/) are
