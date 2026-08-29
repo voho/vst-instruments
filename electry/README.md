@@ -1703,14 +1703,25 @@ adds 580 CC0 raw-DI monophonic phrases for timing, dynamics and incidental-noise
 listening, but has no string, fret, tuning or technique labels. Neither source
 can promote a Drop-E/F# coefficient.
 
-The best unavailable lead is the
-[2025 EG-IPT test set](https://www.nime.org/proceedings/2025/nime2025_14.pdf):
-the paper describes 1,038 direct-input files, 16 techniques and a different
-player on a Strandberg Boden Prog seven-string with a Fishman Fluence Modern
-bridge pickup. It does not state the tuning, and neither audio nor manifest is
-present in the [companion repository](https://github.com/nbrochec/nime2025) or
-a discoverable deposit. The authors are therefore a promising request or
-commission lead only. [GOAT](https://zenodo.org/records/15690894),
+The formerly unavailable EG-IPT lead is now a published
+[CC-BY-4.0 Zenodo dataset](https://doi.org/10.5281/zenodo.15205644). The main
+corpus contains 52,320 audio files (28 h 22 min 56 s) recorded at 96 kHz/24 bit
+from a six-string 2005 Gibson SG Standard: three humbucker configurations and
+six simultaneous sources, including a BSS AR 133 DI through a Midas XL48. The
+paper's 1,038-file Strandberg seven-string corpus is a separate generalisation
+test set, not the deposited EG-IPT archive; conflating the two had made this
+source look both smaller and unavailable.
+
+A range-only audit of the 23,757,983,313-byte archive selected the sixth-string
+note-index `02` DI under `ordinario`, `muted` and `snap-pizz` for all available
+pickup folders. Eight files exist; `HB-bridge/snap-pizz` is absent. ZIP CRC and
+SHA-256 checks passed after 36 HTTP range requests totalling 30,512,346 bytes,
+or 0.1284% of the archive. The read-only source receipt has SHA-256
+`1a60c1c1b4cffecd90f5c47d5f180bda92716f9653cfd84fe46573dac964a5f1`;
+no third-party audio is committed. Filename ordering suggests open E2, but that
+identity remains an analysis hypothesis until measured. Even then this is a
+controlled conventional six-string technique/pickup check, not licensed
+Drop-E calibration data. [GOAT](https://zenodo.org/records/15690894),
 [IDMT-SMT-Guitar](https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html)
 and the [pitx muted pack](https://freesound.org/people/pitx/packs/898/) are
 noncommercial; [GADA](https://gingerpianist.github.io/GADA_demo_page/) exposes
