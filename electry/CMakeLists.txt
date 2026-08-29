@@ -364,9 +364,12 @@ if(BUILD_TESTING)
         add_test(NAME Electry.ValidateReferenceFixture
                  COMMAND "${Python3_EXECUTABLE}"
                          "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ValidateReferenceFixtureTests.py")
+        add_test(NAME Electry.CompareReferenceFixture
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Tests/CompareReferenceFixtureTests.py")
         set_tests_properties(
             Electry.PrepareBlindListening Electry.ScoreBlindListening
-            Electry.ValidateReferenceFixture
+            Electry.ValidateReferenceFixture Electry.CompareReferenceFixture
             PROPERTIES TIMEOUT 60)
     endif()
 endif()

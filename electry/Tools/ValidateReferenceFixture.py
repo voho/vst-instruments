@@ -217,7 +217,7 @@ def _same_file(first: Path, second: Path, label: str) -> bool:
         raise Invalid(f"{label}: cannot compare file identities") from exc
 
 
-def _wave_info(data: bytes, label: str) -> None:
+def _wave_info(data: bytes, label: str) -> dict:
     _require(len(data) >= 44 and data[:4] == b"RIFF" and data[8:12] == b"WAVE",
              f"{label} is not a RIFF/WAVE file")
     declared_size = struct.unpack_from("<I", data, 4)[0] + 8
@@ -225,6 +225,7 @@ def _wave_info(data: bytes, label: str) -> None:
 
     position = 12
     format_chunk = None
+    data_offset = None
     data_size = None
     while position < len(data):
         _require(position + 8 <= len(data), f"{label} has a truncated chunk header")
@@ -238,6 +239,7 @@ def _wave_info(data: bytes, label: str) -> None:
             format_chunk = data[start:end]
         elif chunk_id == b"data":
             _require(data_size is None, f"{label} has duplicate data chunks")
+            data_offset = start
             data_size = chunk_size
         position = end + (chunk_size & 1)
         _require(position <= len(data), f"{label} has a missing RIFF pad byte")
@@ -277,6 +279,16 @@ def _wave_info(data: bytes, label: str) -> None:
              f"{label} byte rate or block alignment is inconsistent")
     _require(data_size > 0 and data_size % block_align == 0,
              f"{label} audio payload is empty or not frame-aligned")
+    return {
+        "encoding": "PCM" if effective_encoding == 1 else "IEEE_FLOAT",
+        "channels": channels,
+        "sample_rate_hz": sample_rate,
+        "bits_per_sample": bits,
+        "block_align": block_align,
+        "data_offset": data_offset,
+        "data_size": data_size,
+        "frames": data_size // block_align,
+    }
 
 
 def _checked_audio(path: Path, expected, label: str) -> None:

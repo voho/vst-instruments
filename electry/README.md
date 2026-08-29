@@ -2165,6 +2165,33 @@ regression-measured model—not capture parity or market leadership.
   The public recordings audited can support a descriptive direction check,
   but lack measured tension and construction controls for capture calibration.
 
+### 2026-08-29 provenance-locked exact-eight comparison
+
+- `CompareReferenceFixture.py` closes the mechanical gap between the existing
+  successor-only exact-eight receipt validator and the frozen v3 model probes.
+  A separate frozen plan must name each upstream asset, zero-based channel,
+  isolated crop, the onset-search start following at least 50 ms of pre-roll,
+  nominal frequency and same-note model probe; it also binds the analyzer,
+  validator, receipt, model manifest and every consumed model WAV by SHA-256.
+  The comparator accepts only the full ten-probe, dry-DI 44.1 kHz v3 renderer
+  contract and protects every listed probe plus every fixture input from an
+  aliased output path.
+- The resulting `electry-evaluation/v4` record detects each onset independently
+  at or after the declared search start with the same native-rate 2 ms envelope,
+  requires 20 dB onset SNR (or an exactly silent measured pre-roll) and a full
+  two-second tail, then reports within-file-normalized RMS decay, onset-to-peak
+  timing and centered-envelope first-cycle return. Peak times use the earliest
+  frame within 0.05 dB of the window maximum, avoiding arbitrary later-cycle
+  choices at low E1 rates; the contract exercises the same sine at 8, 44.1, 48
+  and 96 kHz. It neither downmixes nor resamples and has no fit, aggregate score,
+  distance threshold or promotion verdict. The record names its Python/runtime
+  host because floating analysis is only promised deterministic there. This is
+  a descriptive comparison surface, not evidence of capture parity or market
+  superiority. No third-party recording or generated fixture artifact is
+  committed; temporary contract tests synthesize their own reference audio. A
+  real result still requires a reviewed upstream-original exact-eight WAV with
+  usable quiet pre-roll.
+
 ### 2026-08-29 positioned following-fret loss candidate (default off)
 
 - The shipping Artifacts limiter sees only the vertical wave at the loop seam,
@@ -2785,8 +2812,24 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 Read the [evaluation contract](Docs/evaluation.md) before comparing levels or
-publishing scores. Validate one commissioned session or a complete split-safe
-collection with:
+publishing scores. For a rights-reviewed upstream-original exact-eight fixture,
+print and fill the receipt/evidence and frozen mapping-plan templates, validate
+the receipt, then write the derived result under an ignored build directory:
+
+```bash
+python3 Tools/ValidateReferenceFixture.py --print-template receipt
+python3 Tools/ValidateReferenceFixture.py --print-template evidence
+python3 Tools/CompareReferenceFixture.py --print-template
+python3 Tools/ValidateReferenceFixture.py /absolute/fixture/receipt.json
+python3 Tools/CompareReferenceFixture.py \
+  --plan /absolute/fixture/comparison-plan.json \
+  --receipt /absolute/fixture/receipt.json \
+  --model-manifest build-dsp/evaluation/manifest.json \
+  --output build-dsp/reference-comparison-v4.json
+```
+
+The v4 output is descriptive-only and cannot authorize fitting or promotion.
+Validate one commissioned session or a complete split-safe collection with:
 
 ```bash
 cmake -DELECTRY_MUTE_CAPTURE_DIR=/absolute/session/path \
