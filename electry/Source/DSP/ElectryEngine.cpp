@@ -31,8 +31,9 @@ constexpr float narrowCoilNeckPickupMetres = 0.163f;
 // string's transverse wave speed. A single window of width W nulls at c/W
 // instead, most of an octave too high: modelling the humbucker as one 21 mm
 // rectangle put string 2's first null at 5507 Hz where a 19 mm coil pair puts
-// it at 3043 Hz, against the 3000 Hz Lemme measures on a low E and the
-// 4000 Hz he measures on the A.
+// it at 3043 Hz, against the roughly 3000 Hz low-E and 4000 Hz A-string
+// notches Lemme reports:
+// https://buildyourguitar.com/resources/lemme/
 //
 // The two coils also sit at two different distances from the bridge, so each
 // sees its own position comb. Writing the pair out shows that this needs no
@@ -3219,6 +3220,60 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                     - voice.lastAttackPitchFrequencyFactor) > 4.6e-5f
 #endif
         ;
+
+    const float pickupTensionSemitones = bend + vibrato;
+    const bool pickupTensionMoved = forceDelayJump
+        || std::abs(pickupTensionSemitones
+                    - voice.pickupTensionSemitones) > 8.0e-4f
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        || std::abs(voice.attackPitchFrequencyFactor
+                    - voice.pickupAttackPitchFrequencyFactor) > 4.6e-5f
+#endif
+        ;
+    if (pickupTensionMoved || fitMoved)
+    {
+        // Pickup position, aperture and coil separation are physical distances.
+        // Paiva, Pakarinen and Valimaki's spatial model maps them to time through
+        // 1/c (Eq. 19):
+        // https://research.aalto.fi/en/publications/acoustics-and-modeling-of-pickups/
+        // A fret move shortens L and raises the unbent frequency reciprocally,
+        // leaving c = 2 L f unchanged; tension bend, finger vibrato and the
+        // optional attack glide change c. Keep every representable pickup delay
+        // in that live coordinate at control rate. Apertures below one internal
+        // sample stay at this implementation's one-sample identity floor. These
+        // setters retain their histories; only cached delays and interpolation
+        // weights move.
+        float pickupWaveSpeedRatio = 1.0f;
+        const bool tensionPitchMoved = pickupTensionSemitones != 0.0f
+#if ELECTRY_ENERGY_ATTACK_PITCH
+            || voice.attackPitchFrequencyFactor != 1.0f
+#endif
+            ;
+        if (tensionPitchMoved)
+        {
+            const float liveUnbentFrequency = voice.baseFrequency
+                * std::exp2(legatoOffset / 12.0f);
+            pickupWaveSpeedRatio = f0
+                / std::max(liveUnbentFrequency, 20.0f);
+            if (! finitef(pickupWaveSpeedRatio)
+                || ! (pickupWaveSpeedRatio > 0.0f))
+            {
+                pickupWaveSpeedRatio = 1.0f;
+            }
+        }
+        voice.pickupTensionSemitones = pickupTensionSemitones;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        voice.pickupAttackPitchFrequencyFactor =
+            voice.attackPitchFrequencyFactor;
+#endif
+        if (std::abs(pickupWaveSpeedRatio - voice.pickupWaveSpeedRatio)
+                > 1.0e-7f)
+        {
+            voice.pickupWaveSpeedRatio = pickupWaveSpeedRatio;
+            configureVoicePickups(voice);
+        }
+    }
+
     const float omega = twoPi * f0 * inverseSampleRate_;
     const float period = static_cast<float>(sampleRate_) / f0;
 #if ELECTRY_ENERGY_ATTACK_PITCH
@@ -3632,7 +3687,11 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
                                     narrowCoilNeckPickupMetres,
                                     parameters.pickupType);
 
-    const float period = static_cast<float>(sampleRate_) / voice.baseFrequency;
+    const float waveSpeedRatio = finitef(voice.pickupWaveSpeedRatio)
+                              && voice.pickupWaveSpeedRatio > 0.0f
+        ? voice.pickupWaveSpeedRatio : 1.0f;
+    const float period = (static_cast<float>(sampleRate_) / voice.baseFrequency)
+                       / waveSpeedRatio;
     const float maximumTapDelay = static_cast<float>(delayLineSize - 8);
     voice.pickupTapBridge.setDelay(pickupTapDelaySamples(
         bridgeDistance, soundingLength, period, maximumTapDelay));
@@ -3647,7 +3706,7 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     // moves is how far apart the humbucker's two of them sit.
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const float waveSpeed = 2.0f * openLength * midiToHz(
-        static_cast<float>(spec.openMidiNote));
+        static_cast<float>(spec.openMidiNote)) * waveSpeedRatio;
     const float apertureLength = clampf(
         static_cast<float>(sampleRate_) * coilApertureMetres
             / std::max(waveSpeed, 1.0f),
@@ -5503,6 +5562,11 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.lastCompensatedSemitones = -999.0f;
     voice.lastCompensatedPeriod = 0.0f;
     voice.compensationDirty = true;
+    voice.pickupTensionSemitones = 0.0f;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    voice.pickupAttackPitchFrequencyFactor = 1.0f;
+#endif
+    voice.pickupWaveSpeedRatio = 1.0f;
     // The string is free again: the next bridge-coupled excitation reconfigures
     // and clears the loop for its open pitch.
     voice.sympatheticReady = false;

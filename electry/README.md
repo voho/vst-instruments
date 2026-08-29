@@ -588,8 +588,8 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   rather than nulling infinitely — the screw coil sits further from the string
   than the slug coil and reads quieter for it, and no real pickup is a pair of
   point sensors reading one plane of motion. The dip lands at `c / 2d` with the
-  string's own transverse wave speed `c = 2 L f_open`: 3046 Hz on the E2
-  string and 4066 Hz on the A2 string, against Lemme's measured 3000 Hz and
+  string's own transverse wave speed `c = 2 L f`: 3043 Hz on the unbent E2
+  string and 4062 Hz on the A2 string, against Lemme's approximate 3000 Hz and
   4000 Hz, where the single wide rectangular window this replaced first nulled
   at 5507 Hz and 7351 Hz — most of an octave too high, because a rectangle of
   width `W` nulls at `c / W` and a two-point sum at `c / 2d`. The two coils need
@@ -600,8 +600,13 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   unpaired and returns its input untouched, so the single coil is structurally
   one coil and not a cancelled pair — its measured partials move by at most
   0.008 dB. The magnetic aperture is then the same wave-speed-scaled 4.8 mm
-  finite rectangular window with its exact sinc response for both types, because
-  it is one bobbin either way. Putting the notch where it belongs also rebalances
+  rectangular-window FIR for both types, because it is one bobbin either way.
+  Wheel/MPE bend and fretting vibrato now move the position tap, representable
+  aperture and coil spacing together through their live `1/c` delays; the
+  implementation clamps an aperture shorter than one internal sample to its
+  one-sample identity floor. A pure fret or slide remains neutral because `L`
+  shortens by the reciprocal of its unbent frequency rise, while a tension
+  gesture changes `c`. Putting the notch where it belongs also rebalances
   the humbucker across the string set, since the wide window was throwing away
   top octave on the wound strings and keeping it on the plain ones; on a full
   chord the corrected pickup comes out 0.86 dB darker overall, so it stays the
@@ -1137,7 +1142,7 @@ High-Gain.
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
 | Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, moves stiffness with the live `1/L^2` coordinate, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position-, stiffness- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. A mid-glide Hammer takes its source and direction from the live fractional fret while phase-compensated delay translation preserves effective pitch. Neither gesture moves a planted Palm hand or rewrites sibling damping | Pitch-continuous, direction-aware legato with conservatively voiced finger attacks; not a velocity-continuous spline or a distributed or capture-fitted finger-force model |
-| Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
+| Pickups | [Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling](https://research.aalto.fi/en/publications/acoustics-and-modeling-of-pickups/); low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite; an O(1) fractional moving average implements the chosen rectangular aperture; the position, aperture and two-coil delays share the live transverse wave speed during wheel/MPE bend and finger vibrato; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with one geometry-derived live-tension correction and datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Ray's controlled walnut/ash pair; Paté's bridge-admittance and decay analysis; Elliott, Magill and Kendrick's vibro-electric transfer measurements | Structural bridge displacement is differentiated before three double-precision, peak-normalised modal resonators and a 4 kHz guard, producing quiet body-induced voltage before the loaded pickup coils. Each Ray frequency/loss-factor pole stays paired with its measured mate; no unsupported termination loss is added | A narrow specimen-to-specimen structural pickup-colour morph with voiced residues inside measured transfer bounds; not undifferentiated acoustic displacement, transferable complex bridge mobility, or a general material taxonomy |
 | Guitar Build | Ray's controlled walnut/ash pair and modern extended-range scale and gauge practice | Body Wood moves monotonically through the paired modes while six curated short/extended and light/heavy string setups provide the audible path. Unsupported body size, shape and joint coordinates remain neutral; Pickup construction, Tone and Body Resonance amount remain independent | An evidence-limited material morph plus an explicitly voiced setup path; not evidence that material determines scale/gauge or that Shape, Size or Construction has been identified |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
@@ -2133,6 +2138,15 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-29 live-wave-speed pickup geometry
+
+- Wheel/MPE bend and fretting vibrato now carry every representable pickup
+  position, 4.8 mm aperture and 19 mm coil-spacing delay in the sounding
+  string's live `1/c` coordinate; pure fretting/slide motion stays neutral and
+  sub-sample apertures stay at the implementation's identity floor. A
+  +2-semitone bend now targets approximately `0.8909x` the resting spatial
+  delay instead of leaving that delay unchanged.
+
 ### 2026-08-29 positioned following-fret loss candidate (default off)
 
 - The shipping Artifacts limiter sees only the vertical wave at the loop seam,
@@ -2722,8 +2736,8 @@ Standalone:
   fixed nominal 5.805 ms acoustic return, independent of host block size;
   pressure messages, MPE CC 74 timbre and release velocity are unassigned.
 - A published pickup signal structure: per-string position comb following each
-  fret, an O(1) fractional moving average for the finite aperture's exact sinc
-  response, bounded flux nonlinearity differentiated into induced EMF, and a
+  fret, an O(1) fractional moving average for its chosen rectangular aperture,
+  bounded flux nonlinearity differentiated into induced EMF, and a
   loaded coil/tone circuit.
 - A four-mode solid-body structural path, geometry-informed and passive, with
   a six-anchor Guitar Build macro and independent pickup/tone/body-colour

@@ -130,6 +130,18 @@ struct ElectryEngineTestAccess
         };
     }
 
+    static void setAttackPitchAfterLoopCacheAdvanced(
+        ElectryEngine& engine, int stringIndex, float frequencyFactor) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        voice.attackPitchTensionRatio =
+            frequencyFactor * frequencyFactor - 1.0f;
+        // Reproduce a legato/damping solve consuming the loop-pitch cache
+        // before this sub-quantum attack decay accumulates for the pickup.
+        voice.lastAttackPitchFrequencyFactor = frequencyFactor;
+        engine.configureVoicePitch(voice, false);
+    }
+
     static float scaleLengthMetres(const ElectryEngine& engine) noexcept
     {
         return engine.scaleLengthMetres();
@@ -587,6 +599,69 @@ struct ElectryEngineTestAccess
     {
         return engine.voices_[static_cast<std::size_t>(stringIndex)]
             .coilPairBridge.paired;
+    }
+
+    struct PickupGeometry
+    {
+        float waveSpeedRatio { 1.0f };
+        float neckTapDelay { 0.0f };
+        float bridgeTapDelay { 0.0f };
+        float apertureDelay { 0.0f };
+        float coilDelay { 0.0f };
+    };
+
+    static PickupGeometry pickupGeometry(const ElectryEngine& engine,
+                                         int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return {};
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto tapDelay = [] (const ElectryEngine::DelayTap& tap)
+        {
+            const float fractional = -tap.c0 + tap.c2 + 2.0f * tap.c3;
+            return static_cast<float>(tap.offset) - fractional;
+        };
+        return {
+            voice.pickupWaveSpeedRatio,
+            tapDelay(voice.pickupTapNeck),
+            tapDelay(voice.pickupTapBridge),
+            static_cast<float>(voice.apertureBridge.windowWhole)
+                + static_cast<float>(voice.apertureBridge.windowFraction),
+            static_cast<float>(voice.coilPairBridge.spacingWhole)
+                + voice.coilPairBridge.spacingFraction
+        };
+    }
+
+    static bool refreshPickupWaveSpeedPreservesHistory(
+        ElectryEngine& engine, int stringIndex, float ratio) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return false;
+        auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto aperture = voice.apertureBridge;
+        const auto coil = voice.coilPairBridge;
+        const float previousFluxBridge = voice.previousFluxBridge;
+        const float emfBridge = voice.emfLowpassBridge.state;
+        const bool populated = std::any_of(
+            aperture.cumulativeHistory.begin(), aperture.cumulativeHistory.end(),
+            [] (double sample) { return sample != 0.0; })
+            && std::any_of(coil.history.begin(), coil.history.end(),
+                           [] (float sample) { return sample != 0.0f; })
+            && previousFluxBridge != 0.0f && emfBridge != 0.0f;
+
+        voice.pickupWaveSpeedRatio = ratio;
+        engine.configureVoicePickups(voice);
+
+        return populated
+            && voice.apertureBridge.cumulativeHistory
+                    == aperture.cumulativeHistory
+            && voice.apertureBridge.cumulative == aperture.cumulative
+            && voice.apertureBridge.writeIndex == aperture.writeIndex
+            && voice.coilPairBridge.history == coil.history
+            && voice.coilPairBridge.writeIndex == coil.writeIndex
+            && voice.previousFluxBridge == previousFluxBridge
+            && voice.emfLowpassBridge.state == emfBridge;
     }
 
     // The pickup's spatial transfer at one frequency, evaluated in closed form
@@ -16493,8 +16568,8 @@ double bandEnergyDb(const std::vector<float>& data, int start, int length,
 // A humbucker's two-point cancellation notch sits at c/2d, where d is the
 // distance between its coils and c is the string's transverse wave speed.
 // Modelling it as one wide rectangular window instead put the notch at c/W,
-// most of an octave too high - 5507 Hz on string 2 where Lemme measures a low
-// E notching at about 3000 Hz, and 7351 Hz on string 3 against his 4000 Hz.
+// most of an octave too high - 5507 Hz on string 2 where Lemme reports a low E
+// notching at about 3000 Hz, and 7351 Hz on string 3 against about 4000 Hz.
 //
 // Moving the notch is the smaller half of what the two coils do. The larger
 // half is that two narrow windows pass a top octave one wide window was
@@ -16504,6 +16579,226 @@ double bandEnergyDb(const std::vector<float>& data, int start, int length,
 // *inside* the 4-8 kHz band, so moving it out of that band necessarily raises
 // it, and on the plain strings the change goes the other way. See the plan
 // document for the measurement that retired that bound.
+void testPickupGeometryFollowsLiveWaveSpeed()
+{
+    constexpr int note = 45; // open A2, clear of every pickup-delay clamp
+    constexpr double sampleRate = 48000.0;
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Both;
+    parameters.pickupType = 0.0f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.bendTimeSeconds = 0.040f;
+
+    const auto geometryAt = [&] (float bendSemitones)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        // The legacy wheel's public range is +/-1 for +/-2 semitones. reset()
+        // snaps the preserved target so this also covers a pre-bent Note On.
+        engine.setPitchBend(0.5f * bendSemitones);
+        engine.reset();
+        engine.noteOn(note, 0.8f);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        expect(stringIndex >= 0,
+               "the pickup wave-speed probe did not allocate A2");
+        return TestAccess::pickupGeometry(engine, std::max(stringIndex, 0));
+    };
+
+    const auto expectScaled = [&] (const TestAccess::PickupGeometry& rest,
+                                   const TestAccess::PickupGeometry& moved,
+                                   float semitones,
+                                   const std::string& context)
+    {
+        const float expectedRatio = std::exp2(semitones / 12.0f);
+        const float expectedDelayScale = 1.0f / expectedRatio;
+        expect(std::abs(moved.waveSpeedRatio / expectedRatio - 1.0f) < 2.0e-5f,
+               context + " cached the wrong transverse wave-speed ratio ("
+                   + std::to_string(moved.waveSpeedRatio) + ")");
+        const std::array before { rest.neckTapDelay, rest.bridgeTapDelay,
+                                  rest.apertureDelay, rest.coilDelay };
+        const std::array after { moved.neckTapDelay, moved.bridgeTapDelay,
+                                 moved.apertureDelay, moved.coilDelay };
+        const std::array stages { "neck tap", "bridge tap", "aperture",
+                                  "coil spacing" };
+        for (std::size_t index = 0; index < before.size(); ++index)
+        {
+            const float actualScale = after[index]
+                / std::max(before[index], 1.0e-6f);
+            expect(std::abs(actualScale / expectedDelayScale - 1.0f) < 2.0e-4f,
+                   context + " left the " + stages[index]
+                       + " outside the live wave-speed coordinate ("
+                       + std::to_string(actualScale) + " vs "
+                       + std::to_string(expectedDelayScale) + ")");
+        }
+    };
+
+    // All four spatial stages are metres divided by c. This pre-bent Note On
+    // covers the legacy wheel.
+    const auto rest = geometryAt(0.0f);
+    expect(rest.coilDelay > 1.0f,
+           "the pickup wave-speed fixture did not retain two coils");
+    expectScaled(rest, geometryAt(2.0f), 2.0f, "+2-semitone pre-bend");
+
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // Legato and damping solves have their own pitch cache. Advancing it first
+    // must not consume a smaller attack-tension move before pickup c sees it.
+    {
+        constexpr float attackFactor = 1.003f;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(note, 0.8f);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        expect(stringIndex >= 0,
+               "the attack-cache pickup probe did not allocate A2");
+        const int safeStringIndex = std::max(stringIndex, 0);
+        const auto before =
+            TestAccess::pickupGeometry(engine, safeStringIndex);
+        TestAccess::setAttackPitchAfterLoopCacheAdvanced(
+            engine, safeStringIndex, attackFactor);
+        expectScaled(before, TestAccess::pickupGeometry(
+                               engine, safeStringIndex),
+                     12.0f * std::log2(attackFactor),
+                     "pickup-owned attack-tension cache");
+    }
+#endif
+
+    // Member expression reaches configureVoicePitch through separate state.
+    {
+        constexpr ElectryEngine::ExpressionId expressionId = 3;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.setExpressionPitchBend(expressionId, 2.0f);
+        engine.reset();
+        engine.noteOn(note, 0.8f, expressionId);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        expect(stringIndex >= 0,
+               "the expression pickup probe did not allocate A2");
+        expectScaled(rest, TestAccess::pickupGeometry(
+                               engine, std::max(stringIndex, 0)),
+                     2.0f, "member expression bend");
+    }
+
+    // Reconfiguring the live geometry must not clear the spatial FIRs or the
+    // Faraday differentiator. A reset would turn every control tick into a
+    // false attack even if the steady-state delay were right.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(note, 0.8f);
+        StereoBuffer establish(static_cast<int>(0.08 * sampleRate));
+        renderInto(engine, establish, 17);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        expect(TestAccess::refreshPickupWaveSpeedPreservesHistory(
+                   engine, stringIndex, std::exp2(2.0f / 12.0f)),
+               "a wave-speed refresh reset populated pickup/EMF history");
+    }
+
+    // A pure slide changes speaking length and pitch reciprocally, so it must
+    // not masquerade as a tension change. Absolute pickup delays stay fixed.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(note, 0.8f);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        const auto before = TestAccess::pickupGeometry(engine, stringIndex);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(note + 2, 0.8f);
+        StereoBuffer travel(static_cast<int>(0.015 * sampleRate));
+        renderInto(engine, travel, 17);
+        const auto after = TestAccess::pickupGeometry(engine, stringIndex);
+        expect(TestAccess::legatoBlend(engine, stringIndex) > 0.35f
+                   && TestAccess::legatoBlend(engine, stringIndex) < 0.65f,
+               "the pickup slide fixture missed the travelling finger");
+        expect(std::abs(after.waveSpeedRatio - 1.0f) < 1.0e-7f
+                   && std::abs(after.neckTapDelay / before.neckTapDelay - 1.0f)
+                          < 2.0e-5f
+                   && std::abs(after.bridgeTapDelay / before.bridgeTapDelay - 1.0f)
+                          < 2.0e-5f
+                   && std::abs(after.apertureDelay / before.apertureDelay - 1.0f)
+                          < 2.0e-5f
+                   && std::abs(after.coilDelay / before.coilDelay - 1.0f)
+                          < 2.0e-5f,
+               "a zero-bend slide changed transverse wave speed");
+
+        // Opposing wheel travel can hold total pitch still while tension moves.
+        // Stay below the dispersion fit's 0.06-fret quantum so this specifically
+        // proves that pickup geometry follows its own tension coordinate.
+        TestAccess::setLegatoWithOpposingBend(engine, stringIndex, 0.0f);
+        const auto opposedStart =
+            TestAccess::pickupGeometry(engine, stringIndex);
+        TestAccess::setLegatoWithOpposingBend(engine, stringIndex, 0.10f);
+        const auto opposedMoved =
+            TestAccess::pickupGeometry(engine, stringIndex);
+        const float fromSemitones = 12.0f * std::log2(
+            TestAccess::legatoFromFrequency(engine, stringIndex)
+            / TestAccess::snapshot(engine, stringIndex).baseFrequency);
+        const float bendStart = -fromSemitones;
+        const float bendMoved = -fromSemitones
+            * (1.0f - electry::smoothStep(0.10f));
+        const float expectedRatioChange =
+            std::exp2((bendMoved - bendStart) / 12.0f);
+        expect(std::abs(opposedMoved.waveSpeedRatio
+                            / (opposedStart.waveSpeedRatio
+                               * expectedRatioChange)
+                        - 1.0f) < 2.0e-5f,
+               "opposing slide/bend left pickup geometry on the pitch gate");
+    }
+
+    // A live finger vibrato is the other tension path. Use the voice's actual
+    // semitone excursion rather than deriving the expectation from this cache.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(note + 2, 0.8f);
+        const int stringIndex = TestAccess::stringForNote(engine, note + 2);
+        const auto before = TestAccess::pickupGeometry(engine, stringIndex);
+        engine.setVibrato(1.0f);
+        const int tickFrames = TestAccess::hostFramesPerControlPeriod(engine);
+        StereoBuffer tick(tickFrames);
+        auto widest = before;
+        float widestSemitones = 0.0f;
+        for (int frame = 0; frame < static_cast<int>(1.0 * sampleRate);
+             frame += tickFrames)
+        {
+            renderInto(engine, tick, tickFrames);
+            const auto current = TestAccess::pickupGeometry(engine, stringIndex);
+            const float currentSemitones =
+                TestAccess::snapshot(engine, stringIndex).vibratoSemitones;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+            const float currentTensionSemitones = currentSemitones
+                + 12.0f * std::log2(TestAccess::attackPitchState(
+                                        engine, stringIndex).frequencyFactor);
+#else
+            const float currentTensionSemitones = currentSemitones;
+#endif
+            // Inspect a tick that actually crossed the engine's 0.0008-semitone
+            // pitch quantum; between such ticks the instantaneous gesture may
+            // move while both the loop target and pickup geometry correctly hold.
+            if (current.waveSpeedRatio > widest.waveSpeedRatio + 1.0e-7f)
+            {
+                widestSemitones = currentTensionSemitones;
+                widest = current;
+            }
+        }
+        expect(widestSemitones > 0.08f,
+               "the vibrato fixture never developed a measurable tension bend");
+        expectScaled(before, widest, widestSemitones,
+                     "live fretting-hand vibrato");
+    }
+
+}
+
 void testHumbuckerTwoCoilNotch()
 {
     constexpr double sampleRate = 48000.0;
@@ -17811,6 +18106,7 @@ int main()
 #endif
     testAttackStateTransitions();
     testPickupsToneAndBuildMorph();
+    testPickupGeometryFollowsLiveWaveSpeed();
     testHumbuckerTwoCoilNotch();
     testArtifactsControl();
 #if ELECTRY_POSITIONED_FRET_COLLISION

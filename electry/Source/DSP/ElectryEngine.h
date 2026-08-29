@@ -670,8 +670,8 @@ private:
     };
 
     // Causal finite-window spatial average implemented through a ring of
-    // cumulative sums. It gives the exact rectangular-aperture sinc response
-    // with O(1) work and supports a fractional window length.
+    // cumulative sums. It gives the chosen rectangular-aperture response with
+    // O(1) work and supports a fractional window length.
     struct FractionalMovingAverage
     {
         std::array<double, apertureHistorySize> cumulativeHistory {};
@@ -1237,6 +1237,19 @@ private:
         FractionalMovingAverage apertureBridge {};
         CoilPairSum coilPairNeck {};
         CoilPairSum coilPairBridge {};
+        // Bend/vibrato is a separate pickup coordinate: an opposing slide can
+        // keep total pitch fixed while changing tension and transverse speed.
+        float pickupTensionSemitones { 0.0f };
+#if ELECTRY_ENERGY_ATTACK_PITCH
+        // Pickup-owned so a legato or damping solve cannot consume a small
+        // attack-tension move through the loop pitch's independent cache.
+        float pickupAttackPitchFrequencyFactor { 1.0f };
+#endif
+        // Transverse wave speed relative to the same string at its present
+        // unbent fret. Fretting alone leaves this at one; tension gestures move
+        // every representable pickup delay by 1/c (the aperture implementation
+        // clamps a sub-sample window to a one-sample identity).
+        float pickupWaveSpeedRatio { 1.0f };
         float previousFluxNeck { 0.0f };
         float previousFluxBridge { 0.0f };
         OnePole emfLowpassNeck {};
