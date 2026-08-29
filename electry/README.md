@@ -90,11 +90,11 @@ real-recording boundaries and blind-study plan live in the
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
 | `01-range-open-strings.wav` | −12.6 dBFS | +9.6 dB |
-| `02-range-full-fretboard.wav` | −14.2 dBFS | +11.2 dB |
+| `02-range-full-fretboard.wav` | −14.7 dBFS | +11.7 dB |
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −13.2 dBFS | +10.2 dB |
 | `05-drop-e-rhythm-amp.wav` | −12.6 dBFS | +9.6 dB |
-| `06-lead-amp-delay-room.wav` | −11.9 dBFS | +8.9 dB |
+| `06-lead-amp-delay-room.wav` | −11.8 dBFS | +8.8 dB |
 | `07-pickups-and-tone.wav` | −12.5 dBFS | +9.5 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.5 dBFS | +13.5 dB |
 | `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
@@ -108,8 +108,8 @@ real-recording boundaries and blind-study plan live in the
 | `17-extended-technique-solo.wav` | −12.4 dBFS | +9.4 dB |
 | `18-syncopated-djent-study.wav` | −12.3 dBFS | +9.3 dB |
 | `19-modern-metalcore-study.wav` | −12.5 dBFS | +9.5 dB |
-| `20-odd-meter-prog-study.wav` | +0.4 dBFS | −3.4 dB |
-| `21-blues-rock-lead-study.wav` | −9.6 dBFS | +6.6 dB |
+| `20-odd-meter-prog-study.wav` | +1.0 dBFS | −4.0 dB |
+| `21-blues-rock-lead-study.wav` | −9.7 dBFS | +6.7 dB |
 | `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
 | `23-amp-voices.wav` | −15.4 dBFS | +12.4 dB |
 <!-- peaks-table-end -->
@@ -415,6 +415,9 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   delay line left after damping and dispersion phase compensation. A fixed hand
   therefore remains fixed through fret and String Age changes, while tension
   bends move its delay by the physically required inverse wave-speed ratio.
+  Positions past the speaking string's midpoint retain their own modal phase
+  instead of being mirrored or snapped to 49%; only the final two per cent are
+  reserved as the endpoint/contact guard, symmetric with the bridge end.
 - **Pick release:** the plectrum does not leave every string equally quickly. A
   wound .080 carries far more mass per unit length than a plain .009 at
   comparable tension, so it leaves the pick more slowly, and the duration of
@@ -484,12 +487,14 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   open A2's octave partial 16 dB per second of loss nothing physical was asking
   for. The pinch harmonic is the same filter driven by the other hand: the
   thumb catches the string at the pick's own position, so Pick Position chooses
-  which partial squeals. Near the bridge it selects a high partial; over the
-  neck, co-locating the pick and thumb near 49% leaves a low even partial rather
-  than guaranteeing the octave, because modes at the touch node also begin
-  near the pluck's own null. The current E3 regression selects partial eight at
-  the bridge and four over the neck, moves the tracked mean from 6.03 to 4.78
-  and lifts the bridge squeal 9.23 dB against an ordinary stroke. It is a
+  which partial squeals. Near the bridge it selects a high partial; approaching
+  the midpoint leaves a low even partial rather than guaranteeing the octave,
+  because modes at the touch node also begin near the pluck's own null. Passing
+  the midpoint walks that sequence upward again with the far side's distinct
+  modal phase—it is not another midpoint setting. The current E3 regression
+  selects partials eight/four/nine at the bridge, near-midpoint and far-side
+  settings, moves the tracked mean 6.03 -> 4.74 -> 7.06, and lifts the bridge
+  squeal 9.23 dB against an ordinary stroke. It is a
   firmer, longer contact than the fretting finger's because the mode-shape law
   gives a touch that close to the bridge little purchase on the low partials —
   the fundamental loses about seven per cent of its energy per round trip where
@@ -1150,9 +1155,9 @@ High-Gain.
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
 | Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store; Lee et al.'s measured common partial glide | Shipping keeps its compensated fundamental delay independent of pick velocity. The compile-time default-off experiment converts the resolved two-axis release energy through the steel core's axial `E A`, clamps the shared tension ratio to a seven-cent ceiling, and moves the complete compensated period without refitting static dispersion | A bounded research candidate that passes a frozen conventional-E2 descriptive compatibility gate with under 1% measured CPU overhead; not enabled shipping behavior, an exact-eight calibration, a causal identification, or evidence of market superiority |
-| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; its fixed-metre position and asymmetric 0.5-1.5 mm contact patch map through the complete sounding period rather than filter-phase-shortened raw delay, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; pull-off release position uses the same physical-period coordinate, and legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
+| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; its fixed-metre position and asymmetric 0.5-1.5 mm contact patch map through the complete sounding period rather than filter-phase-shortened raw delay, retain far-side positions through the midpoint and reserve only a symmetric two-per-cent guard at either termination, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; pull-off release position uses the same physical-period coordinate, and legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling; [Poirot et al.'s perceptual study of collision location](https://doi.org/10.1109/TASLP.2023.3284515) | Shipping uses the Artifacts path's decaying collision window, whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise. The compile-time default-off positioned-loss candidate instead compares the unfiltered return with a following-fret tap at `D * 2^(-1/12)`, retaining the old zero-slope knee while giving the loss a `sin^2(n pi p)` modal location cue; distributed Dead contact keeps the shipping law | Shipping is bounded collision-informed contact behavior. The candidate is a one-read longitudinal loss surrogate that deliberately retains shipping's bilateral absolute-value barrier for an isolated A/B; it is not a unilateral fretboard obstacle, reciprocal two-rail junction, passive nonlinear contact proof, measured action/fret geometry, or FDTD distributed-contact simulation |
-| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the spectral region; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials. The co-located ideal pick/touch product tends to `abs(sin(2 pi n p))`, so a hand near the midpoint selects a low even partial without promising the octave | Position-dependent high-versus-low harmonic selection with the technique's own asymmetry preserved; not a measured thumb/pick separation, thumb geometry, pick grip, or exact contact-area model |
+| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the spectral region; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials. The co-located ideal pick/touch product tends to `abs(sin(2 pi n p))`, so approaching the midpoint selects a low even partial without promising the octave, while crossing it reverses that sequence with distinct relative modal phase | Position-dependent harmonic selection on both halves of the speaking string with the technique's own asymmetry preserved; not a measured thumb/pick separation, thumb geometry, pick grip, or exact contact-area model |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap contact `(1 - d/2) + (d/2) z^-M` inside each polarisation loop. `M` is `p` times the complete live fundamental period—raw current delay plus its cached damping/dispersion phase—so build damping cannot move a fixed finger and the existing bend smoother and horizontal detune remain continuous. The ideal nondispersive response is unity at a node and `1 - d` at an antinode. The natural harmonic touches the midpoint, so its octave comes from the string's own series, inharmonicity, decay and pickup comb; the finger lifts once the note has formed | A low-cost fundamental-period realization that targets the ideal nondispersive node law subject to cubic fractional-delay interpolation; additionally approximate for a stiff string's inharmonic spatial modes, and not a distributed finger-force or local bidirectional contact solve |
 | Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, moves stiffness with the live `1/L^2` coordinate, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position-, stiffness- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved. An ascending note gets the established soft finger impact; a descending note, including a release to an open string, excites the old fret's position in the lateral plane, both without plectrum noise. A mid-glide Hammer takes its source and direction from the live fractional fret while phase-compensated delay translation preserves effective pitch. Neither gesture moves a planted Palm hand or rewrites sibling damping | Pitch-continuous, direction-aware legato with conservatively voiced finger attacks; not a velocity-continuous spline or a distributed or capture-fitted finger-force model |
@@ -2256,6 +2261,38 @@ regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
 
+### 2026-08-29 far-side pick geometry
+
+- Pick and co-located thumb positions now retain the complete speaking-string
+  coordinate through the midpoint and up to the symmetric two-per-cent
+  endpoint/contact guard at `p = 0.98`. The former 49% ceiling was not a safety
+  bound: it moved every valid `0.5 < p < 1` contact to the midpoint and erased
+  relative modal phase even though ideal comb magnitude can look mirrored.
+  Nominal Pick Position 0.30 at top-string fret 22 is `p = 0.57552`; the old
+  clamp displaced it 16.8 mm bridgeward on the default 27.625-inch scale. At
+  fret 12 the nominal neck endpoint is `p = 0.96`, which the clamp displaced
+  164.9 mm. Regressions pin the far-side absolute coordinate, the unchanged
+  below-midpoint path, the unmirrored 98% endpoint and both pick/thumb identity.
+- The existing positive `pP` touch image remains valid: because
+  `p = p_open 2^(fret/12)` while `P = P_open 2^(-fret/12)`, its extra delay is
+  the fixed hand distance `pP = p_open P_open`, not an allocation that grows
+  with fret. Far-side lowest-string Pinch reads remain inside the delay line at
+  44.1, 48, 96, 96.001, 192 and 384 kHz under -2/0/+2-semitone bends. This is
+  one event-time clamp change with no new state or render-loop operation.
+- The E3 Pinch mechanism now distinguishes bridge, near-midpoint and far-side
+  settings: strongest partials are eight/four/nine and tracked means are
+  6.03/4.74/7.06. That non-monotone return is the co-located
+  `abs(sin(2 pi n p))` sequence crossing the midpoint, not a reason to restore
+  the false clamp. Public recordings do not control an absolute far-side pick
+  point, so this analytically corrects geometry rather than claiming a capture
+  win; a decisive fit needs mechanically repeated raw DI at measured mirrored
+  positions such as `p = 0.42/0.58`, scored for complex modal phase as well as
+  magnitude.
+- A same-compiler baseline/candidate render changed exactly the five canonical
+  demos containing affected far-side notes: 02, 06, 17, 20 and 21. The other 18
+  baseline/candidate WAV pairs were byte-identical, so their committed assets
+  remain untouched; the level table records only the five changed candidates.
+
 ### 2026-08-29 live status accessibility announcements
 
 - The live engine status now sends a JUCE accessibility `titleChanged` event
@@ -2285,15 +2322,16 @@ regression-measured model—not capture parity or market leadership.
   96 kHz run measured 0.1208x realtime in the hostile Both/Stereo eight-string
   case, below the unchanged portable guard.
 - Correcting the coordinate exposed one over-specific historical regression:
-  with pick and thumb co-located at the 49% clamp, their ideal modal product is
+  with pick and thumb co-located at the then-existing 49% clamp, their ideal
+  modal product is
   `abs(sin(2 pi n p))`, making the fourth start about 5.95 dB above the octave.
   The raw-delay error had accidentally reversed that ordering. The revised
-  mechanism gate requires a low even partial (two or four) at the neck extreme,
-  a bridge partial of at least six, a lower spectral mean toward the neck and
-  more than 6 dB of squeal lift. Shipping currently selects eight/four, moves
-  its tracked mean 6.03 -> 4.78 and measures 9.23 dB of lift. No arbitrary thumb
-  offset was introduced to preserve the old snapshot; a measured fixed-metre
-  thumb/pick separation remains capture-gated.
+  mechanism gate required a low even partial (two or four) near the midpoint,
+  a bridge partial of at least six, a lower spectral mean toward that midpoint
+  and more than 6 dB of squeal lift. The later far-side checkpoint retains that
+  rail at Pick Position 0.90 and adds the distinct post-midpoint result instead
+  of preserving the clamp. No arbitrary thumb offset was introduced; a
+  measured fixed-metre thumb/pick separation remains capture-gated.
 - This is corrected fundamental-period geometry, not an exact spatial contact
   for every inharmonic partial: a single temporal tap cannot represent all
   stiff-string nodes. The correction and that claim boundary are decided

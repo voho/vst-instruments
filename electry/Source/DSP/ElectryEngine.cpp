@@ -4626,8 +4626,12 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
     const float strokePluckFraction = pluckFraction
         + strokeContactOffsetMetres / scaleLengthMetres();
+    // A valid pick point does not stop existing when it crosses the speaking
+    // string's midpoint. Mirroring or pinning it there preserves magnitude on
+    // an ideal string but discards modal phase. Keep only the symmetric final
+    // two per cent as an endpoint/contact guard, matching the bridge end.
     const float combFraction = clampf(strokePluckFraction * fretStretch,
-                                      0.02f, 0.49f);
+                                      0.02f, 0.98f);
     const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
                                           0.05f);
     // Where the touching hand is, if either hand is touching. The natural
@@ -4638,9 +4642,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // the stiff string's inharmonic spatial modes remain approximations.
     //
     // The pinch harmonic is the picking hand's thumb catching the string
-    // immediately after the pick, so it touches at the pick's own position -
-    // which is why moving Pick Position toward the neck moves the squeal down
-    // the harmonic series, exactly as moving the hand does on the instrument.
+    // immediately after the pick, so it touches at the pick's own position.
+    // Moving toward the midpoint walks the squeal down the harmonic series;
+    // continuing past the midpoint reverses that sequence with distinct phase,
+    // exactly as moving the hand does on the instrument.
     // Its depth is one rather than the fretting finger's 0.92 because a thumb
     // pressed against a string is a much firmer contact, and it stays on the
     // string far longer, because the mode-shape law gives a contact this close

@@ -9103,6 +9103,59 @@ void testTouchHarmonics()
                         - expectedBendScale) < 2.0e-5f,
            "a two-semitone pre-bend did not move the touch tap with 1/c");
 
+    // A fixed picking hand can legitimately lie past the speaking string's
+    // midpoint on a fretted note. Keep that geometric fraction and its modal
+    // phase instead of snapping it to 49%. The existing positive pP image is
+    // still within the delay-line allocation at every supported rate and bend
+    // extreme, including the low string where the period is longest.
+    for (const double hostRate : { 44100.0, 48000.0, 96000.0, 96001.0,
+                                   192000.0, 384000.0 })
+    {
+        for (const float bend : { -1.0f, 0.0f, 1.0f })
+        {
+            ElectryEngine farSide;
+            farSide.prepare(hostRate, 512);
+            auto farParameters = parameters;
+            farParameters.pickPosition = 1.0f;
+            farSide.setParameters(farParameters);
+            farSide.setPitchBend(bend);
+            farSide.reset();
+            farSide.noteOn(styleKeyswitch(PlayStyle::Pinch), 1.0f);
+            farSide.noteOn(30, 0.8f); // fret 2 on the unique lowest string
+            const int stringIndex = TestAccess::stringForNote(farSide, 30);
+            const auto geometry = TestAccess::touchGeometry(
+                farSide, std::max(stringIndex, 0));
+            const float verticalPeriod = geometry.verticalRawPeriod
+                + geometry.soundingPeriod
+                - geometry.verticalCompensatedPeriod;
+            const float horizontalPeriod = geometry.horizontalRawPeriod
+                + geometry.soundingPeriod
+                - geometry.horizontalCompensatedPeriod;
+            const float expectedVertical = geometry.verticalRawPeriod
+                + geometry.fraction * verticalPeriod;
+            const float expectedHorizontal = geometry.horizontalRawPeriod
+                + geometry.fraction * horizontalPeriod;
+            const float maximumRead = static_cast<float>(
+                TestAccess::delayLineCapacity() - 8);
+            expect(stringIndex == 0 && geometry.fraction > 0.5f
+                       && geometry.fraction < 0.98f,
+                   "the far-side touch fixture did not retain its physical "
+                   "lowest-string pick position");
+            expect(std::abs(geometry.verticalReadDelay - expectedVertical)
+                           < 1.0e-6f * verticalPeriod
+                       && std::abs(geometry.horizontalReadDelay
+                                   - expectedHorizontal)
+                              < 1.0e-6f * horizontalPeriod,
+                   "a far-side touch left the positive full-period pP image");
+            expect(geometry.verticalReadDelay >= 4.0f
+                       && geometry.horizontalReadDelay >= 4.0f
+                       && geometry.verticalReadDelay <= maximumRead
+                       && geometry.horizontalReadDelay <= maximumRead,
+                   "a far-side touch exceeded the allocated delay line at "
+                       + std::to_string(hostRate) + " Hz");
+        }
+    }
+
     // A wheel move after contact exercises the other half of the formula:
     // currentDelay is deliberately between its old and new targets. The touch
     // must follow that live period, not jump to the target and not fall back to
@@ -11030,9 +11083,34 @@ void testPinchHarmonic()
         return renderNote(engine, sampleRate, note, 0.9f, style, 1.0);
     };
 
+    // At this fret the neck-end setting is a real far-side contact, not a
+    // midpoint synonym. Pin both the absolute metre-derived fraction and the
+    // fact that the thumb reads that same position before scoring its spectrum.
+    parameters.pickPosition = 1.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Pinch), 1.0f);
+    engine.noteOn(note, 0.9f);
+    const int farString = TestAccess::stringForNote(engine, note);
+    const auto farVoice = TestAccess::snapshot(engine, farString);
+    const auto farTouch = TestAccess::touchGeometry(engine, farString);
+    const float farExpected = electry::clampf(
+        (0.48f + farVoice.strokeContactOffsetMetres
+                     / TestAccess::scaleLengthMetres(engine))
+            * std::exp2(static_cast<float>(farVoice.fret) / 12.0f),
+        0.02f, 0.98f);
+    expect(farTouch.fraction > 0.5f
+               && std::abs(farTouch.fraction - farExpected) < 1.0e-6f
+               && std::abs(farVoice.excitationCombDelay
+                                / farVoice.lastCompensatedPeriod
+                            - farTouch.fraction) < 1.0e-6f,
+           "the far-side pinch did not keep the pick and thumb at their "
+           "physical position");
+
     const auto pickedNearBridge = renderAt(0.18f, PlayStyle::Sustain);
     const auto pinchedNearBridge = renderAt(0.18f, PlayStyle::Pinch);
-    const auto pinchedOverNeck = renderAt(1.0f, PlayStyle::Pinch);
+    const auto pinchedNearMidpoint = renderAt(0.90f, PlayStyle::Pinch);
+    const auto pinchedFarSide = renderAt(1.0f, PlayStyle::Pinch);
 
     const auto strongestPartial = [] (const std::array<double, 17>& magnitudes)
     {
@@ -11052,10 +11130,12 @@ void testPinchHarmonic()
 
     const auto pickedPartials = partialMagnitudes(pickedNearBridge);
     const auto pinchedPartials = partialMagnitudes(pinchedNearBridge);
-    const auto neckPartials = partialMagnitudes(pinchedOverNeck);
+    const auto midpointPartials = partialMagnitudes(pinchedNearMidpoint);
+    const auto farSidePartials = partialMagnitudes(pinchedFarSide);
     const double pickedMean = meanPartial(pickedPartials);
     const double pinchedMean = meanPartial(pinchedPartials);
-    const double neckMean = meanPartial(neckPartials);
+    const double midpointMean = meanPartial(midpointPartials);
+    const double farSideMean = meanPartial(farSidePartials);
 
     // Measured with per-partial peak tracking so stiffness and window leakage
     // cannot masquerade as articulation separation.
@@ -11067,26 +11147,36 @@ void testPinchHarmonic()
            "the pinch did not move the note's weight up the harmonic series "
            "(picked " + std::to_string(pickedMean) + ", pinched "
                + std::to_string(pinchedMean) + ")");
-    expect(neckMean < pinchedMean - 1.25,
-           "moving the picking hand toward the neck did not move the squeal "
-           "down the series (bridge " + std::to_string(pinchedMean) + ", neck "
-               + std::to_string(neckMean) + ")");
+    expect(midpointMean < pinchedMean - 1.25,
+           "moving the picking hand near the midpoint did not move the squeal "
+           "down the series (bridge " + std::to_string(pinchedMean)
+               + ", midpoint " + std::to_string(midpointMean) + ")");
+    expect(farSideMean > midpointMean + 1.5,
+           "crossing the midpoint did not reverse the co-located pick/thumb "
+           "mode sequence (midpoint " + std::to_string(midpointMean)
+               + ", far side " + std::to_string(farSideMean) + ")");
 
     // The touch sits at the pick, so the surviving partial is the one with a
     // node there: around the eighth near the bridge, and a low even partial
-    // with the hand over the neck where the touch is at nearly half the string.
-    // With pick and thumb co-located at 49%, the ideal octave is also barely
-    // excited; requiring exactly partial two used to pin the filter-phase-
-    // shortened raw delay rather than a physical node coordinate.
+    // with the hand just short of the midpoint. Crossing the midpoint then
+    // walks the same physical mode sequence back upward with different phase;
+    // it is not a synonym for the midpoint. Requiring exactly partial two used
+    // to pin the filter-phase-shortened raw delay rather than a physical node
+    // coordinate.
     const int bridgeSquealPartial = strongestPartial(pinchedPartials);
-    const int neckSquealPartial = strongestPartial(neckPartials);
+    const int midpointSquealPartial = strongestPartial(midpointPartials);
+    const int farSideSquealPartial = strongestPartial(farSidePartials);
     expect(bridgeSquealPartial >= 6,
            "the near-bridge pinch did not select a high partial (strongest "
                + std::to_string(bridgeSquealPartial) + ")");
-    expect((neckSquealPartial == 2 || neckSquealPartial == 4)
-               && neckSquealPartial < bridgeSquealPartial,
-           "the pinch with the hand over the neck did not select a low even partial "
-           "(strongest " + std::to_string(neckSquealPartial) + ")");
+    expect((midpointSquealPartial == 2 || midpointSquealPartial == 4)
+               && midpointSquealPartial < bridgeSquealPartial,
+           "the near-midpoint pinch did not select a low even partial "
+           "(strongest " + std::to_string(midpointSquealPartial) + ")");
+    expect(farSideSquealPartial >= 6
+               && farSideSquealPartial != midpointSquealPartial,
+           "the far-side pinch collapsed back onto the midpoint spectrum "
+           "(strongest " + std::to_string(farSideSquealPartial) + ")");
 
     // Measured against the ordinary pick stroke, the squeal partial gains a
     // long way on the fundamental. This is the effect itself rather than a
@@ -11122,11 +11212,12 @@ void testPinchHarmonic()
            "the pinch did not lift its partial against the fundamental (gain "
                + std::to_string(gain) + " dB at partial "
                + std::to_string(gainPartial) + ")");
-    std::cout << "PROBE pinch picked/pinched/neck means "
-              << pickedMean << '/' << pinchedMean << '/' << neckMean
-              << ", strongest bridge/neck " << bridgeSquealPartial << '/'
-              << neckSquealPartial << ", gain " << gain << " dB at partial "
-              << gainPartial << '\n';
+    std::cout << "PROBE pinch picked/bridge/midpoint/far means "
+              << pickedMean << '/' << pinchedMean << '/' << midpointMean << '/'
+              << farSideMean << ", strongest bridge/midpoint/far "
+              << bridgeSquealPartial << '/' << midpointSquealPartial << '/'
+              << farSideSquealPartial << ", gain " << gain
+              << " dB at partial " << gainPartial << '\n';
 
     // It is its own articulation, not a relabelled one.
     const auto natural = renderAt(0.18f, PlayStyle::Harmonics);
@@ -11136,6 +11227,10 @@ void testPinchHarmonic()
     expect(normalisedDifferenceRms(pinchedNearBridge.left, natural.left, 0,
                                    static_cast<int>(0.3 * sampleRate)) > 0.2,
            "a pinch renders nearly the same audio as a natural harmonic");
+    expect(normalisedDifferenceRms(pinchedFarSide.left,
+                                   pinchedNearMidpoint.left, 0,
+                                   static_cast<int>(0.3 * sampleRate)) > 0.2,
+           "a far-side pinch rendered as a mirrored midpoint clamp");
 }
 
 // The fretting hand has a position and a reach, so the same pitch is not
@@ -15687,7 +15782,7 @@ void testPickGeometryFollowsFret()
         ElectryEngine engine;
         engine.prepare(sampleRate, 512);
         EngineParameters parameters;
-        parameters.pickPosition = 0.10f;
+        parameters.pickPosition = 0.30f;
         engine.setParameters(parameters);
         engine.reset();
         engine.noteOn(midiNote, 0.8f);
@@ -15704,7 +15799,9 @@ void testPickGeometryFollowsFret()
     const double frettedComb = combFraction(86);
     const double expectedRatio = std::pow(2.0, 22.0 / 12.0);
     const double actualRatio = frettedComb / std::max(openComb, 1.0e-9);
-    expect(std::abs(actualRatio - expectedRatio) < 1.0e-4 * expectedRatio,
+    expect(frettedComb > 0.5 && frettedComb < 0.98
+               && std::abs(actualRatio - expectedRatio)
+                      < 1.0e-4 * expectedRatio,
            "pluck position did not follow the fretted sounding length ("
                + std::to_string(actualRatio) + " vs "
                + std::to_string(expectedRatio) + ")");
@@ -15716,14 +15813,16 @@ void testPickContactGeometry()
 
     // A plectrum is neither a point nor symmetric: it touches the string over a
     // patch and it slips off far faster than it loaded.
-    const auto pickGeometry = [] (int midiNote, float hardness,
-                                  float stringAge, float pitchBend)
+    const auto pickGeometry = [] (
+        int midiNote, float hardness, float stringAge, float pitchBend,
+        float pickPosition = EngineParameters {}.pickPosition)
     {
         ElectryEngine engine;
         engine.prepare(sampleRate, 512);
         EngineParameters parameters;
         parameters.pickHardness = hardness;
         parameters.stringAge = stringAge;
+        parameters.pickPosition = pickPosition;
         engine.setParameters(parameters);
         engine.setPitchBend(pitchBend);
         engine.reset();
@@ -15745,7 +15844,7 @@ void testPickContactGeometry()
                 (0.025f + (0.48f - 0.025f) * parameters.pickPosition
                     + snapshot.strokeContactOffsetMetres / scaleLength)
                     * fretStretch,
-                0.02f, 0.49f);
+                0.02f, 0.98f);
             const float expectedCentre = expectedFraction
                                        * snapshot.lastCompensatedPeriod;
             const float soundingLength = std::max(
@@ -15772,9 +15871,25 @@ void testPickContactGeometry()
     const auto highDefault = pickGeometry(64, 0.6f, defaultAge, 0.0f);
     const auto lowSoft = pickGeometry(28, 0.0f, defaultAge, 0.0f);
     const auto lowHard = pickGeometry(28, 1.0f, defaultAge, 0.0f);
+    const auto fretTwelveNearFinger = pickGeometry(
+        76, 0.6f, defaultAge, 0.0f, 1.0f);
+    const auto stoppedAtFinger = pickGeometry(
+        86, 0.6f, defaultAge, 0.0f, 1.0f);
 
     expect(lowDefault.excitationCombWidth > 0.0f,
            "the pick contact patch has no width");
+    expect(lowDefault.excitationCombDelay
+                   / lowDefault.lastCompensatedPeriod < 0.49f,
+           "the below-midpoint pick fixture did not stay on its original path");
+    expect(fretTwelveNearFinger.excitationCombDelay
+                   / fretTwelveNearFinger.lastCompensatedPeriod > 0.90f,
+           "a valid fret-12 pick near the stopping finger was collapsed to "
+           "the string midpoint");
+    expect(std::abs(stoppedAtFinger.excitationCombDelay
+                        / stoppedAtFinger.lastCompensatedPeriod
+                    - 0.98f) < 1.0e-6f,
+           "a fixed pick beyond the shortened string was not stopped just "
+           "bridge-side of the fretting finger");
     // A fixed physical patch is a larger share of the low string's much longer
     // round trip, so it spans more delay-line samples there.
     expect(lowDefault.excitationCombWidth > 4.0f * highDefault.excitationCombWidth,
