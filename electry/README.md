@@ -1587,10 +1587,25 @@ The active-F# cost is one double biquad per polarisation on one voice. In 24
 alternating 96 kHz, 512-frame, eight-note runs, OFF and ON used 0.12325x and
 0.12239x realtime at their independent medians; paired overhead averaged 0.69%
 inside a -5.05..+3.77% clock-noise range, and the worst ON run was 0.12634x.
-CPU is not the promotion blocker. A legato retarget changes its loss topology
-immediately when it crosses MIDI 29/30 or 42/43; regression tests bound gross
-steps and pitch error, but do not make that law continuous. The flag therefore
-remains off pending a smoothed boundary, repeated licensed exact-eight
+CPU is not the promotion blocker. The two evidence boundaries now follow the
+same continuous fret coordinate as Hammer and Slide: a one-fret C1 smoothstep
+crossfades loss between frets 1/2 and 14/15, retains the exact source section
+until the finger actually moves, and lands on exact full-correction and bypass
+endpoints. Each tick rebuilds the passive physical filter rather than
+interpolating coefficients, retains the two independent filter states, and
+translates both raw delays for the changed filter phase. Legacy and MPE bends
+do not move the evidence gate.
+
+The boundary regression covers both directions at both ends for Hammer and
+Slide, chained reversal, finite output, monotone loss, fractional passivity,
+legacy/MPE bends and both-polarisation stationary-pitch error below 0.25 cent
+at 44.1, 48, 96, 192 and 384 kHz. All thirteen settled ON renders remain
+byte-identical to the frozen candidate and all thirteen OFF renders remain
+byte-identical to shipping. An intentionally continuous, alternating MIDI
+29/30 boundary-Slide microbenchmark at 96 kHz and eight-sample process quanta
+used 0.04459x OFF and 0.04750x ON at the six-run medians: 0.00291x realtime,
+or 0.29 percentage points of one core, for coefficient motion on every control
+tick. The flag therefore remains off only pending repeated licensed exact-eight
 captures and phrase-level blind listening. No harmonic bank, neural network or
 FDTD solver enters the realtime path.
 
