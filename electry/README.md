@@ -2352,6 +2352,142 @@ requires predeclared superiority. Until those commissioned captures and the
 frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
+#### Capture-gated support-friction pitch memory
+
+Electry's bend trajectory is currently memoryless. The legacy wheel or resolved
+MPE member/master interval is smoothed, added to legato and vibrato, and mapped
+directly to `f0`. A key-held voice returns with its controller trajectory; a
+released MPE tail deliberately freezes its member interval while its master
+remains live. A legacy rendered-audio regression holds an up-bent string's
+centred return within 0.75 cent. These are deterministic MIDI contracts, but
+none can express a tension imbalance left at a nut, stopped fret or saddle
+after a real tension gesture reverses.
+
+[Groves and Kemp](https://journals.pan.pl/Content/112808/PDF/aoa.2019.129261.pdf)
+used tuner steps on a one-string rig across a Stratocaster-type saddle and found
+capstan-consistent coefficients below 0.26 for wound strings and below 0.17 for
+plain strings. They report that sliding almost equalises the two tensions
+before friction arrests a smaller residual, and argue from practical afterlength
+geometry that the sounding-length pitch consequence is small but non-zero; they
+did not measure an actual bend-return trajectory and leave its full treatment
+outside the paper. Surface condition strongly affected their result, while the
+capstan equation is itself only an approximation for a stiff, elastic string
+that slips dynamically. Kemp's
+[tremolo-arm experiment](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0184803)
+conditioned one non-locking Stratocaster to repeat within two cents by retuning
+and repeating any unstable pull-up, so those trials cannot estimate a
+greater-than-two-cent return-memory distribution. On a different Washburn,
+clamping a locking nut changed one high-E pull-up response by `21 +/- 11%`.
+That result establishes nut/afterlength compliance as a control variable, not a
+hysteretic-return amplitude. Neither paper's coefficients or measured intervals
+transfer to an extended-range guitar, and neither identifies Electry's residual.
+
+The smallest candidate is therefore a measured play operator, not a derivation
+of either paper. For each physical string `s`, let `x_s` be one already-smoothed
+wheel/MPE tension gesture in semitones, `q_s` its persistent play state,
+`r_s > 0` the fitted play half-width and `h_s` a signed fitted branch-correction
+amplitude constrained by `abs(h_s) < r_s`:
+
+```
+q_s <- clamp(q_s, x_s - r_s, x_s + r_s)
+e_s  = clamp((x_s - q_s) / r_s, -1, 1)
+y_s  = x_s + h_s e_s
+```
+
+Initialising `q_s = x_s` starts this bounded stop operator at exact equilibrium.
+It traces a different return branch after reversal and cannot move corrected
+pitch more than `100 * abs(h_s)` cents away from the input. The full transition
+between branch limits spans `2 r_s`; a smaller excursion need not leave the
+full `h_s` correction. The `abs(h_s) < r_s` rail also keeps its interpolation
+monotone. This is only an engineering inference to test against complete
+trajectories; neither fitted number may be calculated from a published friction
+coefficient. The first experiment keeps legato/fret motion and algorithmic
+vibrato outside the state. Conventional finger-bend and bridge-actuated
+captures are separate strata: legacy-wheel or MPE friction correction stays
+disabled unless its corresponding physical gesture passes.
+
+The first candidate admits exactly one gesture class and needs two fitted floats
+plus one state float per string: 96 bytes for all eight strings. If both classes
+pass separately, two independent states are forbidden because both gestures
+move the same physical string; mixed-gesture captures must identify one
+composed state law first. The admitted class adds at most eight O(1) scalar
+updates at the existing 16-sample control tick; there is no oscillator, filter,
+delay read or sample-loop branch. The corrected interval enters the existing
+configured-F0 path so tension-derived dispersion and pickup wave-speed
+coordinates follow it, while ideal fret length remains unchanged.
+
+For a sounding physical string, `x_s` is the legacy interval or the resolved
+key-held MPE member plus master; after Note Off its member freezes and only the
+master may keep moving it. Idle member messages do not advance an unassigned
+physical state. An ownership or active/sympathetic route change without a
+physical gesture translates `q_s` by the simultaneous change in `x_s`, keeping
+`e_s` continuous: a fresh equilibrium starts with `q_s = x_s`, while a centred
+repick retains a real preceding residual. State survives Note Off and repick,
+and is re-anchored to current `x_s` on enable, engine preparation/reset, an
+explicit retune, or CC 121 after its controller recenter—not on an ordinary
+wheel return or voice retirement. This preserves Reset All Controllers as an
+emergency equilibrium command. The operator is cached once per physical
+string/control tick outside active-voice updates and shared by played and
+sympathetic paths. Tests must cover released-member freeze, live-master motion,
+idle-channel reuse, alternate string assignment and active-to-sympathetic-to-
+repick handoff without a correction jump. A disabled or zero residual returns
+`x_s` before division or state mutation to remain bit-identical. The
+preregistered 96 kHz overhead ceiling is 0.25% of the physical-string engine,
+not a promised result.
+
+Public recordings cannot fit the operator. The
+[EG-IPT corpus](https://doi.org/10.5281/zenodo.15205644) supplies high-resolution
+DI bends, but the audited `HB-bridge_bend-up-wholetone_121-14_2s_DI.wav` and
+`HB-bridge_bend-down-halftone_162-14_2s_DI.wav` examples finish at their bent
+targets rather than pairing a pre-gesture equilibrium with a post-return
+reference. The newer
+[longitudinal string-ageing dataset](https://www.research.ed.ac.uk/en/publications/a-longitudinal-dataset-for-guitar-string-ageing/)
+is an external lead for age dependence only after its fixed-segment timing is
+decoded, and cannot calibrate an eight-string support setup. Neither source
+freezes the actuator, break geometry, afterlength, lubrication and
+locked-support control needed to separate friction memory from player pitch
+error.
+
+Promotion instead requires one pre-stretched target guitar/string set and
+setup, with scale, gauges and core/wrap construction, nut/fret/saddle break
+geometry, both afterlengths, surface treatment, string age and temperature
+logged. A calibrated transverse or bridge actuator performs randomised
+low/middle/high-fret gestures at several safe amplitudes and rates, with fixed
+contact position/normal force and exactly 20 accepted trials per cell. Trial
+exclusions, a maximum attempted count and stopping rule are frozen before
+capture. A paired locked-support or independently frozen low-memory pitch
+trajectory, not raw actuator displacement, supplies the reference `x_s(t)` in
+semitones so ordinary bend geometry cannot be fitted as hysteresis. Clamp state
+is randomised; score matched achieved cents peaks/rates or preregistered strata,
+normalise its change in bend sensitivity, and include a sham clamp plus
+individually controlled supports before assigning causality. Track continuous
+F0 through the return before making a gentle post-return diagnostic pluck, and
+interleave time-matched no-gesture/sham trials to estimate amplitude-dependent
+pitch decay, ordinary tuning drift and disturbance by the diagnostic pluck. A
+temporary locked or clamped-support block is the causal control; equilibrium is
+restored between blocks. Fit only training trials, then hold out complete frets
+and rates. A later-day remove/reinstall session changes the contact surface and
+is external robustness evidence, not a veto of the captured-setup claim.
+
+On training trials a string is non-zero only when the absolute value of its
+post-return signed median exceeds two cents, its trial-level stratified 95%
+bootstrap confidence interval excludes zero and at least 80% of trials agree in
+sign; otherwise `h_s = 0`. A hidden held-out decision must independently repeat
+the floor, interval and sign. The mechanism is rejected entirely if no
+metal-relevant wound low string passes both decisions, or if clamping fails to
+halve the matched residual or push it below the floor. All promotion metrics
+use held-out trials. On every admitted route the candidate must separately
+reduce median absolute full-trajectory error and post-return-window error by at
+least 50% against the current memoryless model, with no worse p95 or maximum in
+either window and the correct reversal sign. Regression rails require exact
+disabled identity, finite `r_s` above a frozen positive floor, bounded output,
+`e_s = 0` after explicit retune, no drift through 1,000 alternating cycles,
+fresh equilibrium attacks unchanged, and stable 44.1--384 kHz/MPE/repick
+lifecycles. Only after those objective gates pass does an RMS-matched dry and
+high-gain blind A/B run. The permissible claim is the captured setup's
+bend-return pitch memory; if a well-set locking target remains inside two cents,
+the realistic result is to ship nothing.
+
 ## Development checkpoints
 
 ### 2026-08-29 sounding-period modal spectrum
