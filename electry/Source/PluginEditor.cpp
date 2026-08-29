@@ -1192,9 +1192,11 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
         auto labelBounds = juce::Rectangle<float> (
             tuningArea.getX(), y - 6.0f, tuningArea.getWidth(), 12.0f);
         auto stringNumberBounds = labelBounds.removeFromLeft (14.0f);
+        // Keep the 8.8 px figures above 4.5:1 over both endpoints of the
+        // panel gradient without competing with the selected-string accent.
         graphics.setColour (stringIndex == selectedString
                                 ? colours::accentBright
-                                : colours::dimText.withAlpha (0.58f));
+                                : colours::dimText.withAlpha (0.72f));
         graphics.setFont (juce::FontOptions (8.8f, juce::Font::bold));
         graphics.drawText (juce::String (
                                electry::ElectryEngine::stringCount - stringIndex),
