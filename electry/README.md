@@ -94,7 +94,7 @@ real-recording boundaries and blind-study plan live in the
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −13.6 dBFS | +10.6 dB |
 | `05-drop-e-rhythm-amp.wav` | −13.0 dBFS | +10.0 dB |
-| `06-lead-amp-delay-room.wav` | −12.0 dBFS | +9.0 dB |
+| `06-lead-amp-delay-room.wav` | −11.9 dBFS | +8.9 dB |
 | `07-pickups-and-tone.wav` | −12.0 dBFS | +9.0 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.7 dBFS | +13.7 dB |
 | `09-guitar-build-contrasts.wav` | −8.7 dBFS | +5.7 dB |
