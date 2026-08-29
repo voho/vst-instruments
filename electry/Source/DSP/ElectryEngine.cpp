@@ -4768,8 +4768,12 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // 1/n^2 high-mode falloff of a triangular released displacement while the
     // position comb below retains the actual pluck location. The separate
     // broad path supplies the plectrum edge, not the sustained tone.
+    // Keep the two-pole curve in harmonic-number coordinates. A pre-bent
+    // plectrum or settled-source finger contact already has a sounding period
+    // different from the written note; using that same period here transports
+    // the established unbent spectrum instead of tilting it with the mismatch.
     const float modalCutoff = clampf(
-        voice.baseFrequency
+        voice.baseFrequency / projectionPeriodScale
             * lerp(0.55f, 1.36f, effectivePickHardness)
             * lerp(0.90f, 1.12f, profile.releaseRate),
         28.0f, std::min(900.0f, 0.20f * sampleRate));

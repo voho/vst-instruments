@@ -1299,7 +1299,8 @@ impulse returning at the fixed sample-rate-derived delay on 44.1, 48, 96 and
 with the voiced quarter return; pluck position following the fretted sounding
 length by 2^(fret/12), while its fixed-metre centre and contact width remain
 invariant through fretting and loop-filter phase and follow inverse wave speed
-under a pre-bend;
+under a pre-bend; both modal-release poles retaining their harmonic-number
+cutoff under that same pre-bend rather than following written MIDI pitch;
 fretboard geometry, meter ballistics, standing-wave shape, colour knee and a
 lossless packed audio-to-editor round trip; per-string display readout naming
 the right string, fret, note and articulation; selector-driven pickup culling,
@@ -2352,6 +2353,29 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 sounding-period modal spectrum
+
+- The two temporal poles that approximate triangular displacement's `1/n^2`
+  modal falloff now use `fs/P_contact` before the existing hardness, velocity
+  and articulation factors. They formerly used the written MIDI frequency even
+  though projection and geometry had already resolved a pre-bent or settled
+  legato source period. That changed the harmonic-number envelope by almost
+  2.01 dB at high modes across a standard two-semitone bend and by about
+  4.01 dB across a four-semitone source mismatch.
+- An independent regression reads the pole itself: because
+  `log(a) = -2 pi fc/fs`, its down/up-bend ratios must be
+  `2^(-2/12) = 0.890899` and `2^(2/12) = 1.122462`. The former written-note law
+  returns 1.0 at both endpoints and fails both rails. The change reuses the
+  already-validated contact-period scale and adds one event-time division, no
+  new fit, state or sample-loop work; an ordinary unbent attack still divides
+  by exact unity.
+- A same-compiler render changed exactly demos 03, 06, 17, 18, 21 and 22; the
+  other 17 canonical WAV pairs were byte-identical and no printed peak crossed
+  a tenth-decibel boundary. No admissible corpus take holds force, contact and
+  rig fixed while varying only this period, so this closes an internal modal-
+  coordinate inconsistency rather than claiming a recording fit or market
+  parity. The broader unfinished-delay residual experiment remains separate.
 
 ### 2026-08-29 choice-strip arrow navigation
 

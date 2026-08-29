@@ -245,6 +245,7 @@ struct ElectryEngineTestAccess
         // The two the picking hand's force and contact patch reach.
         float excitationAmplitude { 0.0f };
         float excitationTransientAmplitude { 0.0f };
+        float excitationModalCoefficient { 0.0f };
         float excitationReleaseCoefficient { 0.0f };
 #if ELECTRY_ANALYTIC_RELEASE_IC
         float analyticReleaseAmplitude { 0.0f };
@@ -333,6 +334,8 @@ struct ElectryEngineTestAccess
         result.excitationAmplitude = voice.excitationAmplitude;
         result.excitationTransientAmplitude =
             voice.excitationTransientAmplitude;
+        result.excitationModalCoefficient =
+            voice.excitationModalCoefficient;
         result.excitationReleaseCoefficient =
             voice.excitationReleaseCoefficient;
 #if ELECTRY_ANALYTIC_RELEASE_IC
@@ -8003,6 +8006,13 @@ void testMaterialAndControlAudibility()
     };
     const auto [centreBendVoice, centreBendDisplacement] =
         bentDisplacement(0.6f, 0.0f);
+    const bool centreModalValid =
+        centreBendVoice.excitationModalCoefficient > 0.0f
+        && centreBendVoice.excitationModalCoefficient < 1.0f;
+    expect(centreModalValid,
+           "unbent modal spectrum produced an invalid pole coefficient");
+    const float centreModalLog = centreModalValid
+        ? std::log(centreBendVoice.excitationModalCoefficient) : -1.0f;
     for (const float bend : { -1.0f, 1.0f })
     {
         const auto [bentSoftVoice, bentSoft] = bentDisplacement(0.0f, bend);
@@ -8024,6 +8034,24 @@ void testMaterialAndControlAudibility()
                "(ratio " + std::to_string(actualDisplacementRatio)
                    + ", expected " + std::to_string(expectedPeriodRatio)
                    + ")");
+
+        const float expectedModalCutoffRatio = std::exp2(
+            2.0f * bend / 12.0f);
+        const bool bentModalValid =
+            bentVoice.excitationModalCoefficient > 0.0f
+            && bentVoice.excitationModalCoefficient < 1.0f;
+        const float actualModalCutoffRatio = bentModalValid
+            ? std::log(bentVoice.excitationModalCoefficient) / centreModalLog
+            : 0.0f;
+        expect(centreModalValid && bentModalValid
+                   && std::isfinite(actualModalCutoffRatio)
+                   && std::abs(actualModalCutoffRatio
+                                   / expectedModalCutoffRatio - 1.0f)
+                          < 2.0e-5f,
+               "pre-bent modal spectrum did not follow the target period "
+               "(cutoff ratio " + std::to_string(actualModalCutoffRatio)
+                   + ", expected "
+                   + std::to_string(expectedModalCutoffRatio) + ")");
     }
     engine.setPitchBend(0.0f);
 
