@@ -90,27 +90,27 @@ real-recording boundaries and blind-study plan live in the
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
 | `01-range-open-strings.wav` | −12.6 dBFS | +9.6 dB |
-| `02-range-full-fretboard.wav` | −13.3 dBFS | +10.3 dB |
+| `02-range-full-fretboard.wav` | −14.2 dBFS | +11.2 dB |
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
-| `04-drop-e-rhythm-dry.wav` | −13.6 dBFS | +10.6 dB |
-| `05-drop-e-rhythm-amp.wav` | −13.0 dBFS | +10.0 dB |
+| `04-drop-e-rhythm-dry.wav` | −13.2 dBFS | +10.2 dB |
+| `05-drop-e-rhythm-amp.wav` | −12.6 dBFS | +9.6 dB |
 | `06-lead-amp-delay-room.wav` | −11.9 dBFS | +8.9 dB |
-| `07-pickups-and-tone.wav` | −12.0 dBFS | +9.0 dB |
-| `08-sympathetic-strum-stereo.wav` | −16.7 dBFS | +13.7 dB |
-| `09-guitar-build-contrasts.wav` | −8.7 dBFS | +5.7 dB |
-| `10-velocity-dynamics.wav` | −11.9 dBFS | +8.9 dB |
-| `11-power-chords-dry.wav` | −8.5 dBFS | +5.5 dB |
+| `07-pickups-and-tone.wav` | −12.5 dBFS | +9.5 dB |
+| `08-sympathetic-strum-stereo.wav` | −16.5 dBFS | +13.5 dB |
+| `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
+| `10-velocity-dynamics.wav` | −12.1 dBFS | +9.1 dB |
+| `11-power-chords-dry.wav` | −8.6 dBFS | +5.6 dB |
 | `12-power-chords-amp.wav` | −12.4 dBFS | +9.4 dB |
-| `13-long-rhythm-arrangement.wav` | −13.3 dBFS | +10.3 dB |
-| `14-whammy-and-feedback.wav` | −13.0 dBFS | +10.0 dB |
+| `13-long-rhythm-arrangement.wav` | −13.0 dBFS | +10.0 dB |
+| `14-whammy-and-feedback.wav` | −13.2 dBFS | +10.2 dB |
 | `15-mute-and-dead-audition.wav` | −12.9 dBFS | +9.9 dB |
-| `16-mute-and-dead-metal.wav` | −13.7 dBFS | +10.7 dB |
-| `17-extended-technique-solo.wav` | −12.2 dBFS | +9.2 dB |
-| `18-syncopated-djent-study.wav` | −12.4 dBFS | +9.4 dB |
+| `16-mute-and-dead-metal.wav` | −13.5 dBFS | +10.5 dB |
+| `17-extended-technique-solo.wav` | −12.4 dBFS | +9.4 dB |
+| `18-syncopated-djent-study.wav` | −12.3 dBFS | +9.3 dB |
 | `19-modern-metalcore-study.wav` | −12.5 dBFS | +9.5 dB |
-| `20-odd-meter-prog-study.wav` | +0.9 dBFS | −3.9 dB |
+| `20-odd-meter-prog-study.wav` | +0.4 dBFS | −3.4 dB |
 | `21-blues-rock-lead-study.wav` | −9.6 dBFS | +6.6 dB |
-| `22-tremolo-picking-study.wav` | −13.6 dBFS | +10.6 dB |
+| `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
 | `23-amp-voices.wav` | −15.4 dBFS | +12.4 dB |
 <!-- peaks-table-end -->
 
@@ -408,8 +408,13 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   bridge; it does not follow the fretting hand up the neck. Pick Position is
   therefore a fraction of the *open* string, and the pluck comb as a fraction of
   the sounding length grows by `2^(fret/12)`, so a note fretted high up moves
-  toward the hollow, mid-string comb of a real guitar. At the nut this is
-  identical to the previous behaviour.
+  toward the hollow, mid-string comb of a real guitar. The distance is mapped
+  through the complete round-trip sounding period `P = fs/f0`: one-way travel
+  to the pick is `x/c`, and the opposite travelling-wave image that forms the
+  comb is separated by `2x/c = (x/L)P`. It is not mapped through the shorter raw
+  delay line left after damping and dispersion phase compensation. A fixed hand
+  therefore remains fixed through fret and String Age changes, while tension
+  bends move its delay by the physically required inverse wave-speed ratio.
 - **Pick release:** the plectrum does not leave every string equally quickly. A
   wound .080 carries far more mass per unit length than a plain .009 at
   comparable tension, so it leaves the pick more slowly, and the duration of
@@ -426,7 +431,7 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
 - **Pick contact:** the plectrum is neither a point nor symmetric. It touches
   the string over a patch — half a millimetre for a stiff sharp pick, around a
   millimetre and a half for a soft rounded one — so the reflected image of the
-  excitation is spread over that width through the same sounding-length
+  excitation is spread over that width through the same full-period `2x/c`
   geometry the comb uses, and the comb notches wash out with frequency instead
   of staying razor sharp up to Nyquist. Its release is asymmetric: the string is
   drawn aside over most of the contact and then slips off in a fraction of that
@@ -477,7 +482,7 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   same filter driven by the other hand: the thumb catches the string at the
   pick's own position, so Pick Position chooses which partial squeals. Measured
   on a fretted E3 with the pick near the bridge, the surviving partial is the
-  eighth or ninth and it gains 15 dB on the fundamental against the ordinary
+  eighth and it gains about 6.43 dB on the fundamental against the ordinary
   pick stroke; with the picking hand over the neck the touch sits near the
   midpoint and the squeal is the octave. It is a firmer, longer contact than
   the fretting finger's because the mode-shape law gives a touch that close to
@@ -679,14 +684,15 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   What this buys is a structural absence closed rather than a loud effect, and
   the honest measurement is the one worth quoting: a chord that fingers all eight
   strings leaves no idle string to ring and until now had no coupling path at
-  all, and it now differs from the same chord at Resonance 0 by -60.4 dB at the
-  20% default and -50.8 dB at maximum over the first 1.5 s, and by -45.9 dB and
-  -36.2 dB over 10-12 s - the effect grows in the tail, where coupling belongs.
+  all, and it now differs from the same chord at Resonance 0 by -60.11 dB at the
+  20% default and -50.55 dB at maximum over the first 1.5 s. At the original
+  coupling checkpoint those differences grew to -45.9 dB and -36.2 dB over
+  10-12 s - the effect grows in the tail, where coupling belongs.
   It does not get louder than that: the difference is exactly linear in the
   injection gain, and rendering the same chord with the cap lifted, the network
   stops being a filter and diverges at roughly twenty times the gain the bound
   permits. The alias floor
-  is 162.3 dB below the spectral peak because the
+  is 162.2 dB below the spectral peak because the
   injection is one more lossy path into loops that already low-pass. The bridge
   hand that mutes a palm-muted passage covers every string, so the style damps
   and starves both the coupled strings and the played strings' share of the bus
@@ -707,9 +713,9 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   Dead now uses a 1.6 s contact target, fits its upper loss at the eighth
   partial and applies only 15% of the hand amount to the attack path. In the
   isolated E1 comparison, its 30-100/100-250/250-380 ms levels are
-  -8.05/-15.16/-24.09 dB. Its picked onset is +0.47 dB versus Sustain, 99.88%
+  -7.31/-14.16/-22.88 dB. Its picked onset is +0.30 dB versus Sustain, 99.93%
   of tracked harmonic power is below 250 Hz, and its 100-250 ms tail is
-  -15.71 dB versus Sustain: a dark periodic thunk, not a gate. Mute Pressure
+  -14.59 dB versus Sustain: a dark periodic thunk, not a gate. Mute Pressure
   can stack as the separate bridge hand; Mute Tightness changes only the Mute
   style.
 - **Bridge-hand damping:** the heel of the hand is a passive absorber, so its
@@ -1139,7 +1145,7 @@ High-Gain.
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
 | Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store; Lee et al.'s measured common partial glide | Shipping keeps its compensated fundamental delay independent of pick velocity. The compile-time default-off experiment converts the resolved two-axis release energy through the steel core's axial `E A`, clamps the shared tension ratio to a seven-cent ceiling, and moves the complete compensated period without refitting static dispersion | A bounded research candidate that passes a frozen conventional-E2 descriptive compatibility gate with under 1% measured CPU overhead; not enabled shipping behavior, an exact-eight calibration, a causal identification, or evidence of market superiority |
-| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; an asymmetric constant-area release and a 0.5-1.5 mm contact patch vary with Pick Hardness, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
+| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; its fixed-metre position and asymmetric 0.5-1.5 mm contact patch map through the complete sounding period rather than filter-phase-shortened raw delay, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; pull-off release position uses the same physical-period coordinate, and legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling; [Poirot et al.'s perceptual study of collision location](https://doi.org/10.1109/TASLP.2023.3284515) | Shipping uses the Artifacts path's decaying collision window, whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise. The compile-time default-off positioned-loss candidate instead compares the unfiltered return with a following-fret tap at `D * 2^(-1/12)`, retaining the old zero-slope knee while giving the loss a `sin^2(n pi p)` modal location cue; distributed Dead contact keeps the shipping law | Shipping is bounded collision-informed contact behavior. The candidate is a one-read longitudinal loss surrogate that deliberately retains shipping's bilateral absolute-value barrier for an isolated A/B; it is not a unilateral fretboard obstacle, reciprocal two-rail junction, passive nonlinear contact proof, measured action/fret geometry, or FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
@@ -1221,7 +1227,7 @@ ordinarily picked note - the direct evidence that the loop is no longer
 retuned; a pinch harmonic whose energy-weighted mean partial index sits well
 above an ordinary pick stroke's, whose strongest partial is at least the sixth
 near the bridge and exactly the octave with the hand over the neck, which gains
-more than 10 dB on the fundamental, and which renders as neither a pick stroke
+more than 6 dB on the fundamental, and which renders as neither a pick stroke
 nor a natural harmonic; palm-mute decay
 contraction; the same ±2 semitone wheel ratio on played voices and a ringing
 coupled string, with travel following Bend Time and settling exactly on the
@@ -1278,7 +1284,9 @@ host blocks with non-aligned CC1, Note On and Note Off events, plus an acoustic
 impulse returning at the fixed sample-rate-derived delay on 44.1, 48, 96 and
 384 kHz hosts; a held A4 loop exceeding the idle high E by at least 6.02 dB
 with the voiced quarter return; pluck position following the fretted sounding
-length by 2^(fret/12);
+length by 2^(fret/12), while its fixed-metre centre and contact width remain
+invariant through fretting and loop-filter phase and follow inverse wave speed
+under a pre-bend;
 fretboard geometry, meter ballistics, standing-wave shape, colour knee and a
 lossless packed audio-to-editor round trip; per-string display readout naming
 the right string, fret, note and articulation; selector-driven pickup culling,
@@ -1368,7 +1376,7 @@ The engine suite separately pins bounded/repeatable second-player pick timing,
 one offset per chord, strum composition and pre-contact cancellation.
 
 The amplifier chain has its own suite: the shipping rapid-Mute body's current
-30-80 ms medians are 8.8260% upper-band share and 0.882806 harmonicity, above
+30-80 ms medians are 7.5623% upper-band share and 0.897633 harmonicity, above
 the 6% body floor while remaining nonperiodic; halfband unity DC gain, the -6 dB
 halfband symmetry point, a dense passband sweep below 0.01 dB deviation and a
 dense stopband sweep above 70 dB rejection; the diode
@@ -1424,7 +1432,7 @@ Twenty-three rendered examples of the whole path are committed under
 rather than only read. They are demonstrations, not evidence: an audible
 example is not a measurement, and none of the claims above rest on them.
 
-### Current Mute/Dead checkpoint
+### Mute/Dead body checkpoint
 
 The previous Palm-only finite heel has been retired. User feedback identified its
 rendered chugs as squishy and short of body; a same-build waveform, spectrum and
@@ -1434,21 +1442,22 @@ Palm's existing modal-excitation factor from 0.74 to 0.85 restores the periodic
 low body without adding gain compensation, a parameter or another resonator.
 At that Palm-only correction, Open and Dead evaluator WAVs were byte-identical.
 
-The unnormalised dry evaluator at the shipping default now measures:
+At that Palm-body correction, the unnormalised dry evaluator measured:
 
-| default probe | retired finite heel | current | change |
+| default probe | retired finite heel | body correction | change |
 | --- | ---: | ---: | ---: |
 | E1 30-80 / 0-30 ms body | -5.4608 dB | -4.1961 dB | +1.2647 dB |
 | E2 30-80 / 0-30 ms body | -4.8192 dB | -3.2264 dB | +1.5928 dB |
 | E1 raw peak | -28.03 dBFS | -26.29 dBFS | +1.74 dB |
 | E2 raw peak | -26.70 dBFS | -25.11 dBFS | +1.59 dB |
 
-The noise-free engine guard independently reads -4.060/-3.150 dB of E1/E2
-body. It also keeps the intended selective loss: over 150-500 ms the Palm-minus-
-Open low/high changes are -10.327/-19.832 dB on E1 and -8.347/-22.812 dB on
-E2. The early Palm high/low balance remains 4.499/0.385 dB darker than Open.
-Light, default and hard body remain strictly ordered, so Mute Tightness is still
-one understandable loose-to-tight performance axis rather than three samples.
+At that checkpoint, the noise-free engine guard independently read
+-4.060/-3.150 dB of E1/E2 body. It also kept the intended selective loss: over
+150-500 ms the Palm-minus-Open low/high changes were -10.327/-19.832 dB on E1
+and -8.347/-22.812 dB on E2. The early Palm high/low balance remained
+4.499/0.385 dB darker than Open. Light, default and hard body remained strictly
+ordered, so Mute Tightness was one understandable loose-to-tight performance
+axis rather than three samples.
 
 There is one explicit tradeoff. The tracked Guitar-TECHS F2 development proxy
 moves from the retired contact's -4.009 dB contraction to -0.644 dB at 44.1 kHz
@@ -1459,17 +1468,18 @@ therefore demoted from a hard target after it conflicted with low-body evidence
 and the rendered result; the commissioned E1/E2 TRAIN/HOLDOUT comparison remains
 the actual fit gate.
 
-The common high-gain rapid-Mute fixture now has 8.8260% of its 30-80 ms power
-above 500 Hz and 0.882806 harmonicity, passing its intentionally loose body and
-nonperiodicity rails. The shared-hand transition remains smooth: Palm -> Open
-moves the old E1 by +9.8741 dB above 500 Hz and +0.279835 percentage points;
-Open -> Palm moves it by -7.2850 dB and -0.154347 points. Adjacent CC2 attack
-moves are 0.0409/0.0548 dB on E1/E2. The stateful Dead medians shift only to
+At that checkpoint, the common high-gain rapid-Mute fixture had 8.8260% of its
+30-80 ms power above 500 Hz and 0.882806 harmonicity, passing its intentionally
+loose body and nonperiodicity rails. The shared-hand transition remained
+smooth: Palm -> Open moved the old E1 by +9.8741 dB above 500 Hz and +0.279835
+percentage points; Open -> Palm moved it by -7.2850 dB and -0.154347 points.
+Adjacent CC2 attack moves were 0.0409/0.0548 dB on E1/E2. The stateful Dead
+medians shifted only to
 -8.178/-15.086/-23.257 dB with a 4.85398 dB contextual RMSE because the earlier
 Palm ring and its live damping phase are different; no Dead coefficient changed.
 
-All demonstrations affected by the correction were regenerated from the same
-code. The current SHA-256 hashes are
+All demonstrations affected by that correction were regenerated from the same
+code. Its checkpoint SHA-256 hashes were
 `5988919af56d2ba0f669011709e3468254db8664c9dd783d434918809c5296ed`
 for demo 04 and
 `20c612d85fd0b81ef4ae24885a7314afbdd47af92586b80c03aa2380ec3065e5`
@@ -2240,6 +2250,37 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 physical-period pick geometry
+
+- Pick-comb centre, 0.5-1.5 mm plectrum contact width and pull-off release
+  position now map physical distance through the complete sounding period
+  `P = fs/f0`. The former raw-delay coordinate was `P` minus damping and
+  dispersion phase, so changing String Age subtly moved a stationary hand and
+  fretting changed a fixed-width tip. Regressions pin absolute centre/width on
+  one string from open to fret 12, the inverse-wave-speed law under a
+  two-semitone pre-bend, invariance across String Age extremes, and both
+  fretted and open pull-offs. At pull-off contact the loop is still sounding at
+  the source fret, so that live period is already the released finger's
+  `2L_old/c` image delay; no second `L_old/L_new` ratio is applied. The shipping
+  regression also pins that delay to the nominal source-note period. The raw
+  line/full-period probe reads 0.94413 on open E4 and 0.87422 on default E1,
+  falling from 0.87470 to 0.79329 across E1's String Age extremes, which
+  quantifies the false hand motion removed. The cached-period substitution is
+  event-only: it adds no render-loop operation, memory or steady CPU. This
+  corrects internal geometry; it is not a claim of capture parity.
+- The existing lawful CC0 Drop-E four-ghost comparison improved without
+  retuning a Dead coefficient. Against the real 30-100/100-250/250-380 ms
+  median of -3.57/-12.66/-20.75 dB, shipping moved from
+  -8.114/-14.919/-23.040 dB to -7.466/-14.073/-22.059 dB: three-window RMSE
+  fell from 3.21 to 2.51 dB. Its first-versus-repick contextual RMSE also moved
+  from about 4.85 to 4.82 dB. Every individual render remains inside the same
+  broad four-take real ranges; deterministic whole-source spectral snapshots
+  were refreshed, but those internal snapshots are not capture targets.
+- All 23 committed demonstrations were regenerated from the validated engine,
+  and the rendered-peak table above was refreshed. The objective geometry and
+  existing real-envelope comparison decided this correction; no A--Z listening
+  gate selected it.
 
 ### 2026-08-29 full accessible knob names
 

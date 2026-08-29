@@ -4613,10 +4613,11 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // follow the fretting hand up the neck. `pluckFraction` is therefore a
     // fraction of the *open* string, and the comb position as a fraction of
     // the sounding length grows by 2^(fret/12) as the note is fretted higher.
-    // At the nut this reproduces the previous behaviour exactly, while a note
-    // at the twelfth fret is now picked at twice the relative distance, which
-    // is what moves a high fretted note toward the hollow, mid-string comb of
-    // a real guitar.
+    // At the nut the fraction is still the open-string control mapping, while
+    // a note at the twelfth fret is picked at twice the relative distance,
+    // which is what moves a high fretted note toward the hollow, mid-string
+    // comb of a real guitar. The delay coordinate used for that fraction is
+    // derived independently below.
     //
     // The stroke's own contact offset is a distance along the string, so it is
     // added to the open-string fraction before the fret stretch, exactly as the
@@ -4680,11 +4681,19 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // geometry the comb itself uses, that width is a little over one sample on
     // an open Drop-E eighth string and a small fraction of one at the top of
     // the range, which is exactly the frequency dependence a real contact has.
+    // One-way travel to a point x from the bridge is x/c. This comb writes the
+    // opposite travelling-wave image, whose separation is 2x/c = (x/L) P for
+    // the complete round-trip sounding period P = fs/f0. A contact half-width
+    // w/2 likewise maps to w/c. The raw delay line is shorter by the damping
+    // and dispersion filters' phase delay; using it here made the apparent
+    // pick location and tip width move when String Age changed even though
+    // neither the hand nor the transverse wave speed had moved.
     const float contactMetres = 0.001f * lerp(1.5f, 0.5f,
                                               effectivePickHardness);
-    voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
+    const float soundingPeriod = voice.lastCompensatedPeriod;
+    voice.excitationCombDelay = combFraction * soundingPeriod;
     voice.excitationCombWidth = 0.5f * (contactMetres / soundingMetres)
-                              * voice.vertical.targetDelay;
+                              * soundingPeriod;
 
 #if ELECTRY_ANALYTIC_RELEASE_IC
     if (analyticReleaseEligible && voice.stringTensionNewtons > 0.0f)
@@ -5427,9 +5436,12 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
         // magnitude is symmetric, but the modal phase against the already
         // ringing string is not. The polarisation swap is a conservative
         // lateral-release voicing estimate, not capture-fitted mechanics.
-        const float releasedFraction = std::exp2(
-            (static_cast<float>(voice.fret) - fromFret) / 12.0f);
-        voice.excitationCombDelay = releasedFraction * voice.vertical.targetDelay;
+        // At contact the live loop is still sounding at the source fret, so
+        // lastCompensatedPeriod is already 2 L_old/c: exactly the reflected-
+        // image delay of the finger being released. Multiplying it by
+        // L_old/L_new again would apply the fret ratio twice and move that
+        // finger bridgeward before the glide had even begun.
+        voice.excitationCombDelay = voice.lastCompensatedPeriod;
         voice.excitationCombWidth = 0.0f;
         std::swap(voice.verticalWeight, voice.horizontalWeight);
     }
