@@ -4377,8 +4377,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         pulseMs *= 0.58f;
         pulseCutoff *= 2.00f;
         // The upstroke contact point sits a little closer to the bridge,
-        // thinning and brightening the stroke.
-        pluckFraction = clampf(pluckFraction - 0.020f, 0.03f, 0.45f);
+        // thinning and brightening the stroke. Leave endpoint protection to
+        // the shared physical guard after metre variation and fret stretch;
+        // clamping here can reverse or exaggerate this bridgeward move.
+        pluckFraction -= 0.020f;
         noiseMs *= 0.8f;
         noiseCutoff *= 1.2f;
         modalBrightness *= 1.42f;

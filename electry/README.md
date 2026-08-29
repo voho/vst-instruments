@@ -417,7 +417,10 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   bends move its delay by the physically required inverse wave-speed ratio.
   Positions past the speaking string's midpoint retain their own modal phase
   instead of being mirrored or snapped to 49%; only the final two per cent are
-  reserved as the endpoint/contact guard, symmetric with the bridge end.
+  reserved as the endpoint/contact guard, symmetric with the bridge end. An Up
+  stroke applies its established two-per-cent-of-open-scale bridgeward shift
+  before the hand's metre variation and the fret stretch, then shares that one
+  final physical guard with every other stroke.
 - **Pick release:** the plectrum does not leave every string equally quickly. A
   wound .080 carries far more mass per unit length than a plain .009 at
   comparable tension, so it leaves the pick more slowly, and the duration of
@@ -2267,6 +2270,30 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 bridgeward upstroke endpoints
+
+- Up strokes now retain their established `-0.020` open-string position shift
+  through the complete Pick Position range. The former private `0.03..0.45`
+  clamp contradicted its own “closer to the bridge” direction: at Pick Position
+  zero it moved the nominal `.025 - .020 = .005` result to `.030`, neckward of
+  the `.025` Down stroke, while at Pick Position one it moved the intended
+  `.460` result to `.450` and made the offset 50% too large. For a Palm Up at
+  the bridge end it changed `.025 * .8 - .020 = 0` to `.030`, also beyond the
+  corresponding Down contact.
+- Removing that redundant clamp leaves the one physical coordinate law in
+  charge: `p = clamp((p_style + dx/L_open) 2^(fret/12), 0.02, 0.98)`.
+  Independent regressions pin both Sustain endpoints for Down and Up, the
+  exact two-per-cent neck-end separation, and Palm Up against the shared bridge
+  guard while including deterministic metre variation. The change removes one
+  note-start clamp and adds no state, render-loop operation or steady CPU.
+- A same-compiler baseline/candidate render left all 23 canonical WAVs
+  byte-identical because their Up/Alternate contacts stay outside the removed
+  private clamp. The retained two-per-cent stroke-direction offset is existing
+  voicing, not a capture fit: no admissible recording here holds player, pick,
+  string and absolute contact position fixed while changing only direction.
+  This corrects an internal geometry contradiction rather than claiming a
+  real-recording win or using a listening preference to select a coefficient.
 
 ### 2026-08-29 far-side pick geometry
 

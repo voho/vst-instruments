@@ -15815,7 +15815,9 @@ void testPickContactGeometry()
     // patch and it slips off far faster than it loaded.
     const auto pickGeometry = [] (
         int midiNote, float hardness, float stringAge, float pitchBend,
-        float pickPosition = EngineParameters {}.pickPosition)
+        float pickPosition = EngineParameters {}.pickPosition,
+        PickStyle pickStyle = PickStyle::Down,
+        PlayStyle playStyle = PlayStyle::Sustain)
     {
         ElectryEngine engine;
         engine.prepare(sampleRate, 512);
@@ -15826,6 +15828,8 @@ void testPickContactGeometry()
         engine.setParameters(parameters);
         engine.setPitchBend(pitchBend);
         engine.reset();
+        engine.noteOn(pickKeyswitch(pickStyle), 1.0f);
+        engine.noteOn(styleKeyswitch(playStyle), 1.0f);
         engine.noteOn(midiNote, 0.9f);
         const int stringIndex = TestAccess::stringForNote(engine, midiNote);
         expect(stringIndex >= 0, "note " + std::to_string(midiNote)
@@ -15840,8 +15844,15 @@ void testPickContactGeometry()
             const float scaleLength = TestAccess::scaleLengthMetres(engine);
             const float fretStretch = std::exp2(
                 static_cast<float>(snapshot.fret) / 12.0f);
+            float expectedOpenFraction =
+                0.025f + (0.48f - 0.025f) * parameters.pickPosition;
+            if (playStyle == PlayStyle::PalmMute)
+                expectedOpenFraction *= 0.8f;
+            if (pickStyle == PickStyle::Up
+                && playStyle != PlayStyle::Hammer)
+                expectedOpenFraction -= 0.020f;
             const float expectedFraction = electry::clampf(
-                (0.025f + (0.48f - 0.025f) * parameters.pickPosition
+                (expectedOpenFraction
                     + snapshot.strokeContactOffsetMetres / scaleLength)
                     * fretStretch,
                 0.02f, 0.98f);
@@ -15875,6 +15886,20 @@ void testPickContactGeometry()
         76, 0.6f, defaultAge, 0.0f, 1.0f);
     const auto stoppedAtFinger = pickGeometry(
         86, 0.6f, defaultAge, 0.0f, 1.0f);
+    const auto bridgeDown = pickGeometry(
+        28, 0.6f, defaultAge, 0.0f, 0.0f, PickStyle::Down);
+    const auto bridgeUp = pickGeometry(
+        28, 0.6f, defaultAge, 0.0f, 0.0f, PickStyle::Up);
+    const auto neckDown = pickGeometry(
+        28, 0.6f, defaultAge, 0.0f, 1.0f, PickStyle::Down);
+    const auto neckUp = pickGeometry(
+        28, 0.6f, defaultAge, 0.0f, 1.0f, PickStyle::Up);
+    const auto palmBridgeDown = pickGeometry(
+        28, 0.6f, defaultAge, 0.0f, 0.0f, PickStyle::Down,
+        PlayStyle::PalmMute);
+    const auto palmBridgeUp = pickGeometry(
+        28, 0.6f, defaultAge, 0.0f, 0.0f, PickStyle::Up,
+        PlayStyle::PalmMute);
 
     expect(lowDefault.excitationCombWidth > 0.0f,
            "the pick contact patch has no width");
@@ -15890,6 +15915,20 @@ void testPickContactGeometry()
                     - 0.98f) < 1.0e-6f,
            "a fixed pick beyond the shortened string was not stopped just "
            "bridge-side of the fretting finger");
+    const auto contactFraction = [] (const auto& snapshot)
+    {
+        return snapshot.excitationCombDelay
+             / snapshot.lastCompensatedPeriod;
+    };
+    expect(contactFraction(bridgeUp) < contactFraction(bridgeDown),
+           "the bridge-end upstroke did not stay bridgeward of the downstroke");
+    expect(std::abs((contactFraction(neckDown) - contactFraction(neckUp))
+                    - 0.020f) < 1.0e-6f,
+           "the neck-end upstroke did not retain its 2%-of-scale offset");
+    expect(contactFraction(palmBridgeUp) <= contactFraction(palmBridgeDown)
+               && std::abs(contactFraction(palmBridgeUp) - 0.02f) < 1.0e-6f,
+           "the palm-muted bridge-end upstroke escaped or reversed the shared "
+           "physical endpoint guard");
     // A fixed physical patch is a larger share of the low string's much longer
     // round trip, so it spans more delay-line samples there.
     expect(lowDefault.excitationCombWidth > 4.0f * highDefault.excitationCombWidth,
