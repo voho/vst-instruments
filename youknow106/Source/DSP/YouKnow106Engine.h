@@ -1409,6 +1409,20 @@ private:
                       VcfTanhMode tanhMode = VcfTanhMode::Exact,
                       VcfSolverMode solverMode =
                           VcfSolverMode::MersonHalfSteps) noexcept;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        // The shipping six-card workload resolves almost every settled
+        // interval to the same two-half-step RK4 tableau. Advance two
+        // independent cards in the two FP64 NEON lanes when that exact hot
+        // case is present; false means the caller must use `process` without
+        // this function having changed either cascade.
+        static bool tryProcessSettledRk4HalfPair(
+            OtaCascade& first, float firstInput, float firstOmegaStep,
+            float firstFeedback, float firstHeadroom,
+            OtaCascade& second, float secondInput, float secondOmegaStep,
+            float secondFeedback, float secondHeadroom,
+            bool enableEarlyEffect, float calibration,
+            float& firstOutput, float& secondOutput) noexcept;
+#endif
 
         [[nodiscard]] static double reconstructInput(
             double current, const std::array<double, 3>& history,
@@ -1905,9 +1919,28 @@ private:
     [[nodiscard]] static bool pulseMixEnabled(bool requested,
                                               float duty) noexcept;
     void updateSharedHighPass(const EngineParameters& parameters) noexcept;
+    struct VoiceFilterFrame
+    {
+        float input {};
+        float omegaStep {};
+        float headroom {};
+        OtaCascade::ControlTrajectory trajectory {};
+        bool hasTrajectory { false };
+        bool needsFilter { false };
+    };
+    [[nodiscard]] VoiceFilterFrame prepareVoiceFilter(
+        Voice& voice, const EngineParameters& parameters,
+        float noiseSample) noexcept;
+    [[nodiscard]] float finishVoiceFilter(Voice& voice,
+                                          float filtered) noexcept;
     template <bool useCubicEarly = false>
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    [[nodiscard]] std::array<float, 2> renderVoicePair(
+        Voice& first, Voice& second, const EngineParameters& parameters,
+        float noiseSample) noexcept;
+#endif
     // The cheap advance a retired physical card takes under the fast VCF
     // tanh modes: exactly the free-running state a reassignment can hear --
     // DCO PIT/ramp state, sub-divider level, per-cycle render scale, card noise --

@@ -4,6 +4,10 @@
 #include <cmath>
 #include <limits>
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 #if defined(YOUKNOW106_WORK_AUDIT)
 #include "../../Tools/OversamplingAuditSupport.h"
 
@@ -2980,6 +2984,302 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     return static_cast<float>(state[3]);
 }
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
+bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
+    OtaCascade& first, float firstInput, float firstOmegaStep,
+    float firstFeedback, float firstHeadroom,
+    OtaCascade& second, float secondInput, float secondOmegaStep,
+    float secondFeedback, float secondHeadroom,
+    bool enableEarlyEffect, float calibration,
+    float& firstOutput, float& secondOutput) noexcept
+{
+    constexpr double feedbackHeadroom =
+        VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
+    const double currentCalibration = std::clamp(
+        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        0.0, static_cast<double>(EngineParameters::calibrationCeiling));
+    const bool applyEarlyEffect = enableEarlyEffect
+                               && currentCalibration > 0.0;
+    const double earlyAmount =
+        static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
+    const double earlyCeiling = applyEarlyEffect ? 1.0 + earlyAmount : 1.0;
+
+    struct Lane
+    {
+        OtaCascade* cascade {};
+        double input {};
+        double omega {};
+        double feedback {};
+        double headroom {};
+        double inverseHeadroom {};
+        std::array<double, 5> drive {};
+        std::array<double, 4> stageOmega {};
+        std::array<double, 4> stageOffset {};
+    };
+
+    const auto prepareLane = [&](OtaCascade& cascade, float input,
+                                 float omegaStep, float feedback,
+                                 float headroom, Lane& lane) {
+        const double currentOmega = clampOmegaStep(
+            static_cast<double>(omegaStep));
+        const double currentFeedback = std::clamp(
+            std::isfinite(feedback) ? static_cast<double>(feedback) : 0.0,
+            0.0, 8.0);
+        const double currentHeadroom = std::max(
+            std::isfinite(headroom) ? static_cast<double>(headroom) : 0.0,
+            1.0e-5);
+        if (!cascade.parameterHistoryPrimed
+            || cascade.inputHistoryCount != 2
+            || cascade.previousOmegaStep != currentOmega
+            || cascade.previousFeedback != currentFeedback
+            || cascade.previousHeadroom != currentHeadroom
+            || !std::all_of(
+                cascade.state.begin(), cascade.state.end(), [](double value) {
+                    return std::abs(value) <= 64.0;
+                }))
+            return false;
+
+        double largestScale = 0.0;
+        for (const float scale : cascade.gScale)
+            largestScale = std::max(
+                largestScale, static_cast<double>(std::abs(scale)));
+        if (planTableau(VcfSolverMode::Rk4Single,
+                        currentOmega * largestScale * earlyCeiling,
+                        currentFeedback) != Tableau::Rk4Half)
+            return false;
+
+        lane.cascade = &cascade;
+        lane.input = std::isfinite(input) ? static_cast<double>(input) : 0.0;
+        lane.omega = currentOmega;
+        lane.feedback = currentFeedback;
+        lane.headroom = currentHeadroom;
+        lane.inverseHeadroom = 1.0 / currentHeadroom;
+
+        const auto reconstruct = [&](double currentWeight,
+                                     double firstWeight,
+                                     double secondWeight,
+                                     double thirdWeight) {
+            return currentWeight * lane.input
+                + firstWeight * cascade.inputHistory[0]
+                + secondWeight * cascade.inputHistory[1]
+                + thirdWeight * cascade.inputHistory[2];
+        };
+        // Rk4Half reads positions 0, 1/4, 1/2, 3/4 and 1. These are the
+        // identical cubic weights produced by `makeNodes` in `process`.
+        lane.drive = {
+            reconstruct(0.0,       1.0,       0.0,        0.0),
+            reconstruct(0.1171875, 1.0546875, -0.2109375, 0.0390625),
+            reconstruct(0.3125,    0.9375,    -0.3125,    0.0625),
+            reconstruct(0.6015625, 0.6015625, -0.2578125, 0.0546875),
+            reconstruct(1.0,       0.0,        0.0,        0.0)
+        };
+        for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
+        {
+            lane.stageOmega[stage] = currentOmega
+                * static_cast<double>(cascade.gScale[stage]);
+            lane.stageOffset[stage] =
+                static_cast<double>(cascade.offsetVoltage[stage]);
+        }
+        return true;
+    };
+
+    Lane lanes[2];
+    if (!prepareLane(first, firstInput, firstOmegaStep, firstFeedback,
+                     firstHeadroom, lanes[0])
+        || !prepareLane(second, secondInput, secondOmegaStep, secondFeedback,
+                        secondHeadroom, lanes[1]))
+        return false;
+
+    using Pair = float64x2_t;
+    using PairState = std::array<Pair, 4>;
+    const auto pack = [](double low, double high) {
+        return vsetq_lane_f64(high, vdupq_n_f64(low), 1);
+    };
+    const auto polyTanhPair = [&](Pair value) {
+        const Pair u = vmulq_f64(value, value);
+        if (vgetq_lane_f64(u, 0) >= 1.0
+            || vgetq_lane_f64(u, 1) >= 1.0)
+            return pack(polyZonedTanhImpl(vgetq_lane_f64(value, 0)),
+                        polyZonedTanhImpl(vgetq_lane_f64(value, 1)));
+
+        const Pair uSquared = vmulq_f64(u, u);
+        const Pair top = vfmaq_n_f64(
+            vdupq_n_f64(0.016720855179576926), u,
+            -0.00305822903759879);
+        const Pair high = vfmaq_n_f64(
+            vdupq_n_f64(0.1328072064598552), u,
+            -0.051585988404218436);
+        const Pair low = vfmaq_n_f64(
+            vdupq_n_f64(0.9999993948006496), u,
+            -0.3332895137021704);
+        const Pair upper = vfmaq_f64(high, top, uSquared);
+        const Pair factor = vfmaq_f64(low, upper, uSquared);
+        return vmulq_f64(value, factor);
+    };
+    const auto cubicEarlyPair = [&](Pair value) {
+        if (std::abs(vgetq_lane_f64(value, 0)) >= 1.5
+            || std::abs(vgetq_lane_f64(value, 1)) >= 1.5)
+            return pack(cubicEarlyTanh(vgetq_lane_f64(value, 0)),
+                        cubicEarlyTanh(vgetq_lane_f64(value, 1)));
+
+        const Pair scaled = vmulq_n_f64(value, -(4.0 / 27.0));
+        const Pair factor = vfmaq_f64(vdupq_n_f64(1.0), scaled, value);
+        return vmulq_f64(value, factor);
+    };
+
+    PairState state;
+    PairState stageOmega;
+    PairState stageOffset;
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+    {
+        state[stage] = pack(first.state[stage], second.state[stage]);
+        stageOmega[stage] = pack(lanes[0].stageOmega[stage],
+                                 lanes[1].stageOmega[stage]);
+        stageOffset[stage] = pack(lanes[0].stageOffset[stage],
+                                  lanes[1].stageOffset[stage]);
+    }
+    const Pair inverseHeadroom = pack(lanes[0].inverseHeadroom,
+                                      lanes[1].inverseHeadroom);
+    const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
+
+    const auto derivative = [&](const PairState& value, Pair drive) {
+        const Pair feedbackArgument = vmulq_n_f64(
+            value[3], 1.0 / feedbackHeadroom);
+        const Pair feedbackTanh = polyTanhPair(feedbackArgument);
+        const double firstLoopReturn = lanes[0].feedback == 0.0
+            ? vgetq_lane_f64(drive, 0)
+            : vgetq_lane_f64(drive, 0)
+                - lanes[0].feedback * feedbackHeadroom
+                    * vgetq_lane_f64(feedbackTanh, 0);
+        const double secondLoopReturn = lanes[1].feedback == 0.0
+            ? vgetq_lane_f64(drive, 1)
+            : vgetq_lane_f64(drive, 1)
+                - lanes[1].feedback * feedbackHeadroom
+                    * vgetq_lane_f64(feedbackTanh, 1);
+        const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
+
+        PairState stageArgument {
+            vmulq_f64(vaddq_f64(vsubq_f64(loopReturn, value[0]),
+                                stageOffset[0]), inverseHeadroom),
+            vmulq_f64(vaddq_f64(vsubq_f64(value[0], value[1]),
+                                stageOffset[1]), inverseHeadroom),
+            vmulq_f64(vaddq_f64(vsubq_f64(value[1], value[2]),
+                                stageOffset[2]), inverseHeadroom),
+            vmulq_f64(vaddq_f64(vsubq_f64(value[2], value[3]),
+                                stageOffset[3]), inverseHeadroom)
+        };
+        PairState stageTanh;
+        for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
+            stageTanh[stage] = polyTanhPair(stageArgument[stage]);
+
+        PairState early;
+        if (!applyEarlyEffect)
+        {
+            for (auto& valueAtStage : early)
+                valueAtStage = vdupq_n_f64(1.0);
+        }
+        else
+        {
+            for (std::size_t stage = 0; stage < early.size(); ++stage)
+            {
+                const Pair earlyTanh = cubicEarlyPair(
+                    vmulq_f64(value[stage], inverseHeadroom));
+                early[stage] = vfmaq_n_f64(
+                    vdupq_n_f64(1.0), earlyTanh, earlyAmount);
+            }
+        }
+
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            result[stage] = vmulq_f64(stageOmega[stage], early[stage]);
+            result[stage] = vmulq_f64(result[stage], runningHeadroom);
+            result[stage] = vmulq_f64(result[stage], stageTanh[stage]);
+        }
+        return result;
+    };
+    const auto advanceOne = [](const PairState& origin,
+                               const PairState& slope, double distance) {
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = vfmaq_n_f64(
+                origin[stage], slope[stage], distance);
+        return result;
+    };
+    const auto finishRk4Half = [](const PairState& origin,
+                                  const PairState& k1,
+                                  const PairState& k2,
+                                  const PairState& k3,
+                                  const PairState& k4) {
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            Pair weighted = vmulq_n_f64(k2[stage], 1.0 / 3.0);
+            weighted = vfmaq_n_f64(weighted, k1[stage], 1.0 / 6.0);
+            weighted = vfmaq_n_f64(weighted, k3[stage], 1.0 / 3.0);
+            weighted = vfmaq_n_f64(weighted, k4[stage], 1.0 / 6.0);
+            result[stage] = vfmaq_n_f64(origin[stage], weighted, 0.5);
+        }
+        return result;
+    };
+
+    for (int step = 0; step < 2; ++step)
+    {
+        const std::size_t start = static_cast<std::size_t>(2 * step);
+        const PairState origin = state;
+        const Pair k1Drive = pack(lanes[0].drive[start],
+                                  lanes[1].drive[start]);
+        const Pair middleDrive = pack(lanes[0].drive[start + 1u],
+                                      lanes[1].drive[start + 1u]);
+        const Pair endDrive = pack(lanes[0].drive[start + 2u],
+                                   lanes[1].drive[start + 2u]);
+        const PairState k1 = derivative(origin, k1Drive);
+        const PairState k2 = derivative(
+            advanceOne(origin, k1, 0.25), middleDrive);
+        const PairState k3 = derivative(
+            advanceOne(origin, k2, 0.25), middleDrive);
+        const PairState k4 = derivative(
+            advanceOne(origin, k3, 0.5), endDrive);
+        state = finishRk4Half(origin, k1, k2, k3, k4);
+    }
+
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+    {
+        first.state[stage] = vgetq_lane_f64(state[stage], 0);
+        second.state[stage] = vgetq_lane_f64(state[stage], 1);
+    }
+
+    const auto finishLane = [](Lane& lane, float& output) {
+        auto& cascade = *lane.cascade;
+        for (std::size_t point = cascade.inputHistory.size() - 1u;
+             point > 0u; --point)
+            cascade.inputHistory[point] = cascade.inputHistory[point - 1u];
+        cascade.inputHistory[0] = lane.input;
+        cascade.inputHistoryCount = std::min(cascade.inputHistoryCount + 1, 2);
+        cascade.previousOmegaStep = lane.omega;
+        cascade.previousFeedback = lane.feedback;
+        cascade.previousHeadroom = lane.headroom;
+
+        const bool valid = std::all_of(
+            cascade.state.begin(), cascade.state.end(), [](double value) {
+                return std::abs(value) <= 64.0;
+            });
+        if (!valid)
+        {
+            cascade.state.fill(0.0);
+            cascade.inputHistory.fill(lane.input);
+            cascade.inputHistoryCount = 2;
+            output = 0.0f;
+            return;
+        }
+        output = static_cast<float>(cascade.state[3]);
+    };
+    finishLane(lanes[0], firstOutput);
+    finishLane(lanes[1], secondOutput);
+    return true;
+}
+#endif
+
 void YouKnow106Engine::HighPass::reset() noexcept
 {
     state = 0.0;
@@ -5531,15 +5831,15 @@ void YouKnow106Engine::freewheelVoiceCard(Voice& voice) noexcept
     voice.noiseState = xorshift32(voice.noiseState);
 }
 
-template <bool useCubicEarly>
-float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parameters,
-                                    float noiseSample) noexcept
+YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
+    Voice& voice, const EngineParameters& parameters,
+    float noiseSample) noexcept
 {
     // Extension slots have no continuously powered voice card behind them.
     // Their digital portamento state still advances on the converter pass,
     // but an unassigned slot has no DCO/filter/audio state that must run.
     if (!voice.active && voice.cardIndex >= hardwareVoices)
-        return 0.0f;
+        return {};
 
     // A retired physical card's render is computed and then discarded: the
     // caller drops the sample, so the only thing this pass can change is the
@@ -5551,7 +5851,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (!voice.active && parameters.vcfTanhMode != VcfTanhMode::Exact)
     {
         freewheelVoiceCard(voice);
-        return 0.0f;
+        return {};
     }
 
 #if defined(YOUKNOW106_WORK_AUDIT)
@@ -5754,12 +6054,22 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         eventControlTrajectory.headroom.back() = dynamicHeadroom;
         controlTrajectory = &eventControlTrajectory;
     }
-    const float filtered = voice.filter.process<useCubicEarly>(
-        filterInput, effectiveFilterOmegaStep, voice.feedback,
-        dynamicHeadroom, parameters.enableVcfEarlyEffect,
-        parameters.calibration, controlTrajectory, parameters.vcfTanhMode,
-        parameters.vcfSolverMode);
+    VoiceFilterFrame frame;
+    frame.input = filterInput;
+    frame.omegaStep = effectiveFilterOmegaStep;
+    frame.headroom = dynamicHeadroom;
+    if (controlTrajectory != nullptr)
+    {
+        frame.trajectory = eventControlTrajectory;
+        frame.hasTrajectory = true;
+    }
+    frame.needsFilter = true;
+    return frame;
+}
 
+float YouKnow106Engine::finishVoiceFilter(Voice& voice,
+                                          float filtered) noexcept
+{
     // C59 stands between pin 3 VCF OUT and pin 9 VCA IN, so the amplifier
     // never sees the filter's DC. The cascade makes DC of its own: the stage
     // offsets sit inside the loop, and an enabled pulse arrives duty
@@ -5789,6 +6099,74 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
 }
+
+template <bool useCubicEarly>
+float YouKnow106Engine::renderVoice(Voice& voice,
+                                    const EngineParameters& parameters,
+                                    float noiseSample) noexcept
+{
+    auto frame = prepareVoiceFilter(voice, parameters, noiseSample);
+    if (!frame.needsFilter)
+        return 0.0f;
+    const auto* trajectory = frame.hasTrajectory ? &frame.trajectory : nullptr;
+    const float filtered = voice.filter.process<useCubicEarly>(
+        frame.input, frame.omegaStep, voice.feedback, frame.headroom,
+        parameters.enableVcfEarlyEffect, parameters.calibration, trajectory,
+        parameters.vcfTanhMode, parameters.vcfSolverMode);
+    return finishVoiceFilter(voice, filtered);
+}
+
+template float YouKnow106Engine::renderVoice<false>(
+    Voice&, const EngineParameters&, float) noexcept;
+template float YouKnow106Engine::renderVoice<true>(
+    Voice&, const EngineParameters&, float) noexcept;
+
+#if defined(__aarch64__) && defined(__ARM_NEON)
+std::array<float, 2> YouKnow106Engine::renderVoicePair(
+    Voice& first, Voice& second, const EngineParameters& parameters,
+    float noiseSample) noexcept
+{
+    auto firstFrame = prepareVoiceFilter(first, parameters, noiseSample);
+    auto secondFrame = prepareVoiceFilter(second, parameters, noiseSample);
+    std::array<float, 2> filtered {};
+    bool processed = false;
+#if !defined(YOUKNOW106_WORK_AUDIT)
+    if (firstFrame.needsFilter && secondFrame.needsFilter
+        && !firstFrame.hasTrajectory && !secondFrame.hasTrajectory)
+        processed = OtaCascade::tryProcessSettledRk4HalfPair(
+            first.filter, firstFrame.input, firstFrame.omegaStep,
+            first.feedback, firstFrame.headroom,
+            second.filter, secondFrame.input, secondFrame.omegaStep,
+            second.feedback, secondFrame.headroom,
+            parameters.enableVcfEarlyEffect, parameters.calibration,
+            filtered[0], filtered[1]);
+#endif
+    if (!processed)
+    {
+        if (firstFrame.needsFilter)
+            filtered[0] = first.filter.process<true>(
+                firstFrame.input, firstFrame.omegaStep, first.feedback,
+                firstFrame.headroom, parameters.enableVcfEarlyEffect,
+                parameters.calibration,
+                firstFrame.hasTrajectory ? &firstFrame.trajectory : nullptr,
+                parameters.vcfTanhMode, parameters.vcfSolverMode);
+        if (secondFrame.needsFilter)
+            filtered[1] = second.filter.process<true>(
+                secondFrame.input, secondFrame.omegaStep, second.feedback,
+                secondFrame.headroom, parameters.enableVcfEarlyEffect,
+                parameters.calibration,
+                secondFrame.hasTrajectory ? &secondFrame.trajectory : nullptr,
+                parameters.vcfTanhMode, parameters.vcfSolverMode);
+    }
+
+    return {
+        firstFrame.needsFilter
+            ? finishVoiceFilter(first, filtered[0]) : 0.0f,
+        secondFrame.needsFilter
+            ? finishVoiceFilter(second, filtered[1]) : 0.0f
+    };
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Decimation
@@ -6213,94 +6591,138 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // Every slot, not just the first `limit` of them. The voice count
             // bounds what the key assigner may take; lowering it must stop new
             // notes rather than freeze notes that are already sounding.
-            const auto renderVoices = [&]<bool useCubicEarly> {
-                for (int slot = 0; slot < maxVoices; ++slot)
-                {
-                    auto& voice = voices_[static_cast<std::size_t>(slot)];
-
+            const auto updateVoiceForInterval = [&](int slot) {
+                auto& voice = voices_[static_cast<std::size_t>(slot)];
 #if defined(YOUKNOW106_WORK_AUDIT)
-                    YOUKNOW106_COUNT_DOMAIN_WORK(holdVoiceUpdates, 1);
+                YOUKNOW106_COUNT_DOMAIN_WORK(holdVoiceUpdates, 1);
 #endif
-                    // Each hold capacitor's own slew turns the scan's staircase
-                    // back into a continuous control voltage before it reaches
-                    // its converter. The amplifier's hold is the slow one.
-                    const bool cutoffEvent = cutoffHoldEvent
-                        && physicalHoldEvent.write.destination
-                               == ConverterDestination::Vcf
-                        && physicalHoldEvent.write.voice == slot;
-                    const float cutoffIntervalStart = voice.cutoffCounts;
-                    if (cutoffEvent)
-                    {
-                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
-                            exactVcfHoldInterval(
-                                cutoffIntervalStart,
-                                physicalHoldEvent.previousTarget, true,
-                                physicalHoldEvent.position,
-                                physicalHoldEvent.target,
-                                coefficients.internalIntervalSeconds);
-                        voice.cutoffCounts =
-                            cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
-                                .endpoint;
-                    }
-                    else if (resonanceEvent)
-                    {
-                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
-                            exactVcfHoldInterval(
-                                cutoffIntervalStart, voice.cutoffCountsTarget,
-                                false, 1.0, voice.cutoffCountsTarget,
-                                coefficients.internalIntervalSeconds);
-                        voice.cutoffCounts =
-                            cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
-                                .endpoint;
-                    }
-                    else
-                    {
-                        voice.cutoffCounts +=
-                            (voice.cutoffCountsTarget - voice.cutoffCounts)
-                                * coefficients.vcfSlew;
-                    }
-                    // Every slot reaches this store before renderVoice can read its
-                    // entry, so clearing the whole array at the interval boundary
-                    // would only write the same values twice.
-                    exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
-                        resonanceEvent || cutoffEvent;
-                    voice.dcoCv +=
-                        (voice.dcoCvTarget - voice.dcoCv) * coefficients.dcoSlew;
-                    const bool voiceVcaEvent = physicalHoldEvent.active
-                        && physicalHoldEvent.write.destination
-                               == ConverterDestination::VoiceVca
-                        && physicalHoldEvent.write.voice == slot;
-                    voice.vcaControl = voiceVcaEvent
-                        ? exactOnePoleHoldEndpoint(
-                            voice.vcaControl,
+                // Each hold capacitor's own slew turns the scan's staircase
+                // back into a continuous control voltage before it reaches
+                // its converter. The amplifier's hold is the slow one.
+                const bool cutoffEvent = cutoffHoldEvent
+                    && physicalHoldEvent.write.destination
+                           == ConverterDestination::Vcf
+                    && physicalHoldEvent.write.voice == slot;
+                const float cutoffIntervalStart = voice.cutoffCounts;
+                if (cutoffEvent)
+                {
+                    cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
+                        exactVcfHoldInterval(
+                            cutoffIntervalStart,
                             physicalHoldEvent.previousTarget, true,
                             physicalHoldEvent.position,
                             physicalHoldEvent.target,
-                            coefficients.internalIntervalSeconds,
-                            static_cast<double>(voiceVcaHoldSlewSeconds),
-                            coefficients.voiceVcaDecay)
-                        : advanceOrdinaryOnePoleHold(
-                            voice.vcaControl, voice.vcaControlTarget,
-                            coefficients.voiceVcaDecay);
-                    // Both of these feed `renderVoice`, which returns before it
-                    // reads any of their results for an inactive extension slot
-                    // (`!voice.active && cardIndex >= hardwareVoices`, and
-                    // `cardIndex` is always the slot). One guard, so the two
-                    // cannot drift apart from that early return or each other.
-                    // A freewheeling card reads neither result either -- its
-                    // gate below is the same `!active` plus the fast tanh
-                    // mode, and the wake path recomputes both before the
-                    // first audible sample -- so the pair is skipped there
-                    // too, under the identical condition renderVoice tests.
-                    const bool freewheels = !voice.active
-                        && parameters.vcfTanhMode != VcfTanhMode::Exact;
-                    if (!freewheels
-                        && (voice.active || slot < hardwareVoices))
-                    {
-                        updatePulseComparator(voice, parameters);
-                        updateVoiceAudio(voice, parameters);
-                    }
+                            coefficients.internalIntervalSeconds);
+                    voice.cutoffCounts =
+                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
+                            .endpoint;
+                }
+                else if (resonanceEvent)
+                {
+                    cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
+                        exactVcfHoldInterval(
+                            cutoffIntervalStart, voice.cutoffCountsTarget,
+                            false, 1.0, voice.cutoffCountsTarget,
+                            coefficients.internalIntervalSeconds);
+                    voice.cutoffCounts =
+                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
+                            .endpoint;
+                }
+                else
+                {
+                    voice.cutoffCounts +=
+                        (voice.cutoffCountsTarget - voice.cutoffCounts)
+                            * coefficients.vcfSlew;
+                }
+                // Every slot reaches this store before renderVoice can read its
+                // entry, so clearing the whole array at the interval boundary
+                // would only write the same values twice.
+                exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
+                    resonanceEvent || cutoffEvent;
+                voice.dcoCv +=
+                    (voice.dcoCvTarget - voice.dcoCv) * coefficients.dcoSlew;
+                const bool voiceVcaEvent = physicalHoldEvent.active
+                    && physicalHoldEvent.write.destination
+                           == ConverterDestination::VoiceVca
+                    && physicalHoldEvent.write.voice == slot;
+                voice.vcaControl = voiceVcaEvent
+                    ? exactOnePoleHoldEndpoint(
+                        voice.vcaControl,
+                        physicalHoldEvent.previousTarget, true,
+                        physicalHoldEvent.position,
+                        physicalHoldEvent.target,
+                        coefficients.internalIntervalSeconds,
+                        static_cast<double>(voiceVcaHoldSlewSeconds),
+                        coefficients.voiceVcaDecay)
+                    : advanceOrdinaryOnePoleHold(
+                        voice.vcaControl, voice.vcaControlTarget,
+                        coefficients.voiceVcaDecay);
+                // Both of these feed `renderVoice`, which returns before it
+                // reads any of their results for an inactive extension slot
+                // (`!voice.active && cardIndex >= hardwareVoices`, and
+                // `cardIndex` is always the slot). One guard, so the two
+                // cannot drift apart from that early return or each other.
+                // A freewheeling card reads neither result either -- its
+                // gate below is the same `!active` plus the fast tanh
+                // mode, and the wake path recomputes both before the
+                // first audible sample -- so the pair is skipped there
+                // too, under the identical condition renderVoice tests.
+                const bool freewheels = !voice.active
+                    && parameters.vcfTanhMode != VcfTanhMode::Exact;
+                if (!freewheels
+                    && (voice.active || slot < hardwareVoices))
+                {
+                    updatePulseComparator(voice, parameters);
+                    updateVoiceAudio(voice, parameters);
+                }
+            };
+            const auto accountRenderedVoice = [&](Voice& voice, float output) {
+                mono += output;
+                loudestEnvelope = std::max(
+                    loudestEnvelope, voice.envelope.value);
 
+                // Retire on the modelled amplifier actually being shut. A
+                // card's optional control offset can hold the control voltage
+                // just above the turn-on for ever, where the grounded-base
+                // stage still passes an inaudible trickle; without an explicit
+                // silence threshold a voice at -100 dB would block a deferred
+                // quality change indefinitely.
+                if (voice.envelope.stage == EnvelopeStage::Idle
+                    && !voice.keyDown && !voice.sustained
+                    && voice.vcaGain <= VoiceVcaControlLaw::silenceGain)
+                    silenceVoice(voice);
+                else
+                    sounding = true;
+            };
+            const auto renderVoices = [&]<bool useCubicEarly> {
+                for (int slot = 0; slot < maxVoices;)
+                {
+                    auto& voice = voices_[static_cast<std::size_t>(slot)];
+                    updateVoiceForInterval(slot);
+
+#if defined(__aarch64__) && defined(__ARM_NEON) \
+    && !defined(YOUKNOW106_WORK_AUDIT)
+                    if constexpr (useCubicEarly)
+                    {
+                        if (slot + 1 < hardwareVoices && voice.active
+                            && voices_[static_cast<std::size_t>(slot + 1)].active
+                            && parameters.vcfTanhMode
+                                   == VcfTanhMode::PolyZoned
+                            && parameters.vcfSolverMode
+                                   == VcfSolverMode::Rk4Single)
+                        {
+                            auto& second = voices_[
+                                static_cast<std::size_t>(slot + 1)];
+                            updateVoiceForInterval(slot + 1);
+                            const auto outputs = renderVoicePair(
+                                voice, second, parameters, noiseSample);
+                            accountRenderedVoice(voice, outputs[0]);
+                            accountRenderedVoice(second, outputs[1]);
+                            slot += 2;
+                            continue;
+                        }
+                    }
+#endif
                     if (!voice.active)
                     {
                         // The six physical DCO/filter cards remain powered behind
@@ -6310,26 +6732,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                         if (voice.cardIndex < hardwareVoices)
                             renderVoice<useCubicEarly>(
                                 voice, parameters, noiseSample);
+                        ++slot;
                         continue;
                     }
 
-                    mono += renderVoice<useCubicEarly>(
-                        voice, parameters, noiseSample);
-                    loudestEnvelope = std::max(
-                        loudestEnvelope, voice.envelope.value);
-
-                    // Retire on the modelled amplifier actually being shut. A
-                    // card's optional control offset can hold the control voltage
-                    // just above the turn-on for ever, where the grounded-base
-                    // stage still passes an inaudible trickle; without an explicit
-                    // silence threshold a voice at -100 dB would block a deferred
-                    // quality change indefinitely.
-                    if (voice.envelope.stage == EnvelopeStage::Idle
-                        && !voice.keyDown && !voice.sustained
-                        && voice.vcaGain <= VoiceVcaControlLaw::silenceGain)
-                        silenceVoice(voice);
-                    else
-                        sounding = true;
+                    accountRenderedVoice(
+                        voice, renderVoice<useCubicEarly>(
+                            voice, parameters, noiseSample));
+                    ++slot;
                 }
             };
             // The cubic Early multiplier is the shipped default since the
