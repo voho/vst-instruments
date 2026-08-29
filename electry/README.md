@@ -1753,11 +1753,11 @@ The first Electry experiment should remain default-off and control-rate: fit
 measured `delta-f(vertical, amplitude, pickup gap)` and
 `delta-f(horizontal, amplitude, pickup gap)` backbone curves, then feed their
 bounded offsets into the two existing phase-compensated delay targets. That
-adds two envelope states and two target corrections rather than another delay
-line; its operation count should be well below 0.1% of the physical-string
-engine, subject to measurement. A later conservative cubic spring at the live
-pickup displacement is still plausible, but it pays per sample and is not the
-minimum experiment.
+reuses the voice's existing output-energy estimate and adds two target
+corrections rather than another delay line or persistent state. Sub-0.1% of the
+physical-string engine is the benchmark hypothesis, not a promised cost. A
+later conservative cubic spring at the live pickup displacement is still
+plausible, but it pays per sample and is not the minimum experiment.
 
 No published coefficient transfers to a high-output eight-string humbucker or
 its wound .080 string. Promotion requires force-versus-displacement grids in
