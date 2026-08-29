@@ -8,6 +8,11 @@
 #include <cstddef>
 #include <cstdint>
 
+#if (defined(__aarch64__) && defined(__ARM_NEON)) \
+    || (defined(__x86_64__) && defined(__SSE2__))
+#define YOUKNOW106_HAS_VCF_PAIR_SIMD 1
+#endif
+
 namespace youknow106
 {
 
@@ -1440,10 +1445,10 @@ private:
                       VcfTanhMode tanhMode = VcfTanhMode::Exact,
                       VcfSolverMode solverMode =
                           VcfSolverMode::MersonHalfSteps) noexcept;
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
         // The shipping six-card workload resolves almost every settled
         // interval to the same two-half-step RK4 tableau. Advance two
-        // independent cards in the two FP64 NEON lanes when that exact hot
+        // independent cards in two FP64 SIMD lanes when that exact hot
         // case is present; false means the caller must use `process` without
         // this function having changed either cascade.
         static bool tryProcessSettledRk4HalfPair(
@@ -1981,7 +1986,7 @@ private:
     template <bool useCubicEarly = false>
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
     [[nodiscard]] std::array<float, 2> renderVoicePair(
         Voice& first, Voice& second, const EngineParameters& parameters,
         float noiseSample) noexcept;

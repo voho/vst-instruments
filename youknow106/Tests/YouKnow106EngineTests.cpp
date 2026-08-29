@@ -1383,7 +1383,7 @@ struct YouKnow106TestAccess
         return engine.useCubicEarly_;
     }
 
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
     struct OtaPairComparison
     {
         bool accepted {};
@@ -11504,7 +11504,7 @@ void testPanelHelpMatchesTheModulationRouting()
 
 void testSettledRk4HalfPairMatchesScalar()
 {
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
     constexpr std::array<const char*, 3> fixtureNames {
         "open-loop inner-zone", "resonant inner-zone",
         "resonant out-of-zone"
@@ -11515,7 +11515,7 @@ void testSettledRk4HalfPairMatchesScalar()
             YouKnow106TestAccess::compareSettledRk4HalfPair(fixture);
         const std::string name = fixtureNames[fixture];
         expect(compared.accepted,
-               name + " pair was not eligible for the NEON RK4Half path");
+               name + " pair was not eligible for the SIMD RK4Half path");
         expect(compared.firstOutputMatches,
                name + " first output differs from scalar process<true>");
         expect(compared.secondOutputMatches,
@@ -11693,6 +11693,23 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW106_SIMD_TEST_ONLY") != nullptr)
+    {
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
+        testSettledRk4HalfPairMatchesScalar();
+        if (failures != 0)
+        {
+            std::cerr << failures << " SIMD check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "The SIMD VCF pair check passed.\n";
+        return EXIT_SUCCESS;
+#else
+        std::cerr << "The SIMD VCF pair path is unavailable.\n";
+        return EXIT_FAILURE;
+#endif
+    }
+
     if (std::getenv("YOUKNOW106_PIT_TESTS_ONLY") != nullptr)
     {
         testMode3CountStagingAndControlPolarity();

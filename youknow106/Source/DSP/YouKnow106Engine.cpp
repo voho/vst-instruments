@@ -6,6 +6,8 @@
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
+#elif defined(__x86_64__) && defined(__SSE2__)
+#include <emmintrin.h>
 #endif
 
 #if defined(YOUKNOW106_WORK_AUDIT)
@@ -3069,7 +3071,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     return static_cast<float>(state[3]);
 }
 
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
 bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
     OtaCascade& first, float firstInput, float firstOmegaStep,
     float firstFeedback, float firstHeadroom,
@@ -3175,41 +3177,73 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
                         secondHeadroom, lanes[1]))
         return false;
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
     using Pair = float64x2_t;
-    using PairState = std::array<Pair, 4>;
     const auto pack = [](double low, double high) {
         return vsetq_lane_f64(high, vdupq_n_f64(low), 1);
     };
+#define pairLow(value) vgetq_lane_f64((value), 0)
+#define pairHigh(value) vgetq_lane_f64((value), 1)
+#define pairSplat(value) vdupq_n_f64(value)
+#define pairAdd(first, second) vaddq_f64((first), (second))
+#define pairSubtract(first, second) vsubq_f64((first), (second))
+#define pairMultiply(first, second) vmulq_f64((first), (second))
+#define pairMultiplyScalar(value, scalar) vmulq_n_f64((value), (scalar))
+#define pairMultiplyAdd(addend, first, second) \
+    vfmaq_f64((addend), (first), (second))
+#define pairMultiplyAddScalar(addend, value, scalar) \
+    vfmaq_n_f64((addend), (value), (scalar))
+#elif defined(__x86_64__) && defined(__SSE2__)
+    using Pair = __m128d;
+    const auto pack = [](double low, double high) {
+        return _mm_set_pd(high, low);
+    };
+#define pairLow(value) _mm_cvtsd_f64(value)
+#define pairHigh(value) _mm_cvtsd_f64(_mm_unpackhi_pd((value), (value)))
+#define pairSplat(value) _mm_set1_pd(value)
+#define pairAdd(first, second) _mm_add_pd((first), (second))
+#define pairSubtract(first, second) _mm_sub_pd((first), (second))
+#define pairMultiply(first, second) _mm_mul_pd((first), (second))
+#define pairMultiplyScalar(value, scalar) \
+    _mm_mul_pd((value), _mm_set1_pd(scalar))
+    // Baseline x86_64 has SSE2 but not FMA. Keep the scalar path's separate
+    // multiply and add rounding rather than changing the solve along with its
+    // scheduling.
+#define pairMultiplyAdd(addend, first, second) \
+    _mm_add_pd((addend), _mm_mul_pd((first), (second)))
+#define pairMultiplyAddScalar(addend, value, scalar) \
+    _mm_add_pd((addend), _mm_mul_pd((value), _mm_set1_pd(scalar)))
+#endif
+    using PairState = std::array<Pair, 4>;
     const auto polyTanhPair = [&](Pair value) {
-        const Pair u = vmulq_f64(value, value);
-        if (vgetq_lane_f64(u, 0) >= 1.0
-            || vgetq_lane_f64(u, 1) >= 1.0)
-            return pack(polyZonedTanhImpl(vgetq_lane_f64(value, 0)),
-                        polyZonedTanhImpl(vgetq_lane_f64(value, 1)));
+        const Pair u = pairMultiply(value, value);
+        if (pairLow(u) >= 1.0 || pairHigh(u) >= 1.0)
+            return pack(polyZonedTanhImpl(pairLow(value)),
+                        polyZonedTanhImpl(pairHigh(value)));
 
-        const Pair uSquared = vmulq_f64(u, u);
-        const Pair top = vfmaq_n_f64(
-            vdupq_n_f64(0.016720855179576926), u,
+        const Pair uSquared = pairMultiply(u, u);
+        const Pair top = pairMultiplyAddScalar(
+            pairSplat(0.016720855179576926), u,
             -0.00305822903759879);
-        const Pair high = vfmaq_n_f64(
-            vdupq_n_f64(0.1328072064598552), u,
+        const Pair high = pairMultiplyAddScalar(
+            pairSplat(0.1328072064598552), u,
             -0.051585988404218436);
-        const Pair low = vfmaq_n_f64(
-            vdupq_n_f64(0.9999993948006496), u,
+        const Pair low = pairMultiplyAddScalar(
+            pairSplat(0.9999993948006496), u,
             -0.3332895137021704);
-        const Pair upper = vfmaq_f64(high, top, uSquared);
-        const Pair factor = vfmaq_f64(low, upper, uSquared);
-        return vmulq_f64(value, factor);
+        const Pair upper = pairMultiplyAdd(high, top, uSquared);
+        const Pair factor = pairMultiplyAdd(low, upper, uSquared);
+        return pairMultiply(value, factor);
     };
     const auto cubicEarlyPair = [&](Pair value) {
-        if (std::abs(vgetq_lane_f64(value, 0)) >= 1.5
-            || std::abs(vgetq_lane_f64(value, 1)) >= 1.5)
-            return pack(cubicEarlyTanh(vgetq_lane_f64(value, 0)),
-                        cubicEarlyTanh(vgetq_lane_f64(value, 1)));
+        if (std::abs(pairLow(value)) >= 1.5
+            || std::abs(pairHigh(value)) >= 1.5)
+            return pack(cubicEarlyTanh(pairLow(value)),
+                        cubicEarlyTanh(pairHigh(value)));
 
-        const Pair scaled = vmulq_n_f64(value, -(4.0 / 27.0));
-        const Pair factor = vfmaq_f64(vdupq_n_f64(1.0), scaled, value);
-        return vmulq_f64(value, factor);
+        const Pair scaled = pairMultiplyScalar(value, -(4.0 / 27.0));
+        const Pair factor = pairMultiplyAdd(pairSplat(1.0), scaled, value);
+        return pairMultiply(value, factor);
     };
 
     PairState state;
@@ -3228,30 +3262,30 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
     const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
     const auto derivative = [&](const PairState& value, Pair drive) {
-        const Pair feedbackArgument = vmulq_n_f64(
+        const Pair feedbackArgument = pairMultiplyScalar(
             value[3], 1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
-            ? vgetq_lane_f64(drive, 0)
-            : vgetq_lane_f64(drive, 0)
+            ? pairLow(drive)
+            : pairLow(drive)
                 - lanes[0].feedback * feedbackHeadroom
-                    * vgetq_lane_f64(feedbackTanh, 0);
+                    * pairLow(feedbackTanh);
         const double secondLoopReturn = lanes[1].feedback == 0.0
-            ? vgetq_lane_f64(drive, 1)
-            : vgetq_lane_f64(drive, 1)
+            ? pairHigh(drive)
+            : pairHigh(drive)
                 - lanes[1].feedback * feedbackHeadroom
-                    * vgetq_lane_f64(feedbackTanh, 1);
+                    * pairHigh(feedbackTanh);
         const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
 
         PairState stageArgument {
-            vmulq_f64(vaddq_f64(vsubq_f64(loopReturn, value[0]),
-                                stageOffset[0]), inverseHeadroom),
-            vmulq_f64(vaddq_f64(vsubq_f64(value[0], value[1]),
-                                stageOffset[1]), inverseHeadroom),
-            vmulq_f64(vaddq_f64(vsubq_f64(value[1], value[2]),
-                                stageOffset[2]), inverseHeadroom),
-            vmulq_f64(vaddq_f64(vsubq_f64(value[2], value[3]),
-                                stageOffset[3]), inverseHeadroom)
+            pairMultiply(pairAdd(pairSubtract(loopReturn, value[0]),
+                                 stageOffset[0]), inverseHeadroom),
+            pairMultiply(pairAdd(pairSubtract(value[0], value[1]),
+                                 stageOffset[1]), inverseHeadroom),
+            pairMultiply(pairAdd(pairSubtract(value[1], value[2]),
+                                 stageOffset[2]), inverseHeadroom),
+            pairMultiply(pairAdd(pairSubtract(value[2], value[3]),
+                                 stageOffset[3]), inverseHeadroom)
         };
         PairState stageTanh;
         for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
@@ -3261,25 +3295,25 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
         if (!applyEarlyEffect)
         {
             for (auto& valueAtStage : early)
-                valueAtStage = vdupq_n_f64(1.0);
+                valueAtStage = pairSplat(1.0);
         }
         else
         {
             for (std::size_t stage = 0; stage < early.size(); ++stage)
             {
                 const Pair earlyTanh = cubicEarlyPair(
-                    vmulq_f64(value[stage], inverseHeadroom));
-                early[stage] = vfmaq_n_f64(
-                    vdupq_n_f64(1.0), earlyTanh, earlyAmount);
+                    pairMultiply(value[stage], inverseHeadroom));
+                early[stage] = pairMultiplyAddScalar(
+                    pairSplat(1.0), earlyTanh, earlyAmount);
             }
         }
 
         PairState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
         {
-            result[stage] = vmulq_f64(stageOmega[stage], early[stage]);
-            result[stage] = vmulq_f64(result[stage], runningHeadroom);
-            result[stage] = vmulq_f64(result[stage], stageTanh[stage]);
+            result[stage] = pairMultiply(stageOmega[stage], early[stage]);
+            result[stage] = pairMultiply(result[stage], runningHeadroom);
+            result[stage] = pairMultiply(result[stage], stageTanh[stage]);
         }
         return result;
     };
@@ -3287,7 +3321,7 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
                                const PairState& slope, double distance) {
         PairState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
-            result[stage] = vfmaq_n_f64(
+            result[stage] = pairMultiplyAddScalar(
                 origin[stage], slope[stage], distance);
         return result;
     };
@@ -3299,11 +3333,15 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
         PairState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
         {
-            Pair weighted = vmulq_n_f64(k2[stage], 1.0 / 3.0);
-            weighted = vfmaq_n_f64(weighted, k1[stage], 1.0 / 6.0);
-            weighted = vfmaq_n_f64(weighted, k3[stage], 1.0 / 3.0);
-            weighted = vfmaq_n_f64(weighted, k4[stage], 1.0 / 6.0);
-            result[stage] = vfmaq_n_f64(origin[stage], weighted, 0.5);
+            Pair weighted = pairMultiplyScalar(k2[stage], 1.0 / 3.0);
+            weighted = pairMultiplyAddScalar(
+                weighted, k1[stage], 1.0 / 6.0);
+            weighted = pairMultiplyAddScalar(
+                weighted, k3[stage], 1.0 / 3.0);
+            weighted = pairMultiplyAddScalar(
+                weighted, k4[stage], 1.0 / 6.0);
+            result[stage] = pairMultiplyAddScalar(
+                origin[stage], weighted, 0.5);
         }
         return result;
     };
@@ -3330,9 +3368,19 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
 
     for (std::size_t stage = 0; stage < state.size(); ++stage)
     {
-        first.state[stage] = vgetq_lane_f64(state[stage], 0);
-        second.state[stage] = vgetq_lane_f64(state[stage], 1);
+        first.state[stage] = pairLow(state[stage]);
+        second.state[stage] = pairHigh(state[stage]);
     }
+
+#undef pairLow
+#undef pairHigh
+#undef pairSplat
+#undef pairAdd
+#undef pairSubtract
+#undef pairMultiply
+#undef pairMultiplyScalar
+#undef pairMultiplyAdd
+#undef pairMultiplyAddScalar
 
     const auto finishLane = [](Lane& lane, float& output) {
         auto& cascade = *lane.cascade;
@@ -6460,7 +6508,7 @@ template float YouKnow106Engine::renderVoice<false>(
 template float YouKnow106Engine::renderVoice<true>(
     Voice&, const EngineParameters&, float) noexcept;
 
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
 std::array<float, 2> YouKnow106Engine::renderVoicePair(
     Voice& first, Voice& second, const EngineParameters& parameters,
     float noiseSample) noexcept
@@ -7042,7 +7090,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     auto& voice = voices_[static_cast<std::size_t>(slot)];
                     updateVoiceForInterval(slot);
 
-#if defined(__aarch64__) && defined(__ARM_NEON) \
+#if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD) \
     && !defined(YOUKNOW106_WORK_AUDIT)
                     if constexpr (useCubicEarly)
                     {
