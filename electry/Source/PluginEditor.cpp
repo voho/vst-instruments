@@ -794,6 +794,13 @@ juce::String ElectryStatusDisplay::getStatusText() const
     return status;
 }
 
+std::unique_ptr<juce::AccessibilityHandler>
+ElectryStatusDisplay::createAccessibilityHandler()
+{
+    return std::make_unique<juce::AccessibilityHandler> (
+        *this, juce::AccessibilityRole::staticText);
+}
+
 void ElectryStatusDisplay::paint (juce::Graphics& graphics)
 {
     auto bounds = getLocalBounds().toFloat();

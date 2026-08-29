@@ -99,6 +99,7 @@ public:
                     double sampleRate, int midiMutePressure, int vibratoGesture,
                     int tremoloGesture, bool scheduleRepaint = true);
     juce::String getStatusText() const;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
     void paint (juce::Graphics&) override;
 
 private:

@@ -4282,6 +4282,23 @@ void testEditorRendering()
                 "PANIC became a latched action to obtain visual emphasis");
     }
 
+    ElectryStatusDisplay* statusControl = nullptr;
+    for (auto* child : editor->getChildren())
+        if (auto* status = dynamic_cast<ElectryStatusDisplay*> (child))
+            statusControl = status;
+    expect (statusControl != nullptr,
+            "editor is missing the live status readout");
+    if (statusControl != nullptr)
+    {
+        auto accessibility = statusControl->createAccessibilityHandler();
+        expect (accessibility != nullptr
+                    && accessibility->getRole()
+                           == juce::AccessibilityRole::staticText
+                    && accessibility->getTitle()
+                           == statusControl->getStatusText(),
+                "live status is not exposed as accessible static text");
+    }
+
     auto* outputModeControl = findControl (electry::parameters::outputMode);
     const auto* outputControl = findControl (electry::parameters::output);
     expect (outputModeControl != nullptr && outputControl != nullptr,
