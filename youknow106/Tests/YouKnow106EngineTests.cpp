@@ -3386,6 +3386,70 @@ void testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension()
            "Phase Zero did not commit the six captured cards at its shared T");
 }
 
+void testRangeDoesNotRetargetDcoCompensationCv()
+{
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.range = DcoRange::Eight;
+    engine.setParameters(parameters);
+    engine.noteOn(69, 1.0f);
+    YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
+
+    const std::uint32_t count =
+        YouKnow106TestAccess::pitWriteDivider(engine, 0);
+    const float fixedCv = YouKnow106TestAccess::dcoCvTarget(engine, 0);
+    YouKnow106TestAccess::setMode3Running(
+        engine, 0, count, true, 103.25, DcoRange::Eight);
+    const double eightFootPeriod =
+        YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
+    YouKnow106TestAccess::setDcoLaunchState(
+        engine, 0, eightFootPeriod, fixedCv, fixedCv);
+
+    const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
+    const double phaseStep =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    YouKnow106TestAccess::setConverterScheduler(
+        engine,
+        YouKnow106TestAccess::converterEventPhase(engine, ordinal)
+            - 19.5 * phaseStep,
+        ordinal);
+
+    const double countdownBefore =
+        YouKnow106TestAccess::pitClocksToEvent(engine, 0);
+    parameters.range = DcoRange::Four;
+    engine.setParameters(parameters);
+    expect(YouKnow106TestAccess::rangeClockTransitionPending(engine)
+               && YouKnow106TestAccess::pitClocksToEvent(engine, 0)
+                      != countdownBefore,
+           "a RANGE-only edit did not retime the physical clock handoff");
+
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    YouKnow106TestAccess::scheduleUpcomingDcoPitchPrestages(engine);
+    engine.process(&left, &right, 1);
+    expect(YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+               && YouKnow106TestAccess::dcoPitchTransactionCvTarget(engine, 0)
+                      == fixedCv,
+           "RANGE data leaked into the captured DCO compensation CV");
+
+    int framesToCommit = 0;
+    while (YouKnow106TestAccess::dcoPitchTransactionValid(engine, 0)
+           && framesToCommit < 32)
+    {
+        engine.process(&left, &right, 1);
+        ++framesToCommit;
+    }
+    expect(framesToCommit < 32
+               && YouKnow106TestAccess::dcoCvTarget(engine, 0) == fixedCv
+               && YouKnow106TestAccess::dcoCv(engine, 0) == fixedCv,
+           "a RANGE-only pitch scan committed or slewed a new DCO CV");
+    expect(YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
+               == eightFootPeriod / 2.0,
+           "the RANGE edit stopped changing the PIT-derived DCO period");
+}
+
 void testRangeDividerCompletesItsCurrentSynchronousCount()
 {
     // Module-board IC35 is not a mux between three clock taps. PF7/PF6 set
@@ -11720,6 +11784,7 @@ int main()
         testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
         testQualitySwitchWaitsForConverterAnchoredPitchTransaction();
         testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
+        testRangeDoesNotRetargetDcoCompensationCv();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -11802,6 +11867,7 @@ int main()
     testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
     testQualitySwitchWaitsForConverterAnchoredPitchTransaction();
     testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
+    testRangeDoesNotRetargetDcoCompensationCv();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();

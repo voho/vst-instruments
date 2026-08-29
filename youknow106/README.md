@@ -486,9 +486,11 @@ zero-interrupt profile instead of inventing a pin edge or jitter distribution.
   each pitch-converter poll, and the synchronous IC35 range handoff. PIT count,
   reset and compensation-CV decisions now form one atomic firmware transaction
   beginning 97.25 us before that poll. This changes pitch-step, retrigger and
-  live RANGE transients; physical mux timestamps and interrupt jitter remain
-  open under OQ-08, while the separate CPU/PIT oscillators rule out one fixed
-  inter-clock phase.
+  live RANGE transients. RANGE changes the shared clock and selected ramp
+  resistor without entering the compensation CV, so a range-only scan no
+  longer fabricates a hold step. Physical mux timestamps and interrupt jitter
+  remain open under OQ-08, while the separate CPU/PIT oscillators rule out one
+  fixed inter-clock phase.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

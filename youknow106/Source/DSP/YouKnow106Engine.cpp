@@ -5143,8 +5143,11 @@ std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
                       + static_cast<double>(cents) / 100.0;
 
     const std::uint32_t requestedDivider = dcoDivider(midiToHz(midi));
+    // Roland explicitly says DCO CV contains no RANGE data: RANGE changes the
+    // timer clock and selects the ramp resistor, not this compensation hold.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
     const double frequency = dcoQuantisedFrequency(
-        requestedDivider, parameters.range);
+        requestedDivider, DcoRange::Eight);
     // The compensation voltage the firmware writes for this pitch. The
     // requested count is staged below by the converter destination. A
     // running M82C53 count-only write leaves the active CE/period untouched
