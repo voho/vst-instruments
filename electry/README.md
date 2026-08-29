@@ -505,13 +505,15 @@ behind a 0% knob. CC 120/123 behave as All Sound Off and All Notes Off.
   decaying fret-collision window on hard-picked notes that soft-limits
   displacement and re-radiates deterministic rattle. Hammer-ons retarget a
   sounding loop without clearing its state.
-- **Attack pitch:** hard strokes keep the written pitch across all eight
-  strings. A force-derived tension-modulation prototype was removed after an
-  absolute-pitch audit found that its one-recording E1 calibration pulled
-  different strings sharp by different amounts and made low chords sour. Real
-  plucked strings can show nonlinear attack glide, but that path remains
-  withheld until matched, absolute-pitch, multi-string and multi-velocity
-  captures can bound it. Legacy pitch bend moves every delay target by the
+- **Attack pitch:** shipping hard strokes keep the written pitch across all
+  eight strings. A compile-time, default-off energy experiment now seeds a
+  bounded common tension coordinate only when an ordinary plectrum contact
+  releases, using the wound steel core for axial elasticity and both
+  polarisations for transverse energy. It passes a frozen conventional-E2
+  compatibility gate and adds under 1% CPU in the registered eight-string
+  stress cases, but remains disabled: the real cohort has one take per pickup
+  on a six-string SG, not matched multi-velocity exact-eight train and holdout
+  captures. Legacy pitch bend moves every delay target by the
   same ±2 semitone ratio; an active MPE zone instead composes its declared
   member and master intervals on each channel-owned string. Both use the Bend
   Time glide. Hold the visible A#0 **VIB** key
@@ -1125,7 +1127,7 @@ High-Gain.
 | Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, live fractional speaking length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation. During legato travel the established tension stays fixed while `B` follows `1/L^2`, including a one-shot exact endpoint fit | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
-| Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store | The shipping string keeps its compensated fundamental delay independent of pick velocity; a regression checks maximum-velocity Sustain on all eight isolated opens and a simultaneous low chord, then the three isolated low strings under Mute and Dead | Nonlinear tension glide is a documented future mechanism, not a shipping claim: the single-recording force prototype failed absolute multi-string tuning and remains withheld until matched captures identify a bounded model |
+| Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store; Lee et al.'s measured common partial glide | Shipping keeps its compensated fundamental delay independent of pick velocity. The compile-time default-off experiment converts the resolved two-axis release energy through the steel core's axial `E A`, clamps the shared tension ratio to a seven-cent ceiling, and moves the complete compensated period without refitting static dispersion | A bounded research candidate that passes a frozen conventional-E2 descriptive compatibility gate with under 1% measured CPU overhead; not enabled shipping behavior, an exact-eight calibration, a causal identification, or evidence of market superiority |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; an asymmetric constant-area release and a 0.5-1.5 mm contact patch vary with Pick Hardness, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
@@ -1892,16 +1894,76 @@ the fundamental plus at least three partials to share the trajectory, and leave
 its existing static dispersion/loss model responsible for purely apparent
 spectral glide.
 
-Electry's current `outputEnergy` is not that state: it sums both axes, has
-retirement-oriented attack/release dynamics, and on a fresh unseeded low loop
-does not rise until the injected wave returns to the read head, roughly one E1
-round trip. The smallest defensible default-off experiment seeds a dedicated
-per-string energy coordinate from the resolved release, updates it from measured
-excitation/loss energy flow or a separately validated one-pole store, sums both
-polarisations because they stretch one string, and applies one common
-phase-aware delay correction before any relative-axis split. Promotion still
-requires matched multi-velocity partial trajectories on the target strings,
-the existing hard-chord tuning contract, and interleaved 96 kHz CPU runs.
+Electry's existing `outputEnergy` is not reused. Under the compile-time
+`ELECTRY_ENERGY_ATTACK_PITCH` flag, an ordinary Sustain plectrum contact
+instead latches a physical release candidate. For pluck fraction `p`,
+two-axis peak displacement `y` and axis weights `w_v`, `w_h`, it evaluates
+`E_string = T y^2 (w_v^2 + w_h^2) / (2 L p (1-p))`, then converts that
+energy to the dimensionless tension ratio
+`q = E A_core E_string / (2 L T^2)`. Sounding frequency follows Bank's
+square-root law, `f / f0 = sqrt(1 + q)`. The winding remains inertial while
+only the estimated steel core supplies axial `E A`; the complete static
+dispersion fit stays at the written pitch.
+
+The physical energy and elastic scale exist only while that plectrum contact
+is pending. On real release they seed a bounded phenomenological `q`; delayed
+or interrupted contacts do nothing, repicks retain the larger old/new value
+without summing it, legato carries only live `q`, and reset, silence and a
+large voice steal close the state explicitly. The common dynamic period is
+phase-compensated in both polarisations before their fixed relative split.
+`q` is capped at `2^(7/600) - 1`, exactly seven cents, and decays with a
+0.3049 s time constant. That time constant is borrowed from Lee et al.'s one
+hard-plucked open high-E measurement, not fitted to EG-IPT and not asserted as
+an eight-string material constant. The 4.8 N full-force contact anchor and
+wound-core fractions are existing heuristic/construction coordinates, not
+coefficients fitted after seeing the comparison.
+
+The v2 candidate protocol was frozen before the final candidate audio was
+decoded by the analyzer, with SHA-256
+`3db89fcbc411ea16d34ba89a0b11b3b15067cd7742053411cb687700f633093e`.
+Its wrapper and unchanged estimator core have SHA-256
+`10e78e687682541c6a28be68144a85c8073bb2bc27c50a1911b77c9eb4e4737c`
+and
+`745d31494b5ddca33f092a3d8208a533892c8a1dd2d21fd9263bdc3fc16d5de3`;
+the exact 29-file source/audio/executable freeze is
+`c50d86d4fea7603bd650b0a96eb1b8d1a21973199e46a93993e8e4c27eb760f1`.
+The wrapper rebinds the byte-identical estimator core; no numeric estimator
+constant or gate changed.
+
+All six model files were sufficient, all three Sustain renders had a positive
+coherent attack trajectory, and every registered absolute-error measure
+strictly improved:
+
+| error against the three ordinary EG-IPT cells | shipping | candidate |
+| --- | ---: | ---: |
+| median aggregate attack | 2.105 c | 0.347 c |
+| maximum aggregate attack | 2.363 c | 0.980 c |
+| median aggregate slope | 9.078 c/s | 2.072 c/s |
+| maximum aggregate slope | 9.577 c/s | 2.569 c/s |
+| median H1 attack | 2.190 c | 0.684 c |
+
+The three Palm renders remain byte-identical with the flag on, while all six
+flag-off release renders remain byte-identical to the pre-candidate baseline.
+Two complete analyzer runs produced identical JSON and CSV with SHA-256
+`bce5c0b612ebd2e8dea8b15dc584b6ece62705b300ab79ded1b3d6eeaa7219a8`
+and
+`23fe3f59f23c3bfc3b4c773b433b9f431e46c380ba5bd340b6b23bc5fad8ba62`.
+Both flag-off and flag-on engine and FX suites pass. Nine alternating
+ABBA/BAAB rounds at 96 kHz, block 256, all eight strings, Both pickup and
+Stereo measured median overhead of 0.397% for Sustain and 0.735% for Palm;
+paired-round medians were 0.403% and 0.764%, below the frozen 3% ceiling.
+The CPU result has SHA-256
+`982c791df5695d54512c4f4ab150b2d54297e27d7a81d2e0cdf62cd64d906f48`.
+
+The default-off candidate is committed at `7807944`; its read-only final
+receipt has SHA-256
+`1b826e0b5683d7c035cb5bbf8a7e2caea7b0f0470eadcdb8a225f82169071144`.
+This is a descriptive compatibility pass against one separately played take
+per pickup on a conventional six-string SG. Muted and snap-pizzicato cells
+remain inconclusive. The result does not identify the physical cause, provide
+matched multi-velocity exact-eight calibration or holdout evidence, include a
+user blind verdict, authorize enabling the flag, or establish market
+superiority.
 
 #### Pickup-magnet back-action research
 
