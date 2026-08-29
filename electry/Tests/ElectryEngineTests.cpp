@@ -593,12 +593,35 @@ struct ElectryEngineTestAccess
         return neck ? engine.neckPathActive_ : engine.bridgePathActive_;
     }
 
-    // Is the humbucker's second coil running on this string's bridge pickup?
+    // Is the humbucker's second coil running on this string's selected pickup?
     static bool coilPairActive(const ElectryEngine& engine,
-                               int stringIndex) noexcept
+                               int stringIndex, bool neck = false) noexcept
     {
-        return engine.voices_[static_cast<std::size_t>(stringIndex)]
-            .coilPairBridge.paired;
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        return (neck ? voice.coilPairNeck : voice.coilPairBridge).paired;
+    }
+
+    static std::array<bool, 3> pickupHistory(
+        const ElectryEngine& engine, int stringIndex, bool neck) noexcept
+    {
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& aperture = neck ? voice.apertureNeck : voice.apertureBridge;
+        const auto& coil = neck ? voice.coilPairNeck : voice.coilPairBridge;
+        const float previousFlux = neck
+            ? voice.previousFluxNeck : voice.previousFluxBridge;
+        const float emf = neck
+            ? voice.emfLowpassNeck.state : voice.emfLowpassBridge.state;
+        return {
+            std::any_of(
+                aperture.cumulativeHistory.begin(),
+                aperture.cumulativeHistory.end(),
+                [] (double sample) { return sample != 0.0; }),
+            std::any_of(coil.history.begin(), coil.history.end(),
+                        [] (float sample) { return sample != 0.0f; }),
+            previousFlux != 0.0f || emf != 0.0f
+        };
     }
 
     struct PickupGeometry
@@ -971,8 +994,8 @@ struct ElectryEngineTestAccess
 
     // A fresh DelayTap solved for one requested delay, so its own clamp and
     // cubic-Lagrange coefficient solve can be checked directly rather than
-    // only through whatever pickup or sympathetic-tap position a configured
-    // voice happens to land on.
+    // only through whatever played or sympathetic pickup position a
+    // configured voice happens to land on.
     static DelayTapSnapshot delayTapAt(float delaySamples) noexcept
     {
         ElectryEngine::DelayTap tap;
@@ -8793,13 +8816,13 @@ void testSetResonanceReturnLevelAndPalmMutePressureSanitisation()
            "audio");
 }
 
-// DelayTap::setDelay - the cubic-Lagrange fractional read shared by both
-// pickup taps and the sympathetic-string bridge tap - clamps its request to
+// DelayTap::setDelay - the cubic-Lagrange fractional read shared by every
+// played and sympathetic pickup tap - clamps its request to
 // [4, delayLineSize - 8] before solving four interpolation coefficients from
 // the clamped delay's fractional part. Nothing in the suite ever asked it for
 // a delay outside that range directly, or checked the coefficients
-// themselves rather than the pickup or sympathetic audio they eventually
-// shape, so a clamp landing on the wrong boundary or a sign error in the
+// themselves rather than the pickup audio they eventually shape, so a clamp
+// landing on the wrong boundary or a sign error in the
 // Lagrange solve would still have passed every existing test.
 void testDelayTapClampsAndInterpolates()
 {
@@ -16618,6 +16641,18 @@ void testPickupCullingAndChannelLinking()
                "the bridge pickup path was not culled to match the selector");
         expect(allFinite(audio) && peakAbs(audio.left) > 1.0e-5f,
                "a selector position rendered silence");
+
+        constexpr int idleString = 0;
+        expect(TestAccess::snapshot(engine, idleString).sympatheticReady,
+               "the pickup-culling fixture did not wake idle E1");
+        const std::array<bool, 3> populated { true, true, true };
+        const std::array<bool, 3> clear { false, false, false };
+        expect(TestAccess::pickupHistory(engine, idleString, true)
+                   == (item.neck ? populated : clear),
+               "the idle neck pickup history did not follow its culling state");
+        expect(TestAccess::pickupHistory(engine, idleString, false)
+                   == (item.bridge ? populated : clear),
+               "the idle bridge pickup history did not follow its culling state");
     }
 
     // Bringing a culled pickup back must not click: its aperture and EMF
@@ -16922,6 +16957,104 @@ void testPickupGeometryFollowsLiveWaveSpeed()
                "the vibrato fixture never developed a measurable tension bend");
         expectScaled(before, widest, widestSemitones,
                      "live fretting-hand vibrato");
+    }
+
+    // An idle open string is the same vibrating steel under the same pickups.
+    // It must therefore use the played path's position, aperture and coil-pair
+    // geometry, including the live 1/c coordinate and exact single-coil end.
+    {
+        auto coupledParameters = parameters;
+        coupledParameters.sympatheticAmount = 1.0f;
+        ElectryEngine coupled;
+        coupled.prepare(sampleRate, 512);
+        coupled.setParameters(coupledParameters);
+        coupled.reset();
+        coupled.noteOn(note, 0.9f);
+        StereoBuffer wake(static_cast<int>(0.12 * sampleRate));
+        renderInto(coupled, wake);
+
+        constexpr int idleString = 0; // open Drop-E E1
+        expect(TestAccess::snapshot(coupled, idleString).sympatheticReady,
+               "the sympathetic pickup fixture did not wake idle E1");
+        const auto idleRest = TestAccess::pickupGeometry(coupled, idleString);
+
+        ElectryEngine played;
+        played.prepare(sampleRate, 512);
+        auto playedParameters = coupledParameters;
+        playedParameters.sympatheticAmount = 0.0f;
+        played.setParameters(playedParameters);
+        played.reset();
+        played.noteOn(ElectryEngine::lowestPlayableNote, 0.9f);
+        const auto playedOpen = TestAccess::pickupGeometry(played, idleString);
+        expect(idleRest.neckTapDelay == playedOpen.neckTapDelay
+                   && idleRest.bridgeTapDelay == playedOpen.bridgeTapDelay
+                   && idleRest.apertureDelay == playedOpen.apertureDelay
+                   && idleRest.coilDelay == playedOpen.coilDelay,
+               "idle E1 did not reuse the played open string's pickup geometry");
+        expect(idleRest.neckTapDelay > idleRest.bridgeTapDelay * 3.0f
+                   && TestAccess::coilPairActive(coupled, idleString, true)
+                   && TestAccess::coilPairActive(coupled, idleString, false),
+               "idle E1 did not expose distinct pickup positions and two coils");
+
+        coupledParameters.pickupType = 1.0f;
+        coupled.setParameters(coupledParameters);
+        // The endpoint snap waits for the ordinary 14 ms smoothing tail to
+        // enter its 1e-4 deadband. Give both directions the full tail before
+        // inspecting geometry or starting the independent bend gesture.
+        StereoBuffer endpointSettle(static_cast<int>(0.20 * sampleRate));
+        renderInto(coupled, endpointSettle, 17);
+        const auto singleCoil = TestAccess::pickupGeometry(coupled, idleString);
+        expect(singleCoil.coilDelay == 0.0f
+                   && ! TestAccess::coilPairActive(coupled, idleString, true)
+                   && ! TestAccess::coilPairActive(coupled, idleString, false)
+                   && singleCoil.apertureDelay == idleRest.apertureDelay,
+               "idle E1 missed the exact single-coil pickup endpoint");
+
+        coupledParameters.pickupType = 0.0f;
+        coupled.setParameters(coupledParameters);
+        renderInto(coupled, endpointSettle, 17);
+        const auto humbuckerRestored =
+            TestAccess::pickupGeometry(coupled, idleString);
+        expect(humbuckerRestored.neckTapDelay == idleRest.neckTapDelay
+                   && humbuckerRestored.bridgeTapDelay
+                       == idleRest.bridgeTapDelay
+                   && humbuckerRestored.apertureDelay
+                       == idleRest.apertureDelay
+                   && humbuckerRestored.coilDelay == idleRest.coilDelay
+                   && TestAccess::coilPairActive(coupled, idleString, true)
+                   && TestAccess::coilPairActive(coupled, idleString, false),
+               "idle E1 did not restore its humbucker pickup geometry");
+
+        coupled.setPitchBend(1.0f);
+        StereoBuffer bendSettle(static_cast<int>(0.20 * sampleRate));
+        renderInto(coupled, bendSettle, 17);
+        const auto idleBent = TestAccess::pickupGeometry(coupled, idleString);
+        const float bendSemitones = 12.0f * std::log2(
+            TestAccess::sympatheticFrequency(coupled, idleString)
+            / midiHz(ElectryEngine::lowestPlayableNote));
+        expect(bendSemitones > 1.9f,
+               "the sympathetic pickup fixture did not reach its bend");
+        expectScaled(humbuckerRestored, idleBent, bendSemitones,
+                     "live sympathetic-string bend");
+
+        // Picking this already-ringing steel changes ownership, not the
+        // physical pickup. Preserve its populated spatial/Faraday memories so
+        // the played attack does not begin behind an artificially empty path.
+        const auto neckBeforeHandoff =
+            TestAccess::pickupHistory(coupled, idleString, true);
+        const auto bridgeBeforeHandoff =
+            TestAccess::pickupHistory(coupled, idleString, false);
+        const std::array<bool, 3> populated { true, true, true };
+        coupled.noteOn(ElectryEngine::lowestPlayableNote, 0.9f);
+        expect(neckBeforeHandoff == populated
+                   && bridgeBeforeHandoff == populated
+                   && ! TestAccess::snapshot(coupled, idleString)
+                           .sympatheticReady
+                   && TestAccess::pickupHistory(coupled, idleString, true)
+                       == neckBeforeHandoff
+                   && TestAccess::pickupHistory(coupled, idleString, false)
+                       == bridgeBeforeHandoff,
+               "the sympathetic-to-played handoff cleared pickup history");
     }
 
 }
@@ -18181,30 +18314,35 @@ void testCpuGuardrail()
 
     double idleWorstCase = 1.0e9;
     double idleDefaultCase = 1.0e9;
-    int largestIdleCount = 0;
+    StereoBuffer idleWake(512);
+    const auto wakeIdleStrings = [&] (ElectryEngine& engine,
+                                      const std::string& context)
+    {
+        renderInto(engine, idleWake);
+        expect(engine.getActiveVoiceCount() == 1
+                   && engine.getSympatheticStringCount()
+                          == ElectryEngine::stringCount - 1,
+               context + " did not keep one driver and seven coupled strings");
+    };
     for (int attempt = 0; attempt < 5; ++attempt)
     {
         ElectryEngine worstEngine;
         strikeWithIdleStrings(
             worstEngine, PickupSelector::Both, electry::OutputMode::Stereo);
+        wakeIdleStrings(worstEngine, "Both/Stereo idle CPU fixture");
         idleWorstCase = std::min(
             idleWorstCase, timeRender(worstEngine, buffer));
-        largestIdleCount = std::max(
-            largestIdleCount, worstEngine.getSympatheticStringCount());
 
         ElectryEngine defaultEngine;
         strikeWithIdleStrings(
             defaultEngine, PickupSelector::Bridge, electry::OutputMode::Mono);
+        wakeIdleStrings(defaultEngine, "Bridge/Mono idle CPU fixture");
         idleDefaultCase = std::min(
             idleDefaultCase, timeRender(defaultEngine, buffer));
-        largestIdleCount = std::max(
-            largestIdleCount, defaultEngine.getSympatheticStringCount());
     }
     std::cout << "One-active/seven-idle render CPU ratio at 96 kHz: "
               << idleWorstCase << "x worst case (Both + Stereo), "
               << idleDefaultCase << "x default (Bridge + Mono)\n";
-    expect(largestIdleCount == ElectryEngine::stringCount - 1,
-           "the idle-string CPU fixture did not wake all seven coupled strings");
     expect(idleWorstCase < ceiling && idleDefaultCase < ceiling,
            "the sympathetic-string render exceeded the portable CPU ceiling");
 

@@ -276,11 +276,9 @@ float rateAdjustedCoefficient(float coefficientAt48k, float sampleRate) noexcept
 
 // A pickup's distance from the bridge becomes a comb-filter tap delay: the
 // fraction of the string it sits under, converted to samples via the
-// string's own period. Shared by configureVoicePickups' neck and bridge taps
-// and configureSympatheticString's bridge tap, which all did this same
-// distance/length -> fraction -> samples conversion independently, so the
-// three could disagree about the 0.01..0.95 fraction clamp or the delay
-// floor without it being obvious from any one call site.
+// string's own period. Shared by the neck and bridge paths for both played and
+// sympathetic strings, so they cannot disagree about the 0.01..0.95 fraction
+// clamp or the delay floor.
 float pickupTapDelaySamples(float distanceMetres, float stringLengthMetres,
                             float periodSamples, float maximumDelay) noexcept
 {
@@ -3691,13 +3689,24 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
     }
 }
 
-void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
+void ElectryEngine::resetVoicePickupState(Voice& voice) noexcept
+{
+    voice.apertureNeck.reset();
+    voice.apertureBridge.reset();
+    voice.coilPairNeck.reset();
+    voice.coilPairBridge.reset();
+    voice.previousFluxNeck = 0.0f;
+    voice.previousFluxBridge = 0.0f;
+    voice.emfLowpassNeck.reset();
+    voice.emfLowpassBridge.reset();
+}
+
+void ElectryEngine::configurePickupGeometry(Voice& voice,
+                                             float soundingLength,
+                                             float period,
+                                             float waveSpeed) noexcept
 {
     const auto& parameters = smoothedParameters_;
-    const float openLength = scaleLengthMetres();
-    const float soundingLength = openLength
-        * std::exp2(-static_cast<float>(voice.fret) / 12.0f);
-
     const float bridgeDistance = lerp(wideCoilBridgePickupMetres,
                                       narrowCoilBridgePickupMetres,
                                       parameters.pickupType);
@@ -3705,11 +3714,6 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
                                     narrowCoilNeckPickupMetres,
                                     parameters.pickupType);
 
-    const float waveSpeedRatio = finitef(voice.pickupWaveSpeedRatio)
-                              && voice.pickupWaveSpeedRatio > 0.0f
-        ? voice.pickupWaveSpeedRatio : 1.0f;
-    const float period = (static_cast<float>(sampleRate_) / voice.baseFrequency)
-                       / waveSpeedRatio;
     const float maximumTapDelay = static_cast<float>(delayLineSize - 8);
     voice.pickupTapBridge.setDelay(pickupTapDelaySamples(
         bridgeDistance, soundingLength, period, maximumTapDelay));
@@ -3722,9 +3726,6 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     // unlike the previous one-pole approximation. The window is the same for
     // both pickups - it is one bobbin either way - and what the pickup type
     // moves is how far apart the humbucker's two of them sit.
-    const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-    const float waveSpeed = 2.0f * openLength * midiToHz(
-        static_cast<float>(spec.openMidiNote)) * waveSpeedRatio;
     const float apertureLength = clampf(
         static_cast<float>(sampleRate_) * coilApertureMetres
             / std::max(waveSpeed, 1.0f),
@@ -3747,17 +3748,34 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     voice.coilPairBridge.setSpacing(coilDelay, humbuckerCoilBalance);
 }
 
+void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
+{
+    const float openLength = scaleLengthMetres();
+    const float soundingLength = openLength
+        * std::exp2(-static_cast<float>(voice.fret) / 12.0f);
+    const float waveSpeedRatio = finitef(voice.pickupWaveSpeedRatio)
+                              && voice.pickupWaveSpeedRatio > 0.0f
+        ? voice.pickupWaveSpeedRatio : 1.0f;
+    const float period = (static_cast<float>(sampleRate_) / voice.baseFrequency)
+                       / waveSpeedRatio;
+    const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
+    const float waveSpeed = 2.0f * openLength * midiToHz(
+        static_cast<float>(spec.openMidiNote)) * waveSpeedRatio;
+    configurePickupGeometry(voice, soundingLength, period, waveSpeed);
+}
+
 void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
 {
     // An unfingered string vibrates over its full open length. One
     // polarisation is enough for a bridge-coupled ring, so this solves a
-    // single loop: period, damping, gain, and the bridge pickup tap.
+    // single loop while the ordinary neck/bridge pickup geometry observes it.
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
     // Unowned sympathetic strings follow the legacy global wheel.
-    const float f0 = midiToHz(static_cast<float>(spec.openMidiNote))
-        * std::exp2(pitchBendSemitones_ / 12.0f);
+    const float openFrequency = midiToHz(static_cast<float>(spec.openMidiNote));
+    const float waveSpeedRatio = std::exp2(pitchBendSemitones_ / 12.0f);
+    const float f0 = openFrequency * waveSpeedRatio;
     const float period = sampleRate / f0;
     const float omega = twoPi * f0 * inverseSampleRate_;
 
@@ -3827,12 +3845,14 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     if (! voice.sympatheticReady)
         loop.currentDelay = compensatedPeriod;
 
-    const float bridgeDistance = lerp(wideCoilBridgePickupMetres,
-                                      narrowCoilBridgePickupMetres,
-                                      parameters.pickupType);
-    voice.sympatheticPickupTap.setDelay(pickupTapDelaySamples(
-        bridgeDistance, scaleLengthMetres(), period,
-        static_cast<float>(delayLineSize - 8)));
+    const float openLength = scaleLengthMetres();
+    voice.pickupTensionSemitones = pitchBendSemitones_;
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    voice.pickupAttackPitchFrequencyFactor = 1.0f;
+#endif
+    voice.pickupWaveSpeedRatio = waveSpeedRatio;
+    configurePickupGeometry(voice, openLength, period,
+                            2.0f * openLength * f0);
 }
 
 // Whether the plectrum meets the string on this attack. A hammer-on or tap is
@@ -4997,8 +5017,6 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         for (auto& sample : voice.vertical.line)
             sample *= 0.22f;
         voice.sympatheticEnergy = 0.0f;
-        voice.sympatheticPreviousFlux = 0.0f;
-        voice.sympatheticEmf.reset();
     }
     voice.sympatheticReady = false;
 
@@ -5556,19 +5574,12 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
-    voice.apertureNeck.reset();
-    voice.apertureBridge.reset();
-    voice.coilPairNeck.reset();
-    voice.coilPairBridge.reset();
+    resetVoicePickupState(voice);
     voice.excitationShaper.reset();
     voice.excitationModalShaper1.reset();
     voice.excitationModalShaper2.reset();
     voice.excitationReleaseShaper.reset();
     voice.excitationImageShaper.reset();
-    voice.previousFluxNeck = 0.0f;
-    voice.previousFluxBridge = 0.0f;
-    voice.emfLowpassNeck.reset();
-    voice.emfLowpassBridge.reset();
     voice.noiseShaper.reset();
     voice.noiseBandState = 0.0f;
     voice.artifactNoiseShaper.reset();
@@ -5589,8 +5600,6 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     // and clears the loop for its open pitch.
     voice.sympatheticReady = false;
     voice.sympatheticEnergy = 0.0f;
-    voice.sympatheticPreviousFlux = 0.0f;
-    voice.sympatheticEmf.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -6570,8 +6579,7 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
         // but at the wrong pitch. Start the open string from rest.
         loop.clear();
         voice.sympatheticEnergy = 0.0f;
-        voice.sympatheticPreviousFlux = 0.0f;
-        voice.sympatheticEmf.reset();
+        resetVoicePickupState(voice);
         configureSympatheticString(voice);
         voice.sympatheticReady = true;
     }
@@ -6601,25 +6609,40 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
                       + 0.25f * feedbackDrive_ * feedbackHandScale_;
     loop.line[static_cast<std::size_t>(loop.writeIndex & (delayLineSize - 1))]
         = total;
-    // The same physical pickup senses this string, so it cancels no better here
-    // than it does on a played one: `pickupCombDepth` has to apply to the
-    // coupled ring too, or a sympathetically excited low string keeps the
-    // hollow fundamental and the infinitely deep position nulls this weight
-    // exists to remove.
-    const float tap = total
-        - pickupCombDepth * loop.readTap(voice.sympatheticPickupTap);
+    // An idle string is observed by the same spatial pickup model as a played
+    // string: separate neck/bridge positions, finite coil aperture and the
+    // humbucker's two-coil spacing. At sympathetic levels its magnetic map is
+    // linear, so no extra nonlinear solve is needed here.
+    const auto readPickup = [&] (const DelayTap& pickupTap,
+                                 FractionalMovingAverage& aperture,
+                                 CoilPairSum& coilPair,
+                                 float& previousFlux, OnePole& emfLowpass)
+    {
+        float tap = total - pickupCombDepth * loop.readTap(pickupTap);
+        tap = aperture.process(coilPair.process(tap));
+        const float flux = voice.fluxScale * tap;
+        const float emf = emfLowpass.process(
+            (flux - previousFlux) * emfScale_, emfLowpassCoefficient_);
+        previousFlux = flux;
+        return emf;
+    };
+    float neckSignal = 0.0f;
+    float bridgeSignal = 0.0f;
+    if (neckPathActive_)
+        neckSignal = readPickup(
+            voice.pickupTapNeck, voice.apertureNeck, voice.coilPairNeck,
+            voice.previousFluxNeck, voice.emfLowpassNeck);
+    if (bridgePathActive_)
+        bridgeSignal = readPickup(
+            voice.pickupTapBridge, voice.apertureBridge,
+            voice.coilPairBridge, voice.previousFluxBridge,
+            voice.emfLowpassBridge);
     loop.writeIndex = (loop.writeIndex + 1) & (delayLineSize - 1);
     loop.currentDelay += loop.delaySmoothing
                        * (loop.targetDelay - loop.currentDelay);
 
-    const float flux = voice.fluxScale * tap;
-    const float emf = voice.sympatheticEmf.process(
-        (flux - voice.sympatheticPreviousFlux) * emfScale_,
-        emfLowpassCoefficient_);
-    voice.sympatheticPreviousFlux = flux;
-
-    accumulateStereoContribution(sums, voice.stereoLateral, 0.28f, emf, 0.5f,
-                                 emf);
+    accumulateStereoContribution(sums, voice.stereoLateral,
+                                 0.28f, neckSignal, 0.5f, bridgeSignal);
     sums.body += 0.35f * total;
 
     voice.sympatheticEnergy += sympatheticEnergyCoefficient_
@@ -6798,8 +6821,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                         continue;
                     voice.sympatheticReady = false;
                     voice.sympatheticEnergy = 0.0f;
-                    voice.sympatheticPreviousFlux = 0.0f;
-                    voice.sympatheticEmf.reset();
+                    resetVoicePickupState(voice);
                 }
                 sympatheticBus_ = 0.0f;
                 sympatheticBusDelayed_ = 0.0f;

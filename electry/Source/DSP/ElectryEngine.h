@@ -794,7 +794,7 @@ private:
     };
 
     // A read at a delay that only changes when the voice is reconfigured: the
-    // pickup position taps and the coupled string's bridge tap. Their
+    // played and coupled strings' neck/bridge pickup position taps. Their
     // interpolation weights are a function of the delay alone, so they are
     // solved once instead of being rebuilt from a clamp, a floor and eight
     // polynomial multiplies on every sample of every string.
@@ -1271,9 +1271,10 @@ private:
         float articulationMakeup { 1.0f };
 
         // Bridge-coupled sympathetic ring of an unfingered string. The voice
-        // reuses its own (otherwise idle) vertical waveguide, so this costs no
-        // extra memory and cannot form a feedback loop: only voices with
-        // `active` set drive the bridge bus, and only inactive voices read it.
+        // reuses its own otherwise-idle vertical waveguide and pickup path, so
+        // this costs no extra memory and cannot form a feedback loop: only
+        // voices with `active` set drive the bridge bus, and only inactive
+        // voices read it.
         bool sympatheticReady { false };
         // What this voice added to the bridge bus on the previous sample. A
         // played voice reads the bus *minus* this, so it never drives itself:
@@ -1281,10 +1282,7 @@ private:
         // and `bodyLossFactor`, and injecting it a second time would retune
         // every decay time in the instrument instead of coupling anything.
         float busContribution { 0.0f };
-        DelayTap sympatheticPickupTap {};
-        float sympatheticPreviousFlux { 0.0f };
         float sympatheticEnergy { 0.0f };
-        OnePole sympatheticEmf {};
 
         // A light finger or thumb resting on the string, at
         // `touchFraction` of its sounding length. Mode n's displacement there
@@ -1433,8 +1431,11 @@ private:
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
     void configureVoiceDamping(Voice& voice, PlayStyle dampingStyle) noexcept;
+    void configurePickupGeometry(Voice& voice, float soundingLength,
+                                 float period, float waveSpeed) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
     void configureSympatheticString(Voice& voice) noexcept;
+    static void resetVoicePickupState(Voice& voice) noexcept;
     void updateStyleWeights(Voice& voice, bool legato = false) noexcept;
     void refreshVoicingIfNeeded() noexcept;
     void configureBody() noexcept;
@@ -1512,9 +1513,7 @@ private:
     // same way renderVoice() and renderSympatheticString() each did with
     // their own copy of the channelsLinked_ branch: everything into channel 0
     // when the field is linked, or panned by the voice's own lateral position
-    // otherwise. `neckSignal`/`bridgeSignal` may be the same value (as they
-    // are for the sympathetic ring's single EMF), so the weights alone tell
-    // the two destinations apart.
+    // otherwise.
     inline void accumulateStereoContribution(RenderSums& sums,
                                              float stereoLateral,
                                              float neckWeight, float neckSignal,
