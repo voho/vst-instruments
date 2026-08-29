@@ -45,6 +45,7 @@ constexpr int lastKeyboardNote = electry::ElectryEngine::highestPlayableNote; //
 constexpr int keyswitchCount = electry::ElectryEngine::keyswitchCount;
 constexpr int keyboardWhiteKeyCount = 44; // C0..D6 inclusive
 constexpr auto visualWeightProperty = "electryVisualWeight";
+constexpr float compactKnobWeight = 0.65f;
 constexpr int sectionTitleHeight = 28;
 constexpr int sectionContentTrim = sectionTitleHeight - 10;
 
@@ -74,6 +75,9 @@ constexpr KnobTierMetrics metricsFor (KnobTier tier) noexcept
     }
     return { 88, 122, 0.82f };
 }
+
+static_assert (metricsFor (KnobTier::detail).visualWeight < compactKnobWeight);
+static_assert (metricsFor (KnobTier::contextual).visualWeight >= compactKnobWeight);
 
 struct KnobSlot
 {
@@ -248,9 +252,10 @@ void ElectryLookAndFeel::drawRotarySlider (juce::Graphics& graphics, int x, int 
     const auto centre = bounds.getCentre();
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // A quiet 0..10 scale keeps every tier readable without putting tiny
-    // numerals around the detail controls.
-    for (int tick = 0; tick <= 10; ++tick)
+    // Primary controls keep the full 0..10 scale; compact texture controls
+    // retain only its 0/5/10 anchors so they do not compete with the heroes.
+    const int tickStep = visualWeight < compactKnobWeight ? 5 : 1;
+    for (int tick = 0; tick <= 10; tick += tickStep)
     {
         const auto tickAngle = juce::jmap (static_cast<float> (tick), 0.0f, 10.0f,
                                            rotaryStartAngle, rotaryEndAngle);
@@ -721,7 +726,7 @@ void ElectryKnob::resized()
 {
     const auto visualWeight = static_cast<float> (
         slider.getProperties().getWithDefault (visualWeightProperty, 0.82f));
-    const bool compact = visualWeight < 0.65f;
+    const bool compact = visualWeight < compactKnobWeight;
     const bool hero = visualWeight >= 0.9f;
 
     auto area = getLocalBounds();
