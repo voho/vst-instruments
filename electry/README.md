@@ -1807,9 +1807,50 @@ Commercial calibration/private-evaluation rights, stable player and guitar IDs,
 and train/holdout separation are mandatory; the final engineering gate needs
 at least three train clusters and exactly two untouched active holdout clusters.
 
+#### Energy-derived attack-pitch research
+
+The first-ranked low-CPU pitch experiment is now a common string-tension glide,
+but not a return to the removed force-to-cents envelope. [Lee et al.'s
+per-partial measurements](https://www.dafx.de/paper-archive/2009/papers/paper_86.pdf)
+show the first 15 partials of one plucked guitar string relaxing along nearly
+one normalized exponential trajectory; a softer pluck mainly changed its
+starting offset. [Bank's energy formulation](https://dafx.de/paper-archive/2009/papers/paper_76.pdf)
+relates the quasistatic tension increase directly to transverse string energy,
+`T_qs = E_modulus A E_string / (2 L T0)`, and permits evaluation every 1-10 ms with
+linear interpolation. That is one bounded scalar per string, not a nonlinear
+solver or per-partial oscillator bank.
+
+The wound-string scaling is crucial. [Kemp's measured string-construction
+model](https://doi.org/10.1371/journal.pone.0184803) supports treating winding
+tension as negligible, so the elastic term uses the steel core's `E A_core`
+while inertia still uses the complete string's linear density. Using the .080
+outer diameter as load-bearing area would grossly overstate Drop-E modulation
+and repeats the kind of cross-string mismatch that made the earlier prototype
+sharpen E1 by about 30 cents but B1/E2 by only 9-13 cents.
+
+Broadband tuner motion is not enough evidence. In [Kemp's .132 bass-string
+experiment](https://doi.org/10.1007/s42452-020-2391-2), static inharmonicity and
+faster upper-partial decay produced a strong downward broadband pitch trace
+while the isolated fundamental and spectrogram did not descend. Any Electry
+gate must therefore normalize and track individual partial frequencies, require
+the fundamental plus at least three partials to share the trajectory, and leave
+its existing static dispersion/loss model responsible for purely apparent
+spectral glide.
+
+Electry's current `outputEnergy` is not that state: it sums both axes, has
+retirement-oriented attack/release dynamics, and on a fresh unseeded low loop
+does not rise until the injected wave returns to the read head, roughly one E1
+round trip. The smallest defensible default-off experiment seeds a dedicated
+per-string energy coordinate from the resolved release, updates it from measured
+excitation/loss energy flow or a separately validated one-pole store, sums both
+polarisations because they stretch one string, and applies one common
+phase-aware delay correction before any relative-axis split. Promotion still
+requires matched multi-velocity partial trajectories on the target strings,
+the existing hard-chord tuning contract, and interleaved 96 kHz CPU runs.
+
 #### Pickup-magnet back-action research
 
-The strongest new low-CPU direction is the force a pickup magnet applies back
+The second-ranked low-CPU direction is the force a pickup magnet applies back
 to the string, not another pickup-output waveshaper. Electry already reads two
 transverse polarisations through a nonlinear magnetic sensor and gives them a
 small fixed split, but its pickup cannot change their restoring stiffness.
@@ -1828,12 +1869,15 @@ reports pickup-height measurements and a single-recursion realtime model.
 The first Electry experiment should remain default-off and control-rate: fit
 measured `delta-f(vertical, amplitude, pickup gap)` and
 `delta-f(horizontal, amplitude, pickup gap)` backbone curves, then feed their
-bounded offsets into the two existing phase-compensated delay targets. That
-reuses the voice's existing output-energy estimate and adds two target
-corrections rather than another delay line or persistent state. Sub-0.1% of the
-physical-string engine is the benchmark hypothesis, not a promised cost. A
-later conservative cubic spring at the live pickup displacement is still
-plausible, but it pays per sample and is not the minimum experiment.
+bounded offsets into the two existing phase-compensated delay targets. The
+existing summed retirement follower is too delayed and loses axis identity, so
+this needs two small, release-seeded axis-amplitude states or an equivalently
+validated pickup-local displacement coordinate. Pickup selection must not gate
+the mechanical force: both magnets remain beside the string when one electrical
+tap is deselected. Sub-0.1% of the physical-string engine is the benchmark
+hypothesis, not a promised cost. A later conservative cubic spring at live
+pickup displacement is plausible, but pays per sample and is not the minimum
+experiment.
 
 No published coefficient transfers to a high-output eight-string humbucker or
 its wound .080 string. Promotion requires force-versus-displacement grids in
@@ -1842,6 +1886,16 @@ synchronised two-axis motion plus dry DI over several velocities, and a
 magnet-removed or very-low-pickup control. The evidence supports evolving
 stiffness, polarisation split and beating; it does not justify inventing extra
 sustain loss.
+
+A third, cheaper measured residual is pickup-localised partial warping.
+[Harazono et al.](https://www.jstage.jst.go.jp/article/ast/33/5/33_E1148/_article)
+model two humbucker poles as local negative stiffness and reproduce long-period
+waveform/envelope motion with pickup-specific fitted values. Rather than add a
+modal bank, a future offline solve can project a target pickup-height residual
+onto Electry's existing dispersion/allpass fit at note start. No published pole
+stiffness transfers to Electry's pickup, and longitudinal/phantom resonators
+remain below priority until repeatable clean magnetic-DI sum/difference
+partials survive a target high-gain chain.
 
 The frozen perceptual gate scores ten real/model cells plus three hidden repeats
 with exactly 30 listeners: 15 extended-range guitarists and 15 metal producers.
