@@ -18159,6 +18159,55 @@ void testCpuGuardrail()
     expect(palmCase < ceiling,
            "eight-string Palm render exceeded the portable CPU ceiling");
 
+    // The complementary production case: one played string drives all seven
+    // idle open strings through the bridge. The eight-active fixture above
+    // cannot measure sympathetic-string work because no idle voice remains.
+    const auto strikeWithIdleStrings = [&] (
+        ElectryEngine& engine, PickupSelector selector,
+        electry::OutputMode mode)
+    {
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupSelector = selector;
+        parameters.outputMode = mode;
+        parameters.sympatheticAmount = 1.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.stringAge = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.9f); // open A2; seven physical strings remain idle
+    };
+
+    double idleWorstCase = 1.0e9;
+    double idleDefaultCase = 1.0e9;
+    int largestIdleCount = 0;
+    for (int attempt = 0; attempt < 5; ++attempt)
+    {
+        ElectryEngine worstEngine;
+        strikeWithIdleStrings(
+            worstEngine, PickupSelector::Both, electry::OutputMode::Stereo);
+        idleWorstCase = std::min(
+            idleWorstCase, timeRender(worstEngine, buffer));
+        largestIdleCount = std::max(
+            largestIdleCount, worstEngine.getSympatheticStringCount());
+
+        ElectryEngine defaultEngine;
+        strikeWithIdleStrings(
+            defaultEngine, PickupSelector::Bridge, electry::OutputMode::Mono);
+        idleDefaultCase = std::min(
+            idleDefaultCase, timeRender(defaultEngine, buffer));
+        largestIdleCount = std::max(
+            largestIdleCount, defaultEngine.getSympatheticStringCount());
+    }
+    std::cout << "One-active/seven-idle render CPU ratio at 96 kHz: "
+              << idleWorstCase << "x worst case (Both + Stereo), "
+              << idleDefaultCase << "x default (Bridge + Mono)\n";
+    expect(largestIdleCount == ElectryEngine::stringCount - 1,
+           "the idle-string CPU fixture did not wake all seven coupled strings");
+    expect(idleWorstCase < ceiling && idleDefaultCase < ceiling,
+           "the sympathetic-string render exceeded the portable CPU ceiling");
+
     // The default configuration is cheaper than the worst case, and it is
     // deliberately not asserted here. It used to be, as `defaultCase <
     // worstCase * 0.97`, and that assertion was flaky: the saving it looks for
