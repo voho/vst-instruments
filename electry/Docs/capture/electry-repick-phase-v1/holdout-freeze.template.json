@@ -1,0 +1,137 @@
+{
+  "schema": "electry-repick-phase-holdout-freeze/v1",
+  "instructions": "Read README.md beside this template. Create exactly one holdout-freeze.json only after all three TRAIN result receipts pass. Replace every REPLACE, null placeholder and zero hash, change status to frozen_before_holdout_decode, then make this file immutable before either HOLDOUT bridge-DI response is decoded. If TRAIN fails, do not create a candidate or use this template.",
+  "status": "REPLACE_frozen_before_holdout_decode",
+  "study_id": "REPLACE_study_id_shared_by_all_five_clusters",
+  "created_utc": "REPLACE_YYYY-MM-DDTHH:MM:SSZ",
+  "coordinator_id": "REPLACE_accountable_person_or_service",
+  "preholdout_detached_anchor": {
+    "sha256_file": "REPLACE_holdout-freeze.sha256",
+    "custodian_signature_file": "REPLACE_holdout-freeze.sha256.sig",
+    "signature_method": "openssh_sshsig",
+    "signature_namespace": "electry-repick-phase-v1",
+    "signer_identity": "REPLACE",
+    "pretrusted_allowed_signers_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "custodian_attests_signature_completed_before_holdout_decode": true
+  },
+  "acquisition_analysis_freeze": {
+    "receipt_file": "REPLACE_acquisition-freeze.json",
+    "receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "protocol_git_commit": "0000000000000000000000000000000000000000",
+    "analyzer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "model_render_contract_source_json_pointer": "/acquisition_analysis_freeze/model_render_contract",
+    "model_render_contract_canonicalization": "UTF-8 Python json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)",
+    "model_render_contract_canonical_json_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "analysis_contract_canonical_json_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "analyzer_and_settings_unchanged_since_train": true
+  },
+  "train_evidence": [
+    {
+      "cluster_id": "REPLACE_train_cluster_1",
+      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "result_receipt_file": "REPLACE_train_cluster_1_result-receipt.json",
+      "result_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "cluster_id": "REPLACE_train_cluster_2",
+      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "result_receipt_file": "REPLACE_train_cluster_2_result-receipt.json",
+      "result_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "cluster_id": "REPLACE_train_cluster_3",
+      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "result_receipt_file": "REPLACE_train_cluster_3_result-receipt.json",
+      "result_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "train_gate": {
+    "all_three_clusters_complete": null,
+    "all_string_direction_profiles_resolve_phase": null,
+    "all_corresponding_centred_profile_pairwise_dot_products_positive": null,
+    "coefficient_derived_only_after_gate_passed": null,
+    "status": "REPLACE_passed_all_registered_train_gates"
+  },
+  "candidate": {
+    "name": "REPLACE_single_candidate_name",
+    "model_source_commit": "0000000000000000000000000000000000000000",
+    "source_tree_receipt_file": "REPLACE",
+    "source_tree_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "renderer_executable_file": "REPLACE",
+    "renderer_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "renderer_source_file": "REPLACE",
+    "renderer_source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "model_preset_file": "REPLACE",
+    "model_preset_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "model_seed": "REPLACE_same_seed_bound_by_acquisition_freeze",
+    "code_freeze_receipt_file": "REPLACE",
+    "code_freeze_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "coefficient": {
+      "name": "REPLACE_parameter_or_compile_time_constant",
+      "value": null,
+      "units": "dimensionless_contact_amount",
+      "registered_contractive_range_inclusive": [0.0, 2.0],
+      "sample_rate_semantics": "one_shot_total_applied_once_at_second_diagnostic_contact_independent_of_sample_rate_and_contact_duration",
+      "derivation_receipt_file": "REPLACE",
+      "derivation_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "one_fitted_parameter_only": true,
+    "derived_from_train_only": true,
+    "shipping_default_off": true,
+    "uses_unchanged_frozen_render_contract": true
+  },
+  "holdouts": [
+    {
+      "cluster_id": "REPLACE_holdout_cluster_1",
+      "manifest_file": "REPLACE_cluster_1_manifest.json",
+      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bridge_di_response_unopened_at_freeze": true,
+      "allowed_decode_count": 1,
+      "result_receipt_file": "REPLACE_cluster_1_immutable_result.json"
+    },
+    {
+      "cluster_id": "REPLACE_holdout_cluster_2",
+      "manifest_file": "REPLACE_cluster_2_manifest.json",
+      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bridge_di_response_unopened_at_freeze": true,
+      "allowed_decode_count": 1,
+      "result_receipt_file": "REPLACE_cluster_2_immutable_result.json"
+    }
+  ],
+  "exact_once_decode": {
+    "order": "automatic_frozen_analyzer_then_seal_result_receipt_then_listen",
+    "same_analyzer_settings_shipping_baseline_candidate_and_gates_for_both_holdouts": true,
+    "no_candidate_or_coefficient_change_between_holdouts": true,
+    "missing_cell": "sealed_inconclusive_result_no_rerun",
+    "decode_failure": "terminal_validator_failure_inconclusive_no_rerun_no_promotion"
+  },
+  "registered_holdout_gates": {
+    "real_effect_replication": "In each HOLDOUT, both strings and both second-stroke directions resolve phase; corresponding centred four-quadrant profiles have positive dot product between HOLDOUTS.",
+    "registered_cells_per_holdout": 16,
+    "real_cell_estimator": "median event G for each string,second_stroke_direction,measured_phase_quadrant cell",
+    "model_cell_estimator": "median model G in the corresponding model-measured phase cell after rendering every eligible real IOI and stroke schedule",
+    "minimum_model_events_per_cell": 3,
+    "absolute_cell_error_db": "abs(model_cell_median_G-real_cell_median_G)",
+    "median_error_reduction_min_fraction_each_holdout": 0.50,
+    "median_error_reduction_equation": "1-median(candidate_absolute_cell_errors)/median(shipping_absolute_cell_errors)",
+    "zero_shipping_median_error_rule": "promotion_impossible_if_median_shipping_absolute_cell_errors_equals_zero",
+    "maximum_error_rule_each_holdout": "max(candidate_absolute_cell_errors)<=max(shipping_absolute_cell_errors)",
+    "existing_rails_required": [
+      "fresh_note_identity",
+      "energy_nonincrease",
+      "lifecycle",
+      "level",
+      "tuning",
+      "stability"
+    ],
+    "cpu_median_overhead_max_percent_at_96khz": 1.0,
+    "cpu_worst_case_overhead_max_percent_at_384khz": 3.0,
+    "unresolved_or_unreplicated_real_effect": "inconclusive",
+    "failed_candidate_or_rail_gate_after_resolved_real_effect_replication": "do_not_promote"
+  },
+  "post_decode_receipt": {
+    "file": "REPLACE_final-receipt.json",
+    "must_hash_both_immutable_holdout_results": true,
+    "must_report_every_registered_cell_and_rail": true
+  }
+}

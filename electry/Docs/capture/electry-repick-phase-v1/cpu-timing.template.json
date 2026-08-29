@@ -1,0 +1,24 @@
+{
+  "schema": "electry-repick-phase-cpu-timing/v1",
+  "instructions": "The frozen CPU driver emits this immutable raw timing result. Replace every REPLACE and zero hash. Supply exactly eighteen scenarios: 96/384 kHz crossed with block sizes 16/64/512 and repick rates 4/12/20 per second. Every scenario has twenty alternating ABBA/BAAB rounds; each round retains two positive shipping and two positive candidate render times plus the recomputed paired overhead.",
+  "study_id": "REPLACE",
+  "benchmark_contract_canonical_json_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "benchmark_driver_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "shipping_benchmark_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "candidate_benchmark_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "host_fingerprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "required_scenario_schema": {
+    "sample_rate_hz": "96000_or_384000",
+    "block_size_samples": "16_64_or_512",
+    "repicks_per_second_per_string": "4_12_or_20",
+    "rounds": "twenty_registered_round_objects",
+    "scenario_median_paired_overhead_percent": "number"
+  },
+  "required_round_schema": {
+    "order": "ABBA_or_BAAB",
+    "shipping_render_seconds": "two_positive_numbers",
+    "candidate_render_seconds": "two_positive_numbers",
+    "paired_overhead_percent": "100_times_candidate_median_over_shipping_median_minus_one"
+  },
+  "scenarios": []
+}

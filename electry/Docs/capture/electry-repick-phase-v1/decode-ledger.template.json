@@ -1,0 +1,37 @@
+{
+  "schema": "electry-repick-phase-decode-ledger/v1",
+  "instructions": "The independent custodian creates one decode-ledger.json per cluster. Replace every REPLACE and zero hash. Permit exactly one automatic analyzer attempt, link its immutable event detail, then sign this ledger's detached SHA-256 before anyone listens. The signature authenticates the no-prior-or-parallel-decode attestation; it is not a trusted timestamp.",
+  "status": "REPLACE_sealed_after_only_decode_before_listening",
+  "study_id": "REPLACE",
+  "cluster_id": "REPLACE",
+  "split": "REPLACE_train_or_holdout",
+  "authority_freeze_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "analyzer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "analysis_contract_canonical_json_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "input_takes": {
+    "e1_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "e2_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "attempt_count": 1,
+  "attempt": {
+    "ordinal": 1,
+    "started_utc": "REPLACE_YYYY-MM-DDTHH:MM:SSZ",
+    "completed_utc": "REPLACE_YYYY-MM-DDTHH:MM:SSZ",
+    "event_detail_file": "REPLACE_event-detail.json",
+    "event_detail_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "automatic_before_listening": true,
+    "completed_successfully": true
+  },
+  "custodian_attestation": {
+    "no_prior_parallel_or_unlogged_decode": true,
+    "no_second_decode_authorized": true,
+    "sha256_file": "REPLACE_decode-ledger.sha256",
+    "custodian_signature_file": "REPLACE_decode-ledger.sha256.sig",
+    "signature_method": "openssh_sshsig",
+    "signature_namespace": "electry-repick-phase-v1",
+    "signer_identity": "REPLACE",
+    "pretrusted_allowed_signers_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "custodian_attests_ledger_sealed_before_any_listening": true
+  }
+}

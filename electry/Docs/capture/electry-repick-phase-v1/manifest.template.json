@@ -1,0 +1,393 @@
+{
+  "schema": "electry-repick-phase-capture/v1",
+  "instructions": "Read README.md beside this template. Copy to manifest.json; replace every REPLACE value, null placeholder, empty trial-order array, variable frame count and zero SHA-256 before changing acquisition_analysis_freeze.status to frozen_before_train_decode. A measured zero is valid after replacement.",
+  "session": {
+    "study_id": "REPLACE_same_id_across_all_five_clusters",
+    "split": "REPLACE_train_or_holdout",
+    "cluster_id": "REPLACE_disconnected_performance_cluster_id",
+    "session_id": "REPLACE_anonymous_session_id",
+    "player_id": "REPLACE_stable_anonymous_player_id",
+    "rig_id": "REPLACE_same_id_across_internal_train_and_holdout",
+    "recorded_utc": "REPLACE_YYYY-MM-DDTHH:MM:SSZ",
+    "rights": {
+      "agreement_id": "REPLACE_signed_agreement_id",
+      "agreement_file": "REPLACE",
+      "agreement_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commercial_model_calibration": true,
+      "private_competitive_evaluation": true,
+      "redistribution_allowed": null
+    }
+  },
+  "audio_format": {
+    "container": "WAVE",
+    "encoding": "IEEE_FLOAT",
+    "bits_per_sample": 32,
+    "channels": 4,
+    "sample_rate_hz": 96000,
+    "channel_order": [
+      "bridge_pickup_di",
+      "contact_onset_reference",
+      "plectrum_normal_motion",
+      "tangential_motion"
+    ],
+    "one_sample_clock": true,
+    "normalization_applied": false,
+    "processing": "none"
+  },
+  "instrument": {
+    "guitar_id": "REPLACE_same_physical_guitar_across_internal_clusters",
+    "make_model": "REPLACE",
+    "scale_length_inches": null,
+    "tuning_low_to_high": ["E1", "B1", "E2", "A2", "D3", "G3", "B3", "E4"],
+    "string_gauges_inches_low_to_high": [null, null, null, null, null, null, null, null],
+    "string_make_model": "REPLACE",
+    "string_age_hours_at_start": null,
+    "bridge_pickup_make_model": "REPLACE",
+    "bridge_pickup_mode": "REPLACE",
+    "bridge_pickup_sensing_centre_distance_from_saddle_mm": {
+      "e1": null,
+      "e2": null
+    },
+    "bridge_pickup_open_string_gap_mm": {
+      "e1": null,
+      "e2": null
+    },
+    "volume_percent": 100.0,
+    "tone_percent": 100.0
+  },
+  "sensors": {
+    "contact_reference": {
+      "make_model_and_method": "REPLACE",
+      "quantity_and_units": "REPLACE",
+      "polarity_definition": "REPLACE",
+      "onset_threshold_or_calibration": "REPLACE",
+      "measured_onset_half_width_ms": null,
+      "added_mass_mg": null,
+      "added_stiffness_or_grip_change": "REPLACE_or_none"
+    },
+    "plectrum_normal_motion": {
+      "make_model_and_method": "REPLACE_nonmagnetic_LDV_or_equivalent",
+      "quantity": "REPLACE_velocity_or_displacement",
+      "units": "REPLACE",
+      "positive_axis_definition": "REPLACE",
+      "pick_point_target_distance_from_saddle_mm": {"e1": null, "e2": null},
+      "reflective_target_mass_mg": null
+    },
+    "tangential_motion": {
+      "make_model_and_method": "REPLACE_nonmagnetic_LDV_or_equivalent",
+      "quantity": "REPLACE_velocity_or_displacement",
+      "units": "REPLACE",
+      "positive_axis_definition": "REPLACE",
+      "pick_point_target_distance_from_saddle_mm": {"e1": null, "e2": null},
+      "reflective_target_mass_mg": null
+    },
+    "relative_latency_and_phase_calibration": {
+      "method_and_common_stimulus": "REPLACE",
+      "calibration_file": "REPLACE",
+      "calibration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "phase_response_correction_file": "REPLACE",
+      "phase_response_correction_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "latency_samples_at_96khz_by_channel": [null, null, null, null],
+      "latency_half_width_samples_by_channel": [null, null, null, null],
+      "phase_response_half_width_degrees_by_channel_h1_h4": [
+        [null, null, null, null],
+        [null, null, null, null],
+        [null, null, null, null],
+        [null, null, null, null]
+      ],
+      "calibration_phase_half_width_degrees_by_string": {
+        "e1": null,
+        "e2": null
+      },
+      "calibration_half_width_calculation": "360*f0_hz*(contact_onset_half_width_ms/1000+(latency_half_width_samples_contact+latency_half_width_samples_normal)/96000)+phase_response_half_width_degrees_contact_H1+phase_response_half_width_degrees_normal_H1"
+    }
+  },
+  "performance": {
+    "articulation": "open_sustain",
+    "force_instruction": "one_natural_hard_intended_force",
+    "force_repeatability_method": "REPLACE",
+    "pick_make_material": "REPLACE",
+    "pick_thickness_mm": null,
+    "pick_tip_geometry": "REPLACE",
+    "pick_grip_exposure_mm": null,
+    "pick_contact_distance_from_saddle_mm": {"e1": null, "e2": null},
+    "non_target_string_damping": {
+      "method_and_nonmagnetic_material": "REPLACE_fixed_felt_fixture",
+      "position_array_physical_string_order_when_e1_target": [7, 6, 5, 4, 3, 2, 1],
+      "contact_positions_from_saddle_mm_when_e1_target": [null, null, null, null, null, null, null],
+      "position_array_physical_string_order_when_e2_target": [8, 7, 5, 4, 3, 2, 1],
+      "contact_positions_from_saddle_mm_when_e2_target": [null, null, null, null, null, null, null],
+      "target_string_untouched": true,
+      "residual_ring_verification": {
+        "method": "three_hard_calibration_strokes_per_string_bridge_di_rms",
+        "window_ms": [50.0, 200.0],
+        "reference": "median_undamped_target_string_rms_same_force_instruction",
+        "maximum_each_damped_string_relative_db": -40.0,
+        "e1_target_results_db_physical_strings_7_to_1_each_three_strokes": [[null, null, null], [null, null, null], [null, null, null], [null, null, null], [null, null, null], [null, null, null], [null, null, null]],
+        "e2_target_results_db_physical_strings_8_7_5_4_3_2_1_each_three_strokes": [[null, null, null], [null, null, null], [null, null, null], [null, null, null], [null, null, null], [null, null, null], [null, null, null]],
+        "all_results_pass": null,
+        "receipt_file": "REPLACE",
+        "receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "failure_action": "cluster_invalid"
+      }
+    },
+    "session_f0_hz": {"e1": null, "e2": null},
+    "phase_locked_cue": {
+      "method": "REPLACE_actuator_or_realtime_sensor_cue",
+      "pre_session_pilot_file": "REPLACE",
+      "pre_session_pilot_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "all_four_measured_quadrants_demonstrated": true,
+      "bridge_di_response_hidden": true
+    },
+    "pairs_per_string": 64,
+    "target_phase_fractions": [0.0, 0.25, 0.5, 0.75],
+    "pairs_per_target_phase": 16,
+    "second_strokes_per_phase": {"down": 8, "up": 8},
+    "first_stroke": "opposite_second_stroke",
+    "cue_cycles_before_fraction": {"e1": 4, "e2": 8},
+    "intended_ioi_equation": "(cue_cycles_before_fraction[string] + target_phase_fraction) / session_f0_hz[string]",
+    "post_repick_ring_min_ms": 250.0,
+    "post_manual_stop_silence_min_ms": 1000.0,
+    "randomization": {
+      "method": "independent_complete_per_string_before_recording",
+      "e1_seed_or_draw_id": "REPLACE",
+      "e2_seed_or_draw_id": "REPLACE"
+    },
+    "trial_order": {
+      "required_item_schema": {
+        "trial": "integer_1_to_64",
+        "target_phase_fraction": "one_of_0_0.25_0.5_0.75",
+        "first_stroke": "down_or_up",
+        "second_stroke": "opposite_down_or_up"
+      },
+      "e1": [],
+      "e2": []
+    }
+  },
+  "signal_chain": {
+    "interface_make_model": "REPLACE",
+    "interface_clock_source": "REPLACE",
+    "input_impedance_ohms": null,
+    "interface_gain_db_by_channel": [null, null, null, null],
+    "guitar_output_cable_make_model": "REPLACE",
+    "guitar_output_cable_length_m": null,
+    "guitar_output_cable_total_capacitance_pf": null,
+    "notes": "REPLACE_or_none"
+  },
+  "acquisition_analysis_freeze": {
+    "status": "REPLACE_frozen_before_train_decode",
+    "protocol_frozen_before_first_scored_pair": true,
+    "receipt_created_before_train_bridge_di_decode": true,
+    "holdout_blinding": {
+      "independent_custodian_id": "REPLACE",
+      "allowed_before_candidate_freeze": [
+        "raw_file_sha256_and_format_integrity",
+        "frozen_intended_stroke_schedule",
+        "aggregate_registered_precontact_coverage_pass_or_fail"
+      ],
+      "sealed_before_candidate_freeze": [
+        "all_bridge_di_samples",
+        "all_raw_waveforms",
+        "all_contact_and_motion_samples_at_or_after_second_contact",
+        "all_response_metrics_and_listening_access"
+      ],
+      "per_event_contact_ioi_and_phase_released_only_to_exact_once_analyzer_after_candidate_freeze": true,
+      "blinded_qc_program_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "expected_clusters": {"train": 3, "holdout": 2},
+    "study_receipt_file": "acquisition-freeze.json",
+    "receipt_binds": [
+      "all_completed_cluster_manifest_sha256_values",
+      "all_cluster_ids_and_train_holdout_splits",
+      "all_raw_take_sha256_values",
+      "predecode_acquisition_integrity_receipts",
+      "sensor_calibration",
+      "analyzer_and_synthetic_fixtures",
+      "shipping_baseline_render_contract"
+    ],
+    "protocol_git_commit": "0000000000000000000000000000000000000000",
+    "analysis_preregistration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "analyzer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "predecode_acquisition_integrity_receipt_file": "REPLACE",
+    "predecode_acquisition_integrity_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "synthetic_joint_fit_fixtures": {
+      "inputs_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected_results_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "analyzer_passed_before_capture_decode": true
+    },
+    "sensor_calibration_binding": {
+      "manifest_json_pointer": "/sensors/relative_latency_and_phase_calibration",
+      "calibration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "phase_response_correction_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "shipping_baseline": {
+      "renderer_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "renderer_source_tree_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "model_source_commit": "0000000000000000000000000000000000000000",
+      "model_preset_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "model_seed": "REPLACE_nonplaceholder_fixed_seed"
+    },
+    "model_render_contract": {
+      "sample_rate_hz": 96000,
+      "render_block_size_samples": 64,
+      "source": "direct_engine_no_fx",
+      "notes": {"e1_midi": 28, "e2_midi": 40},
+      "physical_string_numbers": {"e1": 8, "e2": 6},
+      "pair_initial_state": "prepare_and_reset_exact_zero_state_before_each_pair",
+      "first_event": "playable_note_on",
+      "second_event": "dedicated_physical_string_repick_trigger",
+      "first_diagnostic_contact_sample": 96000,
+      "ioi_reference": "diagnostic_contact_to_contact",
+      "ioi_samples": "floor(measured_real_ioi_seconds*96000+0.5)",
+      "note_off_sample": "second_diagnostic_contact_sample+24000",
+      "render_end_sample_minimum": "note_off_sample+24000",
+      "variation_seed_policy": "reset_same_frozen_seed_before_each_pair",
+      "first_velocity": 0.90,
+      "second_velocity": 0.90,
+      "first_stroke_direction": "recorded_first_stroke_direction",
+      "second_stroke_direction": "recorded_second_stroke_direction",
+      "diagnostic_contact_source": "exact_engine_contact_sample",
+      "diagnostic_phase_source": "read_only_plectrum_normal_displacement_at_pick_point",
+      "diagnostics_change_audio": false,
+      "precontact_identity_source": "SHA256_from_frozen_renderer_test_seam_over_canonical_little_endian_pre_second_contact_audio_contact_and_normal_motion_streams_plus_all_common_sound_generating_state_used_after_contact_excluding_candidate_constant_and_code_only_state",
+      "precontact_identity_interval": "render_start_through_sample_immediately_before_second_diagnostic_contact",
+      "precontact_identity_serialization": "field_order_frozen_by_renderer_source_IEEE754_float_and_double_bits_little_endian_signed_and_unsigned_integers_little_endian_no_padding",
+      "shipping_candidate_precontact_identity_required": true,
+      "model_events_use_own_measured_phase_quadrant": true,
+      "recorded_non_target_fixture_mapping": "all_seven_non_target_strings_silent",
+      "output_mode": "mono",
+      "pickup_selector": "bridge",
+      "play_style": "sustain_open",
+      "output_gain": 1.0,
+      "sympathetic_amount": 0.0,
+      "palm_mute": 0.0,
+      "artifact_amount": 0.0,
+      "pick_noise": 0.0,
+      "finger_noise": 0.0,
+      "release_noise": 0.0,
+      "normalization_applied": false,
+      "real_level_fitting": false
+    },
+    "engine_coordinate_mapping": {
+      "calibration_file": "REPLACE",
+      "calibration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "recorded_down_maps_to_engine_stroke": "REPLACE_down_or_up",
+      "recorded_up_maps_to_engine_stroke": "REPLACE_opposite_engine_stroke",
+      "recorded_positive_normal_maps_to_engine_sign": null,
+      "frozen_before_first_scored_pair": true,
+      "post_decode_sign_or_direction_change_allowed": false
+    },
+    "local_f0_estimator": {
+      "source": "plectrum_normal_motion_only",
+      "interval": "[first_contact_plus_20_ms,second_contact_minus_7_ms]",
+      "interval_semantics": "half_open_start_inclusive_end_exclusive",
+      "pre_second_contact_only": true,
+      "nominal_notes_midi": {"e1": 28, "e2": 40},
+      "search_cents_from_nominal": [-50.0, 50.0],
+      "grid_step_cents": 0.1,
+      "fit": "joint_hann_weighted_least_squares_h1_h4_plus_dc_and_linear",
+      "weight_equation": "periodic_hann_w[n]=0.5-0.5*cos(2*pi*n/N),n=0,...,N-1",
+      "objective": "minimize_sum_over_samples(hann_weight * residual_squared)",
+      "exact_tie_break": "lower_frequency",
+      "f0_uncertainty_interval": {
+        "method": "deterministic_residual_block_wild_bootstrap",
+        "confidence": 0.95,
+        "replicates": 4096,
+        "block_samples_at_96khz": 384,
+        "residual_block_count": "ceil(f0_interval_sample_count/384)_with_final_shorter_block",
+        "replicate_signal": "best_fit_plus_each_contiguous_residual_block_times_its_sign",
+        "event_id_utf8": "study_id+'/'+cluster_id+'/'+string+'/'+trial_as_canonical_unsigned_ASCII_decimal",
+        "replicate_and_block_indices": "zero_based_canonical_unsigned_ASCII_decimal_without_leading_zeroes_except_zero",
+        "sign": "minus_one_if_SHA256(seed_utf8+'|'+event_id_utf8+'|'+replicate_index_utf8+'|'+block_index_utf8).digest()[0]&1_is_0_else_plus_one",
+        "seed": "electry-repick-phase-v1-f0-bootstrap",
+        "each_replicate_reruns_complete_grid_search": true,
+        "quantiles": "R_type_7_at_0.025_and_0.975",
+        "expand_each_endpoint_cents": 0.05,
+        "touching_search_boundary": "event_ineligible"
+      }
+    },
+    "window_fit": {
+      "pre_contact_ms": [-55.0, -7.0],
+      "post_contact_ms": [7.0, 55.0],
+      "duration_ms": 48.0,
+      "interval_semantics": "half_open_start_inclusive_end_exclusive",
+      "time_origin": "window_centre_c",
+      "weights": "periodic_hann",
+      "weight_equation": "w[n]=0.5-0.5*cos(2*pi*n/N),n=0,...,N-1",
+      "model": "x(t)=a0+a1*(t-c)+Re(sum_h1_h4 z_h*exp(j*2*pi*h*f0*(t-c)))",
+      "design_column_order": ["dc", "linear", "Re_z1_cos", "minus_Im_z1_sin", "Re_z2_cos", "minus_Im_z2_sin", "Re_z3_cos", "minus_Im_z3_sin", "Re_z4_cos", "minus_Im_z4_sin"],
+      "objective": "minimize_sum_over_samples(hann_weight * residual_squared)",
+      "complex_amplitude_normalization": "for_x=A*cos(2*pi*h*f0*(t-c)+theta),z_h=A*exp(j*theta)",
+      "joint_harmonic_fit": true,
+      "motion_velocity_to_displacement": "u_h=v_h/(j*2*pi*h*f0)"
+    },
+    "phase_assignment": {
+      "source": "plectrum_normal_motion_displacement_h1_pre_window",
+      "equation": "phi=arg(m_1_minus*exp(j*2*pi*f0*(t_contact-c_minus)))",
+      "zero": "positive_displacement_maximum_positive_real_phasor",
+      "quadrant_centres_degrees": [0.0, 90.0, 180.0, 270.0],
+      "half_open_counter_clockwise_edges_degrees": [-45.0, 45.0, 135.0, 225.0, 315.0],
+      "boundary_tie": "reject",
+      "uncertainty_interval_touching_or_crossing_boundary": "reject",
+      "post_decode_rotation_allowed": false
+    },
+    "event_phase_uncertainty": {
+      "preflight_calibration_floor_source": "/sensors/relative_latency_and_phase_calibration/calibration_phase_half_width_degrees_by_string",
+      "per_event_calibration_half_width": "same_calibration_half_width_calculation_using_event_f0_hz_and_event_contact_onset_half_width_ms",
+      "fit_phase_bootstrap_source": "same_4096_fitted_plus_residual_block_wild_bootstrap_sign_realizations_as_local_f0_estimator_but_each_replicate_refit_at_original_event_best_f0_held_fixed",
+      "fit_phase_replicate_statistic": "absolute_principal_wrapped_angle_difference_degrees_between_replicate_pre_window_H1_complex_amplitude_and_original_pre_window_H1_complex_amplitude",
+      "fit_phase_half_width": "R_type_7_quantile_at_0.95_of_4096_fit_phase_replicate_statistics",
+      "zero_h1_amplitude_rule": "if_original_or_any_replicate_pre_window_H1_complex_amplitude_is_zero_set_fit_phase_half_width_to_180_degrees",
+      "f0_phase_half_width_degrees": "360*abs(t_contact-c_minus)*max(abs(f0_bootstrap_low-f0),abs(f0_bootstrap_high-f0))",
+      "total_half_width_degrees": "calibration_half_width+fit_phase_half_width+f0_phase_half_width",
+      "combination": "conservative_linear_sum",
+      "circular_interval": "shortest_wrapped_arc_from_phi_minus_total_to_phi_plus_total",
+      "reject_if_half_width_at_least_degrees": 45.0,
+      "reject_if_wrapped_interval_touches_or_crosses_quadrant_boundary": true
+    },
+    "eligibility": {
+      "ioi_ms": [75.0, 130.0],
+      "contact_onset_half_width_max_ms": 1.0,
+      "f0_uncertainty_interval_must_not_touch_search_boundary": true,
+      "combined_calibrated_phase_interval_wholly_inside_one_quadrant": true,
+      "snr_control_band_definition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "pre_normal_motion_h1_over_adjacent_control_bands_min_db": 12.0,
+      "pre_bridge_di_h1_h4_over_adjacent_control_bands_min_db": 12.0,
+      "extra_transient_allowed": false,
+      "clipping_or_nonfinite_allowed": false,
+      "minimum_events_per_string_direction_quadrant": 3,
+      "failed_cell_action": "cluster_inconclusive_no_top_up"
+    },
+    "primary_response": {
+      "source": "bridge_pickup_di_h1_h4",
+      "equation": "G_db=10*log10(sum_h1_h4(abs(d_h_plus)^2)/sum_h1_h4(abs(d_h_minus)^2))"
+    },
+    "registered_statistics": {
+      "event_cell": ["string", "second_stroke_direction", "measured_phase_quadrant", "cluster_id"],
+      "profile": "four quadrant-cell median G values for one string,second_stroke_direction,cluster",
+      "centering": "subtract_unweighted_mean_of_the_four_profile_values",
+      "pooled_residual_mad_db": "median_over_profile_events(abs(G_event-median_G_of_its_cell)); no_scale_factor",
+      "profile_resolution": "uncentred_max_minus_min_exceeds_pooled_residual_mad_db",
+      "train_gate": "both strings and both directions resolve in all three TRAIN clusters and all three pairwise dot products of corresponding centred profiles are positive",
+      "train_failure_action": "stop_phase_dependence_not_resolved_leave_holdout_sealed"
+    }
+  },
+  "takes": [
+    {
+      "file": "e1-open-phase-repick.wav",
+      "target": "e1",
+      "string_number": 8,
+      "pairs": 64,
+      "frames": null,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "file": "e2-open-phase-repick.wav",
+      "target": "e2",
+      "string_number": 6,
+      "pairs": 64,
+      "frames": null,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

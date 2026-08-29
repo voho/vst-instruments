@@ -17,19 +17,22 @@ stroke confounds rather than an eight-string coefficient.
 Decision: make phase-conditioned same-string repicking the first measurement
 target, but make no sound-changing commit from the public data. The minimum
 falsification session uses one fixed exact-eight rig, open E1/E2, one hard force
-and 32 independent stroke pairs per string. Four measured plectrum-normal H1
-phase quadrants each balance four Down and four Up second strokes; at least
-three TRAIN and exactly two untouched HOLDOUT performance clusters stay on the
-same rig. A synchronized sensor, rather than the DI attack, owns contact time,
+and 64 independent stroke pairs per string. Four cue-phase groups each balance
+eight Down and eight Up second strokes before measured-phase rebinning; exactly
+three TRAIN and two untouched HOLDOUT performance clusters stay on the same
+rig. A fixed felt fixture damps the seven non-target strings. Synchronized,
+latency-calibrated sensors rather than the DI attack own contact time and phase,
 and all phase/onset/SNR rules are frozen before decode.
 
 If the real phase-conditioned response first clears within-cell repeatability
-on both strings and both holdouts, test only one default-off normalized adjoint
-gather/scatter contact. Its delay-line Euclidean norm cannot grow, but that does
-not prove whole-engine passivity; its dimensionless amount must have explicit
-sample-rate-independent total or rate semantics and be derived on TRAIN. Do
-not reuse the current whole-loop retention as a local coefficient. Additional
-forces, strings and rigs follow only after this smallest gate is informative.
+on both strings and directions in every TRAIN cluster, derive only one
+default-off normalized adjoint gather/scatter contact on TRAIN. Freeze that
+candidate before decoding either HOLDOUT exactly once for real-effect
+replication and promotion. Its delay-line Euclidean norm cannot grow, but that
+does not prove whole-engine passivity; its dimensionless amount must have
+explicit sample-rate-independent total or rate semantics. Do not reuse the
+current whole-loop retention as a local coefficient. Additional forces,
+strings and rigs follow only after this smallest gate is informative.
 
 Keep pickup-magnet back-action second. Its minimum experiment is a static
 two-axis first-mode stiffness correction with zero per-sample cost, but every

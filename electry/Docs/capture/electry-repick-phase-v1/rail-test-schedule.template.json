@@ -1,0 +1,10 @@
+{
+  "schema": "electry-repick-phase-rail-test-schedule/v1",
+  "instructions": "Before TRAIN decode, copy this template, replace the driver hash, and enumerate every deterministic case ID emitted by the frozen rail driver. Each of the six rails needs at least one unique case. The acquisition freeze hashes the filled schedule; missing, duplicate, unknown or unreported IDs fail final validation.",
+  "rail_test_driver_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "required_case_schema": {
+    "rail": "one_registered_rail_name",
+    "case_id": "nonempty_driver_defined_stable_case_id"
+  },
+  "cases": []
+}

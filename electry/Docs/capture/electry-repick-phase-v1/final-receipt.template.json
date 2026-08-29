@@ -1,0 +1,75 @@
+{
+  "schema": "electry-repick-phase-final-result/v1",
+  "instructions": "Create final-receipt.json only after both exact-once HOLDOUT result wrappers are sealed. Replace every REPLACE, null and zero hash. Hash both wrappers and every rail receipt, report both HOLDOUTS separately, then seal this file before any promotion claim. Use inconclusive_missing_registered_cell for a dot product that cannot be formed and for every metric copied from an inconclusive HOLDOUT comparison; its gate booleans are false.",
+  "status": "REPLACE_sealed_before_promotion_decision",
+  "study_id": "REPLACE",
+  "created_utc": "REPLACE_YYYY-MM-DDTHH:MM:SSZ",
+  "holdout_freeze": {
+    "file": "REPLACE_holdout-freeze.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "holdout_results": [
+    {
+      "cluster_id": "REPLACE_holdout_cluster_1",
+      "result_receipt_file": "REPLACE",
+      "result_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "cluster_id": "REPLACE_holdout_cluster_2",
+      "result_receipt_file": "REPLACE",
+      "result_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "real_effect_replication": {
+    "corresponding_profile_dot_products": {
+      "e1_down": null,
+      "e1_up": null,
+      "e2_down": null,
+      "e2_up": null
+    },
+    "all_positive": null,
+    "both_holdouts_all_profiles_resolved": null,
+    "passed": null
+  },
+  "promotion_by_holdout": [
+    {
+      "cluster_id": "REPLACE_holdout_cluster_1",
+      "shipping_median_absolute_error_db": null,
+      "candidate_median_absolute_error_db": null,
+      "median_error_reduction_fraction_or_rule": "REPLACE_number_zero_shipping_rule_or_inconclusive_missing_registered_cell",
+      "shipping_maximum_absolute_error_db": null,
+      "candidate_maximum_absolute_error_db": null,
+      "median_reduction_at_least_0_50": null,
+      "maximum_error_not_worse": null,
+      "passed": null
+    },
+    {
+      "cluster_id": "REPLACE_holdout_cluster_2",
+      "shipping_median_absolute_error_db": null,
+      "candidate_median_absolute_error_db": null,
+      "median_error_reduction_fraction_or_rule": "REPLACE_number_zero_shipping_rule_or_inconclusive_missing_registered_cell",
+      "shipping_maximum_absolute_error_db": null,
+      "candidate_maximum_absolute_error_db": null,
+      "median_reduction_at_least_0_50": null,
+      "maximum_error_not_worse": null,
+      "passed": null
+    }
+  ],
+  "existing_rails": {
+    "receipt_file": "REPLACE",
+    "receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "fresh_note_identity": null,
+    "energy_nonincrease": null,
+    "lifecycle": null,
+    "level": null,
+    "tuning": null,
+    "stability": null,
+    "cpu_median_overhead_at_96khz_percent": null,
+    "cpu_worst_case_overhead_at_384khz_percent": null,
+    "cpu_limits_inclusive": true,
+    "all_passed": null
+  },
+  "decision": "REPLACE_promote_or_do_not_promote_or_inconclusive",
+  "all_registered_gates_passed": null,
+  "sealed_before_promotion_claim": true
+}

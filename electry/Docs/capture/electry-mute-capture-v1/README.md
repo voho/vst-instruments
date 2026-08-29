@@ -109,6 +109,11 @@ The Open E2 at hit 4 is an upstroke and the one at hit 7 is a downstroke. This
 directly captures playable global bridge-hand lift/replant transitions without
 confounding them with one pick direction. The file is at least 429,975 frames.
 
+This 44.1 kHz v1 contract does not isolate phase-conditioned open-string
+repicks. Use the separate
+[`electry-repick-phase/v1` contract](../electry-repick-phase-v1/README.md) for
+that experiment; do not add its files or fields to this manifest.
+
 ## Before delivery
 
 Listen and inspect the waveforms at useful zoom. Confirm:

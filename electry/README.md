@@ -2011,40 +2011,49 @@ plectra prevent transfer of an absolute depth to Electry.
 The first falsification gate is therefore a separate commissioned 96 kHz
 exact-eight session, not another conventional-guitar fit or a mutation of the
 validated 44.1 kHz Palm/Dead capture contract. On one fixed measured rig it
-records E1 and E2 at one hard intended force as 32 independent two-stroke pairs
-per string. Four cue phases receive eight randomized pairs each; every phase
-balances four Down and four Up second strokes, with the opposite first stroke.
-At least three disconnected TRAIN and exactly two untouched HOLDOUT performance
+records E1 and E2 at one hard intended force as 64 independent two-stroke pairs
+per string. Four cue phases receive sixteen randomized pairs each; every phase
+balances eight Down and eight Up second strokes, with the opposite first stroke.
+Exactly three disconnected TRAIN and two untouched HOLDOUT performance
 clusters use that same rig; other rigs are external-validity tests, not mixed
-into its coefficient fit.
+into its coefficient fit. The operational
+[`electry-repick-phase/v1` capture contract](Docs/capture/electry-repick-phase-v1/README.md)
+freezes the file, sensor, schedule and rights requirements.
 
-The cue phase is only scheduling metadata. A synchronized contact-onset channel
-and nonmagnetic two-axis LDV or equivalent motion reference measure the actual
-state. The frozen primary phase is plectrum-normal H1 displacement at contact,
-with zero fixed at its positive-real crossing and four fixed +/-45-degree
-quadrants; it is never rotated after decoding. Tangential H1 phase remains a
+The cue phase is only scheduling metadata. A fixed nonmagnetic felt fixture
+damps the seven non-target strings while leaving E1 or E2 untouched. A
+synchronized contact-onset channel and nonmagnetic two-axis LDV or equivalent
+motion reference measure the actual state. The frozen primary phase is
+plectrum-normal H1 displacement at contact,
+with zero fixed at its positive displacement maximum (positive-real phasor) and
+four fixed +/-45-degree quadrants; it is never rotated after decoding.
+Tangential H1 phase remains a
 recorded covariate. Pickup/gap, gauge, pick geometry, grip and pick point stay
 fixed or measured. A magnetic DI is already spatially filtered; the
 [electric-guitar measurement comparison](https://pmc.ncbi.nlm.nih.gov/articles/PMC12609871/)
 also warns that microphones do not recover an exact string waveform and that
 an LDV target can mass-load a thin string.
 
-Before any waveform is decoded, the gate freezes contact/onset uncertainty,
-phase and local-frequency estimators, sideband/SNR exclusions, exact files and
-hashes, fixed quadrants, renderer/build/preset/seed and TRAIN/HOLDOUT split.
-Its one primary response is H1-H4 energy gain from 48 ms Hann projections in
-`[-55, -7] ms` and `[+7, +55] ms` around measured contact; 0-12 ms remains a
+Before the first scored pair, the protocol, sensor-latency calibration and
+analyzer are frozen. After acquisition but before any TRAIN bridge-DI response
+is decoded, a first receipt binds all five completed manifests, raw hashes,
+blinded integrity records, equations, fixtures, fixed quadrants, shipping
+renderer/build/preset/seed and the TRAIN/HOLDOUT split. Its one primary response
+is bridge-DI H1-H4 energy gain from joint 48 ms
+Hann-weighted fits in `[-55, -7) ms` and `[+7, +55) ms` around measured
+contact; 0-12 ms remains a
 broadband attack window, not an identifiable E1 complex-partial estimate. Each
-string/direction/quadrant must retain at least three eligible pairs. A real
-phase effect clears the gate only when the quadrant span of cell medians
-exceeds pooled within-cell MAD on both strings and both HOLDOUT clusters and
-the centred four-quadrant profiles have positive dot product between holdouts.
-
-Only then may one default-off fractional junction derive its sample-rate-
-independent contact amount on TRAIN. Promotion requires at least 50% lower
+string/direction/quadrant must retain at least three eligible pairs. The real
+phase effect must first resolve on both strings and directions in all three
+TRAIN clusters with mutually aligned centred profiles. Only then may one
+default-off fractional junction derive its sample-rate-independent contact
+amount entirely on TRAIN. A second receipt freezes that candidate and both
+still-unopened HOLDOUT manifests. Exact-once HOLDOUT decoding must replicate
+the registered effect and aligned profiles. Promotion additionally requires
+at least 50% lower
 median absolute real/model cell error in each HOLDOUT with no worse maximum
-cell, plus identity, energy, lifecycle, tuning and stability rails and below
-1% median overhead at 96 kHz and 3% worst case at 384 kHz. The permissible
+cell, plus identity, energy, lifecycle, level, tuning and stability rails and
+at most 1% median overhead at 96 kHz and 3% worst case at 384 kHz. The permissible
 result is narrower than “realistic plectrum”: more accurate phase-dependent
 open E1/E2 repicks on the captured rig and protocol.
 

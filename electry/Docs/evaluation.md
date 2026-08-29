@@ -1249,6 +1249,21 @@ spectrum even after one fundamental period. Adding a moving one-sided rigid
 contact at least reproduced the observed damping, ringing and pitch glides,
 although neither simulation matched the measured spectra accurately.
 
+The missing experiment is now frozen as the separate
+[`electry-repick-phase/v1` capture contract](capture/electry-repick-phase-v1/README.md).
+It keeps the validated Palm/Dead schema unchanged and records open E1/E2 on one
+96 kHz exact-eight rig as 64 independently reset two-stroke pairs per string,
+with a measured felt fixture damping the seven non-target strings. Four cue
+phases each balance eight Down and eight Up second strokes, but a
+synchronized contact reference and latency-calibrated plectrum-normal motion
+channel—not the cue or DI transient—assign the fixed phase quadrant. One joint
+48 ms pre/post bridge-DI H1-H4 energy-gain fit must first clear within-cell
+variability on both strings and directions in all three TRAIN clusters. Only
+then is one TRAIN-derived candidate frozen against exactly two still-unopened
+same-rig HOLDOUT clusters. Those clusters are decoded once for independent
+real-effect replication and candidate promotion; additional forces, strings
+and rigs come later.
+
 ### Retired finite-width Palm experiment and current body checkpoint
 
 The 4 mm, six-read Palm heel that held for 100 ms and released over 10 ms is no
