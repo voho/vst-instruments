@@ -1629,8 +1629,35 @@ downloadable exact-eight open-note sustains from E1 upward. Its two low files
 show a much faster attack and broadly similar first-two-second decay, but the
 guitar, tuning, string/fret, channel identities and recording chain are
 undocumented and there is only one stroke per pitch; it is a direction check,
-not a fit set. The
-[cabled_mess profile](https://freesound.org/people/cabled_mess/) offers custom
+not a fit set.
+
+The expanded lawful search adds useful controls but no missing extended-range
+gate. [EGFxSet](https://egfxset.github.io/) and its
+[CC-BY-4.0 Zenodo deposit](https://zenodo.org/records/7044411) provide 690
+five-second clean-DI captures: all 138 string/fret positions of a standard
+six-string Strat at five pickup settings, made with one 2.0 mm pick and one
+documented instrument-input chain. They are a strong adjacent-fret,
+pickup-invariance and conventional-E2 sustain control, but their normalisation
+precludes absolute-level fitting and they contain no Palm or Dead notes.
+[GuitarJam](https://huggingface.co/datasets/Julian-br/GuitarJam/blob/main/README.md)
+adds 580 CC0 raw-DI monophonic phrases for timing, dynamics and incidental-noise
+listening, but has no string, fret, tuning or technique labels. Neither source
+can promote a Drop-E/F# coefficient.
+
+The best unavailable lead is the
+[2025 EG-IPT test set](https://www.nime.org/proceedings/2025/nime2025_14.pdf):
+the paper describes 1,038 direct-input files, 16 techniques and a different
+player on a Strandberg Boden Prog seven-string with a Fishman Fluence Modern
+bridge pickup. It does not state the tuning, and neither audio nor manifest is
+present in the [companion repository](https://github.com/nbrochec/nime2025) or
+a discoverable deposit. The authors are therefore a promising request or
+commission lead only. [GOAT](https://zenodo.org/records/15690894),
+[IDMT-SMT-Guitar](https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html)
+and the [pitx muted pack](https://freesound.org/people/pitx/packs/898/) are
+noncommercial; [GADA](https://gingerpianist.github.io/GADA_demo_page/) exposes
+no dataset licence. They cannot be used to tune a commercial product.
+
+The [cabled_mess profile](https://freesound.org/people/cabled_mess/) offers custom
 recordings and is the best first commission lead; availability, Drop-E setup,
 protocol compliance and commercial calibration rights still require a written
 agreement. The documented
