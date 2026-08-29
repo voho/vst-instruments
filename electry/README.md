@@ -1645,6 +1645,42 @@ Commercial calibration/private-evaluation rights, stable player and guitar IDs,
 and train/holdout separation are mandatory; the final engineering gate needs
 at least three train clusters and exactly two untouched active holdout clusters.
 
+#### Pickup-magnet back-action research
+
+The strongest new low-CPU direction is the force a pickup magnet applies back
+to the string, not another pickup-output waveshaper. Electry already reads two
+transverse polarisations through a nonlinear magnetic sensor and gives them a
+small fixed split, but its pickup cannot change their restoring stiffness.
+[Feinberg and Yang's measured pickup-like field](https://doi.org/10.1121/1.5080465)
+changed that stiffness differently in the two axes, split their frequencies
+and produced beating; their parameter-free model matched the experiment and
+put a commercial-magnet effect near the order of one hertz. The later
+[two-axis force/displacement measurements](https://doi.org/10.1121/10.0027283)
+show that the split depends on vibration amplitude and magnetic force, so it
+can evolve through the note rather than acting as one static detune. The
+[official Yamaha/CIRMMT project](https://www.cirmmt.org/en/research/projects/yamaha-rnd_guitar-analysis)
+establishes the programme's provenance, and its 2025
+[ISMRA abstract](https://ismra2025.org/wp-content/uploads/2025/05/ISMRA-2025-Final-1.3.pdf)
+reports pickup-height measurements and a single-recursion realtime model.
+
+The first Electry experiment should remain default-off and control-rate: fit
+measured `delta-f(vertical, amplitude, pickup gap)` and
+`delta-f(horizontal, amplitude, pickup gap)` backbone curves, then feed their
+bounded offsets into the two existing phase-compensated delay targets. That
+adds two envelope states and two target corrections rather than another delay
+line; its operation count should be well below 0.1% of the physical-string
+engine, subject to measurement. A later conservative cubic spring at the live
+pickup displacement is still plausible, but it pays per sample and is not the
+minimum experiment.
+
+No published coefficient transfers to a high-output eight-string humbucker or
+its wound .080 string. Promotion requires force-versus-displacement grids in
+both axes for the actual pickups, per-string gaps at open and high frets,
+synchronised two-axis motion plus dry DI over several velocities, and a
+magnet-removed or very-low-pickup control. The evidence supports evolving
+stiffness, polarisation split and beating; it does not justify inventing extra
+sustain loss.
+
 The frozen perceptual gate scores ten real/model cells plus three hidden repeats
 with exactly 30 listeners: 15 extended-range guitarists and 15 metal producers.
 A separate licensed-leader session compares Electric Storm Deluxe, Shreddage
