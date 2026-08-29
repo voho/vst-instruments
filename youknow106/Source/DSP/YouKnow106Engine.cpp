@@ -1839,21 +1839,16 @@ std::uint32_t YouKnow106Engine::Dco::mode3HalfClocks(
     return outHigh ? (count + 1u) / 2u : count / 2u;
 }
 
-bool YouKnow106Engine::Dco::programMode3() noexcept
+bool YouKnow106Engine::Dco::programMode3(
+    double clocksToNextInputEdge) noexcept
 {
     // A mode word resets the CE and forces OUT high immediately. The selected
-    // input clock keeps running while CE waits for the later LSB/MSB pair, so
-    // retain its phase rather than leaving the next-clock countdown frozen.
-    // Cold start has no recovered CPU/CLK phase and deliberately begins one
-    // full clock away; that absolute phase remains documented in OQ-08.
-    double nextClock = 1.0;
-    if (pitState != PitState::stopped && pitClocksToEvent > 0.0)
-    {
-        const double fraction = pitClocksToEvent
-                              - std::floor(pitClocksToEvent);
-        if (fraction > 1.0e-12)
-            nextClock = fraction;
-    }
+    // input clock keeps running while CE waits for the later LSB/MSB pair.
+    // IC35/TP5 is one shared clock, so the engine supplies that global phase
+    // rather than recovering six incompatible phases from the PIT counters.
+    const double nextClock = std::isfinite(clocksToNextInputEdge)
+                          && clocksToNextInputEdge > 0.0
+        ? clocksToNextInputEdge : 1.0;
 
     const bool positiveEdge = !pitOutHigh;
     pitOutHigh = true;
@@ -1988,6 +1983,67 @@ void YouKnow106Engine::updateActiveDcoPeriod(
                       ? oversampledRate_ / frequency : 1.0e6;
 }
 
+void YouKnow106Engine::beginRangeClockTransition(
+    DcoRange previous, DcoRange next) noexcept
+{
+    if (previous == next)
+        return;
+
+    const double rateRatio = rangeClockHz(next) / rangeClockHz(previous);
+    const double oldClocksToReload = rangeClockClocksToEdge_;
+    const double newClocksToReload = oldClocksToReload * rateRatio;
+    for (auto& voice : voices_)
+    {
+        auto& dco = voice.dco;
+        if (dco.pitState == Dco::PitState::stopped
+            || !(dco.pitClocksToEvent > 0.0))
+            continue;
+
+        // IC35 has only one phase. Preserve the integer number of shared
+        // rising edges after its pending reload, whether this is the first
+        // switch or a later PF write replacing the preset before that reload.
+        // Round away accumulated residue, including a near-zero/near-one
+        // boundary that the shared clock coalesced to one full clock.
+        const double clocksAfterReload = std::max(
+            0.0, std::round(
+                dco.pitClocksToEvent - oldClocksToReload));
+        dco.pitClocksToEvent = newClocksToReload + clocksAfterReload;
+    }
+
+    rangeClockClocksToEdge_ = newClocksToReload;
+    rangeClockTransitionPending_ = true;
+}
+
+void YouKnow106Engine::advanceRangeClock(DcoRange range) noexcept
+{
+    const double clockHz = rangeClockHz(range);
+    const double intervalSeconds = 1.0 / oversampledRate_;
+    const double clockTolerance = std::max(
+        1.0e-15, intervalSeconds * 1.0e-9) * clockHz;
+    double clocksAdvanced = clockHz * intervalSeconds;
+    if (rangeClockTransitionPending_)
+    {
+        if (clocksAdvanced + clockTolerance < rangeClockClocksToEdge_)
+        {
+            rangeClockClocksToEdge_ -= clocksAdvanced;
+            return;
+        }
+
+        clocksAdvanced = std::max(
+            0.0, clocksAdvanced - rangeClockClocksToEdge_);
+        rangeClockClocksToEdge_ = 1.0;
+        rangeClockTransitionPending_ = false;
+    }
+
+    double phase = std::fmod(
+        rangeClockClocksToEdge_ - clocksAdvanced, 1.0);
+    if (phase < 0.0)
+        phase += 1.0;
+    if (phase <= clockTolerance || 1.0 - phase <= clockTolerance)
+        phase = 1.0;
+    rangeClockClocksToEdge_ = phase;
+}
+
 void YouKnow106Engine::programDcoCount(
     Voice& voice, std::uint32_t count, bool writesControlWord) noexcept
 {
@@ -2017,7 +2073,7 @@ void YouKnow106Engine::programDcoCount(
     // Mode programming forces OUT high. That is a physical C54/sub event only
     // when the previously stored output was low; an already-high output does
     // not acquire a fabricated edge or a fabricated sub polarity.
-    if (dco.programMode3())
+    if (dco.programMode3(rangeClockClocksToEdge_))
         beginDcoDischarge(voice, 1.0f, true);
 
     // Compatibility policy anchors the control store here. IC29 B-2's reset
@@ -3675,7 +3731,16 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     // A live quality change is a numerical implementation detail, not a power
     // cycle of the assigner or modulator. Their phases are stored in passes or
     // normalized cycles, so they survive unchanged. Only a first prepare/reset
-    // starts a new scan. Preserve the remaining drift interval in seconds too.
+    // starts a new scan. DCO periodSamples is only a coordinate for a physical
+    // period already in flight: scale that retained period with the grid rather
+    // than reconstructing it from a newly moved RANGE switch before the next
+    // PIT edge. Preserve the remaining drift interval in seconds too.
+    if (preserveFreeRunningState && previousProcessingRate > 0.0)
+    {
+        const double rateRatio = oversampledRate_ / previousProcessingRate;
+        for (auto& voice : voices_)
+            voice.dco.periodSamples *= rateRatio;
+    }
     if (preserveFreeRunningState && driftControlCountdown_ > 0
         && previousProcessingRate > 0.0)
     {
@@ -3836,11 +3901,6 @@ void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
         const float previousEffectiveFilterOmegaStep =
             boundedThermalFilterOmegaStep(
                 previousFilterOmegaStep, activeParameters_, voice.cardIndex);
-        const double frequency = dcoQuantisedFrequency(
-            voice.dco.divider, activeParameters_.range);
-        voice.dco.periodSamples = frequency > 0.0
-                                ? oversampledRate_ / frequency : 1.0e6;
-
         // Residual kernels are measured in internal samples. The safety fade
         // has reached zero, so discard their old-rate tails and prime the new
         // timeline at the continuing capacitor voltage. PIT countdown is held
@@ -3961,6 +4021,11 @@ void YouKnow106Engine::reset()
     // a hold left over from the previous run would be skipped.
     lfoDelayHoldoff_ = 0u;
     lfoDelayFade_ = 0u;
+    // The two oscillators have no recoverable startup relation. One full
+    // selected period is the deterministic arbitrary IC35 phase; unlike the
+    // old card-local policy it is one phase shared by all six PIT inputs.
+    rangeClockClocksToEdge_ = 1.0;
+    rangeClockTransitionPending_ = false;
     controlScanPhase_ = 1.0;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
@@ -4125,6 +4190,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
                                           || activeParameters_.keyMode
                                                  == KeyMode::Unison);
     const bool highPassChanged = next.highPass != activeParameters_.highPass;
+    const bool rangeChanged = next.range != activeParameters_.range;
     const bool stageTrimsChanged =
         next.calibration != activeParameters_.calibration
         || next.enableVcfStageOffsets
@@ -4143,6 +4209,26 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // silence here. Once audio time has started, the hardware scanner keeps
     // running through ordinary silence and after panic.
     targetParameters_ = next;
+    if (rangeChanged && !startupSnapshot)
+    {
+        // IC35 is one shared 8 MHz synchronous divider. PF7/PF6 present
+        // 14/12/8 while its inverted carry feeds both /LD and every PIT CLK:
+        // a switch cannot truncate the count already in progress. Retain the
+        // old-cycle remainder on every card, then use the new modulus after
+        // that common reload edge.
+        // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13
+        // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17
+        // https://toshiba.semicon-storage.com/info/TC74HC161AF_datasheet_en_20140301.pdf?did=10907&prodName=TC74HC161AF#page=2
+        beginRangeClockTransition(activeParameters_.range, next.range);
+    }
+    else if (startupSnapshot)
+    {
+        // A restored pre-audio panel image is the power-up selection, not a
+        // timed PF write from the constructor's default range. Adopt its
+        // modulus without manufacturing an old-range cycle first.
+        rangeClockClocksToEdge_ = 1.0;
+        rangeClockTransitionPending_ = false;
+    }
     // Switch positions land immediately. Main VOLUME is the only continuous
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
@@ -5571,6 +5657,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
     const double eventToleranceSeconds = std::max(
         1.0e-15, intervalSeconds * 1.0e-9);
     const double pitClockHz = rangeClockHz(range);
+    double rangeClockTransitionClocks = rangeClockTransitionPending_
+        ? rangeClockClocksToEdge_ : 0.0;
     const double thresholdStart = std::isfinite(previousThresholdVolts)
         ? static_cast<double>(previousThresholdVolts) : 6.0;
     const double thresholdEnd = std::isfinite(thresholdVolts)
@@ -5630,7 +5718,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
     // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
     // can contain 126 OUT transitions plus 63 reset completions and 63 supply
     // hits. The fixed byte transaction adds at most two scheduled events, so
-    // 512 leaves a real margin over the 254-event supported worst case while
+    // A range handoff can add one divider-reload boundary. 512 leaves a real
+    // margin over the 255-event supported worst case while
     // still bounding malformed state without allocating anything.
     constexpr int maximumEventsPerInterval = 512;
     for (int eventIndex = 0;
@@ -5648,6 +5737,10 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             dco.pitWriteState == Dco::PitWriteState::idle
                 ? std::numeric_limits<double>::infinity()
                 : std::max(0.0, dco.cpuStatesToWrite) / voiceCpuStateHz;
+        const double rangeClockTransitionSeconds =
+            rangeClockTransitionClocks > 0.0
+                ? rangeClockTransitionClocks / pitClockHz
+                : std::numeric_limits<double>::infinity();
         const double resetSeconds = dco.resetSecondsRemaining > 0.0
             ? dco.resetSecondsRemaining
             : std::numeric_limits<double>::infinity();
@@ -5671,7 +5764,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                    : std::numeric_limits<double>::infinity());
         const double segment = std::min(
             { remaining, pitSeconds, cpuWriteSeconds,
-              resetSeconds, positiveRailSeconds });
+              rangeClockTransitionSeconds, resetSeconds,
+              positiveRailSeconds });
 
         if (addCorrections && !comparatorPinnedForInterval && segment > 0.0)
         {
@@ -5721,13 +5815,24 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             // exact boundary to one full clock: if the MSB shares that
             // timestamp, the input edge has already happened and initial load
             // belongs to the following clock.
-            double phase = std::fmod(
-                dco.pitClocksToEvent - segment * pitClockHz, 1.0);
-            if (std::abs(phase) <= eventToleranceSeconds * pitClockHz)
-                phase = 1.0;
-            else if (phase < 0.0)
-                phase += 1.0;
-            dco.pitClocksToEvent = phase;
+            if (rangeClockTransitionClocks > 0.0)
+            {
+                dco.pitClocksToEvent = std::max(
+                    0.0, dco.pitClocksToEvent - segment * pitClockHz);
+            }
+            else
+            {
+                double phase = std::fmod(
+                    dco.pitClocksToEvent - segment * pitClockHz, 1.0);
+                if (phase < 0.0)
+                    phase += 1.0;
+                const double phaseTolerance =
+                    eventToleranceSeconds * pitClockHz;
+                if (phase <= phaseTolerance
+                    || 1.0 - phase <= phaseTolerance)
+                    phase = 1.0;
+                dco.pitClocksToEvent = phase;
+            }
         }
         else if (dco.pitState != Dco::PitState::stopped)
             dco.pitClocksToEvent = std::max(
@@ -5735,6 +5840,9 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
         if (dco.pitWriteState != Dco::PitWriteState::idle)
             dco.cpuStatesToWrite = std::max(
                 0.0, dco.cpuStatesToWrite - segment * voiceCpuStateHz);
+        if (rangeClockTransitionClocks > 0.0)
+            rangeClockTransitionClocks = std::max(
+                0.0, rangeClockTransitionClocks - segment * pitClockHz);
         elapsed += segment;
 
         const bool resetComplete =
@@ -5745,9 +5853,23 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             pitSeconds <= segment + eventToleranceSeconds;
         const bool cpuWriteEvent =
             cpuWriteSeconds <= segment + eventToleranceSeconds;
+        const bool rangeClockTransitionEvent =
+            rangeClockTransitionSeconds
+                <= segment + eventToleranceSeconds;
         if (!resetComplete && !positiveRailHit && !pitEvent
-            && !cpuWriteEvent)
+            && !cpuWriteEvent && !rangeClockTransitionEvent)
             break;
+
+        if (rangeClockTransitionEvent)
+            rangeClockTransitionClocks = 0.0;
+        if (rangeClockTransitionEvent
+            && dco.pitState == Dco::PitState::awaitingCount)
+        {
+            // The old-modulus reload edge happened before a coincident MSB.
+            // CE is still stopped, so retain one full new-clock period to the
+            // following edge on which that completed count can load.
+            dco.pitClocksToEvent = 1.0;
+        }
 
         // Complete an older C54 discharge before processing a coincident new
         // OUT edge. The ordering is deterministic; the two events cannot
@@ -6813,6 +6935,11 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             else
                 renderVoices.template operator()<false>();
 
+            // IC35/TP5 is shared by all six channels of the two M82C53s. Each
+            // card-local event walk above read the same left-boundary phase;
+            // advance that one physical divider once after every card consumes
+            // this interval.
+            advanceRangeClock(parameters.range);
             displayEnvelope_ = loudestEnvelope;
 
             // The POLY/unison handler gated and cleared at the host event.

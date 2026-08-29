@@ -96,8 +96,10 @@ forty-year-old unit will null against the plug-in.
 **Digital control system**
 
 - Pitch is one 8 MHz reference divided by a 16-bit integer count, quantised
-  exactly as the hardware's is; RANGE switches the clock, not the count
-  (anchored).
+  exactly as the hardware's is. RANGE changes IC35's synchronous preset,
+  not the PIT count: the current count completes, the latest stable preset
+  loads on the existing synchronous reload edge following terminal carry,
+  and subsequent TP5 periods use the new ÷2/÷4/÷8 cadence (anchored).
 - One 12-bit converter scans 23 sample-and-hold destinations — 18 per-card,
   5 shared — over a 4.2 ms pass in the service chart's exact write order,
   on a fractional scheduler with per-destination smoothing constants
@@ -113,10 +115,14 @@ forty-year-old unit will null against the plug-in.
 
 **Oscillator**
 
-- A straight constant-current ramp with finite reset, a comparator-based
-  pulse against the shared scanned PWM threshold, and a divide-by-two sub
-  (anchored topology); the scan-and-slew amplitude transient on pitch
-  changes is rendered in the slope of each rise (derived).
+- A straight Miller-integrator constant-current ramp with finite reset, a
+  comparator-based pulse against the shared scanned PWM threshold, and a
+  divide-by-two sub (anchored topology). Roland's
+  [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9)
+  give an approximately 12 Vpp Miller ramp; its PWM anchors are consistent
+  with a nominal 0 to approximately +12 V excursion. The internal custom-IC
+  reset curve remains unmeasured. The scan-and-slew amplitude transient on
+  pitch changes is rendered in the slope of each rise (derived).
 - All six DCOs free-run behind their closed VCAs with staggered phase; a
   note opens a card that already has history. Oscillator edges are
   bandlimited (BLEP/BLAMP) as a numerical product mechanism.
@@ -425,7 +431,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced | P0 |
 | OQ-06 | Absolute output-reference calibration. The product convention is settled and not reopenable; only the physical reference value is open. Roland's L −30 / M −15 / H 0 dBm selector spec fixes the intended steps but not the reference impedance | dependent |
 | OQ-07 | Converter hold topology and time constants. Ownership and inventory are closed — 23 used 0.01 µF holds over a 4.2 ms pass, per-destination smoothing designator-complete | P1 |
-| OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741) and [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the byte spacing: a 4 MHz CPU-state cadence, 55 states (13.75 us) from control to LSB on reset, and 11 states (2.75 us) from LSB to MSB on both paths. The engine schedules that three-byte transaction per DCO, preserves the selected PIT input phase while CE awaits the count, and orders a coincident PIT clock before the MSB. The matching [OKI Mode-3 specification](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=185) anchors the OUT polarity, odd-count split and delayed CE transfer; Roland maps only positive-going OUT to C54 discharge and the sub clock. Only that instruction spacing is closed: the absolute converter-write anchor, CPU-X1 to PIT-X2 phase, divided-clock phase through a range switch, and C54's off-phase transistor waveform remain open. The renderer retains its finite-linear discharge as analogue policy rather than a measurement claim, and uses the MC5534A's ideal +15 V supply as a scale-aware compatibility ceiling while installed output swing remains unmeasured | P1 |
+| OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741) and [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the byte spacing: a 4 MHz CPU-state cadence, 55 states (13.75 us) from control to LSB on reset, and 11 states (2.75 us) from LSB to MSB on both paths. The engine schedules that three-byte transaction per DCO, preserves the selected PIT input phase while CE awaits the count, and orders a coincident PIT clock before the MSB. The matching [OKI Mode-3 specification](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=186) anchors the OUT polarity, odd-count split and delayed CE transfer; Roland maps only positive-going OUT to C54 discharge and the sub clock. IC29's 12 MHz resonator and IC35's separate 8 MHz resonator prove there is no fixed CPU-to-PIT phase to recover; deterministic initial phase and exact-tie order are product policy. IC35's [installed-part truth table](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17), the firmware's [`$C0/$40/$00` range writes](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L246-L273), and Toshiba's [compatible-counter specification](https://toshiba.semicon-storage.com/info/TC74HC161AF_datasheet_en_20140301.pdf?did=10907&prodName=TC74HC161AF#page=2) close the range handoff: DCBA presets 14/12/8 make ÷2/÷4/÷8, a PF edit cannot truncate the current count, and the latest stable preset is loaded on the existing synchronous reload edge following terminal carry. What remains open is the exact converter-mux anchor and interrupt jitter, plus C54 reset shape and installed MC5534A saturation. Roland's [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9) give an approximately 12 Vpp Miller ramp, and its PWM anchors are consistent with a nominal 0 to approximately +12 V excursion, but the custom IC's internal A/E values are unpublished; the renderer therefore retains its finite-linear discharge and scale-aware +15 V ideal-supply bound as compatibility policy rather than a measurement claim | P1 |
 | OQ-09 | Resonance byte-to-loop-gain law. Topology and mechanism are settled, including the Roland-printed input-side compensation from the p. 9 module drawing; the drawing prints no component values, so the 0.2296 coefficient stays voiced | P1 |
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. About −0.8 V holds the comparator output high, represented by a provisional hard-zero audio gate; what the coupling network does — DC shift, residual bleed, loading, the switching transient — is untraced | P1 |
 | OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled, supporting the shipped quasi-linear compatibility law; the transfer law itself awaits measurement | P1 |
@@ -456,9 +462,10 @@ unit; the priority column is this project's own ranking of audible impact.
   polyphony, unison, master tune, transpose and chorus noise; contextual
   control help, live output display, panic, reset and patch randomisation.
 - Replaced instantaneous DCO timer programming with explicit M82C53 Mode-3
-  OUT/count staging and the recovered µPD7810 control/LSB/MSB spacing. This
-  changes pitch-step and retrigger transients; the absolute converter and
-  CPU-to-PIT clock phase remain open under OQ-08.
+  OUT/count staging, the recovered µPD7810 control/LSB/MSB spacing and the
+  synchronous IC35 range handoff. This changes pitch-step, retrigger and live
+  RANGE transients; the converter-mux anchor remains open under OQ-08, while
+  the separate CPU/PIT oscillators rule out one fixed inter-clock phase.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

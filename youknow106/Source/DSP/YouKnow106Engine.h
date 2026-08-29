@@ -1199,7 +1199,9 @@ private:
         bool coldInitialLoadPending { false };
         // Remaining selected input-clock periods to the next CE load or OUT
         // transition. While CE awaits both count bytes this is instead only
-        // the continuously running selected-CLK phase, kept in (0, 1].
+        // the continuously running selected-CLK phase. A pending shared range
+        // handoff may make the retained old-cycle remainder longer than one
+        // newly selected period.
         double pitClocksToEvent { 0.0 };
         double periodSamples { 100.0 };
         // Linear C54 compatibility model. Positive OUT starts the discharge;
@@ -1233,7 +1235,8 @@ private:
             std::uint32_t count, bool outHigh) noexcept;
         // A control word stops CE while the selected PIT input-clock phase
         // continues. The later complete LSB/MSB pair arms the next-clock load.
-        [[nodiscard]] bool programMode3() noexcept;
+        [[nodiscard]] bool programMode3(
+            double clocksToNextInputEdge) noexcept;
         void stageMode3Count(std::uint32_t count) noexcept;
         [[nodiscard]] PitEvent consumePitEvent() noexcept;
         void reset() noexcept;
@@ -1780,6 +1783,9 @@ private:
                         bool addCorrections) noexcept;
     void programDcoCount(Voice& voice, std::uint32_t count,
                          bool writesControlWord) noexcept;
+    void beginRangeClockTransition(DcoRange previous,
+                                   DcoRange next) noexcept;
+    void advanceRangeClock(DcoRange range) noexcept;
     void updateActiveDcoPeriod(Dco& dco, DcoRange range) noexcept;
     void advanceDcoPitAndRamp(Voice& voice, DcoRange range,
                               float previousThresholdVolts,
@@ -2053,6 +2059,12 @@ private:
     RateTransition rateTransition_ { RateTransition::Idle };
     float rateTransitionGain_ { 1.0f };
     float rateTransitionStep_ { 1.0f };
+    // IC35 and TP5 are one clock source shared by all six PITs. This is the
+    // wall time to its next rising edge expressed in periods of the currently
+    // selected range clock. During a RANGE handoff it can exceed one: the old
+    // synchronous count must finish before the new modulus begins.
+    double rangeClockClocksToEdge_ { 1.0 };
+    bool rangeClockTransitionPending_ { false };
     // Fractional pass scheduler. Keeping phase in passes avoids truncating
     // 4.2 ms to a whole internal-sample count at arbitrary host rates.
     double controlScanPhase_ { 1.0 };
