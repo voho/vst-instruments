@@ -4526,10 +4526,7 @@ void testEditorRendering()
                     && fretboard->onRepick != nullptr,
                 "the live fretboard is not mouse- and keyboard-operable");
         expect (fretboard->getTitle().contains ("physical string 8")
-                    && fretboard->getTitle().contains ("Up and Down")
-                    && fretboard->getTitle().contains ("1 through 8")
-                    && fretboard->getTitle().contains ("Space or Return")
-                    && fretboard->getTitle().containsIgnoreCase ("repick")
+                    && fretboard->getTitle().contains ("silent")
                     && fretboard->getHelpText().contains ("Up and Down")
                     && fretboard->getHelpText().contains ("1 through 8")
                     && fretboard->getHelpText().contains ("Space")
@@ -4643,8 +4640,16 @@ void testEditorRendering()
         setParameterValue (semanticProcessor,
                            electry::parameters::sympathetic, 0.0f);
         ElectryFretboardDisplay semanticDisplay;
-        expect (semanticDisplay.getTitle().contains ("physical string 8")
-                    && semanticDisplay.getTitle().contains ("silent"),
+        auto semanticAccessibility = semanticDisplay.createAccessibilityHandler();
+        const auto accessibleTitle = [&]
+        {
+            return semanticAccessibility != nullptr
+                ? semanticAccessibility->getTitle() : juce::String {};
+        };
+        expect (semanticAccessibility != nullptr,
+                "the semantic fretboard probe has no accessibility handler");
+        expect (accessibleTitle().contains ("physical string 8")
+                    && accessibleTitle().contains ("silent"),
                 "the fretboard's initial accessible title is not silent");
 
         juce::AudioBuffer<float> semanticAudio;
@@ -4654,18 +4659,31 @@ void testEditorRendering()
             (juce::uint8) 110), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
-        expect (semanticDisplay.getTitle().contains ("physical string 8")
-                    && semanticDisplay.getTitle().contains ("open E1")
-                    && semanticDisplay.getTitle().contains ("downstroke")
-                    && semanticDisplay.getTitle().contains ("sounding"),
+        expect (accessibleTitle().contains ("physical string 8")
+                    && accessibleTitle().contains ("open E1")
+                    && accessibleTitle().contains ("downstroke")
+                    && accessibleTitle().contains ("held"),
                 "an open downstroke did not reach the fretboard's accessible title");
+
+        // Nothing but the resolved stroke changes here. This specifically
+        // guards the semantic refresh comparison's `strokeUp` member.
+        semanticProcessor.triggerArticulation (
+            static_cast<int> (electry::PickStyle::Up));
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticProcessor.triggerStringRepick (0, 110.0f / 127.0f);
+        renderBlock (semanticProcessor, semanticAudio, semanticMidi);
+        semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
+        expect (accessibleTitle().contains ("open E1")
+                    && accessibleTitle().contains ("upstroke")
+                    && accessibleTitle().contains ("held"),
+                "a same-note upstroke repick did not refresh its accessible title");
 
         semanticMidi.addEvent (juce::MidiMessage::noteOff (
             1, electry::ElectryEngine::lowestPlayableNote), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
-        expect (semanticDisplay.getTitle().contains ("open E1")
-                    && semanticDisplay.getTitle().contains ("releasing"),
+        expect (accessibleTitle().contains ("open E1")
+                    && accessibleTitle().contains ("releasing"),
                 "a released string was not described as releasing");
 
         semanticProcessor.requestPanic();
@@ -4678,10 +4696,10 @@ void testEditorRendering()
             (juce::uint8) 110), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
-        expect (semanticDisplay.getTitle().contains ("physical string 8")
-                    && semanticDisplay.getTitle().contains ("fret 1 F1")
-                    && semanticDisplay.getTitle().contains ("upstroke")
-                    && semanticDisplay.getTitle().contains ("sounding"),
+        expect (accessibleTitle().contains ("physical string 8")
+                    && accessibleTitle().contains ("fret 1 F1")
+                    && accessibleTitle().contains ("upstroke")
+                    && accessibleTitle().contains ("held"),
                 "a fretted upstroke did not reach the fretboard's accessible title");
 
         semanticProcessor.requestPanic();
@@ -4716,7 +4734,7 @@ void testEditorRendering()
                                      - sympatheticString;
             semanticDisplay.keyPressed (juce::KeyPress {
                 static_cast<juce::juce_wchar> ('0' + physicalString) });
-            const auto title = semanticDisplay.getTitle();
+            const auto title = accessibleTitle();
             expect (title.contains ("physical string "
                                     + juce::String (physicalString))
                         && title.contains ("open "

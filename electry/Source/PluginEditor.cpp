@@ -876,7 +876,10 @@ void ElectryFretboardDisplay::updateAccessibilityTitle()
             title += juce::MidiMessage::getMidiNoteName (
                 state.midiNote, true, true, 4) + ", ";
         title += (state.strokeUp ? "upstroke, " : "downstroke, ");
-        title += (state.releasing ? "releasing" : "sounding");
+        // `sounding` also covers a MIDI-held string whose delayed attack has
+        // not begun or whose voice has already retired. "Held" is the exact
+        // invariant and does not promise audible output in either case.
+        title += (state.releasing ? "releasing" : "held");
     }
     else if (state.sympathetic)
     {
@@ -889,8 +892,7 @@ void ElectryFretboardDisplay::updateAccessibilityTitle()
     {
         title += "silent";
     }
-    title += ". Use Up and Down or number keys 1 through 8 to select; "
-             "Space or Return repicks";
+    title += ".";
     setTitle (title);
     if (auto* handler = getAccessibilityHandler())
         handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
