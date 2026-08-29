@@ -14179,7 +14179,8 @@ void testPalmImpactWaitsForStrokeAndClears()
                || TestAccess::palmImpactVelocity(aborted, hammeredString) == 0.0f,
            "Palm Pressure fabricated a plectrum impact on a Hammer attack");
 
-    ElectryEngine tail;
+    auto tailStorage = std::make_unique<ElectryEngine>();
+    auto& tail = *tailStorage;
     tail.prepare(sampleRate, 512);
     tail.setParameters(parameters);
     tail.reset();
@@ -14195,7 +14196,8 @@ void testPalmImpactWaitsForStrokeAndClears()
     // The bridge/body thud outlives its short velocity drive. A repick adds a
     // new contact but cannot erase that already-moving filter state in zero
     // time, which used to notch rapid Palm attacks at every Note On.
-    ElectryEngine overlapping;
+    auto overlappingStorage = std::make_unique<ElectryEngine>();
+    auto& overlapping = *overlappingStorage;
     overlapping.prepare(sampleRate, 512);
     overlapping.setParameters(parameters);
     overlapping.reset();
@@ -18212,7 +18214,8 @@ int main()
     // Palm-mute bridge impact smoke check.
     {
         constexpr auto sampleRate = 48000.0;
-        ElectryEngine engine;
+        auto engineStorage = std::make_unique<ElectryEngine>();
+        auto& engine = *engineStorage;
         engine.prepare(sampleRate, 512);
 
         electry::EngineParameters parameters {};
