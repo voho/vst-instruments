@@ -1647,12 +1647,19 @@ candidate.
 1. Capture-fit the existing wound-string dispersion cascade. [Murray and
    Whitfield (2022)](https://doi.org/10.1119/5.0064373) found good agreement
    between theoretical and measured inharmonicity for monofilament strings but
-   poor agreement for wound guitar strings. H1-H20 measurements from two
-   installed exact-eight string sets can refit Electry's existing eight
-   allpasses, retaining live-tension scaling and adding no render-loop work.
-   Odd frets and the second string set remain holdout; promotion needs at least
-   50% lower median cents error, no worse maximum error and unchanged
-   fundamental tuning.
+   poor agreement for wound guitar strings. `Tools/FitDispersion.py` now
+   provides a non-promotable calibration gate for supplied H1-H12 frequencies:
+   it fixes one joint `(f1, B_take)` observation per take, fits Electry's Drop-E
+   open-string `B` from even-fret TRAIN H2-H12 only, and scores odd-fret HOLDOUT
+   under the same fixed-`f1` constraint. Captured F# fret `r` maps to model fret
+   `r + 2`;
+   the fit changes no source and adds no render-loop work. Original-WAVE hashes
+   and reviewed commercial-calibration rights fail closed, but the tool does
+   not extract partials and therefore cannot prove that supplied measurements
+   came from those bytes. Final promotion still needs a separate installed
+   exact-eight string-set holdout, at least 50% lower median cents error, no
+   worse p95 or maximum error, and rendered confirmation that the production
+   allpass approximation preserves fundamental tuning.
 2. Measure the target pickup as a genuinely bivariate transducer. [Novak et
    al. (2020)](https://doi.org/10.17743/jaes.2020.0002) measured distinct
    two-dimensional nonlinear functions for single-coil, pole-piece humbucker

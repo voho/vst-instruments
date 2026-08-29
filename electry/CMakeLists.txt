@@ -367,9 +367,13 @@ if(BUILD_TESTING)
         add_test(NAME Electry.CompareReferenceFixture
                  COMMAND "${Python3_EXECUTABLE}"
                          "${CMAKE_CURRENT_SOURCE_DIR}/Tests/CompareReferenceFixtureTests.py")
+        add_test(NAME Electry.FitDispersion
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Tests/FitDispersionTests.py")
         set_tests_properties(
             Electry.PrepareBlindListening Electry.ScoreBlindListening
             Electry.ValidateReferenceFixture Electry.CompareReferenceFixture
+            Electry.FitDispersion
             PROPERTIES TIMEOUT 60)
     endif()
 endif()
