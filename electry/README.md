@@ -2263,6 +2263,52 @@ stiffness transfers to Electry's pickup, and longitudinal/phantom resonators
 remain below priority until repeatable clean magnetic-DI sum/difference
 partials survive a target high-gain chain.
 
+#### Setup-conditioned fretted-intonation research
+
+A premium fretted guitar is close to equal temperament, not mathematically
+identical to it. Pressing a real string changes its total length, tension,
+linear density and stiffness while nut/saddle compensation only reduces the
+residual. [Varieschi and Gower](https://arxiv.org/abs/0906.0127) derive that
+coupled geometry and measured one compensated steel sonometer string from
+-7.9 to +7.3 cents across its frets. [Anderson and
+Beausoleil](https://doi.org/10.1121/10.0026483) separately decompose classical-
+guitar intonation into resonant length, density, tension and bending stiffness,
+with [open model and experiment data](https://github.com/beausol/classical-guitar).
+Those results establish the mechanism; neither instrument supplies coefficients
+for a 27.625-inch high-output eight-string with a wound .080.
+
+Electry currently commands exact nominal 12-TET note targets and ideal
+`L = L0 2^(-fret/12)` speaking lengths. Stiffness dispersion therefore bends
+partials without giving a fretted fundamental the deterministic residual of one
+installed setup. This missing mechanism is not random detune. The lowest-cost
+candidate precomputes, whenever Guitar Build or gauge changes, one 8-by-23 table
+of fundamental cents, physical speaking-length ratio and fretting-tension ratio
+(about 2.2 kB as floats). Note allocation multiplies frequency by
+`2^(cents/1200)`; geometry consumes length and the dispersion/tension paths
+consume tension separately. Log-domain control-rate interpolation keeps slides
+continuous. No oscillator, filter, delay read or sample-loop branch is added;
+the preregistered 96 kHz eight-string ceiling is 0.25% CPU.
+
+Promotion is capture-gated on the actual target guitar, installed string set
+and setup. Record mechanically repeated raw DI at every string/fret while
+logging scale, each saddle setback, nut position, action, relief, fret crown,
+gauge and temperature, retuning and recording the adjacent open string before
+each block. Use at least five accepted jig repetitions for identification and
+human-fretted repeats for external validity; fit even frets only, hold out odd
+frets, then hold out a later remove/reinstall session. Existing public DIs do
+not document or repeat that geometry, so their pitch offsets cannot identify
+this table.
+
+The residual itself must repeat above a two-cent practical floor or the feature
+is rejected. Every string must show at least 50% lower held-out median absolute
+cents error than exact 12-TET, with no worse p95 or maximum and at least 80%
+correct residual signs. Hidden distorted chord voicings must also reduce
+inter-string beat-frequency error and win an RMS-matched blind A/B. Open strings
+stay exact, alternate string assignments retain their own deterministic setup,
+bends and MPE compose multiplicatively, and 44.1--384 kHz tuning/stability plus
+the CPU ceiling remain hard rails. Until that capture passes, importing the
+published sonometer or classical-guitar residuals would be invented realism.
+
 The frozen perceptual gate scores ten real/model cells plus three hidden repeats
 with exactly 30 listeners: 15 extended-range guitarists and 15 metal producers.
 A separate licensed-leader session compares Electric Storm Deluxe, Shreddage
