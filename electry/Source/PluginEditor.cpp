@@ -1592,8 +1592,14 @@ void ElectryAudioProcessorEditor::attachSlider (juce::Slider& slider,
     // to whatever JUCE's built-in fallback would pick, so it stays correct
     // for every knob without maintaining a second table of defaults here.
     if (auto* parameter = electryProcessor.parameters.getParameter (parameterId))
+    {
+        // Keep the compact panel label while exposing the complete canonical
+        // parameter name to accessibility clients (for example, "Mute
+        // pressure" rather than the visible "MUTE").
+        slider.setTitle (parameter->getName (100));
         slider.setDoubleClickReturnValue (
             true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+    }
 
     sliderAttachments.push_back (std::make_unique<SliderAttachment> (
         electryProcessor.parameters, parameterId, slider));

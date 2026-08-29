@@ -177,6 +177,9 @@ The editor's **RIG** selector provides four deterministic starting points and
 sets all 28 host parameters, so it cannot inherit a forgotten control from the
 previous patch. Rigs deliberately leave Pick Stroke, the base Play Style and
 the `LATCH | HOLD` choice alone.
+Compact knob captions remain short enough for the faceplate, while each knob's
+accessibility title uses its complete host parameter name (for example,
+**Mute pressure**, **Compressor** and **Output level**).
 
 - **Factory Default:** the dry Drop-E guitar documented in the parameter table.
 - **Drop-E Metal:** the demonstrated 45% distortion / 95% Modern High-Gain amp /
@@ -1345,6 +1348,8 @@ all-sound-off, all-notes-off, Panic and prepare lifecycle clearing), UI
 keyswitch triggering of both banks, panic, output-gain and APVTS
 output-mode effects, three visible non-overlapping mode buttons, three visible
 non-overlapping Amp Voice buttons, Modern default and missing-field migration,
+all 25 knob accessibility handlers exposing their canonical full parameter
+names while retaining the compact visible captions,
 deterministic
 distinct Double channels, an unchanged primary lane and clean Double re-entry,
 the sympathetic, Mute Pressure (parameter and CC 2) and Strum Spread controls
@@ -2235,6 +2240,16 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 full accessible knob names
+
+- All 25 rotary controls now expose the APVTS parameter's complete canonical
+  name to accessibility clients while retaining their compact faceplate labels.
+  This removes ambiguous screen-reader titles such as `MUTE`, `COMP`, `AGE`
+  and `OUTPUT` without adding a parallel naming table. The plug-in regression
+  resolves every knob by parameter ID and checks both its component title and
+  JUCE accessibility-handler title. Rendering is unchanged; this is metadata
+  only, with no audio, steady CPU or visual-layout cost.
 
 ### 2026-08-29 sympathetic exact-bypass state
 

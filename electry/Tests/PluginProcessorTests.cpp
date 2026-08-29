@@ -4105,12 +4105,21 @@ void testEditorRendering()
         expect (knobs[first]->getWidth() >= 44 && knobs[first]->getHeight() >= 110,
                 "knob fell below the compact control size: "
                     + knobs[first]->getName().toStdString());
-        expect (knobs[first]->slider.getTitle()
-                    == knobs[first]->slider.getName()
-                    && knobs[first]->slider.getTitle().isNotEmpty()
+        auto* parameter = processor.parameters.getParameter (
+            knobs[first]->getComponentID());
+        const auto fullParameterName = parameter != nullptr
+            ? parameter->getName (100) : juce::String {};
+        auto accessibility =
+            knobs[first]->slider.createAccessibilityHandler();
+        expect (parameter != nullptr
+                    && knobs[first]->slider.getName().isNotEmpty()
+                    && knobs[first]->slider.getTitle() == fullParameterName
+                    && accessibility != nullptr
+                    && accessibility->getTitle() == fullParameterName
                     && knobs[first]->slider.getWantsKeyboardFocus()
                     && knobs[first]->slider.hasFocusOutline(),
-                "knob is not named and visibly keyboard-focusable: "
+                "knob lacks its full accessible parameter name or visible "
+                "keyboard focus: "
                     + knobs[first]->getName().toStdString());
         for (auto* child : knobs[first]->getChildren())
             expect (knobs[first]->getLocalBounds().contains (child->getBounds()),
