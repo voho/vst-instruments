@@ -1132,7 +1132,7 @@ High-Gain.
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
 | Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store; Lee et al.'s measured common partial glide | Shipping keeps its compensated fundamental delay independent of pick velocity. The compile-time default-off experiment converts the resolved two-axis release energy through the steel core's axial `E A`, clamps the shared tension ratio to a seven-cent ceiling, and moves the complete compensated period without refitting static dispersion | A bounded research candidate that passes a frozen conventional-E2 descriptive compatibility gate with under 1% measured CPU overhead; not enabled shipping behavior, an exact-eight calibration, a causal identification, or evidence of market superiority |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase picked excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; an asymmetric constant-area release and a 0.5-1.5 mm contact patch vary with Pick Hardness, while deterministic per-stroke draws vary force, position, angle and tip contact. Hammer/tap contacts bypass the wrist, plectrum-contact and pick-control paths; legato slides preserve the ringing loop and add only finger friction | A realtime modal approximation to released-string displacement plus bounded contact and pick detail, with one explicit physical boundary between plectrum and fretting-hand gestures; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
-| Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
+| Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling; [Poirot et al.'s perceptual study of collision location](https://doi.org/10.1109/TASLP.2023.3284515) | Shipping uses the Artifacts path's decaying collision window, whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise. The compile-time default-off positioned-loss candidate instead compares the unfiltered return with a following-fret tap at `D * 2^(-1/12)`, retaining the old zero-slope knee while giving the loss a `sin^2(n pi p)` modal location cue; distributed Dead contact keeps the shipping law | Shipping is bounded collision-informed contact behavior. The candidate is a one-read longitudinal loss surrogate that deliberately retains shipping's bilateral absolute-value barrier for an isolated A/B; it is not a unilateral fretboard obstacle, reciprocal two-rail junction, passive nonlinear contact proof, measured action/fret geometry, or FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
 | Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide. A chained gesture samples the live log-frequency and fractional fret, derives duration and friction from the remaining physical path, moves stiffness with the live `1/L^2` coordinate, and translates raw delay for filter-phase changes so the complete loop period remains continuous | A finger-position-, stiffness- and effective-pitch-continuous time-varying waveguide plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not a velocity-continuous spline, an energy-compensated time-varying waveguide, or a measured contact-noise spectrum |
@@ -2132,6 +2132,44 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-29 positioned following-fret loss candidate (default off)
+
+- The shipping Artifacts limiter sees only the vertical wave at the loop seam,
+  so every partial encounters the same threshold regardless of where a real
+  downstream fret would touch. Poirot et al. identify that longitudinal modal
+  distribution as a collision-location cue. `ELECTRY_POSITIONED_FRET_COLLISION`
+  adds one cached linear tap at the equal-tempered following fret before touch,
+  dispersion and fitted damping. Its fixed-depth law leaves node modes intact:
+  the production regression measures gains 0.101/1.000 for the near-antinode
+  ninth and near-node eighteenth harmonics.
+- The experiment retains the established contact window, clearance opening,
+  zero-slope soft knee, deterministic noise and saddle rattle. It does not arm
+  its following-fret branch at fret 22, where this instrument has no following
+  metal fret. Dead notes retain their old distributed-hand contact, including
+  at fret 22, because they have no stopped speaking fret. The OFF build
+  preprocesses to the shipping branch.
+- This is intentionally a bounded one-read loss surrogate, not a reciprocal
+  local two-rail scatter and not a claim of nonlinear passivity. It deliberately
+  retains shipping's bilateral absolute-value barrier to isolate position in
+  the A/B, rather than pretending to be a unilateral fretboard obstacle. A
+  correct paired fractional gather/scatter needs another outgoing write and an
+  adjoint interpolation law; inventing that machinery or a per-fret action map
+  without measurements would overstate the evidence.
+- Both OFF and ON pass the complete DSP suite; the candidate reaches contact
+  from 44.1 through 384 kHz, including 96.001 kHz, stays finite in the maximum
+  eight-string stability cases, and keeps the last fret's following-fret branch
+  exact-null. Across three interleaved Release runs on the current machine, its
+  extra tap is confined to the 25-100 ms opportunity; the median two-second
+  default case costs 2.3 percent over OFF and the hostile all-eight-string 110
+  ms Palm burst costs 6.9 percent. Other full-window timings stayed inside
+  run-order noise.
+- No admissible controlled exact-eight collision capture is currently local.
+  The thirteen CC0 exact-eight Freesound previews are lossy, uncontrolled and
+  show no stable H9/H18 trajectory; they remain descriptive no-fit evidence.
+  Promotion therefore requires a whole-file-RMS-matched private OFF/ON verdict
+  plus a populated original-PCM reference receipt with documented action,
+  relief, fret heights and attack force.
 
 ### 2026-08-29 sample-rate-invariant polarisation seam
 

@@ -136,6 +136,10 @@
 #define ELECTRY_ENERGY_ATTACK_PITCH 0
 #endif
 
+#ifndef ELECTRY_POSITIONED_FRET_COLLISION
+#define ELECTRY_POSITIONED_FRET_COLLISION 0
+#endif
+
 namespace electry
 {
 
@@ -499,6 +503,38 @@ private:
     static constexpr double minimumSupportedSampleRate = 8000.0;
     static constexpr double maximumSupportedSampleRate = 384000.0;
 
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    // An equal-tempered following fret is p = 1 - 2^(-1/12) of the speaking
+    // length from the stopped end. Reading at D * (1 - p) gives the folded
+    // ring's phase-equivalent surrogate for that longitudinal point.
+    static constexpr float followingFretDelayScale = 0.9438743126816935f;
+
+    [[nodiscard]] static float applyPositionedFretCollision(
+        float bridgeSample, float followingFretSample, float clearance,
+        float contact, float& excess) noexcept
+    {
+        const float displacement = bridgeSample - followingFretSample;
+        const float magnitude = displacement < 0.0f
+            ? -displacement : displacement;
+        excess = magnitude > clearance ? magnitude - clearance : 0.0f;
+        if (excess <= 0.0f)
+            return bridgeSample;
+
+        // Preserve the established zero-slope soft-contact knee. A reciprocal
+        // two-rail junction would apply the opposite half-correction to the
+        // other outgoing rail too; this default-off, one-read surrogate cannot,
+        // so it is deliberately described as positioned loss, not as a passive
+        // local collision. With d held fixed, its ideal two-tap modal energy
+        // multiplier is 1 - d(2-d)sin^2(n*pi*p): nodes survive and antinodes
+        // take the loss.
+        const float contactDepth = contact * 6.0f * excess * excess
+            / ((1.0f + 6.0f * excess) * magnitude);
+        const float blend = 0.5f * contactDepth;
+        return bridgeSample
+             + blend * (followingFretSample - bridgeSample);
+    }
+#endif
+
     struct OnePole
     {
         float state { 0.0f };
@@ -766,6 +802,9 @@ private:
     {
         int offset { 4 };
         float c0 { 0.0f }, c1 { 1.0f }, c2 { 0.0f }, c3 { 0.0f };
+#if ELECTRY_POSITIONED_FRET_COLLISION
+        float linear0 { 1.0f }, linear1 { 0.0f };
+#endif
 
         void setDelay(float delaySamples) noexcept;
     };
@@ -888,6 +927,23 @@ private:
                  + tap.c2 * line[static_cast<std::size_t>((index + 1) & mask)]
                  + tap.c3 * line[static_cast<std::size_t>((index + 2) & mask)];
         }
+
+#if ELECTRY_POSITIONED_FRET_COLLISION
+        // The short-lived fret-loss experiment needs one additional spatial
+        // read. Linear interpolation halves its buffer traffic and multiply
+        // count versus the pickup-quality cubic tap while remaining a bounded
+        // fractional delay. Its extra high-frequency droop is an explicit
+        // CPU/accuracy tradeoff in this default-off audition candidate.
+        [[nodiscard]] float readLinearTap(const DelayTap& tap) const noexcept
+        {
+            constexpr int mask = delayLineSize - 1;
+            const int index = writeIndex - tap.offset;
+            return tap.linear0
+                     * line[static_cast<std::size_t>(index & mask)]
+                 + tap.linear1
+                     * line[static_cast<std::size_t>((index + 1) & mask)];
+        }
+#endif
 
         void writeAdd(float offsetSamples, float value) noexcept;
     };
@@ -1146,6 +1202,11 @@ private:
         // length once per sample to form its progress fraction.
         float artifactCollisionLengthDenominator { 1.0f };
         float artifactClearance { 1.0f };
+#if ELECTRY_POSITIONED_FRET_COLLISION
+        // Cached linear coefficients make the extra longitudinal read two
+        // multiplies instead of rebuilding a fractional delay every sample.
+        DelayTap artifactFollowingFretTap {};
+#endif
         ModalResonator saddleRattle {};
 
         // Damping ramp applied by note release and palm muting.

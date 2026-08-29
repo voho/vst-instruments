@@ -21,6 +21,87 @@ namespace electry
 // Narrow inspection seam for the JUCE-free regression suite.
 struct ElectryEngineTestAccess
 {
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    static constexpr float followingFretDelayScale() noexcept
+    {
+        return ElectryEngine::followingFretDelayScale;
+    }
+
+    static float applyPositionedFretCollision(
+        float bridgeSample, float followingFretSample, float clearance,
+        float contact, float& excess) noexcept
+    {
+        return ElectryEngine::applyPositionedFretCollision(
+            bridgeSample, followingFretSample, clearance, contact, excess);
+    }
+
+    static std::array<float, 2> followingFretLinearWeights(
+        float delaySamples) noexcept
+    {
+        ElectryEngine::DelayTap tap;
+        tap.setDelay(delaySamples);
+        return { tap.linear0, tap.linear1 };
+    }
+
+    static float followingFretLinearReadSentinel(
+        float delaySamples) noexcept
+    {
+        ElectryEngine::PolarisationLoop loop;
+        loop.clear();
+        loop.writeIndex = 3;
+        ElectryEngine::DelayTap tap;
+        tap.setDelay(delaySamples);
+        constexpr int mask = ElectryEngine::delayLineSize - 1;
+        const int index = loop.writeIndex - tap.offset;
+        loop.line[static_cast<std::size_t>(index & mask)] = 2.0f;
+        loop.line[static_cast<std::size_t>((index + 1) & mask)] = 10.0f;
+        return loop.readLinearTap(tap);
+    }
+
+    static float followingFretCachedDelay(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return 0.0f;
+        const auto& tap = engine.voices_[static_cast<std::size_t>(stringIndex)]
+                              .artifactFollowingFretTap;
+        return static_cast<float>(tap.offset) - tap.linear1;
+    }
+
+    static double positionedFretHarmonicGain(int harmonic) noexcept
+    {
+        constexpr int period = 4096;
+        constexpr double twoPi = 6.28318530717958647692;
+        ElectryEngine::PolarisationLoop loop;
+        loop.clear();
+        loop.currentDelay = static_cast<float>(period);
+        for (std::size_t index = 0; index < loop.line.size(); ++index)
+        {
+            loop.line[index] = static_cast<float>(std::sin(
+                twoPi * static_cast<double>(harmonic)
+                * static_cast<double>(index) / static_cast<double>(period)));
+        }
+
+        ElectryEngine::DelayTap tap;
+        tap.setDelay(loop.currentDelay
+                     * ElectryEngine::followingFretDelayScale);
+        double inputEnergy = 0.0;
+        double outputEnergy = 0.0;
+        for (int index = 0; index < period; ++index)
+        {
+            loop.writeIndex = index;
+            const float bridge = loop.readFractional(loop.currentDelay);
+            const float following = loop.readLinearTap(tap);
+            float excess = 0.0f;
+            const float output = ElectryEngine::applyPositionedFretCollision(
+                bridge, following, 0.0f, 1.0f, excess);
+            inputEnergy += static_cast<double>(bridge) * bridge;
+            outputEnergy += static_cast<double>(output) * output;
+        }
+        return std::sqrt(outputEnergy / inputEnergy);
+    }
+#endif
+
 #if ELECTRY_ENERGY_ATTACK_PITCH
     struct AttackPitchState
     {
@@ -6659,7 +6740,9 @@ void testArtifactsControl()
             renderInto(collision, contact);
             const auto after = TestAccess::snapshot(collision, stringIndex);
             expect(after.artifactNoiseState != before.artifactNoiseState,
-                   "maximum-force low-string artifact window made no fret contact");
+                   "maximum-force low-string artifact window made no fret contact (style "
+                       + std::to_string(static_cast<int>(style)) + ", note "
+                       + std::to_string(note) + ")");
         }
     }
 
@@ -6682,6 +6765,158 @@ void testArtifactsControl()
     expect(allFinite(strum) && peakAbs(strum.left) < 0.80f,
            "maximum-artifact eight-string strum became unstable");
 }
+
+#if ELECTRY_POSITIONED_FRET_COLLISION
+void testPositionedFretCollision()
+{
+    const double delayScale = TestAccess::followingFretDelayScale();
+    expect(std::abs(delayScale - std::exp2(-1.0 / 12.0)) < 1.0e-7,
+           "following-fret collision tap does not follow equal temperament");
+    const auto linearWeights =
+        TestAccess::followingFretLinearWeights(123.25f);
+    expect(std::abs(linearWeights[0] - 0.25f) < 1.0e-7f
+               && std::abs(linearWeights[1] - 0.75f) < 1.0e-7f,
+           "following-fret cached linear interpolation weights are wrong");
+    expect(TestAccess::followingFretLinearReadSentinel(123.25f) == 8.0f,
+           "following-fret production linear read reversed its tap geometry");
+
+    // Exercise the production collision law with pure harmonic phases. At the
+    // following-fret fraction, harmonic 9 is almost an antinode while harmonic
+    // 18 is almost a node. The latter must survive instead of every partial
+    // seeing the old seam-wide limiter.
+    const double harmonic9Gain = TestAccess::positionedFretHarmonicGain(9);
+    const double harmonic18Gain = TestAccess::positionedFretHarmonicGain(18);
+    expect(harmonic9Gain < 0.25 && harmonic18Gain > 0.99
+               && harmonic9Gain < harmonic18Gain * 0.30,
+           "following-fret law did not preserve the node/antinode contrast (H9 "
+               + std::to_string(harmonic9Gain) + ", H18 "
+               + std::to_string(harmonic18Gain) + ")");
+    for (int harmonic = 1; harmonic <= 32; ++harmonic)
+        expect(TestAccess::positionedFretHarmonicGain(harmonic) <= 1.0001,
+               "following-fret law amplified harmonic "
+                   + std::to_string(harmonic));
+
+    float excess = -1.0f;
+    const float belowClearance =
+        TestAccess::applyPositionedFretCollision(
+            0.20f, -0.40f, 0.61f, 1.0f, excess);
+    expect(belowClearance == 0.20f && excess == 0.0f,
+           "following-fret collision changed a sample below clearance");
+
+    const float zeroContact = TestAccess::applyPositionedFretCollision(
+        0.50f, -0.50f, 0.10f, 0.0f, excess);
+    expect(zeroContact == 0.50f,
+           "following-fret loss was not identity at zero contact");
+
+    const auto kneeCorrection = [&] (float amount)
+    {
+        constexpr float clearance = 0.10f;
+        const float bridge = clearance + amount;
+        float kneeExcess = 0.0f;
+        const float output = TestAccess::applyPositionedFretCollision(
+            bridge, 0.0f, clearance, 1.0f, kneeExcess);
+        return bridge - output;
+    };
+    const float correction1 = kneeCorrection(0.001f);
+    const float correction2 = kneeCorrection(0.002f);
+    expect(correction1 > 0.0f
+               && correction2 / correction1 > 3.8f
+               && correction2 / correction1 < 4.1f,
+           "following-fret loss no longer has a zero-slope quadratic knee");
+
+    // The moving tap remains in the fractional delay's valid range at every
+    // supported production rate, including the non-round 96.001 kHz seam.
+    for (const double sampleRate : { 44100.0, 48000.0, 88200.0, 96000.0,
+                                     96001.0, 192000.0, 384000.0 })
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(28, 1.0f);
+        const int stringIndex = TestAccess::stringForNote(engine, 28);
+        const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+        const float tapDelay = snapshot.verticalDelayCurrent
+                             * TestAccess::followingFretDelayScale();
+        expect(tapDelay >= 4.0f
+                   && tapDelay <= TestAccess::delayLineCapacity() - 8.0f,
+               "following-fret tap escaped its delay line at "
+                   + std::to_string(sampleRate) + " Hz");
+        StereoBuffer contact(static_cast<int>(0.150 * sampleRate));
+        renderInto(engine, contact);
+        const auto after = TestAccess::snapshot(engine, stringIndex);
+        expect(allFinite(contact) && peakAbs(contact.left) > 1.0e-5f,
+               "following-fret contact render was silent or non-finite at "
+                   + std::to_string(sampleRate) + " Hz");
+        expect(after.artifactNoiseState != snapshot.artifactNoiseState,
+               "following-fret contact branch was not reached at "
+                   + std::to_string(sampleRate) + " Hz");
+    }
+
+    EngineParameters parameters;
+    parameters.artifactAmount = 1.0f;
+    parameters.bendTimeSeconds = 0.02f;
+    ElectryEngine engine;
+    engine.prepare(48000.0, 512);
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(85, 1.0f);
+    const auto fret21 = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 85));
+    expect(fret21.fret == 21 && fret21.artifactCollisionLength > 0
+               && fret21.artifactCollisionRemaining
+                    == fret21.artifactCollisionLength,
+           "fret 21 did not arm its following-fret collision");
+
+    // The cached point follows the smoothed physical period during its brief
+    // contact opportunity instead of remaining at the attack coordinate.
+    engine.reset();
+    engine.noteOn(28, 1.0f);
+    const int movingString = TestAccess::stringForNote(engine, 28);
+    StereoBuffer establishTap(1024);
+    renderInto(engine, establishTap);
+    const auto beforeBend = TestAccess::snapshot(engine, movingString);
+    const float cachedBeforeBend =
+        TestAccess::followingFretCachedDelay(engine, movingString);
+    engine.setPitchBend(1.0f);
+    StereoBuffer moveTap(512);
+    renderInto(engine, moveTap);
+    const auto afterBend = TestAccess::snapshot(engine, movingString);
+    const float cachedAfterBend =
+        TestAccess::followingFretCachedDelay(engine, movingString);
+    expect(beforeBend.artifactCollisionRemaining > 0
+               && afterBend.artifactCollisionRemaining > 0
+               && cachedAfterBend < cachedBeforeBend,
+           "following-fret tap did not track an in-window upward pitch bend ("
+               + std::to_string(beforeBend.artifactCollisionRemaining) + " -> "
+               + std::to_string(afterBend.artifactCollisionRemaining) + ", "
+               + std::to_string(cachedBeforeBend) + " -> "
+               + std::to_string(cachedAfterBend) + ")");
+
+    engine.reset();
+    engine.noteOn(86, 1.0f);
+    const auto fret22 = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 86));
+    expect(fret22.fret == 22 && fret22.artifactCollisionLength == 0
+               && fret22.artifactCollisionRemaining == 0,
+           "last-fret note armed a non-existent following fret");
+
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Dead), 1.0f);
+    engine.noteOn(86, 1.0f);
+    const auto deadFret22 = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 86));
+    expect(deadFret22.fret == 22 && deadFret22.artifactCollisionLength > 0
+               && deadFret22.artifactCollisionRemaining
+                    == deadFret22.artifactCollisionLength,
+           "last-fret Dead note lost its distributed-contact fallback");
+
+    std::cout << "PROBE positioned following-fret H9/H18 gains: "
+              << harmonic9Gain << "/" << harmonic18Gain << '\n';
+}
+#endif
 
 void testAdvancedDispersionAndBodyConductance()
 {
@@ -17578,6 +17813,9 @@ int main()
     testPickupsToneAndBuildMorph();
     testHumbuckerTwoCoilNotch();
     testArtifactsControl();
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    testPositionedFretCollision();
+#endif
     testAdvancedDispersionAndBodyConductance();
     testLowRegisterGuitarEnvelope();
     testOpenLowStringLevelBalance();

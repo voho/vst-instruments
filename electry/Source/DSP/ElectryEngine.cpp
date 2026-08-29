@@ -427,6 +427,10 @@ void ElectryEngine::DelayTap::setDelay(float delaySamples) noexcept
     const float ceiling = std::ceil(delaySamples);
     offset = static_cast<int>(ceiling);
     const float t = ceiling - delaySamples;
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    linear0 = 1.0f - t;
+    linear1 = t;
+#endif
     const float tMinus1 = t - 1.0f;
     const float tMinus2 = t - 2.0f;
     const float tPlus1 = t + 1.0f;
@@ -4145,7 +4149,14 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // A picked attack can graze a fret on the way. Start this opportunity at
     // the actual plectrum contact: scheduling it in startVoice() spent part—or
     // all—of the window while a delayed strum was still exactly silent.
-    if (plectrumContact && parameters.artifactAmount > 0.0f)
+    if (plectrumContact && parameters.artifactAmount > 0.0f
+#if ELECTRY_POSITIONED_FRET_COLLISION
+        // This 22-fret instrument has no following metal fret after fret 22.
+        // Dead is a distributed hand contact and retains the established seam
+        // collision below instead of pretending that it has a stopped fret.
+        && (voice.playStyle == PlayStyle::Dead || voice.fret < fretCount)
+#endif
+        )
     {
         const float contact = std::pow(parameters.artifactAmount, 0.75f)
                             * voice.velocityProfile.collision
@@ -4159,6 +4170,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         voice.artifactClearance = lerp(looseFretClearanceMetres,
                                        hardFretClearanceMetres, contact)
                                 / waveguideDisplacementMetresPerUnit;
+#if ELECTRY_POSITIONED_FRET_COLLISION
+        voice.artifactFollowingFretTap.setDelay(
+            voice.vertical.currentDelay * followingFretDelayScale);
+#endif
     }
     else
     {
@@ -5913,10 +5928,62 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
 #endif
 
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    float artifactContactSignal = 0.0f;
+    float artifactExcess = 0.0f;
+    float artifactContact = 0.0f;
+    float artifactClearance = 0.0f;
+    bool positionedFretLossActive = false;
+    // Advance the opportunity once per string sample, not once per
+    // polarisation: advanceLoop() is called for both axes below.
+    if (voice.playStyle != PlayStyle::Dead && artifactsActive_
+        && voice.artifactCollisionRemaining > 0
+        && voice.outputEnergy > 0.0f)
+    {
+        --voice.artifactCollisionRemaining;
+        const float progress = 1.0f
+            - static_cast<float>(voice.artifactCollisionRemaining)
+              / voice.artifactCollisionLengthDenominator;
+        artifactClearance = voice.artifactClearance
+                          * (1.0f + 3.5f * progress);
+        artifactContact = artifactContactShape_
+                        * voice.velocityProfile.collision
+                        * (0.70f + 0.30f * voice.lowStringWeight);
+        // Pitch motion is already control-smoothed. Refreshing the cached tap
+        // on the same 16-sample cadence tracks it without paying a fractional-
+        // coefficient solve throughout the short contact window.
+        if (voice.ageSamples % static_cast<std::uint64_t>(controlPeriod) == 0u)
+            voice.artifactFollowingFretTap.setDelay(
+                voice.vertical.currentDelay * followingFretDelayScale);
+        positionedFretLossActive = true;
+    }
+#endif
+
     // Loop reads and the damping/dispersion chain.
-    const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback)
+    const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback
+#if ELECTRY_POSITIONED_FRET_COLLISION
+                                  , bool applyFretCollision
+#endif
+                                  )
     {
         float sample = loop.readFractional(loop.currentDelay);
+#if ELECTRY_POSITIONED_FRET_COLLISION
+        // Poirot et al. found that a collision's longitudinal position is
+        // carried by the modal distribution (IEEE/ACM TASLP 2023,
+        // https://doi.org/10.1109/TASLP.2023.3284515). Compare the unfiltered
+        // travelling wave with one following-fret tap before touch, dispersion
+        // and fitted damping. This is only a cheap positioned-loss surrogate,
+        // but it lets modes with a node there survive.
+        if (applyFretCollision && positionedFretLossActive)
+        {
+            const float followingFretSample = loop.readLinearTap(
+                voice.artifactFollowingFretTap);
+            sample = applyPositionedFretCollision(
+                sample, followingFretSample, artifactClearance,
+                artifactContact,
+                artifactExcess);
+        }
+#endif
         if (touchWeight > 0.0f)
         {
             const float touched = loop.readFractional(
@@ -5962,9 +6029,59 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     const float contactChoke = voice.excitationPhase == ExcitationPhase::Contact
         ? voice.contactFeedbackGain : 1.0f;
 
-    float verticalSample = advanceLoop(vertical, contactChoke);
-    float horizontalSample = advanceLoop(horizontal, contactChoke);
+    float verticalSample = advanceLoop(vertical, contactChoke
+#if ELECTRY_POSITIONED_FRET_COLLISION
+                                       , true
+#endif
+                                       );
+    float horizontalSample = advanceLoop(horizontal, contactChoke
+#if ELECTRY_POSITIONED_FRET_COLLISION
+                                         , false
+#endif
+                                         );
 
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    if (voice.playStyle == PlayStyle::Dead && artifactsActive_
+        && voice.artifactCollisionRemaining > 0
+        && voice.outputEnergy > 0.0f)
+    {
+        --voice.artifactCollisionRemaining;
+        const float progress = 1.0f
+            - static_cast<float>(voice.artifactCollisionRemaining)
+              / voice.artifactCollisionLengthDenominator;
+        const float clearance = voice.artifactClearance
+                              * (1.0f + 3.5f * progress);
+        artifactExcess = std::max(std::abs(verticalSample) - clearance, 0.0f);
+        if (artifactExcess > 0.0f)
+        {
+            const float contact = artifactContactShape_
+                                * voice.velocityProfile.collision
+                                * (0.70f + 0.30f * voice.lowStringWeight);
+            const float sign = verticalSample >= 0.0f ? 1.0f : -1.0f;
+            const float limited = sign * (clearance
+                + artifactExcess / (1.0f + 6.0f * artifactExcess));
+            verticalSample = lerp(verticalSample, limited, contact);
+
+            const float raw = bipolarNoise(voice.artifactNoiseState);
+            const float lowpassed = voice.artifactNoiseShaper.process(
+                raw, voice.artifactNoiseCoefficient);
+            voice.artifactNoiseBandState += artifactBandCoefficient_
+                * (lowpassed - voice.artifactNoiseBandState);
+            artifactContactSignal = (lowpassed - voice.artifactNoiseBandState)
+                                  * artifactExcess * 0.22f * contact;
+        }
+    }
+    else if (artifactExcess > 0.0f)
+    {
+        const float raw = bipolarNoise(voice.artifactNoiseState);
+        const float lowpassed = voice.artifactNoiseShaper.process(
+            raw, voice.artifactNoiseCoefficient);
+        voice.artifactNoiseBandState += artifactBandCoefficient_
+            * (lowpassed - voice.artifactNoiseBandState);
+        artifactContactSignal = (lowpassed - voice.artifactNoiseBandState)
+                              * artifactExcess * 0.22f * artifactContact;
+    }
+#else
     // Ordinary hard-picked notes can make brief, irregular fret contact too.
     // The Artifacts control blends toward the same bounded collision law used
     // by Slap, but a separate deterministic noise stream preserves the clean
@@ -6004,6 +6121,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                                   * artifactExcess * 0.22f * contact;
         }
     }
+#endif
 
     // Passive bridge coupling exchanges a little energy between the two
     // returned travelling waves. They encounter this contractive matrix once

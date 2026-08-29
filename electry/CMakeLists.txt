@@ -41,6 +41,8 @@ option(ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
     "Build the default-off fitted order-2 lowest-string loss correction" OFF)
 option(ELECTRY_ENERGY_ATTACK_PITCH
     "Build the default-off energy-derived common attack-pitch experiment" OFF)
+option(ELECTRY_POSITIONED_FRET_COLLISION
+    "Build the default-off following-fret collision-position experiment" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -74,6 +76,11 @@ endif()
 if(ELECTRY_ENERGY_ATTACK_PITCH)
     target_compile_definitions(ElectryDSP PUBLIC
         ELECTRY_ENERGY_ATTACK_PITCH=1)
+endif()
+
+if(ELECTRY_POSITIONED_FRET_COLLISION)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_POSITIONED_FRET_COLLISION=1)
 endif()
 
 if(ELECTRY_MEASURED_MODERN_CABINET)
