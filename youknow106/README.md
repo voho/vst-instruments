@@ -487,10 +487,12 @@ and one DAC code while preserving the exact clamp, truncation, CV saturation
 and upper-bound count discontinuity. Ramp charge is expressed without guessed
 volts as DAC code times the active divider, referenced to the centre pair
 `0x0100 * 0x1dfb`. This exposes the hardware's approximately 6.02 dB/octave
-high-note level loss once the CV reaches 4095. The current continuous
-tune/LFO/bend controls are explicitly rounded into this word at the final
-adapter; replacing those three upstream adapters with their recovered integer
-laws is the remaining implementation work, not a pitch-pair research unknown.
+high-note level loss once the CV reaches 4095. MASTER TUNE now maps the host's
+continuous +/-50-cent control onto B-2's signed 1/256-semitone byte, including
+its asymmetric +49.609375-cent hardware endpoint. The current continuous
+LFO/bend controls are explicitly rounded into the word at the final adapter;
+replacing those two upstream adapters with their recovered integer laws is the
+remaining implementation work, not a pitch-pair research unknown.
 For plug-in notes and modulation outside the physical keybed, the final word
 saturates at 0/65535 rather than reproducing the firmware's unsigned wrap; that
 is a deliberate host-safety policy for the instrument's expanded MIDI range.
@@ -529,6 +531,9 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   corner; the same-size kernels now keep the expanded matrix at or below
   -71.62 dBc alias, with at most 0.0026 dB error through 15 kHz and 0.144 dB
   at the worst near-20 kHz line, without adding latency or hot-loop work.
+- MASTER TUNE now uses the recovered signed B-2 byte in 1/256-semitone units:
+  the continuous host control still spans +/-50 cents, while its hardware top
+  code correctly stops at +49.609375 cents instead of fabricating +50 exactly.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

@@ -303,16 +303,17 @@ std::uint16_t derivedDcoCvAnchor(int index) noexcept
         4095.0, std::floor(value + 0.5)));
 }
 
-std::uint16_t aggregatePitchWord(double midiNote) noexcept
+std::uint16_t aggregatePitchWord(double midiNote,
+                                 std::int32_t controlOffset = 0) noexcept
 {
     // B-2 starts the shared master coordinate at 0x1818, then adds the
     // per-voice 8.8 portamento word. The engine's portamento state already
-    // advances on that 1/256-semitone grid. Tune/LFO/bend still arrive through
-    // the established continuous product controls, so their final float-to-
-    // word rounding is explicitly an adapter until those upstream integer
-    // paths are replaced separately.
+    // advances on that 1/256-semitone grid. Exact integer control terms can be
+    // added independently; any remaining continuous controls are rounded only
+    // once when this final host adapter produces the word.
     constexpr double b2MasterPitchWord = 0x1818;
-    const double units = b2MasterPitchWord + midiNote * 256.0;
+    const double units = b2MasterPitchWord + midiNote * 256.0
+                       + static_cast<double>(controlOffset);
     const double bounded = std::clamp(units, 0.0, 65535.0);
     return static_cast<std::uint16_t>(std::floor(bounded + 0.5));
 }
@@ -348,6 +349,20 @@ YouKnow106Engine::DcoPitchPair YouKnow106Engine::dcoPitchPair(
         static_cast<std::uint16_t>(
             cvCode + fraction * (nextCvCode - cvCode) / 256u)
     };
+}
+
+std::int16_t YouKnow106Engine::masterTunePitchWordOffset(
+    double cents) noexcept
+{
+    // IC29 subtracts 128 from the processed Tune ADC byte. The plug-in keeps
+    // its declared continuous +/-50-cent host parameter and maps it onto that
+    // signed-byte grid; clamping before lround also keeps hostile finite input
+    // away from the integral conversion's undefined overflow range.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1107-L1119
+    const double bounded = std::isfinite(cents)
+        ? std::clamp(cents, -50.0, 50.0) : 0.0;
+    const long units = std::lround(bounded * 2.56);
+    return static_cast<std::int16_t>(std::clamp(units, -128L, 127L));
 }
 
 std::uint32_t YouKnow106Engine::dcoDivider(double frequencyHz) noexcept
@@ -5218,13 +5233,13 @@ std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     const float lfoPitchDepth = std::min(
         2.0f, byte7(parameters.dcoLfoDepth)
                   + byte7(parameters.benderLfoDepth) * modWheel_);
-    const float cents = parameters.masterTuneCents
-        + parameters.benderDcoDepth * benderPitchCents * pitchBend_
+    const float cents = parameters.benderDcoDepth * benderPitchCents * pitchBend_
         + lfoPitchDepth * lfoPitchCents * lfoGated;
     const double midi = static_cast<double>(voice.currentMidi)
                       + static_cast<double>(cents) / 100.0;
 
-    const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(midi));
+    const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(
+        midi, masterTunePitchWordOffset(parameters.masterTuneCents)));
     // Roland explicitly says DCO CV contains no RANGE data: RANGE changes the
     // timer clock and selects the ramp resistor, not this compensation hold.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9

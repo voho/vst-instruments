@@ -381,6 +381,11 @@ public:
     };
     [[nodiscard]] static DcoPitchPair dcoPitchPair(
         std::uint16_t pitchWord) noexcept;
+    // Host MASTER TUNE is continuous +/-50 cents; B-2 consumes one signed
+    // byte in units of 1/256 semitone, so the positive hardware endpoint is
+    // +127 units (+49.609375 cents) while the negative endpoint reaches -128.
+    [[nodiscard]] static std::int16_t masterTunePitchWordOffset(
+        double cents) noexcept;
 
     // Convenience adapter for a requested middle-range frequency. Production
     // constructs the 8.8 coordinate directly; this keeps the circuit-law seam

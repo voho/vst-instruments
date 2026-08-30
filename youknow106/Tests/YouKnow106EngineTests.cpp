@@ -3528,6 +3528,52 @@ void testDcoPitchPairKeepsSettledRampProductAndCvSaturation()
                "a cold B-2 transaction normalized its captured pair to unity");
 }
 
+void testMasterTuneUsesRecoveredSignedPitchWord()
+{
+    expect(YouKnow106Engine::masterTunePitchWordOffset(-50.0) == -128
+               && YouKnow106Engine::masterTunePitchWordOffset(0.0) == 0
+               && YouKnow106Engine::masterTunePitchWordOffset(50.0) == 127,
+           "MASTER TUNE left the B-2 signed-byte endpoint law");
+    expect(YouKnow106Engine::masterTunePitchWordOffset(-900.0) == -128
+               && YouKnow106Engine::masterTunePitchWordOffset(900.0) == 127
+               && YouKnow106Engine::masterTunePitchWordOffset(
+                      std::numeric_limits<double>::quiet_NaN()) == 0,
+           "MASTER TUNE's firmware adapter lost its defensive bounds");
+
+    const auto renderedPair = [](float cents) {
+        YouKnow106Engine engine;
+        engine.prepare(192000.0, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.masterTuneCents = cents;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
+        return YouKnow106Engine::DcoPitchPair {
+            YouKnow106TestAccess::pitWriteDivider(engine, 0),
+            static_cast<std::uint16_t>(
+                YouKnow106TestAccess::dcoCvTarget(engine, 0))
+        };
+    };
+
+    const auto low = renderedPair(-50.0f);
+    const auto neutral = renderedPair(0.0f);
+    const auto high = renderedPair(50.0f);
+    const auto expectedLow = YouKnow106Engine::dcoPitchPair(0x5398u);
+    const auto expectedNeutral = YouKnow106Engine::dcoPitchPair(0x5418u);
+    const auto expectedHigh = YouKnow106Engine::dcoPitchPair(0x5497u);
+    expect(low.divider == expectedLow.divider
+               && low.cvCode == expectedLow.cvCode
+               && neutral.divider == expectedNeutral.divider
+               && neutral.cvCode == expectedNeutral.cvCode
+               && high.divider == expectedHigh.divider
+               && high.cvCode == expectedHigh.cvCode,
+           "production MASTER TUNE did not add its signed word to the B-2 pair");
+    const auto oldSymmetricEndpoint = YouKnow106Engine::dcoPitchPair(0x5498u);
+    expect(high.divider != oldSymmetricEndpoint.divider
+               || high.cvCode != oldSymmetricEndpoint.cvCode,
+           "MASTER TUNE +50 still fabricated a symmetric +128 endpoint");
+}
+
 void testRangeDividerCompletesItsCurrentSynchronousCount()
 {
     // Module-board IC35 is not a mux between three clock taps. PF7/PF6 set
@@ -11872,6 +11918,7 @@ int main()
         testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
         testRangeDoesNotRetargetDcoCompensationCv();
         testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
+        testMasterTuneUsesRecoveredSignedPitchWord();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -11956,6 +12003,7 @@ int main()
     testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
     testRangeDoesNotRetargetDcoCompensationCv();
     testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
+    testMasterTuneUsesRecoveredSignedPitchWord();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();
