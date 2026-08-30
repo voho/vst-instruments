@@ -2661,7 +2661,7 @@ float ElectryEngine::scaleLengthMetres() const noexcept
                 smoothedParameters_.scaleLength);
 }
 
-float ElectryEngine::deadSpotFactor(int stringIndex, int fret) const noexcept
+float ElectryEngine::deadSpotFactor(int stringIndex, float fret) const noexcept
 {
     // Solid-body dead spots: locally raised neck conductance shortens decay
     // at specific fret positions.
@@ -2685,7 +2685,29 @@ float ElectryEngine::deadSpotFactor(int stringIndex, int fret) const noexcept
 void ElectryEngine::configureVoiceDamping(Voice& voice,
                                           PlayStyle dampingStyle) noexcept
 {
+    const float liveFrequency = voice.lastCompensatedPeriod > 0.0f
+        ? static_cast<float>(sampleRate_) / voice.lastCompensatedPeriod
+        : voice.baseFrequency;
+    const float liveFret = voice.lastConfiguredLiveFret >= 0.0f
+                        && voice.lastConfiguredLiveFret <= fretCount
+        ? voice.lastConfiguredLiveFret : static_cast<float>(voice.fret);
+    configureVoiceDamping(voice, dampingStyle, liveFrequency, liveFret);
+}
+
+void ElectryEngine::configureVoiceDamping(Voice& voice,
+                                          PlayStyle dampingStyle,
+                                          float liveFrequency,
+                                          float liveFret) noexcept
+{
     voice.dampingStyle = dampingStyle;
+    liveFrequency = clampf(
+        finitef(liveFrequency) ? liveFrequency : voice.baseFrequency,
+        20.0f, 0.24f * static_cast<float>(sampleRate_));
+    liveFret = clampf(finitef(liveFret) ? liveFret
+                                        : static_cast<float>(voice.fret),
+                      0.0f, static_cast<float>(fretCount));
+    voice.lastDampedFrequency = liveFrequency;
+    voice.lastDampedLiveFret = liveFret;
     const auto& parameters = smoothedParameters_;
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
 
@@ -2706,7 +2728,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
 #else
     t60 *= 1.05f * 1.04f;
 #endif
-    t60 *= deadSpotFactor(voice.stringIndex, voice.fret);
+    t60 *= deadSpotFactor(voice.stringIndex, liveFret);
 
 #if ! ELECTRY_MEASURED_BODY_RESPONSE
     // The body modes are not merely a parallel EQ. Modal bridge admittance
@@ -2718,7 +2740,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     float conductanceWeight = 0.0f;
     for (int partial = 1; partial <= 6; ++partial)
     {
-        const float frequency = voice.baseFrequency * static_cast<float>(partial);
+        const float frequency = liveFrequency * static_cast<float>(partial);
         if (frequency >= 0.4f * static_cast<float>(sampleRate_))
             break;
         const float weight = 1.0f / static_cast<float>(partial);
@@ -2951,7 +2973,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
     t60High = clampf(t60High, 0.008f, t60);
 
     const float sampleRate = static_cast<float>(sampleRate_);
-    const float f0 = voice.baseFrequency;
+    const float f0 = liveFrequency;
     // A distributed fretting hand shapes the low-order modes that make up a
     // dead note's whole audible body, so fit its upper decay target at the
     // eighth partial. The bridge hand and ordinary string still use 3.6 kHz;
@@ -3322,6 +3344,24 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const float liveFret = clampf(static_cast<float>(voice.fret)
                                       + legatoOffset,
                                   0.0f, static_cast<float>(fretCount));
+
+    // Loop loss is applied once per round trip, so its coefficients must be
+    // solved at the pitch and fret the string is performing now. Reusing the
+    // written destination made a +2-semitone bend decay about fourteen per cent
+    // too fast and made an ascending slide adopt its destination loss before
+    // the finger moved. The same live f0 keeps Dead's eighth-partial anchor and
+    // the Palm dip's harmonic-number centre attached to the sounding string;
+    // liveFret alone moves the separate neck/dead-spot coordinate.
+    //
+    // Reuse the dispersion fitter's six-cent/fractional-fret quantum. This is
+    // control-rate work on the ticks that already pay for a stiffness refit,
+    // never sample-loop work.
+    const bool dampingCoordinateMoved =
+        std::abs(f0 - voice.lastDampedFrequency)
+            > 3.5e-3f * std::max(f0, 20.0f)
+        || std::abs(liveFret - voice.lastDampedLiveFret) > 0.06f;
+    if (dampingCoordinateMoved)
+        configureVoiceDamping(voice, voice.dampingStyle, f0, liveFret);
 
 #if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
     // The fit covers frets 2--14 of the lowest physical string. A legato
@@ -5290,7 +5330,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     const PlayStyle dampingStyle = wasRinging && startDelaySamples > 0
         && lastHandContactClock_ >= 0
             ? lastHandContactPlayStyle_ : voice.playStyle;
-    configureVoiceDamping(voice, dampingStyle);
+    configureVoiceDamping(voice, dampingStyle, voice.baseFrequency,
+                          static_cast<float>(voice.fret));
     configureVoicePitch(voice, ! wasRinging);
     configureVoicePickups(voice);
 
@@ -5501,7 +5542,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
             * clampf(speed * 1.6f, 0.0f, 1.4f);
     }
 
-    configureVoiceDamping(voice, voice.playStyle);
+    configureVoiceDamping(voice, voice.playStyle, fromFrequency, fromFret);
     configureVoicePitch(voice, false);
     configureVoicePickups(voice);
     startExcitation(voice, velocity, true);
@@ -5761,6 +5802,8 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.lastConfiguredSemitones = -999.0f;
     voice.lastConfiguredFrequency = -1.0f;
     voice.lastConfiguredLiveFret = -999.0f;
+    voice.lastDampedFrequency = -1.0f;
+    voice.lastDampedLiveFret = -999.0f;
     voice.lastCompensatedSemitones = -999.0f;
     voice.lastCompensatedPeriod = 0.0f;
     voice.compensationDirty = true;
@@ -6040,7 +6083,10 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
         voice.legatoBlend = clampf(voice.legatoBlend + voice.legatoIncrement,
                                    0.0f, 1.0f);
         if (voice.legatoBlend >= 1.0f)
+        {
             voice.lastConfiguredLiveFret = -999.0f;
+            voice.lastDampedLiveFret = -999.0f;
+        }
         // The friction follows the glide's normalized smoothstep-velocity
         // proxy, 6 b (1 - b). It is therefore zero at both ends and the squeak
         // swells and dies with the movement instead of switching on and off.

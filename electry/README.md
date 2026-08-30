@@ -2859,6 +2859,46 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 performed-pitch held damping
+
+- Played-string loss is applied once per round trip, but held voices kept
+  solving that loss from the written `baseFrequency` and destination fret. A
+  two-semitone bend therefore shortened the same target decay from 21.456765 s
+  to 18.462843 s, while a two-fret ascending Slide jumped to 24.944102 s at
+  source contact and was still 22.041747 s in mid travel. The loss solve now
+  follows the performed frequency and fractional finger coordinate at control
+  rate; adding the invariant alone to unmodified `9c5e7c37` fails only those
+  three live-coordinate rails, while the corrected shipping build passes.
+- The coordinates remain physically separate. Round-trip gain, legacy modal
+  body conductance, Dead's eighth-partial fit anchor and the Palm hand-dip
+  centre follow sounding frequency, including tension bend, vibrato, legato
+  travel and the optional attack-tension experiment. Only the provisional neck
+  dead-spot term follows fractional fret. No decay or contact coefficient was
+  retuned.
+- Damping keeps its own last-fit coordinate because optional attack tension can
+  move sounding pitch without changing the static stiffness fit. A roughly
+  six-cent/fractional-fret quantum is shared with dispersion; an exact cache
+  assertion proves a two-cent bend does not re-solve it. The check is confined
+  to existing control ticks and adds no sample-loop branch.
+- Three alternating baseline/candidate timing pairs at 96 kHz gave paired
+  median changes of +2.328501% for eight-string Both/Stereo
+  (0.123470x -> 0.126200x absolute medians), +2.305524% for Bridge/Mono
+  (0.0985069x -> 0.1007780x), +0.974944% for eight-string Palm
+  (0.142162x -> 0.143548x), -0.397272%/+0.044772% for one-active/seven-idle
+  Both/Stereo and Bridge/Mono, -1.465413% for its wheel glide and +0.179040%
+  for the eight-string wheel glide (0.126503x -> 0.125336x).
+- Canonical Ubuntu 24.04/GCC 13.3 rendering changes exactly demos 03, 06, 14,
+  15, 17, 18, 21, 22 and 23; the other fourteen demos and all ten evaluation
+  WAVs plus their manifest are byte-identical. The changed SHA-256 prefixes are
+  `50f3a0a9`, `66250999`, `ef89191b`, `8aa6806a`, `2ec9823f`, `475c5500`,
+  `05af2122`, `1efa87d5` and `89c724e7`, respectively.
+- The order-two low-string-loss build passes. The legacy-body build remains
+  finite and inside its coupling bound and has exactly its base's one existing
+  0.220083 dB spectral-golden failure. The optional attack-pitch build likewise
+  adds no failure beyond its base's two existing mid-Slide release fixtures;
+  its exact Palm oracle now evaluates the cached live attack-frequency target,
+  and its strict internal coupling seam remains at or below `0.25f`.
+
 ### 2026-08-30 performed-fret pick-contact geometry
 
 - A pick position `x` and contact width `w` are fixed metres from the bridge,

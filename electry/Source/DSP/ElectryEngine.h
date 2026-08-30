@@ -1064,6 +1064,12 @@ private:
         float lastConfiguredSemitones { -999.0f };
         float lastConfiguredFrequency { -1.0f };
         float lastConfiguredLiveFret { -999.0f };
+        // The live pitch/fret at which the per-round-trip loss and its
+        // harmonic-number anchors were last solved. Kept separate from the
+        // dispersion cache because the optional attack-pitch term moves the
+        // former without changing the string's static stiffness fit.
+        float lastDampedFrequency { -1.0f };
+        float lastDampedLiveFret { -999.0f };
         // The pitch the analytic phase compensation was last evaluated at;
         // this one tracks every sub-cent move so tuning stays exact.
         float lastCompensatedSemitones { -999.0f };
@@ -1450,6 +1456,8 @@ private:
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
     void configureVoiceDamping(Voice& voice, PlayStyle dampingStyle) noexcept;
+    void configureVoiceDamping(Voice& voice, PlayStyle dampingStyle,
+                               float liveFrequency, float liveFret) noexcept;
     void configureVoiceDispersion(Voice& voice, float configuredF0,
                                   float liveFret,
                                   float liveUnbentFrequency,
@@ -1554,7 +1562,7 @@ private:
     // Re-solves the played-string bridge coupling against the row-sum bound.
     // Called wherever the active set or the loop gains can have moved.
     void solveBridgeCoupling() noexcept;
-    [[nodiscard]] float deadSpotFactor(int stringIndex, int fret) const noexcept;
+    [[nodiscard]] float deadSpotFactor(int stringIndex, float fret) const noexcept;
     [[nodiscard]] float scaleLengthMetres() const noexcept;
 
     EngineParameters targetParameters_ {};
