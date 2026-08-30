@@ -2636,6 +2636,34 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 demo 03 physical Slide score
+
+- Demo 03 promised Slide intervals of two frets, twelve frets up and twelve
+  frets down, but only its first gesture followed the held source. In the old
+  second gesture MIDI 40 remained held on zero-based physical string index 1
+  while the target reused the released MIDI 42 tail on index 2; its
+  `legatoFromFrequency` was
+  92.4986038 Hz, so the audible move was 42→52 (ten frets), not 40→52. The old
+  final gesture sent 40→40: its held-owner count became two, Slide blend stayed
+  at one, source frequency and friction stayed zero, and a plectrum Contact
+  started instead of a descending finger move.
+- The score now states the three source/target pairs explicitly as 40→42,
+  40→52 and 53→41. A 600 ms gap lets the preceding fingerless release tail
+  retire before the next source is chosen. The exact 44.1-kHz lifecycle
+  regression requires every source and target on zero-based physical string
+  index 2 (the wound E2), zero initial Slide blend from the named source
+  frequency, positive friction, zero pick excitation and a cleared destination
+  owner after release.
+- A full same-compiler canonical render changes exactly demo 03; the other 22
+  WAV pairs are byte-identical. The corrected file is 654,884 frames
+  (14.849977 s) of 44.1-kHz mono PCM16 at −3.000097 dBFS peak and
+  −34.896833 dBFS RMS, with SHA-256
+  `91ebed5d6c153f27a559d3af2105bd00c5108e945edf79c262c494bf47890202`.
+  The previous 13.349977 s file had SHA-256
+  `a87271d14df85c28ccd37f38877f7cf843694d5a9769f1d66fa515b6da538ae6`.
+  No product DSP or realtime loop changed, so plug-in CPU is identical; this is
+  musical-score correctness, not measurement or real-recording evidence.
+
 ### 2026-08-30 accessible exclusive-choice groups
 
 - Each of the six titled pickup, play-style, keyswitch-mode, output-mode and

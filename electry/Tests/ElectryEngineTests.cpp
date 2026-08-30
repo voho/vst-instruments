@@ -10689,6 +10689,60 @@ void testSlideArticulation()
 {
     constexpr double sampleRate = 48000.0;
 
+    // The canonical play-style score leaves each release enough room to
+    // retire, then demonstrates a short ascent and octave travel in both
+    // directions on the wound E2 string. Every destination must be the same
+    // unpicked moving finger, not a nearby tail or a repeated-note restrike.
+    {
+        constexpr double scoreSampleRate = 44100.0;
+        ElectryEngine engine;
+        engine.prepare(scoreSampleRate, 256);
+        engine.reset();
+        const auto trigger = [&] (int note, float velocity)
+        {
+            const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+                { note, velocity }
+            }};
+            engine.noteOnChord(event);
+        };
+        StereoBuffer establish(static_cast<int>(0.22 * scoreSampleRate));
+        StereoBuffer hold(static_cast<int>(0.60 * scoreSampleRate));
+        StereoBuffer gap(static_cast<int>(0.60 * scoreSampleRate));
+        static constexpr std::array<std::array<int, 2>, 3> slides {{
+            {{ 40, 42 }}, {{ 40, 52 }}, {{ 53, 41 }}
+        }};
+        for (const auto& notes : slides)
+        {
+            const int source = notes[0];
+            const int target = notes[1];
+            engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+            trigger(source, 0.90f);
+            renderInto(engine, establish);
+            const int sourceString = TestAccess::stringForNote(engine, source);
+            engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+            trigger(target, 0.80f);
+            const int targetString = TestAccess::stringForNote(engine, target);
+            const auto moved = TestAccess::snapshot(engine, targetString);
+            expect(sourceString == 2 && targetString == sourceString
+                       && moved.active && moved.keyDown
+                       && moved.playStyle == PlayStyle::Slide
+                       && TestAccess::legatoBlend(engine, targetString) == 0.0f
+                       && std::abs(TestAccess::legatoFromFrequency(
+                                      engine, targetString)
+                                   - midiHz(source)) < 1.0e-3
+                       && TestAccess::slideNoiseAmplitude(engine, targetString)
+                              > 0.0f
+                       && moved.excitationAmplitude == 0.0f,
+                   "canonical Slide score did not move its held wound string");
+            renderInto(engine, hold);
+            engine.noteOff(target);
+            engine.noteOff(source);
+            expect(! TestAccess::snapshot(engine, targetString).keyDown,
+                   "canonical Slide score left its destination held");
+            renderInto(engine, gap);
+        }
+    }
+
     // Broadband magnitude-weighted centroid over a log grid. The harmonic-
     // series centroid used elsewhere cannot see the scrape, which is noise
     // rather than a partial.
