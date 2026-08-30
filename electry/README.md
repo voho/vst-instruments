@@ -2295,6 +2295,60 @@ at most 1% median overhead at 96 kHz and 3% worst case at 384 kHz. The permissib
 result is narrower than “realistic plectrum”: more accurate phase-dependent
 open E1/E2 repicks on the captured rig and protocol.
 
+#### Exact-eight pickup-circuit identification gate
+
+Public high-output pickup specifications do not falsify Electry's current
+2 kHz/Q1 loaded-humbucker anchor. The
+[UIUC complex-impedance programme](https://courses.physics.illinois.edu/phys406/sp2017/406emi_guitar_pickup_results.html)
+measured a Seymour Duncan JB specimen at 16.43 kOhm DC, 9.83 H at 1 kHz,
+61 pF at 10 kHz and a 5.175 kHz unloaded peak with Q 2.843 and 0.627 MOhm
+peak impedance. Its read-only
+[workbook](https://courses.physics.illinois.edu/phys406/sp2017/Experimental_Results/Pickup_Data/Guitar_Bass_Pickup_Data.xls)
+had SHA-256
+`05eae58f51192f47fd1ecaecc26695a4e260cdc5496b5f2cc6943413b96852bd`.
+The same workbook's loading sheet contains only Fender single coils, not a
+loaded JB or metal eight-string pickup. The accompanying
+[measurement method](https://courses.physics.illinois.edu/phys406/sp2017/Lab_Handouts/Electric_Guitar_Pickup_Measurements.pdf)
+also shows why one fixed RLC is not identified: pickup inductance and loss are
+frequency-dependent. Indeed, `(Rdc + jwL) || C` from those three summary cells
+predicts a 6.499 kHz/Q24.43/9.816 MOhm peak rather than the measured one.
+
+The exact-eight summaries close no more of the circuit. Seymour Duncan's
+[comparison data](https://www.seymourduncan.com/blog/latest-updates/pickup-comparison-chart)
+give the passive Nazgul 8 as 18.76 kOhm/3.85 kHz and Pegasus 8 as
+17.31 kOhm/4.00 kHz, without L, C, Q, phase, peak level or test load. A
+3.85 kHz peak permits, for example, 5, 10 or 20 H with 342, 171 or 85.5 pF;
+adding the same 600 pF cable moves those ideal resonances to 2.319, 1.813 or
+1.359 kHz. A family of equally admissible fits to the UIUC JB summaries,
+500 kOhm volume/tone controls, a 1 MOhm input and 400--1,200 pF cable spans
+about 2.81--1.47 kHz and Q 1.15--1.60. The shipping anchor is therefore not a
+measurement of a named pickup, but neither can these public peaks select a
+better replacement.
+
+Active exact-eight pickups are a different model class. Fishman's official
+[Fluence Modern 8 specifications](https://fishman.com/dp/fluence-open-core-modern-8-string-pickups/)
+publish 630/720 Hz Voice-1 peaks, 550 Hz plus 8 kHz or 1.3 kHz Voice-2 peaks,
+4.7/4.5 kHz Voice-3 peaks, 2 kOhm output impedance and 25 kOhm controls. Those
+labels omit gain, bandwidth, phase and filter order, and the two-peak voice
+cannot be inferred as one passive resonator. A 2 kOhm output driving even
+1,200 pF has a simple RC corner near 66.3 kHz, so passive cable loading cannot
+explain the published voice peaks. An active voice must not be smuggled into
+the passive Pickup Type endpoint by retuning one biquad.
+
+Promotion requires an explicitly named exact-eight family and voice. At least
+three passive specimens need raw complex `Re/Im Z(f)` under unloaded, exact
+harness, selector, measured-cable, interface and tone-position conditions;
+active targets instead need magnetic-excitation-to-output transfer and output
+impedance versus frequency, level and voice. Registered clean DIs then freeze
+pickup height, string set, cable/interface and repeated levels before a
+specimen/condition TRAIN/HOLDOUT split. A candidate must halve held-out
+complex-transfer error with no worse p95 or maximum, win a blinded matched
+reamp comparison, allocate nothing in the callback and add under 1% median
+eight-string CPU at 96 kHz. The first implementation is the smallest stable
+fit—normally one biquad plus one pole for passive, or at most two biquads per
+active voice—not a WDF network by default. No third-party measurement file is
+committed.
+
 #### Pickup-magnet back-action research
 
 The second-ranked low-CPU direction is the force a pickup magnet applies back
