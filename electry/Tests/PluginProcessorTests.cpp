@@ -4265,9 +4265,16 @@ void testEditorRendering()
                 "editable knob value lacks its parameter context or edit action: "
                     + knobs[first]->getName().toStdString());
         for (auto* child : knobs[first]->getChildren())
+        {
             expect (knobs[first]->getLocalBounds().contains (child->getBounds()),
                     "knob child escaped its control bounds: "
                         + knobs[first]->getName().toStdString());
+            if (dynamic_cast<juce::Label*> (child) != nullptr)
+                expect (! child->isAccessible(),
+                        "redundant visible knob caption remains in the "
+                        "accessibility tree: "
+                            + knobs[first]->getName().toStdString());
+        }
 
         for (std::size_t second = first + 1u; second < knobs.size(); ++second)
             expect (! knobs[first]->getBounds().intersects (knobs[second]->getBounds()),

@@ -805,6 +805,7 @@ ElectryKnob::ElectryKnob (juce::String name)
     label.setJustificationType (juce::Justification::centred);
     label.setFont (juce::FontOptions (11.5f, juce::Font::bold));
     label.setColour (juce::Label::textColourId, colours::dimText);
+    label.setAccessible (false);
     addAndMakeVisible (label);
 }
 
