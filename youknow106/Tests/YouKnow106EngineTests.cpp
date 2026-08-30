@@ -273,6 +273,16 @@ struct YouKnow106TestAccess
         dco.cpuStatesToWrite = cpuStates;
     }
 
+    static void setAwaitingPitLsb(YouKnow106Engine& engine, int slot,
+                                  std::uint32_t count,
+                                  double cpuStates) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.pitWriteState = YouKnow106Engine::Dco::PitWriteState::awaitingLsb;
+        dco.pitWriteDivider = count;
+        dco.cpuStatesToWrite = cpuStates;
+    }
+
     static void performPitchWrite(YouKnow106Engine& engine, int slot,
                                   const EngineParameters& parameters) noexcept
     {
@@ -668,6 +678,11 @@ struct YouKnow106TestAccess
     static int stoppedPitState() noexcept
     {
         return static_cast<int>(YouKnow106Engine::Dco::PitState::stopped);
+    }
+
+    static int runningPitState() noexcept
+    {
+        return static_cast<int>(YouKnow106Engine::Dco::PitState::running);
     }
 
     static void setDcoLogicStates(YouKnow106Engine& engine, int slot,
@@ -2999,6 +3014,106 @@ void testPitByteTimingIsProcessingGridInvariant()
            "or HQ grids");
 }
 
+void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
+{
+    constexpr std::uint32_t active = 0x1234u;
+    constexpr std::uint32_t requested = 0x3456u;
+
+    const auto fixture = [=] {
+        auto engine = std::make_unique<YouKnow106Engine>();
+        engine->prepare(192000.0, blockSize, false);
+        engine->setParameters(plainPatch());
+        YouKnow106TestAccess::setMode3Running(
+            *engine, 0, active, true, 10000.25);
+        YouKnow106TestAccess::setConverterScheduler(*engine, 0.75, 17u);
+        YouKnow106TestAccess::setColdDcoPitchTransaction(*engine, 0, 0.75f);
+        return engine;
+    };
+    const auto expectRestarted = [](const YouKnow106Engine& engine,
+                                    const std::string& context) {
+        const auto latch = YouKnow106TestAccess::passiveHoldLatch(engine);
+        expect(YouKnow106TestAccess::controlScanPhase(engine) == 0.0
+                   && YouKnow106TestAccess::nextConverterWrite(engine) == 0u
+                   && !latch.valid
+                   && !YouKnow106TestAccess::dcoPitchTransactionValid(
+                          engine, 0)
+                   && !YouKnow106TestAccess::dcoPitchTransactionColdStart(
+                          engine, 0)
+                   && YouKnow106TestAccess::pitWriteState(engine, 0)
+                          == YouKnow106TestAccess::idlePitWriteState()
+                   && YouKnow106TestAccess::cpuStatesToWrite(engine, 0) == 0.0,
+               context + " did not restart the voice-board loop cleanly");
+    };
+
+    // On the running path the serial handler can be accepted during the
+    // 13-state interval from common pitch capture at T-389 to DI at T-376.
+    // No PIT byte has reached the external counter, so that CPU work is lost.
+    auto beforeDi = fixture();
+    YouKnow106TestAccess::setAwaitingPitLsb(
+        *beforeDi, 0, requested, 42.5);
+    beforeDi->noteOn(60, 1.0f);
+    expectRestarted(*beforeDi, "a pre-DI Voice On");
+    expect(YouKnow106TestAccess::pitState(*beforeDi, 0)
+                   == YouKnow106TestAccess::runningPitState()
+               && YouKnow106TestAccess::activeDcoDivider(*beforeDi, 0)
+                      == active
+               && !YouKnow106TestAccess::pendingDcoDividerValid(*beforeDi, 0),
+           "a pre-DI Voice On fabricated a complete PIT count");
+
+    // The exact DI boundary uses PIT/DI-first tie policy. From there through
+    // the MSB, the serial request is pending and both physical bytes finish
+    // before the non-returning handler restarts the firmware loop.
+    auto atDi = fixture();
+    YouKnow106TestAccess::setAwaitingPitLsb(*atDi, 0, requested, 42.0);
+    atDi->noteOn(60, 1.0f);
+    expectRestarted(*atDi, "a DI-boundary Voice On");
+    expect(YouKnow106TestAccess::pendingDcoDividerValid(*atDi, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(*atDi, 0)
+                      == requested,
+           "a DI-boundary Voice On split the protected PIT count pair");
+
+    auto afterLsb = fixture();
+    YouKnow106TestAccess::setAwaitingPitMsb(
+        *afterLsb, 0, requested, 7.0);
+    afterLsb->noteOn(60, 1.0f);
+    expectRestarted(*afterLsb, "a post-LSB Voice On");
+    expect(YouKnow106TestAccess::pendingDcoDividerValid(*afterLsb, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(*afterLsb, 0)
+                      == requested,
+           "a post-LSB Voice On discarded the protected PIT MSB");
+
+    // The reset branch enters DI before the mode-control store. Its complete
+    // control/LSB/MSB transaction therefore survives at every represented
+    // point, including the full 55 states still remaining to the LSB here.
+    auto resetPath = fixture();
+    YouKnow106TestAccess::programDcoCount(
+        *resetPath, 0, requested, true);
+    resetPath->noteOn(60, 1.0f);
+    expectRestarted(*resetPath, "a reset-path Voice On");
+    expect(YouKnow106TestAccess::pitState(*resetPath, 0)
+                   == YouKnow106TestAccess::awaitingInitialLoadState()
+               && YouKnow106TestAccess::pendingDcoDividerValid(*resetPath, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(*resetPath, 0)
+                      == requested,
+           "a reset-path Voice On split the protected control/count write");
+
+    // MIDI All Notes Off is translated into the same semantic Voice Off
+    // commands as individual key releases, rather than the product's separate
+    // hard-panic path. Its final Voice Off must therefore restart B-2 too.
+    auto releaseAll = fixture();
+    releaseAll->noteOn(60, 1.0f);
+    YouKnow106TestAccess::setConverterScheduler(*releaseAll, 0.75, 17u);
+    YouKnow106TestAccess::setColdDcoPitchTransaction(*releaseAll, 0, 0.75f);
+    YouKnow106TestAccess::setAwaitingPitLsb(
+        *releaseAll, 0, requested, 42.0);
+    releaseAll->releaseAllNotes();
+    expectRestarted(*releaseAll, "an All Notes Off Voice Off");
+    expect(YouKnow106TestAccess::pendingDcoDividerValid(*releaseAll, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(*releaseAll, 0)
+                      == requested,
+           "All Notes Off split a protected PIT count pair");
+}
+
 void testConverterAnchoredPitchPrestageTimelineAndAtomicCommit()
 {
     constexpr double sampleRate = 192000.0;
@@ -5287,13 +5402,15 @@ void testRescanGateOffReachesTheVoiceCpu()
     // The fractional scheduler alternates 201/202-sample spacings here. Walk
     // only to the actual wholly subsequent completed pass instead of assuming
     // a truncated period or completing a partial pass that missed voice zero.
-    for (int elapsed = 0;
-         elapsed < 2 * scanPeriod + 3
-             && YouKnow106TestAccess::assignmentPending(engine);
+    int elapsed = 0;
+    for (; elapsed < scanPeriod + 3
+           && YouKnow106TestAccess::assignmentPending(engine);
          ++elapsed)
         renderExact(engine, 1);
     expect(!YouKnow106TestAccess::assignmentPending(engine),
-           "the unison keyboard rescan missed the next converter pass");
+           "the unison keyboard rescan missed the restarted converter pass");
+    expect(elapsed <= scanPeriod + 2,
+           "the unison keyboard rescan waited for a fictitious second pass");
     expect(engine.getDisplayEnvelope() < heldLevel * 0.25f,
            "unison reassignment hid the firmware's gate-off interval");
     expect(engine.getActiveVoiceCount() == 1,
@@ -5595,8 +5712,9 @@ void testStartedIdleEditsUseTheOrderedConverterScan()
 {
     // Audio time, rather than whether a tail is currently audible, closes the
     // startup window. After more than the output-path quiet threshold, an edit
-    // and an immediate note must still leave the physical holds and the
-    // firmware cursor untouched until their ordered converter slots.
+    // and an immediate note must still leave the physical holds untouched.
+    // The note's non-returning B-2 serial handler does restart the firmware
+    // cursor at RESONANCE; it does not directly write any analogue hold.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine engine;
     engine.prepare(sampleRate, blockSize, false);
@@ -5659,10 +5777,11 @@ void testStartedIdleEditsUseTheOrderedConverterScan()
 
     engine.noteOn(60, 1.0f);
     expect(observe(engine) == before
-               && YouKnow106TestAccess::controlScanPhase(engine) == phaseBefore
-               && YouKnow106TestAccess::nextConverterWrite(engine)
-                      == cursorBefore,
-           "a note immediately after an idle edit bypassed the scanner");
+               && YouKnow106TestAccess::controlScanPhase(engine) == 0.0
+               && YouKnow106TestAccess::nextConverterWrite(engine) == 0u
+               && !YouKnow106TestAccess::passiveHoldLatch(engine).valid,
+           "a note did not restart the ordered scanner without touching its "
+           "analogue holds");
 
     // Host partitioning cannot change when the pending edit reaches its holds.
     YouKnow106Engine contiguous = engine;
@@ -7906,10 +8025,9 @@ void testFixedOutputBoundaryCorpus()
 
 void testNotesWaitForTheSharedConverterScan()
 {
-    // One converter serves every voice, so a key struck between passes cannot
-    // be heard until the next pass reaches its ordered DCO write. Two keys
-    // struck after their current-pass slots therefore both wait for the next
-    // shared schedule; neither starts a private note-on-relative scan.
+    // One converter serves every voice. Each serial Voice On makes B-2 discard
+    // its interrupt return and restart the same board loop at RESONANCE; this
+    // is one rewound shared schedule, never a private per-voice scan.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine engine;
     // No oversampling, so the internal rate is the host rate and the pass
@@ -7935,14 +8053,23 @@ void testNotesWaitForTheSharedConverterScan()
     run(scanPeriod / 2);
 
     engine.noteOn(60, 1.0f);
+    expect(YouKnow106TestAccess::controlScanPhase(engine) == 0.0
+               && YouKnow106TestAccess::nextConverterWrite(engine) == 0u,
+           "the first Voice On did not restart the shared converter loop");
     const double duringGap = run(scanPeriod / 4);
+    expect(YouKnow106TestAccess::controlScanPhase(engine) > 0.2
+               && YouKnow106TestAccess::nextConverterWrite(engine) > 0u,
+           "the restarted shared converter loop did not advance");
     engine.noteOn(67, 1.0f);
+    expect(YouKnow106TestAccess::controlScanPhase(engine) == 0.0
+               && YouKnow106TestAccess::nextConverterWrite(engine) == 0u,
+           "the second Voice On did not rewind the same converter loop");
     const double stillWaiting = run(scanPeriod / 8);
 
     expectNear(duringGap, 0.0, 1.0e-9,
                "a note sounded before the converter scan reached it");
     expectNear(stillWaiting, 0.0, 1.0e-9,
-               "the second note did not wait for the same pass as the first");
+               "the second note bypassed the restarted shared pass");
 
     // And once the next pass has traversed both DCO slots, both are speaking.
     const double afterScan = run(scanPeriod);
@@ -7982,19 +8109,20 @@ void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
     engine.noteOn(60, 1.0f);
     expect(YouKnow106TestAccess::vcaControl(engine, 0) == heldBefore,
            "retrigger changed the analogue VCA hold before its converter write");
-    expect(YouKnow106TestAccess::controlScanPhase(engine) == phaseBefore,
-           "a note event advanced the converter scheduler");
+    expect(phaseBefore == 0.0
+               && YouKnow106TestAccess::controlScanPhase(engine) == 0.0
+               && YouKnow106TestAccess::nextConverterWrite(engine) == 0u,
+           "a retrigger did not leave the restarted scanner at RESONANCE");
 }
 
 void testNoteOnPlayingLatencyAcrossConverterPhases()
 {
-    // At 48 kHz, one 4.2 ms converter pass is 201.6 host samples. A new note
-    // must arrive before its T-389 preparation, so its paired converter write
-    // can lie another 4-5 samples beyond that pass. The host boundary and scan
-    // phase realign after five passes, giving 1,008 distinct event phases.
-    // Advance a live, silent engine through that whole cycle rather than
-    // injecting private phase state: this keeps the converter cursor,
-    // free-running DCOs and analogue histories coherent.
+    // A semantic Voice On restarts B-2's shared board loop at RESONANCE, so
+    // converter latency is pinned by card ordinal rather than by the abandoned
+    // pass's phase. The 48 kHz host boundary, 4.2 ms scan cadence and
+    // free-running DCO realign after 1,008 samples. Advance a live, silent
+    // engine through that whole cycle rather than injecting private state so
+    // the output-onset probe still covers the physical clock/host phase grid.
     constexpr double sampleRate = 48000.0;
     constexpr int phaseCycleSamples = 1008;
     constexpr int preRollSamples = 96000;
@@ -8183,8 +8311,8 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                 expect(measured.outputOnsetProxy >= measured.firstVcaGain,
                        "the output threshold preceded nonzero VCA gain"
                            + context);
-                expect(measured.pitchWrite <= 206,
-                       "the pitch write exceeded one scan pass plus T-389"
+                expect(measured.pitchWrite <= 71,
+                       "the restarted-loop pitch write exceeded card-six T"
                            + context);
                 const int pitchToVca =
                     measured.vcaTargetWrite - measured.pitchWrite;
@@ -8260,32 +8388,32 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                "the playing-latency matrix is incomplete");
         const std::string mode = quality != 0 ? "HQ-on" : "HQ-off";
         expectSummary(summary(values, &Observation::pitPrestage),
-                      { 0.0, 100.0, 201.0 }, 0.0,
+                      quality != 0
+                          ? std::array<double, 3> { 21.0, 43.5, 65.0 }
+                          : std::array<double, 3> { 22.0, 43.5, 66.0 },
+                      0.0,
                       mode + " PIT-prestage");
         expectSummary(summary(values, &Observation::pitchWrite),
                       quality != 0
-                          ? std::array<double, 3> { 4.0, 105.0, 206.0 }
-                          : std::array<double, 3> { 5.0, 105.0, 206.0 },
+                          ? std::array<double, 3> { 26.0, 48.0, 70.0 }
+                          : std::array<double, 3> { 27.0, 48.5, 71.0 },
                       0.0, mode + " Pitch-write");
         expectSummary(summary(values, &Observation::vcaTargetWrite),
-                      { 75.0, 197.0, 320.0 }, 0.0,
+                      quality != 0
+                          ? std::array<double, 3> { 96.0, 140.0, 184.0 }
+                          : std::array<double, 3> { 97.0, 141.0, 185.0 },
+                      0.0,
                       mode + " VoiceVca-write");
         expectSummary(summary(values, &Observation::vcaPhysicalWrite),
-                      quality != 0
-                          ? std::array<double, 3> { 74.0, 197.0, 319.0 }
-                          : std::array<double, 3> { 74.0, 196.0, 319.0 },
+                      { 96.0, 140.0, 184.0 },
                       0.0,
                       mode + " VoiceVca-physical-write");
         expectSummary(summary(values, &Observation::firstVcaGain),
-                      quality != 0
-                          ? std::array<double, 3> { 74.0, 197.0, 319.0 }
-                          : std::array<double, 3> { 74.0, 196.0, 319.0 },
+                      { 96.0, 140.0, 184.0 },
                       0.0,
                       mode + " first-VCA-gain");
         expectSummary(summary(values, &Observation::heldOneTimeConstant),
-                      quality != 0
-                          ? std::array<double, 3> { 107.0, 230.0, 352.0 }
-                          : std::array<double, 3> { 107.0, 229.0, 352.0 },
+                      { 129.0, 172.5, 217.0 },
                       0.0, mode + " held-63.2-percent");
         const auto outputOnset =
             summary(values, &Observation::outputOnsetProxy);
@@ -8312,12 +8440,12 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
             printSummary("output-onset-proxy", outputOnset);
         }
         // Unlike the converter/VCA milestones above, this threshold also sees
-        // DCO phase. Its wider HQ split remains expected even though every
-        // milestone now honours the earlier T-389 transaction boundary.
+        // DCO phase. The remaining HQ split is reconstruction-grid behavior;
+        // serial restart has removed the old one-pass scan-phase split.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 110.0, 232.5, 355.0 }
-                          : std::array<double, 3> { 91.0, 214.0, 337.0 },
+                          ? std::array<double, 3> { 131.0, 177.5, 223.0 }
+                          : std::array<double, 3> { 113.0, 159.5, 205.0 },
                       0.0, mode + " output-onset-proxy");
     }
     int maximumOnsetDifference = 0;
@@ -8338,11 +8466,13 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
             std::abs(observations[0][index].vcaTargetWrite
                      - observations[1][index].vcaTargetWrite));
     }
-    expect(maximumPitchDifference == 201
-               && maximumTargetDifference == 201,
-           "the documented HQ scan-grid quantisation changed");
-    expect(std::abs(maximumOnsetDifference - 220) <= 2,
-           "the documented paired HQ onset-grid bound moved to "
+    expect(maximumPitchDifference == 1
+               && maximumTargetDifference == 1,
+           "the restarted-loop HQ converter-grid difference moved to "
+               + std::to_string(maximumPitchDifference) + "/"
+               + std::to_string(maximumTargetDifference));
+    expect(maximumOnsetDifference == 23,
+           "the restarted-loop paired HQ onset-grid bound moved to "
                + std::to_string(maximumOnsetDifference));
 }
 
@@ -12324,6 +12454,7 @@ int main()
         testMode3CountStagingAndControlPolarity();
         testPitByteTransactionsFollowRecoveredCpuTiming();
         testPitByteTimingIsProcessingGridInvariant();
+        testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites();
         testConverterAnchoredPitchPrestageTimelineAndAtomicCommit();
         testConverterAnchoredPitchPrestageIsWallClockInvariant();
         testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
@@ -12414,6 +12545,7 @@ int main()
     testMode3CountStagingAndControlPolarity();
     testPitByteTransactionsFollowRecoveredCpuTiming();
     testPitByteTimingIsProcessingGridInvariant();
+    testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites();
     testConverterAnchoredPitchPrestageTimelineAndAtomicCommit();
     testConverterAnchoredPitchPrestageIsWallClockInvariant();
     testPitchPrestageConsumesResetDiscoveredByItsOwnScan();

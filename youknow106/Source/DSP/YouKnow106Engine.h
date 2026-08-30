@@ -951,11 +951,14 @@ private:
     // edges. T is product policy at the start of ANI PA,$EF: reset control
     // starts at T-389, running LSB at T-334, and both paths' MSB at T-323 CPU
     // states. NEC does not publish exact clock-to-/WR edges, the PA4 write
-    // point inside ANI, or loaded TC4051/0.01-uF settling. ADC/serial are
-    // masked across the PIT bytes but may delay T after EI; their unmeasured
-    // jitter stays unmodelled.
+    // point inside ANI, or loaded HD14051BP/0.01-uF settling. The ADC interrupt
+    // is re-masked before this window. A serial handler can abandon only the
+    // running path's 13 states before DI; once DI begins, both PIT bytes finish
+    // before that handler restarts the main loop. Unpublished serial wire and
+    // NMOS automatic-entry timing stay unmodelled.
     static constexpr double dcoPitchPrestageStates = 389.0;
     static constexpr double pitControlToLsbStates = 55.0;
+    static constexpr double pitDiToLsbStates = 42.0;
     static constexpr double pitLsbToMsbStates = 11.0;
     static constexpr std::uint32_t minimumDivider = 8u;
     static constexpr std::uint32_t maximumDivider = 65535u;
@@ -1891,6 +1894,11 @@ private:
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a
     // second time.
     void assignHeldNote(int midiNote, float velocity) noexcept;
+    // B-2's serial Voice On/Off handlers discard their interrupt return by
+    // replacing SP and jumping to the start of the voice-board loop. Model
+    // that loop restart at the logical command boundary while leaving the
+    // still-unpublished serial wire phase and NMOS interrupt-entry delay out.
+    void restartVoiceBoardScanAfterSerialVoiceCommand() noexcept;
     void noteOffInternal(int midiNote) noexcept;
     void initialiseVoice(Voice& voice, int slot, int midiNote,
                          float velocity) noexcept;

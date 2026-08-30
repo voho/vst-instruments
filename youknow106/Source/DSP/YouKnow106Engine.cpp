@@ -4690,11 +4690,15 @@ void YouKnow106Engine::beginVoiceAssignmentRescan() noexcept
     // A handler may arrive after some voice writes in the current pass. Only a
     // wholly subsequent pass can guarantee that all six CPUs observed gate-off.
     assignmentRescanPassArmed_ = false;
+    bool sentVoiceOff = false;
     for (auto& voice : voices_)
     {
         voice.unisonMember = false;
         if (voice.active && voice.keyDown)
+        {
             releaseVoiceKey(voice);
+            sentVoiceOff = true;
+        }
         // Only the assigner loses this. The voice CPU's last pitch byte, DCO
         // phase and portamento accumulator all survive the table clear.
         voice.hasAllocatorHistory = false;
@@ -4703,6 +4707,14 @@ void YouKnow106Engine::beginVoiceAssignmentRescan() noexcept
     }
     generation_ = 0;
     updateActiveVoiceCount();
+    if (sentVoiceOff)
+    {
+        restartVoiceBoardScanAfterSerialVoiceCommand();
+        // The restart begins a wholly subsequent pass at RESONANCE. That pass
+        // is therefore the one that may prove every card observed gate-off;
+        // waiting to arm at its following wrap would add a fictitious pass.
+        assignmentRescanPassArmed_ = true;
+    }
 }
 
 void YouKnow106Engine::completeVoiceAssignmentRescan() noexcept
@@ -4959,6 +4971,50 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
     assignHeldNote(midiNote, velocity);
 }
 
+void YouKnow106Engine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
+{
+    // The recovered B-2 serial ISR does not RETI from Voice On/Off. It loads
+    // SP with $ffff and jumps through $02eb to the beginning of the main loop,
+    // so an interrupted converter pass resumes at RESONANCE rather than at its
+    // former ordinal. Treat the engine's logical note command as that completed
+    // handler boundary. The 31.25-kbaud arrival phase and the installed NMOS
+    // uPD7810's automatic entry latency remain unmeasured and are deliberately
+    // not turned into random timing here.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244
+    const bool passBoundaryWasAlreadyDue = controlScanPhase_ >= 1.0;
+    controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
+    nextConverterWrite_ = 0;
+    passiveHoldEventLatch_ = {};
+
+    // The stack replacement abandons CPU work that had not reached an
+    // external device. On the running path DI begins 13 states after T-389,
+    // leaving 42 states to the LSB. At or beyond that boundary the pending
+    // serial request cannot split the protected LSB/MSB pair; the reset path
+    // enters DI before its control write, and every awaiting-MSB state is
+    // protected too. Complete those physical pairs before discarding the
+    // captured CV payload. The exact DI-boundary tie uses PIT/DI-first policy.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
+    for (int slot = 0; slot < hardwareVoices; ++slot)
+    {
+        auto& voice = voices_[static_cast<std::size_t>(slot)];
+        auto& dco = voice.dco;
+        const bool lsbIsProtected =
+            dco.pitWriteState == Dco::PitWriteState::awaitingLsb
+            && (dco.pitState == Dco::PitState::awaitingCount
+                || dco.cpuStatesToWrite <= pitDiToLsbStates);
+        const bool msbIsProtected =
+            dco.pitWriteState == Dco::PitWriteState::awaitingMsb;
+        if (lsbIsProtected || msbIsProtected)
+            dco.stageMode3Count(dco.pitWriteDivider);
+
+        voice.dcoPitchTransactionValid = false;
+        voice.dcoPitchTransactionColdStart = false;
+        dco.pitWriteState = Dco::PitWriteState::idle;
+        dco.cpuStatesToWrite = 0.0;
+    }
+}
+
 void YouKnow106Engine::assignHeldNote(int midiNote, float velocity) noexcept
 {
     if (activeParameters_.keyMode == KeyMode::Unison)
@@ -5013,6 +5069,7 @@ void YouKnow106Engine::assignHeldNote(int midiNote, float velocity) noexcept
                 dropFromUnison(voice);
         }
         updateActiveVoiceCount();
+        restartVoiceBoardScanAfterSerialVoiceCommand();
         return;
     }
 
@@ -5025,6 +5082,7 @@ void YouKnow106Engine::assignHeldNote(int midiNote, float velocity) noexcept
     initialiseVoice(voice, slot, midiNote, velocity);
     voice.unisonMember = false;
     updateActiveVoiceCount();
+    restartVoiceBoardScanAfterSerialVoiceCommand();
 }
 
 void YouKnow106Engine::noteOff(int midiNote)
@@ -5070,15 +5128,20 @@ void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
         for (auto& voice : voices_)
             if (voice.active && voice.unisonMember && voice.keyDown)
                 releaseVoiceKey(voice);
+        restartVoiceBoardScanAfterSerialVoiceCommand();
         return;
     }
 
+    bool sentVoiceOff = false;
     for (auto& voice : voices_)
     {
         if (!voice.active || voice.rootMidi != midiNote || !voice.keyDown)
             continue;
         releaseVoiceKey(voice);
+        sentVoiceOff = true;
     }
+    if (sentVoiceOff)
+        restartVoiceBoardScanAfterSerialVoiceCommand();
 }
 
 void YouKnow106Engine::releaseAllNotes()
@@ -5089,12 +5152,16 @@ void YouKnow106Engine::releaseAllNotes()
     assignmentRescanPassArmed_ = false;
     rescanPreviousUnisonMembers_.fill(false);
     rescanUnisonMidiValid_ = false;
+    bool sentVoiceOff = false;
     for (auto& voice : voices_)
     {
         if (!voice.active || !voice.keyDown)
             continue;
         releaseVoiceKey(voice);
+        sentVoiceOff = true;
     }
+    if (sentVoiceOff)
+        restartVoiceBoardScanAfterSerialVoiceCommand();
 }
 
 void YouKnow106Engine::allNotesOff()
@@ -5468,8 +5535,8 @@ void YouKnow106Engine::performConverterWrite(
     // below assigns from scratch on the very same write, so neither could ever
     // reach the output -- the isolated comparison renders measured both at
     // -360 dBc, bit-identical. A physical injection would have to land on the
-    // *slewed hold state*, and its size is set by the hold capacitance and the
-    // mux on-resistance, neither of which is known (OQ-07).
+    // *slewed hold state*. The installed mux and 0.01-uF hold are known, but
+    // the loaded injection and acquisition behavior are not (OQ-07/08).
     switch (write.destination)
     {
         case ConverterDestination::Resonance:
