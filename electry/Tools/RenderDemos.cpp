@@ -312,6 +312,16 @@ public:
         return ok(left_) && ok(right_);
     }
 
+    [[nodiscard]] bool allNotesReleased() const noexcept
+    {
+        std::array<electry::StringVisualState, ElectryEngine::stringCount> states;
+        engine_.getStringVisualState(states);
+        return std::none_of(states.begin(), states.end(), [] (const auto& state)
+        {
+            return state.sounding && ! state.releasing;
+        });
+    }
+
 private:
     ElectryEngine engine_;
     ElectryFx effects_;
@@ -660,16 +670,17 @@ Take renderSympatheticStrum()
     take.chord({ 28, 35, 40, 47, 52, 56 }, 0.75f);
     take.wait(1.30);
     take.releaseChord({ 28, 35, 40, 47, 52, 56 });
+    take.releaseChord({ 28, 35, 40, 47, 52, 56 });
     take.wait(0.35);
 
     parameters.sympatheticAmount = 0.0f;
     take.setEngineParameters(parameters);
-    take.wait(0.15);
+    take.wait(0.20);
     take.pick(PickStyle::Down);
     take.chord({ 28, 35, 40, 47, 52, 56 }, 0.9f);
     take.wait(1.20);
     take.releaseChord({ 28, 35, 40, 47, 52, 56 });
-    take.wait(0.30);
+    take.wait(0.40);
 
     parameters.sympatheticAmount = 0.95f;
     take.setEngineParameters(parameters);
@@ -2012,6 +2023,12 @@ int main(int argc, char** argv)
         const double seconds = static_cast<double>(take.left().size())
                              / demoSampleRate;
 
+        if (! take.allNotesReleased())
+        {
+            std::fprintf(stderr, "%s: playable notes left held\n", demo.fileName);
+            ++failures;
+            continue;
+        }
         if (! take.finite())
         {
             std::fprintf(stderr, "%s: non-finite sample\n", demo.fileName);

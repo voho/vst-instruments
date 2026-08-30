@@ -96,7 +96,7 @@ real-recording boundaries and blind-study plan live in the
 | `05-drop-e-rhythm-amp.wav` | −12.6 dBFS | +9.6 dB |
 | `06-lead-amp-delay-room.wav` | −12.0 dBFS | +9.0 dB |
 | `07-pickups-and-tone.wav` | −12.5 dBFS | +9.5 dB |
-| `08-sympathetic-strum-stereo.wav` | −16.5 dBFS | +13.5 dB |
+| `08-sympathetic-strum-stereo.wav` | −15.6 dBFS | +12.6 dB |
 | `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
 | `10-velocity-dynamics.wav` | −12.1 dBFS | +9.1 dB |
 | `11-power-chords-dry.wav` | −8.6 dBFS | +5.6 dB |
@@ -2701,6 +2701,34 @@ bend-return pitch memory; if a well-set locking target remains inside two cents,
 the realistic result is to ship nothing.
 
 ## Development checkpoints
+
+### 2026-08-30 demo 08 clean sympathetic lifecycle
+
+- Demo 08 struck MIDI 28, 35, 40, 47, 52 and 56 twice but sent only one
+  matching Note Off per pitch. Every owner count therefore remained one through
+  the advertised coupling-off comparison and the final "single low note"; all
+  six strings were still physically held instead of leaving five unfingered
+  strings for the low note to excite.
+- The repeated chord now has two matching release batches. The coupling-off
+  target gets 200 ms to reach the engine's exact-zero bypass, and the disabled
+  chord gets a 400 ms post-release cleanup before coupling is restored. At the
+  three corrected boundaries the held-owner count is zero; exact bypass has no
+  active or sympathetic string, and the final entrance starts with no sounding
+  string before MIDI 28 becomes its sole held source.
+- The deterministic 44.1 kHz regression replays the exact six-note score and
+  requires both overlapping releases, cleared idle loops at bypass, no release
+  tail before the final section and exactly one sounding string at its entrance.
+  The renderer also rejects any completed take whose visual string state still
+  exposes a playable note as held, so an unbalanced score cannot silently become
+  a committed WAV again.
+- A same-compiler full render changes only demo 08; the other 22 WAV pairs are
+  byte-identical. The corrected stereo PCM16 file is 328,543 frames
+  (7.449955 s), at -3.000097 dBFS peak and -19.506759 dBFS RMS, with SHA-256
+  `e88fa1b2903e239e647a0dcb31050f829ec5abbc7098ea3f115b828dc9316cf1`.
+  The previous 321,928-frame file had SHA-256
+  `f668df0356aaa9907021e6cac8f6870c2dd5f81ecd3d107a946a3181e74a4eea`.
+- This changes an offline score and adds one bounded eight-state check per
+  rendered take. Product DSP, plug-in state and realtime CPU are unchanged.
 
 ### 2026-08-30 demo 19 single-note hook description
 

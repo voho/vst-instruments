@@ -13669,6 +13669,121 @@ void testSharedHandRetunesActiveStringDamping()
 void testSympatheticBridgeCoupling()
 {
     constexpr double sampleRate = 48000.0;
+
+    // Demo 08 strikes one chord twice before comparing it with exact bypass,
+    // then starts its final single-note excitation only after that comparison
+    // has stopped. Keep its overlapping owners and three physical boundaries
+    // explicit so the advertised sections cannot bleed into one another.
+    {
+        constexpr double scoreSampleRate = 44100.0;
+        static constexpr std::array<int, 6> notes {{
+            28, 35, 40, 47, 52, 56
+        }};
+
+        ElectryEngine score;
+        score.prepare(scoreSampleRate, 256);
+        EngineParameters scoreParameters;
+        scoreParameters.pickupSelector = electry::PickupSelector::Both;
+        scoreParameters.outputMode = electry::OutputMode::Stereo;
+        scoreParameters.strumSpreadSeconds = 0.022f;
+        scoreParameters.sympatheticAmount = 0.85f;
+        scoreParameters.bodyResonance = 0.55f;
+        scoreParameters.stringAge = 0.05f;
+        scoreParameters.toneKnob = 1.0f;
+        score.setParameters(scoreParameters);
+        score.reset();
+
+        const auto waitSeconds = [&] (double seconds)
+        {
+            StereoBuffer buffer(static_cast<int>(seconds * scoreSampleRate));
+            renderInto(score, buffer);
+        };
+        const auto releaseChord = [&]
+        {
+            for (const int note : notes)
+                score.noteOff(note);
+        };
+        const auto strikeChord = [&] (float velocity)
+        {
+            std::array<ElectryEngine::NoteOnEvent, notes.size()> events;
+            for (std::size_t index = 0; index < notes.size(); ++index)
+                events[index] = { notes[index], velocity };
+            score.noteOnChord(events);
+        };
+        const auto visualState = [&]
+        {
+            std::array<electry::StringVisualState,
+                       ElectryEngine::stringCount> states;
+            score.getStringVisualState(states);
+            return states;
+        };
+
+        waitSeconds(0.25);
+        score.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        strikeChord(0.90f);
+        waitSeconds(1.30);
+        score.noteOn(pickKeyswitch(PickStyle::Up), 1.0f);
+        strikeChord(0.75f);
+        waitSeconds(1.30);
+
+        std::array<int, notes.size()> strings;
+        for (std::size_t index = 0; index < notes.size(); ++index)
+            strings[index] = TestAccess::stringForNote(score, notes[index]);
+        releaseChord();
+        expect(std::all_of(strings.begin(), strings.end(), [&] (int stringIndex)
+                   { return TestAccess::snapshot(score, stringIndex).keyDown; }),
+               "demo-08 first release did not preserve its overlapping owners");
+        releaseChord();
+        expect(std::all_of(strings.begin(), strings.end(), [&] (int stringIndex)
+                   { return ! TestAccess::snapshot(score, stringIndex).keyDown; }),
+               "demo-08 second release left a repeated-chord owner held");
+        waitSeconds(0.35);
+
+        scoreParameters.sympatheticAmount = 0.0f;
+        score.setParameters(scoreParameters);
+        waitSeconds(0.20);
+        const auto bypassEntrance = visualState();
+        expect(score.getActiveVoiceCount() == 0
+                   && score.getSympatheticStringCount() == 0
+                   && std::none_of(bypassEntrance.begin(), bypassEntrance.end(),
+                                   [] (const auto& state) { return state.sounding; }),
+               "demo-08 bypass comparison began before the first chord cleared");
+        for (int stringIndex = 0; stringIndex < ElectryEngine::stringCount;
+             ++stringIndex)
+            expect(! TestAccess::snapshot(score, stringIndex).sympatheticReady,
+                   "demo-08 bypass comparison retained a sympathetic loop");
+
+        score.noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
+        strikeChord(0.90f);
+        waitSeconds(1.20);
+        releaseChord();
+        waitSeconds(0.40);
+        const auto finalGap = visualState();
+        expect(score.getActiveVoiceCount() == 0
+                   && std::none_of(finalGap.begin(), finalGap.end(),
+                                   [] (const auto& state) { return state.sounding; }),
+               "demo-08 final note began over the bypassed chord's release tails");
+
+        scoreParameters.sympatheticAmount = 0.95f;
+        score.setParameters(scoreParameters);
+        waitSeconds(0.15);
+        const auto finalReady = visualState();
+        expect(score.getActiveVoiceCount() == 0
+                   && score.getSympatheticStringCount() == 0
+                   && std::none_of(finalReady.begin(), finalReady.end(),
+                                   [] (const auto& state) { return state.sounding; }),
+               "demo-08 final single-note section inherited a sounding string");
+        const std::array<ElectryEngine::NoteOnEvent, 1> finalNote {{
+            { 28, 1.0f }
+        }};
+        score.noteOnChord(finalNote);
+        const auto finalEntrance = visualState();
+        expect(std::count_if(finalEntrance.begin(), finalEntrance.end(),
+                             [] (const auto& state) { return state.sounding; }) == 1,
+               "demo-08 final entrance was not one physically held string");
+        score.noteOff(28);
+    }
+
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
 
