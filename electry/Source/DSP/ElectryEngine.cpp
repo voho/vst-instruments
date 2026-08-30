@@ -2445,14 +2445,26 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
                 return s;
 
     // A repick of an identity that is still sounding grabs the same string.
-    // This fallback also keeps the private test seam's directly-created voices
-    // sane.
+    // Only a plain released legacy tail may yield to an explicitly requested
+    // fretting-hand continuation; held, sustained and pending identities keep
+    // their established ownership exactly.
+    int releasedTargetTail = -1;
     for (int s = 0; s < stringCount; ++s)
-        if (voices_[static_cast<std::size_t>(s)].active
-            && voices_[static_cast<std::size_t>(s)].midiNote == midiNote
-            && voices_[static_cast<std::size_t>(s)].expressionId == expressionId
-            && playable(s))
+    {
+        const auto index = static_cast<std::size_t>(s);
+        const auto& voice = voices_[index];
+        if (! voice.active || voice.midiNote != midiNote
+            || voice.expressionId != expressionId || ! playable(s))
+            continue;
+        const bool plainReleasedLegacyTail =
+            expressionId == legacyExpressionId
+            && heldNoteCounts_[index] == 0 && voice.releasing
+            && ! voice.pendingRepick.active;
+        if (! plainReleasedLegacyTail)
             return s;
+        releasedTargetTail = s;
+        break;
+    }
 
     // Hammer-on/pull-off continues the closest sounding string when the new
     // note stays within a reachable stretch of the fretting hand. A slide has
@@ -2464,12 +2476,17 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
         int bestDistance = playStyle == PlayStyle::Slide ? fretCount + 1 : 10;
         for (int s = 0; s < stringCount; ++s)
         {
-            const auto& voice = voices_[static_cast<std::size_t>(s)];
+            const auto index = static_cast<std::size_t>(s);
+            const auto& voice = voices_[index];
             const int targetFret = fretOn(s);
             // A slide needs a fingered destination, but a pull-off commonly
             // releases onto the open string beneath the lifted finger.
             if (! voice.active || ! playable(s)
                 || voice.expressionId != expressionId
+                || (releasedTargetTail >= 0
+                    && (voice.midiNote == midiNote
+                        || heldNoteCounts_[index] <= 0
+                        || heldExpressionIds_[index] != expressionId))
                 || (playStyle == PlayStyle::Slide && targetFret < 1))
                 continue;
             const int distance = std::abs(targetFret - voice.fret);
@@ -2482,6 +2499,8 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
         if (best >= 0)
             return best;
     }
+    if (releasedTargetTail >= 0)
+        return releasedTargetTail;
 
     // Otherwise the fretting hand chooses: the free string that puts the note
     // nearest the fingers, with open strings always available because they

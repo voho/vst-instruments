@@ -2490,6 +2490,45 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 held single-note legato string ownership
+
+- A scalar legacy Hammer or Slide note could reuse a released voice already
+  sounding the target pitch even when the performer was still holding a
+  reachable source on another string. That models a repeated target instead of
+  the requested fretting-hand continuation. Only an active, releasing legacy
+  target with no held owner and no pending repick may now yield, and only to the
+  closest active, reachable, key-held source owned by the same expression.
+  Repeated held targets, member-channel binding, CC64-sustained voices, pending
+  target repicks, non-legato styles and the no-held-source fallback retain their
+  prior precedence.
+- The deterministic regression releases MIDI 45 on the open A2 string, holds
+  MIDI 40 on the open E2 string, then requests MIDI 45 as both Slide and Hammer.
+  The candidate moves the held E2 string from fret 0 to fret 5, preserves the
+  old A2-string release, enters the articulation-specific contact state and
+  renders finite nonzero audio. The same test against `e297e849` fails because
+  that allocator chooses the released target tail. The pending-state cases in
+  this fixture are narrow allocator branch probes; the established
+  delayed-contact lifecycle tests remain the travelling-contact coverage.
+- This changes direct single-note events and the one-event `noteOnChord` fast
+  path. Multi-event `noteOnChord` uses its separate global assignment score and
+  is deliberately outside this checkpoint. The implementation reuses the
+  existing eight-string event-time continuation scan, allocates no memory and
+  does not touch a sample loop.
+- The exact canonical scope is empty: none of the 23 current demos contains a
+  plain same-target release colliding with a reachable held source. In demo 06,
+  the held MIDI 67 is at fret 17 on the open-D3 string, so MIDI 74 would require
+  fret 24, beyond Electry's fret 22 limit; this ownership correction therefore
+  does not pretend to repair that demo's advertised 67-to-74 Slide. The broader
+  cases in demos 03, 17 and 21 involve released different-note sources and
+  remain deliberate negative controls. A same-compiler render against
+  `e297e849` confirmed all 23 WAVs byte-identical; the normalized SHA-256
+  manifest is
+  `55bec492d0cf13cce3cc5b279365a6d52abeb8f0f1d50ffda1fd08dd33a06f61`.
+- The default DSP-only CTest matrix passes all nine targets. The complete
+  engine suite also passes with force-decoupled pick release disabled, the
+  optional energy-derived attack-pitch model enabled and the optional order-2
+  low-string loss correction enabled.
+
 ### 2026-08-30 finger-speed slide spectrum
 
 - Pakarinen, Penttinen and Bank's measured wound-string handling-noise study
