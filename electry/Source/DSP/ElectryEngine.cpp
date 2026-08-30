@@ -1650,7 +1650,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         int heldBindingMisses { 0 };
         int soundingBindingMisses { 0 };
         int legatoMisses { 0 };
-        int legatoDistance { 0 };
+        float legatoDistance { 0.0f };
         int occupiedStrings { 0 };
         int heldSteals { 0 };
         int nonReleasingSteals { 0 };
@@ -1704,6 +1704,14 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
     };
 
     const auto& specs = stringSpecs();
+    std::array<float, stringCount> performedFrets {};
+    if (playStyle_ == PlayStyle::Hammer || playStyle_ == PlayStyle::Slide)
+    {
+        for (std::size_t index = 0; index < performedFrets.size(); ++index)
+            performedFrets[index] = voices_[index].active
+                ? performedFret(voices_[index])
+                : static_cast<float>(voices_[index].fret);
+    }
     std::array<int, stringCount> assignment {};
     std::array<int, stringCount> bestAssignment {};
     assignment.fill(-1);
@@ -1780,7 +1788,7 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
             {
                 bool continuationAvailable = false;
                 bool continuation = false;
-                int selectedDistance = 0;
+                float selectedDistance = 0.0f;
                 for (int candidateString = 0; candidateString < stringCount;
                      ++candidateString)
                 {
@@ -1791,7 +1799,9 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
                         || candidateVoice.expressionId != expressionId
                         || (playStyle_ == PlayStyle::Slide && fret < 1))
                         continue;
-                    const int distance = std::abs(fret - candidateVoice.fret);
+                    const float distance = std::abs(
+                        static_cast<float>(fret)
+                            - performedFrets[candidate]);
                     const bool reachable = playStyle_ == PlayStyle::Slide
                                         || distance < 10;
                     if (! reachable)
@@ -2410,6 +2420,19 @@ void ElectryEngine::allNotesOff()
     resetVibratoOnset();
 }
 
+float ElectryEngine::performedFret(const Voice& voice) noexcept
+{
+    float fret = static_cast<float>(voice.fret);
+    if (voice.legatoBlend < 1.0f && voice.legatoFromFrequency > 0.0f)
+    {
+        const float remainingSemitones = 12.0f * std::log2(
+            voice.legatoFromFrequency / voice.baseFrequency)
+            * (1.0f - smoothStep(voice.legatoBlend));
+        fret += remainingSemitones;
+    }
+    return clampf(fret, 0.0f, static_cast<float>(fretCount));
+}
+
 int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
                                 ExpressionId expressionId) const noexcept
 {
@@ -2483,9 +2506,10 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
     if (playStyle == PlayStyle::Hammer || playStyle == PlayStyle::Slide)
     {
         int best = -1;
-        int bestDistance = playStyle == PlayStyle::Slide ? fretCount + 1 : 10;
+        float bestDistance = playStyle == PlayStyle::Slide
+            ? static_cast<float>(fretCount + 1) : 10.0f;
         int bestHeld = -1;
-        int bestHeldDistance = bestDistance;
+        float bestHeldDistance = bestDistance;
         for (int s = 0; s < stringCount; ++s)
         {
             const auto index = static_cast<std::size_t>(s);
@@ -2501,7 +2525,8 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
                         || heldExpressionIds_[index] != expressionId))
                 || (playStyle == PlayStyle::Slide && targetFret < 1))
                 continue;
-            const int distance = std::abs(targetFret - voice.fret);
+            const float distance = std::abs(
+                static_cast<float>(targetFret) - performedFret(voice));
             if (distance < bestDistance)
             {
                 bestDistance = distance;

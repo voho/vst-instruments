@@ -1531,6 +1531,10 @@ private:
     void silenceVoice(Voice& voice) noexcept;
     int chooseString(int midiNote, PlayStyle playStyle,
                      ExpressionId expressionId) const noexcept;
+    // `Voice::fret` is the written destination during a glide; allocation
+    // decisions need the fractional fret under the finger at this event.
+    [[nodiscard]] static float performedFret(
+        const Voice& voice) noexcept;
     // What it costs the fretting hand to take this note on this string, in
     // fret-distance units. Lower wins; ties resolve toward the thicker string,
     // as they did when the rule was simply the lowest fret.

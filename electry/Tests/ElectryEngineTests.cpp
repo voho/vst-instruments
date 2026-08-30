@@ -11102,6 +11102,48 @@ void testSlideArticulation()
 {
     constexpr double sampleRate = 48000.0;
 
+    // A chained fretting gesture starts wherever the travelling finger is,
+    // not at the destination the preceding Slide has not reached. Put the
+    // finger exactly halfway through fret 1 -> 21, at fret 11: a Hammer to
+    // that same live fret must keep string 0. Measuring from the stale written
+    // destination instead makes it an unreachable ten-fret jump and moves the
+    // note to another string. Pin both the scalar and complete-chord allocators,
+    // which solve the same physical continuation through separate paths.
+    const auto placeFingerAtSlideMidpoint = [] (ElectryEngine& engine)
+    {
+        engine.prepare(sampleRate, 64);
+        engine.reset();
+        engine.noteOn(29, 0.85f); // string 0, fret 1
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(49, 0.82f); // same string, written fret 21
+        TestAccess::updateSlideControlAt(engine, 0, 0.5f);
+        expect(TestAccess::stringForNote(engine, 49) == 0
+                   && std::abs(TestAccess::programmedLegatoFrequency(engine, 0)
+                               - midiHz(39)) < 1.0e-3,
+               "invalid mid-slide Hammer-allocation fixture");
+    };
+    {
+        ElectryEngine engine;
+        placeFingerAtSlideMidpoint(engine);
+        expect(TestAccess::chosenString(engine, 39, PlayStyle::Hammer) == 0,
+               "scalar Hammer reach used the unfinished Slide destination");
+        engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        engine.noteOn(39, 0.80f);
+        expect(TestAccess::stringForNote(engine, 39) == 0,
+               "scalar Hammer left the string under the travelling finger");
+    }
+    {
+        ElectryEngine engine;
+        placeFingerAtSlideMidpoint(engine);
+        engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+        const std::array<ElectryEngine::NoteOnEvent, 2> chord {{
+            { 39, 0.80f }, { 45, 0.76f }
+        }};
+        engine.noteOnChord(chord);
+        expect(TestAccess::stringForNote(engine, 39) == 0,
+               "batched Hammer left the string under the travelling finger");
+    }
+
     // The canonical play-style score leaves each release enough room to
     // retire, then demonstrates a short ascent and octave travel in both
     // directions on the wound E2 string. Every destination must be the same
