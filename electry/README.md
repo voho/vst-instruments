@@ -90,7 +90,7 @@ real-recording boundaries and blind-study plan live in the
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
 | `01-range-open-strings.wav` | −12.6 dBFS | +9.6 dB |
-| `02-range-full-fretboard.wav` | −14.7 dBFS | +11.7 dB |
+| `02-range-full-fretboard.wav` | −13.3 dBFS | +10.3 dB |
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −14.9 dBFS | +11.9 dB |
 | `05-drop-e-rhythm-amp.wav` | −13.0 dBFS | +10.0 dB |
@@ -99,19 +99,19 @@ real-recording boundaries and blind-study plan live in the
 | `08-sympathetic-strum-stereo.wav` | −15.6 dBFS | +12.6 dB |
 | `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
 | `10-velocity-dynamics.wav` | −12.1 dBFS | +9.1 dB |
-| `11-power-chords-dry.wav` | −8.6 dBFS | +5.6 dB |
+| `11-power-chords-dry.wav` | −8.7 dBFS | +5.7 dB |
 | `12-power-chords-amp.wav` | −12.4 dBFS | +9.4 dB |
 | `13-long-rhythm-arrangement.wav` | −13.3 dBFS | +10.3 dB |
 | `14-whammy-and-feedback.wav` | −13.2 dBFS | +10.2 dB |
 | `15-mute-and-dead-audition.wav` | −12.9 dBFS | +9.9 dB |
 | `16-mute-and-dead-metal.wav` | −13.5 dBFS | +10.5 dB |
-| `17-extended-technique-solo.wav` | −12.4 dBFS | +9.4 dB |
+| `17-extended-technique-solo.wav` | −12.2 dBFS | +9.2 dB |
 | `18-syncopated-djent-study.wav` | −12.5 dBFS | +9.5 dB |
 | `19-modern-metalcore-study.wav` | −12.5 dBFS | +9.5 dB |
 | `20-odd-meter-prog-study.wav` | +1.0 dBFS | −4.0 dB |
-| `21-blues-rock-lead-study.wav` | −9.8 dBFS | +6.8 dB |
+| `21-blues-rock-lead-study.wav` | −9.9 dBFS | +6.9 dB |
 | `22-tremolo-picking-study.wav` | −13.7 dBFS | +10.7 dB |
-| `23-amp-voices.wav` | −15.4 dBFS | +12.4 dB |
+| `23-amp-voices.wav` | −14.9 dBFS | +11.9 dB |
 <!-- peaks-table-end -->
 
 `15-mute-and-dead-audition.wav` is the quickest dry vocabulary check: the same
