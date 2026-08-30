@@ -807,6 +807,43 @@ struct ElectryEngineTestAccess
         return ElectryEngine::onePoleMagnitude(coefficient, omega);
     }
 
+    static double realisedVoiceFundamentalT60(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return 0.0;
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& loop = voice.vertical;
+        const double rate = engine.sampleRate_;
+        const double period = voice.lastCompensatedPeriod;
+        if (! (period > 0.0))
+            return 0.0;
+
+        const float omega = static_cast<float>(
+            2.0 * 3.14159265358979323846 / period);
+        float handMagnitude = 1.0f;
+        float unusedPhase = 0.0f;
+        ElectryEngine::handLossResponse(
+            loop.handLossDepth, loop.handLossShape, omega,
+            handMagnitude, unusedPhase);
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+        float fittedMagnitude = 1.0f;
+        ElectryEngine::handLossResponse(
+            loop.fittedLossDepth, loop.fittedLossShape, omega,
+            fittedMagnitude, unusedPhase);
+#else
+        constexpr float fittedMagnitude = 1.0f;
+#endif
+        const double perRoundTrip = loop.loopGain
+            * ElectryEngine::onePoleMagnitude(
+                loop.loopDampingCoefficient, omega)
+            * handMagnitude * fittedMagnitude;
+        if (! (perRoundTrip > 0.0 && perRoundTrip < 1.0))
+            return 0.0;
+        return -3.0 * period / (rate * std::log10(perRoundTrip));
+    }
+
     static int chordPerformanceDelaySamples(
         const ElectryEngine& engine) noexcept
     {
@@ -1159,6 +1196,15 @@ struct ElectryEngineTestAccess
         engine.configureVoicePitch(voice, false);
     }
 
+    static void refitVoiceDampingAtCachedCoordinate(
+        ElectryEngine& engine, int stringIndex, PlayStyle style) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        engine.configureVoiceDamping(voice, style,
+                                     voice.lastDampedFrequency,
+                                     voice.lastDampedLiveFret);
+    }
+
     static void silenceVoice(ElectryEngine& engine, int stringIndex) noexcept
     {
         const auto index = static_cast<std::size_t>(stringIndex);
@@ -1215,6 +1261,13 @@ struct ElectryEngineTestAccess
     {
         return engine.voices_[static_cast<std::size_t>(stringIndex)]
             .lastConfiguredSemitones;
+    }
+
+    static float lastDampedFrequency(const ElectryEngine& engine,
+                                     int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .lastDampedFrequency;
     }
 
     static void setLegatoWithOpposingBend(ElectryEngine& engine,
@@ -5671,6 +5724,93 @@ void testReleaseDampingUsesPerformedPitch()
     check(1.0f, 0.0f, 0.0f);
     check(-1.0f, 0.0f, 0.0f);
     check(0.0f, 3.5f, -1.25f);
+}
+
+void testHeldDampingUsesPerformedPitch()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int sourceNote = 47; // B2, fret 2 on the A string
+    constexpr int targetNote = 49; // C#3, two-fret slide on the same string
+
+    const auto configured = []
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.bendTimeSeconds = 0.04f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(sourceNote, 0.8f);
+        StereoBuffer settle(static_cast<int>(0.20 * sampleRate));
+        renderInto(engine, settle);
+        return engine;
+    };
+    const auto expectSameDecay = [] (double reference, double actual,
+                                     const std::string& context)
+    {
+        expect(reference > 0.0 && actual > 0.0
+                   && std::abs(actual / reference - 1.0) < 0.005,
+               context + " changed held-string T60 from "
+                   + std::to_string(reference) + " s to "
+                   + std::to_string(actual) + " s");
+    };
+
+    {
+        auto engine = configured();
+        const int stringIndex = TestAccess::stringForNote(engine, sourceNote);
+        const double rest =
+            TestAccess::realisedVoiceFundamentalT60(engine, stringIndex);
+        const float cachedDamping =
+            TestAccess::lastDampedFrequency(engine, stringIndex);
+        engine.setPitchBend(0.01f); // two cents: below the six-cent fit quantum
+        StereoBuffer subQuantum(512);
+        renderInto(engine, subQuantum);
+        expect(TestAccess::lastDampedFrequency(engine, stringIndex)
+                   == cachedDamping,
+               "a sub-quantum bend unnecessarily re-solved held damping");
+        engine.setPitchBend(1.0f);
+        StereoBuffer bend(static_cast<int>(0.12 * sampleRate));
+        renderInto(engine, bend);
+        expectSameDecay(
+            rest,
+            TestAccess::realisedVoiceFundamentalT60(engine, stringIndex),
+            "a settled two-semitone bend");
+    }
+
+    {
+        auto engine = configured();
+        const int stringIndex = TestAccess::stringForNote(engine, sourceNote);
+        const double rest =
+            TestAccess::realisedVoiceFundamentalT60(engine, stringIndex);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(targetNote, 0.8f);
+        expect(TestAccess::stringForNote(engine, targetNote) == stringIndex,
+               "the live-damping slide fixture changed physical strings");
+        expectSameDecay(
+            rest,
+            TestAccess::realisedVoiceFundamentalT60(engine, stringIndex),
+            "a slide at source contact");
+
+        StereoBuffer middle(static_cast<int>(0.022 * sampleRate));
+        renderInto(engine, middle);
+        expectSameDecay(
+            rest,
+            TestAccess::realisedVoiceFundamentalT60(engine, stringIndex),
+            "a slide at mid travel");
+
+        StereoBuffer destination(static_cast<int>(0.08 * sampleRate));
+        renderInto(engine, destination);
+        expectSameDecay(
+            rest,
+            TestAccess::realisedVoiceFundamentalT60(engine, stringIndex),
+            "a slide at its destination");
+    }
 }
 
 void testStiffnessFollowsLiveTension()
@@ -13291,6 +13431,8 @@ void testSharedHandRetunesActiveStringDamping()
     const float openSolvedDepth = TestAccess::solvedHandLossDepth(
         *openReference, openReferenceString);
 
+    openReference.reset();
+#if ! ELECTRY_ENERGY_ATTACK_PITCH
     auto palmReference = std::make_unique<ElectryEngine>();
     prepare(*palmReference);
     palmReference->noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
@@ -13302,8 +13444,8 @@ void testSharedHandRetunesActiveStringDamping()
                                                       palmReferenceString);
     const float palmSolvedDepth = TestAccess::solvedHandLossDepth(
         *palmReference, palmReferenceString);
-    openReference.reset();
     palmReference.reset();
+#endif
 
     // The most recent contact is one physical hand across the guitar. Lifting
     // it for an open E2 must reopen the already-ringing Palm E1 loop without
@@ -13344,15 +13486,33 @@ void testSharedHandRetunesActiveStringDamping()
     openToPalm->noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
     openToPalm->noteOn(40, 0.95f);
     const auto mutedOpen = TestAccess::snapshot(*openToPalm, oldOpenString);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    // The optional measured attack-tension glide makes this older ringing E1
+    // slightly sharp. Its exact Palm target therefore belongs to its live f0,
+    // not to the just-created, still-unpitched reference above.
+    auto livePalmReference = std::make_unique<ElectryEngine>(*openToPalm);
+    TestAccess::refitVoiceDampingAtCachedCoordinate(
+        *livePalmReference, oldOpenString, PlayStyle::PalmMute);
+    const auto expectedPalmTarget = TestAccess::snapshot(
+        *livePalmReference, oldOpenString);
+    const float expectedPalmDepth = TestAccess::handLossDepth(
+        *livePalmReference, oldOpenString);
+    const float expectedPalmSolvedDepth = TestAccess::solvedHandLossDepth(
+        *livePalmReference, oldOpenString);
+#else
+    const auto& expectedPalmTarget = palmTarget;
+    const float expectedPalmDepth = palmDepth;
+    const float expectedPalmSolvedDepth = palmSolvedDepth;
+#endif
     expect(mutedOpen.playStyle == PlayStyle::Sustain,
            "a Palm contact rewrote the older open attack style");
-    expect(mutedOpen.loopGain == palmTarget.loopGain
+    expect(mutedOpen.loopGain == expectedPalmTarget.loopGain
                && mutedOpen.loopDampingCoefficient
-                      == palmTarget.loopDampingCoefficient
+                      == expectedPalmTarget.loopDampingCoefficient
                && TestAccess::handLossDepth(*openToPalm, oldOpenString)
-                      == palmDepth
+                      == expectedPalmDepth
                && TestAccess::solvedHandLossDepth(*openToPalm, oldOpenString)
-                      == palmSolvedDepth,
+                      == expectedPalmSolvedDepth,
            "a Palm contact did not move the older open loop to the exact "
            "Palm damping target");
 
@@ -13730,17 +13890,30 @@ void testSharedHandRetunesActiveStringDamping()
                                                        scheduledOldString);
     const auto futureAfterContact = TestAccess::snapshot(*scheduled,
                                                           futureString);
+#if ELECTRY_ENERGY_ATTACK_PITCH
+    auto delayedPalmReference = std::make_unique<ElectryEngine>(*scheduled);
+    TestAccess::refitVoiceDampingAtCachedCoordinate(
+        *delayedPalmReference, scheduledOldString, PlayStyle::PalmMute);
+    const auto expectedDelayedPalm = TestAccess::snapshot(
+        *delayedPalmReference, scheduledOldString);
+    const float expectedDelayedPalmSolvedDepth =
+        TestAccess::solvedHandLossDepth(*delayedPalmReference,
+                                        scheduledOldString);
+#else
+    const auto& expectedDelayedPalm = palmTarget;
+    const float expectedDelayedPalmSolvedDepth = palmSolvedDepth;
+#endif
     expect(futureAfterContact.startDelaySamples == 0
                && futureAfterContact.dampingStyle == PlayStyle::PalmMute,
            "the delayed Palm voice did not restore its own damping at contact");
     expect(oldAfterContact.playStyle == PlayStyle::Sustain
                && oldAfterContact.dampingStyle == PlayStyle::PalmMute
-               && oldAfterContact.loopGain == palmTarget.loopGain
+               && oldAfterContact.loopGain == expectedDelayedPalm.loopGain
                && oldAfterContact.loopDampingCoefficient
-                      == palmTarget.loopDampingCoefficient
+                      == expectedDelayedPalm.loopDampingCoefficient
                && TestAccess::solvedHandLossDepth(*scheduled,
                                                    scheduledOldString)
-                      == palmSolvedDepth,
+                      == expectedDelayedPalmSolvedDepth,
            "the delayed Palm contact did not retune the old open loop at its "
            "physical contact");
 
@@ -19700,7 +19873,17 @@ void testFingeredStringsShareTheBridge()
                 const double gain = TestAccess::bridgeCouplingGain(engine);
                 const double rowSum = static_cast<double>(active - 1) * gain
                                     * worstAmplification;
-                expect(rowSum <= 0.25,
+#if ELECTRY_ENERGY_ATTACK_PITCH
+                // The engine solves and stores this contract in float. A live
+                // attack-tension damping refit can land exactly on 0.25f;
+                // recomputing the same float seam here in double differs by at
+                // most one float ULP. Keep the engine's own strict bound below.
+                const double recomputedBound = static_cast<double>(
+                    std::nextafter(0.25f, 1.0f));
+#else
+                constexpr double recomputedBound = 0.25;
+#endif
+                expect(rowSum <= recomputedBound,
                        "the played-string coupling exceeded its row-sum bound ("
                            + std::to_string(rowSum) + " at Resonance "
                            + std::to_string(sympathetic) + ")");
@@ -20127,6 +20310,7 @@ int main()
     testSamePitchExpressionOwnersReleaseIndependently();
     testPitchWheelUsesUniformSemitoneInterval();
     testReleaseDampingUsesPerformedPitch();
+    testHeldDampingUsesPerformedPitch();
     testStiffnessFollowsLiveTension();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
