@@ -2078,6 +2078,64 @@ exact-eight stopping gestures identify a direction and curve, mapping Note Off
 velocity to Electry's release-noise burst remains unsupported; the existing
 unassigned-release-velocity boundary stands.
 
+#### 2026-08-30 exact-eight recording checkpoint
+
+A fresh search found no second public source that closes the controlled dry
+E1/E2 Open/Palm/Dead gate. The only new lawfully reusable exact-eight signal is
+a descriptive F1 anchor, not a calibration corpus.
+[Vrezerino 133024](https://freesound.org/people/Vrezerino/sounds/133024/)
+is CC0 and identifies a sustained lowest string of a Schecter Omen 8, reported
+as gauge `0.74`; its adjacent source identifies F1. The clean recording has
+short reverb and no documented fret, pickup, pick, force or path. Its login-only
+original is a 44.1 kHz/16-bit stereo WAV. The unauthenticated
+[HQ preview](https://cdn.freesound.org/previews/133/133024_17361-hq.mp3)
+fetched on 2026-08-30 is a 43.932154-second, 995,282-byte stereo MP3 with
+SHA-256 `3535e3a7b7edf8f63ee7639ed1c096f9ece1932527be57625f05bebe6a3a4e23`.
+Only normalized onset-aligned first-100-ms timing and partial-frequency motion are
+admissible; reverb and the unknown chain censor late decay, noise floor,
+absolute level, pickup response and absolute spectrum.
+
+The adjacent CC0
+[distorted F1 recording](https://freesound.org/people/Vrezerino/sounds/133025/)
+is not a DI/reamp pair: "playing again" identifies a separate performance with
+heavy distortion and no reverb through an unknown nonlinear chain. Its public
+[HQ preview](https://cdn.freesound.org/previews/133/133025_17361-hq.mp3)
+is 25.868571 seconds and has SHA-256
+`e6862bfdf643fbecf2988da56be11efbcd726fd1cc44483f1e3cee485e801b45`.
+It is a listening reference only and cannot identify dry attack, damping,
+pickup balance or an amp transfer from the clean file.
+
+[Ueberschall Metal Riffs](https://www.ueberschall.com/en/product/283/Metal-Riffs)
+has 400 DI phrases paired to the same amped performances, but mixes seven- and
+eight-string guitars without per-file identity. Its
+[licence](https://www.ueberschall.com/en/faq) makes the permitted music-production
+uses conclusive, restricts duplication and adaptation outside such productions,
+and separately prohibits AI/ML development. Electry calibration needs a written
+grant. [JST Spirit of the Machine](https://joeysturgistones.com/products/riff-vault-spirit-of-the-machine)
+does identify Drop-E eight-string DI and corresponding amped/wet phrases, but
+JST's public
+[permission statement](https://joeysturgistones.zendesk.com/hc/en-us/articles/40184857335444-Can-I-use-your-samples-in-my-own-music-releases)
+covers royalty-free music releases subject to the included EULA, not competing
+instrument calibration; it is also written-permission only.
+
+Beyond the established commission lead above,
+[Ciprian Martin](https://soundbetter.com/profiles/465257-ciprian-martin) is a
+fallback: his profile names an Ibanez RG2228M with EMG pickups and D'Addario
+NYXL strings and offers DI delivery. Vrezerino's
+[2026 metal pack](https://freesound.org/people/Vrezerino/packs/45261/) shows
+current activity and makes its surviving pre-distortion DIs and guitar identity
+worth asking about. Either route needs the existing protocol and explicit rights
+for commercial physical-model calibration, private evaluation and derived
+measurements.
+
+The minimal experiment is to obtain the original 133024 WAV, render Electry's
+physical eighth string at F1, and triangulate both with the established dry F#1
+and low open-note anchors. Normalize per file and score only the first 100 ms:
+H2-H8 inharmonicity, 30-to-100-ms per-partial pitch change, median attack-pitch
+slope and onset-to-2-ms-RMS-peak time. This F1 file supplies direction only; it
+cannot promote a decay, spectrum or level change, and no model adjustment
+advances unless it also improves the independent dry reference.
+
 #### Reactive loudspeaker-load research
 
 Published bidirectional guitar-amplifier models support a causal electrical
