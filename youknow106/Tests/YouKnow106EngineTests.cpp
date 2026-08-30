@@ -1526,6 +1526,37 @@ struct YouKnow106TestAccess
         bool secondOutputUnchanged {};
     };
 
+    struct OtaQuadComparison
+    {
+        bool accepted {};
+        float maximumOutputError {};
+        double maximumStateError {};
+        bool persistentFieldsMatch {};
+        bool innerLaneIndependent {};
+        float occupancyTransitionOutputError {};
+        double occupancyTransitionStateError {};
+        bool rejectionIsAtomic {};
+    };
+
+    static bool sameOtaCascadePersistentBits(
+        const YouKnow106Engine::OtaCascade& first,
+        const YouKnow106Engine::OtaCascade& second) noexcept
+    {
+        const auto sameBits = [](const auto& firstValue,
+                                 const auto& secondValue) {
+            return std::memcmp(&firstValue, &secondValue,
+                               sizeof(firstValue)) == 0;
+        };
+        return sameBits(first.offsetVoltage, second.offsetVoltage)
+            && sameBits(first.inputHistory, second.inputHistory)
+            && first.inputHistoryCount == second.inputHistoryCount
+            && sameBits(first.gScale, second.gScale)
+            && sameBits(first.previousOmegaStep, second.previousOmegaStep)
+            && sameBits(first.previousFeedback, second.previousFeedback)
+            && sameBits(first.previousHeadroom, second.previousHeadroom)
+            && first.parameterHistoryPrimed == second.parameterHistoryPrimed;
+    }
+
     static bool sameOtaCascadeBits(
         const YouKnow106Engine::OtaCascade& first,
         const YouKnow106Engine::OtaCascade& second) noexcept
@@ -1536,14 +1567,7 @@ struct YouKnow106TestAccess
                                sizeof(firstValue)) == 0;
         };
         return sameBits(first.state, second.state)
-            && sameBits(first.offsetVoltage, second.offsetVoltage)
-            && sameBits(first.inputHistory, second.inputHistory)
-            && first.inputHistoryCount == second.inputHistoryCount
-            && sameBits(first.gScale, second.gScale)
-            && sameBits(first.previousOmegaStep, second.previousOmegaStep)
-            && sameBits(first.previousFeedback, second.previousFeedback)
-            && sameBits(first.previousHeadroom, second.previousHeadroom)
-            && first.parameterHistoryPrimed == second.parameterHistoryPrimed;
+            && sameOtaCascadePersistentBits(first, second);
     }
 
     static OtaPairComparison compareSettledRk4Pair(
@@ -1794,6 +1818,221 @@ struct YouKnow106TestAccess
             sameBits(pairSecondOutput, scalarSecondOutput),
             sameOtaCascadeBits(pairFirst, scalarFirst),
             sameOtaCascadeBits(pairSecond, scalarSecond)
+        };
+    }
+
+    static OtaQuadComparison compareSettledMersonQuad() noexcept
+    {
+        struct LaneFixture
+        {
+            std::array<double, 4> state;
+            std::array<float, 4> offset;
+            std::array<double, 3> history;
+            std::array<float, 4> scale;
+            float input;
+            float omega;
+            float feedback;
+            float headroom;
+        };
+        const std::array<LaneFixture, 4> fixtures {{
+            {
+                { 0.024, 0.008, -0.012, 0.006 },
+                { 0.0011f, -0.0005f, 0.0009f, -0.0013f },
+                { 0.031, 0.017, -0.009 },
+                { 1.03f, 0.98f, 1.01f, 0.96f },
+                0.027f, 2.10f, 8.0f, 0.36f
+            },
+            {
+                { 0.82, -0.61, 0.47, -0.34 },
+                { 0.021f, -0.013f, 0.008f, -0.017f },
+                { 0.73, -0.52, 0.36 },
+                { 1.06f, 0.94f, 1.03f, 0.97f },
+                0.69f, 2.00f, 8.0f, 0.32f
+            },
+            {
+                { -0.018, 0.011, 0.004, -0.007 },
+                { -0.0008f, 0.0014f, -0.0010f, 0.0006f },
+                { -0.025, 0.014, 0.003 },
+                { 0.95f, 1.05f, 0.99f, 1.02f },
+                -0.022f, 2.04f, 7.0f, 0.40f
+            },
+            {
+                { -0.78, 0.55, -0.42, 0.31 },
+                { -0.018f, 0.015f, -0.011f, 0.019f },
+                { -0.67, 0.49, -0.33 },
+                { 0.93f, 1.07f, 0.96f, 1.04f },
+                -0.64f, 2.20f, 6.5f, 0.28f
+            }
+        }};
+        const auto makeCascade = [](const LaneFixture& fixture) {
+            YouKnow106Engine::OtaCascade cascade;
+            cascade.state = fixture.state;
+            cascade.offsetVoltage = fixture.offset;
+            cascade.inputHistory = fixture.history;
+            cascade.inputHistoryCount = 2;
+            cascade.gScale = fixture.scale;
+            cascade.previousOmegaStep =
+                YouKnow106Engine::OtaCascade::clampOmegaStep(fixture.omega);
+            cascade.previousFeedback = fixture.feedback;
+            cascade.previousHeadroom = fixture.headroom;
+            cascade.parameterHistoryPrimed = true;
+            return cascade;
+        };
+        std::array<YouKnow106Engine::OtaCascade, 4> initial;
+        std::array<float, 4> inputs;
+        std::array<float, 4> omegaSteps;
+        std::array<float, 4> feedbacks;
+        std::array<float, 4> headrooms;
+        for (std::size_t lane = 0; lane < fixtures.size(); ++lane)
+        {
+            initial[lane] = makeCascade(fixtures[lane]);
+            inputs[lane] = fixtures[lane].input;
+            omegaSteps[lane] = fixtures[lane].omega;
+            feedbacks[lane] = fixtures[lane].feedback;
+            headrooms[lane] = fixtures[lane].headroom;
+        }
+        const auto pointers = [](auto& cascades) {
+            std::array<YouKnow106Engine::OtaCascade*, 4> result;
+            for (std::size_t lane = 0; lane < cascades.size(); ++lane)
+                result[lane] = &cascades[lane];
+            return result;
+        };
+
+        auto scalar = initial;
+        std::array<float, 4> scalarOutputs;
+        for (std::size_t lane = 0; lane < scalar.size(); ++lane)
+            scalarOutputs[lane] = scalar[lane].process<true>(
+                inputs[lane], omegaSteps[lane], feedbacks[lane],
+                headrooms[lane], true, 0.70f, nullptr,
+                VcfTanhMode::PolyZoned, VcfSolverMode::Rk4Single);
+
+        auto quad = initial;
+        std::array<float, 4> quadOutputs {};
+        const bool accepted =
+            YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
+                pointers(quad), inputs, omegaSteps, feedbacks, headrooms,
+                true, 0.70f, quadOutputs);
+        float maximumOutputError = 0.0f;
+        double maximumStateError = 0.0;
+        bool persistentFieldsMatch = true;
+        for (std::size_t lane = 0; lane < quad.size(); ++lane)
+        {
+            maximumOutputError = std::max(
+                maximumOutputError,
+                std::abs(quadOutputs[lane] - scalarOutputs[lane]));
+            for (std::size_t stage = 0; stage < quad[lane].state.size();
+                 ++stage)
+                maximumStateError = std::max(
+                    maximumStateError,
+                    std::abs(quad[lane].state[stage]
+                             - scalar[lane].state[stage]));
+            persistentFieldsMatch = persistentFieldsMatch
+                && sameOtaCascadePersistentBits(quad[lane], scalar[lane]);
+        }
+
+        auto innerPartners = initial;
+        auto innerInputs = inputs;
+        auto innerOmegaSteps = omegaSteps;
+        auto innerFeedbacks = feedbacks;
+        auto innerHeadrooms = headrooms;
+        for (std::size_t lane = 1; lane < innerPartners.size(); ++lane)
+        {
+            innerPartners[lane] = initial[0];
+            innerInputs[lane] = inputs[0];
+            innerOmegaSteps[lane] = omegaSteps[0];
+            innerFeedbacks[lane] = feedbacks[0];
+            innerHeadrooms[lane] = headrooms[0];
+        }
+        std::array<float, 4> innerOutputs {};
+        const bool innerAccepted =
+            YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
+                pointers(innerPartners), innerInputs, innerOmegaSteps,
+                innerFeedbacks, innerHeadrooms, true, 0.70f, innerOutputs);
+        bool innerLaneIndependent = innerAccepted
+            && std::memcmp(&quadOutputs[0], &innerOutputs[0],
+                           sizeof(float)) == 0;
+        for (std::size_t stage = 0; stage < quad[0].state.size(); ++stage)
+            innerLaneIndependent = innerLaneIndependent
+                && std::memcmp(&quad[0].state[stage],
+                               &innerPartners[0].state[stage],
+                               sizeof(double)) == 0;
+
+        auto warmed = initial;
+        auto warmInputs = inputs;
+        std::array<float, 4> warmOutputs {};
+        bool warmAccepted = true;
+        for (int interval = 0; interval < 512 && warmAccepted; ++interval)
+        {
+            for (std::size_t lane = 0; lane < warmInputs.size(); ++lane)
+                warmInputs[lane] = 0.01f * static_cast<float>(
+                    (interval + static_cast<int>(7u * lane)) % 17 - 8);
+            warmAccepted =
+                YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
+                    pointers(warmed), warmInputs, omegaSteps, feedbacks,
+                    headrooms, true, 0.70f, warmOutputs);
+        }
+        auto switchedToScalar = warmed[0];
+        std::array<YouKnow106Engine::OtaCascade, 4> stayedQuad {
+            warmed[0], warmed[0], warmed[0], warmed[0]
+        };
+        const float transitionInput = 0.067f;
+        const std::array<float, 4> transitionInputs {
+            transitionInput, transitionInput, transitionInput, transitionInput
+        };
+        const std::array<float, 4> transitionOmegaSteps {
+            omegaSteps[0], omegaSteps[0], omegaSteps[0], omegaSteps[0]
+        };
+        const std::array<float, 4> transitionFeedbacks {
+            feedbacks[0], feedbacks[0], feedbacks[0], feedbacks[0]
+        };
+        const std::array<float, 4> transitionHeadrooms {
+            headrooms[0], headrooms[0], headrooms[0], headrooms[0]
+        };
+        std::array<float, 4> stayedQuadOutputs {};
+        const bool transitionQuadAccepted =
+            YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
+                pointers(stayedQuad), transitionInputs,
+                transitionOmegaSteps, transitionFeedbacks,
+                transitionHeadrooms, true, 0.70f, stayedQuadOutputs);
+        const float switchedOutput = switchedToScalar.process<true>(
+            transitionInput, omegaSteps[0], feedbacks[0], headrooms[0],
+            true, 0.70f, nullptr, VcfTanhMode::PolyZoned,
+            VcfSolverMode::Rk4Single);
+        const float occupancyTransitionOutputError =
+            warmAccepted && transitionQuadAccepted
+            ? std::abs(switchedOutput - stayedQuadOutputs[0])
+            : std::numeric_limits<float>::infinity();
+        double occupancyTransitionStateError = 0.0;
+        for (std::size_t stage = 0; stage < stayedQuad[0].state.size();
+             ++stage)
+            occupancyTransitionStateError = std::max(
+                occupancyTransitionStateError,
+                std::abs(switchedToScalar.state[stage]
+                         - stayedQuad[0].state[stage]));
+
+        auto rejected = initial;
+        rejected.back().parameterHistoryPrimed = false;
+        const auto beforeRejected = rejected;
+        std::array<float, 4> rejectedOutputs {
+            -123.5f, 97.25f, -19.0f, 41.0f
+        };
+        const auto beforeRejectedOutputs = rejectedOutputs;
+        bool rejectionIsAtomic =
+            !YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
+                pointers(rejected), inputs, omegaSteps, feedbacks, headrooms,
+                true, 0.70f, rejectedOutputs)
+            && std::memcmp(rejectedOutputs.data(),
+                           beforeRejectedOutputs.data(),
+                           sizeof(rejectedOutputs)) == 0;
+        for (std::size_t lane = 0; lane < rejected.size(); ++lane)
+            rejectionIsAtomic = rejectionIsAtomic
+                && sameOtaCascadeBits(rejected[lane], beforeRejected[lane]);
+
+        return {
+            accepted, maximumOutputError, maximumStateError,
+            persistentFieldsMatch, innerLaneIndependent,
+            occupancyTransitionOutputError,
+            occupancyTransitionStateError, rejectionIsAtomic
         };
     }
 
@@ -12714,6 +12953,24 @@ void testSettledRk4PairMatchesScalar()
                name + " second cascade differs from scalar process<true>");
     }
 
+    const auto quad = YouKnow106TestAccess::compareSettledMersonQuad();
+    expect(quad.accepted,
+           "four eligible cards were not accepted by the Merson quad path");
+    expect(quad.maximumOutputError <= 1.0e-5f,
+           "Merson quad output exceeded the 10 uV scalar-error fence");
+    expect(quad.maximumStateError <= 1.0e-5,
+           "Merson quad state exceeded the 10 uV scalar-error fence");
+    expect(quad.persistentFieldsMatch,
+           "Merson quad changed non-state bookkeeping versus scalar");
+    expect(quad.innerLaneIndependent,
+           "an out-of-zone partner changed an inner Merson quad lane");
+    expect(quad.occupancyTransitionOutputError <= 1.0e-5f,
+           "leaving a Merson quad exceeded the 10 uV output fence");
+    expect(quad.occupancyTransitionStateError <= 1.0e-5,
+           "leaving a Merson quad exceeded the 10 uV state fence");
+    expect(quad.rejectionIsAtomic,
+           "a rejected Merson quad changed a cascade or output sentinel");
+
     for (const bool mixedTableaux : { false, true })
     {
         const auto rejected =
@@ -12912,7 +13169,7 @@ int main()
             std::cerr << failures << " SIMD check(s) failed.\n";
             return EXIT_FAILURE;
         }
-        std::cout << "The SIMD VCF pair check passed.\n";
+        std::cout << "The SIMD VCF checks passed.\n";
         return EXIT_SUCCESS;
 #else
         std::cerr << "The SIMD VCF pair path is unavailable.\n";

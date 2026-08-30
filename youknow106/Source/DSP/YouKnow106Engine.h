@@ -1517,6 +1517,17 @@ private:
             float secondFeedback, float secondHeadroom,
             bool enableEarlyEffect, float calibration,
             float& firstOutput, float& secondOutput) noexcept;
+        // Four settled Merson cards share one FP32 SIMD solve, bounded by the
+        // 10 uV scalar-error regression. A rejected group leaves every
+        // cascade and output sentinel unchanged.
+        static bool tryProcessSettledMersonQuad(
+            const std::array<OtaCascade*, 4>& cascades,
+            const std::array<float, 4>& inputs,
+            const std::array<float, 4>& omegaSteps,
+            const std::array<float, 4>& feedbacks,
+            const std::array<float, 4>& headrooms,
+            bool enableEarlyEffect, float calibration,
+            std::array<float, 4>& outputs) noexcept;
 #endif
 
         [[nodiscard]] static double reconstructInput(
@@ -2055,6 +2066,9 @@ private:
     [[nodiscard]] std::array<float, 2> renderVoicePair(
         Voice& first, Voice& second, const EngineParameters& parameters,
         float noiseSample) noexcept;
+    [[nodiscard]] std::array<float, 4> renderVoiceQuad(
+        const std::array<Voice*, 4>& voices,
+        const EngineParameters& parameters, float noiseSample) noexcept;
 #endif
     // The cheap advance a retired physical card takes under the fast VCF
     // tanh modes: exactly the free-running state a reassignment can hear --

@@ -4038,6 +4038,398 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonPair(
     finishLane(lanes[1], secondOutput);
     return true;
 }
+
+YOUKNOW106_MERSON_NOINLINE
+bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
+    const std::array<OtaCascade*, 4>& cascades,
+    const std::array<float, 4>& inputs,
+    const std::array<float, 4>& omegaSteps,
+    const std::array<float, 4>& feedbacks,
+    const std::array<float, 4>& headrooms,
+    bool enableEarlyEffect, float calibration,
+    std::array<float, 4>& outputs) noexcept
+{
+    constexpr float feedbackHeadroom = static_cast<float>(
+        VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+    const double currentCalibration = std::clamp(
+        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        0.0, static_cast<double>(EngineParameters::calibrationCeiling));
+    const bool applyEarlyEffect = enableEarlyEffect
+                               && currentCalibration > 0.0;
+    const double earlyAmountDouble =
+        static_cast<double>(otaEarlyEffectCoefficient)
+        * currentCalibration;
+    const float earlyAmount = static_cast<float>(earlyAmountDouble);
+    const double earlyCeiling = applyEarlyEffect
+        ? 1.0 + earlyAmountDouble : 1.0;
+
+    struct Lane
+    {
+        OtaCascade* cascade {};
+        double input {};
+        double omega {};
+        double feedback {};
+        double headroom {};
+        float inverseHeadroom {};
+        std::array<float, 7> drive {};
+        std::array<float, 4> stageOmega {};
+        std::array<float, 4> stageOffset {};
+    };
+    std::array<Lane, 4> lanes;
+    for (std::size_t laneIndex = 0; laneIndex < lanes.size(); ++laneIndex)
+    {
+        auto& cascade = *cascades[laneIndex];
+        auto& lane = lanes[laneIndex];
+        const double currentOmega = clampOmegaStep(
+            static_cast<double>(omegaSteps[laneIndex]));
+        const double currentFeedback = std::clamp(
+            std::isfinite(feedbacks[laneIndex])
+                ? static_cast<double>(feedbacks[laneIndex]) : 0.0,
+            0.0, 8.0);
+        const double currentHeadroom = std::max(
+            std::isfinite(headrooms[laneIndex])
+                ? static_cast<double>(headrooms[laneIndex]) : 0.0,
+            1.0e-5);
+        if (!cascade.parameterHistoryPrimed
+            || cascade.inputHistoryCount != 2
+            || cascade.previousOmegaStep != currentOmega
+            || cascade.previousFeedback != currentFeedback
+            || cascade.previousHeadroom != currentHeadroom
+            || !std::all_of(
+                cascade.state.begin(), cascade.state.end(), [](double value) {
+                    return std::abs(value) <= 64.0;
+                }))
+            return false;
+
+        double largestScale = 0.0;
+        for (const float scale : cascade.gScale)
+            largestScale = std::max(
+                largestScale, static_cast<double>(std::abs(scale)));
+        if (planTableau(
+                VcfSolverMode::Rk4Single,
+                currentOmega * largestScale * earlyCeiling,
+                currentFeedback) != Tableau::MersonHalf)
+            return false;
+
+        lane.cascade = &cascade;
+        lane.input = std::isfinite(inputs[laneIndex])
+            ? static_cast<double>(inputs[laneIndex]) : 0.0;
+        lane.omega = currentOmega;
+        lane.feedback = currentFeedback;
+        lane.headroom = currentHeadroom;
+        lane.inverseHeadroom = static_cast<float>(1.0 / currentHeadroom);
+        const auto reconstruct = [&](double currentWeight,
+                                     double firstWeight,
+                                     double secondWeight,
+                                     double thirdWeight) {
+            return static_cast<float>(
+                currentWeight * lane.input
+                + firstWeight * cascade.inputHistory[0]
+                + secondWeight * cascade.inputHistory[1]
+                + thirdWeight * cascade.inputHistory[2]);
+        };
+        lane.drive[0] = reconstruct(0.0,    1.0,    0.0,     0.0);
+        lane.drive[1] = reconstruct(
+            0x1.1f9add3c0ca45p-4, 0x1.0da12f684bda1p+0,
+            -0x1.3425ed097b426p-3, 0x1.ba781948b0fcfp-6);
+        lane.drive[2] = reconstruct(
+            0.1171875, 1.0546875, -0.2109375, 0.0390625);
+        lane.drive[3] = reconstruct(
+            0.3125, 0.9375, -0.3125, 0.0625);
+        lane.drive[4] = reconstruct(
+            0x1.f9add3c0ca457p-2, 0x1.7b425ed097b42p-1,
+            -0x1.2f684bda12f68p-2, 0x1.f9add3c0ca458p-5);
+        lane.drive[5] = reconstruct(
+            0.6015625, 0.6015625, -0.2578125, 0.0546875);
+        lane.drive[6] = reconstruct(1.0,    0.0,    0.0,     0.0);
+        for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
+        {
+            lane.stageOmega[stage] = static_cast<float>(
+                currentOmega * static_cast<double>(cascade.gScale[stage]));
+            lane.stageOffset[stage] = cascade.offsetVoltage[stage];
+        }
+    }
+
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    using Quad = float32x4_t;
+    const auto quadLoad = [](const std::array<float, 4>& values) {
+        return vld1q_f32(values.data());
+    };
+    const auto quadStore = [](Quad value, std::array<float, 4>& values) {
+        vst1q_f32(values.data(), value);
+    };
+#define quadSplat(value) vdupq_n_f32(value)
+#define quadAdd(first, second) vaddq_f32((first), (second))
+#define quadSubtract(first, second) vsubq_f32((first), (second))
+#define quadMultiply(first, second) vmulq_f32((first), (second))
+#define quadMultiplyScalar(value, scalar) vmulq_n_f32((value), (scalar))
+#define quadMultiplyAdd(addend, first, second) \
+    vfmaq_f32((addend), (first), (second))
+#define quadMultiplyAddScalar(addend, value, scalar) \
+    vfmaq_n_f32((addend), (value), (scalar))
+#define quadAnyGreaterEqual(value, limit) \
+    (vmaxvq_f32(vabsq_f32(value)) >= (limit))
+#elif defined(__x86_64__) && defined(__SSE2__)
+    using Quad = __m128;
+    const auto quadLoad = [](const std::array<float, 4>& values) {
+        return _mm_loadu_ps(values.data());
+    };
+    const auto quadStore = [](Quad value, std::array<float, 4>& values) {
+        _mm_storeu_ps(values.data(), value);
+    };
+#define quadSplat(value) _mm_set1_ps(value)
+#define quadAdd(first, second) _mm_add_ps((first), (second))
+#define quadSubtract(first, second) _mm_sub_ps((first), (second))
+#define quadMultiply(first, second) _mm_mul_ps((first), (second))
+#define quadMultiplyScalar(value, scalar) \
+    _mm_mul_ps((value), _mm_set1_ps(scalar))
+#define quadMultiplyAdd(addend, first, second) \
+    _mm_add_ps((addend), _mm_mul_ps((first), (second)))
+#define quadMultiplyAddScalar(addend, value, scalar) \
+    _mm_add_ps((addend), _mm_mul_ps((value), _mm_set1_ps(scalar)))
+#define quadAnyGreaterEqual(value, limit) \
+    (_mm_movemask_ps(_mm_cmpge_ps( \
+        _mm_andnot_ps(_mm_set1_ps(-0.0f), (value)), \
+        _mm_set1_ps(limit))) != 0)
+#endif
+    using QuadState = std::array<Quad, 4>;
+    const auto packField = [&](const auto& member, std::size_t point) {
+        std::array<float, 4> values;
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane)
+            values[lane] = member(lanes[lane], point);
+        return quadLoad(values);
+    };
+    const auto polyTanhQuad = [&](Quad value) {
+        const Quad u = quadMultiply(value, value);
+        const Quad uSquared = quadMultiply(u, u);
+        const Quad top = quadMultiplyAddScalar(
+            quadSplat(0.016720855179576926f), u,
+            -0.00305822903759879f);
+        const Quad high = quadMultiplyAddScalar(
+            quadSplat(0.1328072064598552f), u,
+            -0.051585988404218436f);
+        const Quad low = quadMultiplyAddScalar(
+            quadSplat(0.9999993948006496f), u,
+            -0.3332895137021704f);
+        const Quad upper = quadMultiplyAdd(high, top, uSquared);
+        const Quad factor = quadMultiplyAdd(low, upper, uSquared);
+        Quad result = quadMultiply(value, factor);
+        if (quadAnyGreaterEqual(value, 1.0f))
+        {
+            std::array<float, 4> values;
+            std::array<float, 4> results;
+            quadStore(value, values);
+            quadStore(result, results);
+            for (std::size_t lane = 0; lane < values.size(); ++lane)
+                if (std::abs(values[lane]) >= 1.0f)
+                    results[lane] = static_cast<float>(
+                        polyZonedTanhImpl(
+                            static_cast<double>(values[lane])));
+            result = quadLoad(results);
+        }
+        return result;
+    };
+    const auto cubicEarlyQuad = [&](Quad value) {
+        const Quad scaled = quadMultiplyScalar(value, -(4.0f / 27.0f));
+        const Quad factor = quadMultiplyAdd(quadSplat(1.0f), scaled, value);
+        Quad result = quadMultiply(value, factor);
+        if (quadAnyGreaterEqual(value, 1.5f))
+        {
+            std::array<float, 4> values;
+            std::array<float, 4> results;
+            quadStore(value, values);
+            quadStore(result, results);
+            for (std::size_t lane = 0; lane < values.size(); ++lane)
+                if (std::abs(values[lane]) >= 1.5f)
+                    results[lane] = static_cast<float>(
+                        cubicEarlyTanh(values[lane]));
+            result = quadLoad(results);
+        }
+        return result;
+    };
+
+    QuadState state;
+    QuadState stageOmega;
+    QuadState stageOffset;
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+    {
+        std::array<float, 4> values;
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane)
+            values[lane] = static_cast<float>(lanes[lane].cascade->state[stage]);
+        state[stage] = quadLoad(values);
+        stageOmega[stage] = packField(
+            [](const Lane& lane, std::size_t point) {
+                return lane.stageOmega[point];
+            }, stage);
+        stageOffset[stage] = packField(
+            [](const Lane& lane, std::size_t point) {
+                return lane.stageOffset[point];
+            }, stage);
+    }
+    const Quad inverseHeadroom = packField(
+        [](const Lane& lane, std::size_t) {
+            return lane.inverseHeadroom;
+        }, 0u);
+    const Quad runningHeadroom = packField(
+        [](const Lane& lane, std::size_t) {
+            return static_cast<float>(lane.headroom);
+        }, 0u);
+    const Quad feedbackGain = packField(
+        [&](const Lane& lane, std::size_t) {
+            return static_cast<float>(lane.feedback) * feedbackHeadroom;
+        }, 0u);
+    std::array<Quad, 7> drives;
+    for (std::size_t point = 0; point < drives.size(); ++point)
+        drives[point] = packField(
+            [](const Lane& lane, std::size_t index) {
+                return lane.drive[index];
+            }, point);
+
+    const auto derivative = [&](const QuadState& value, Quad drive) {
+        const Quad feedbackArgument = quadMultiplyScalar(
+            value[3], 1.0f / feedbackHeadroom);
+        const Quad loopReturn = quadSubtract(
+            drive, quadMultiply(feedbackGain,
+                                polyTanhQuad(feedbackArgument)));
+        QuadState stageArgument {
+            quadMultiply(quadAdd(quadSubtract(loopReturn, value[0]),
+                                 stageOffset[0]), inverseHeadroom),
+            quadMultiply(quadAdd(quadSubtract(value[0], value[1]),
+                                 stageOffset[1]), inverseHeadroom),
+            quadMultiply(quadAdd(quadSubtract(value[1], value[2]),
+                                 stageOffset[2]), inverseHeadroom),
+            quadMultiply(quadAdd(quadSubtract(value[2], value[3]),
+                                 stageOffset[3]), inverseHeadroom)
+        };
+        QuadState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            Quad early = quadSplat(1.0f);
+            if (applyEarlyEffect)
+                early = quadMultiplyAddScalar(
+                    early,
+                    cubicEarlyQuad(quadMultiply(
+                        value[stage], inverseHeadroom)),
+                    earlyAmount);
+            result[stage] = quadMultiply(stageOmega[stage], early);
+            result[stage] = quadMultiply(result[stage], runningHeadroom);
+            result[stage] = quadMultiply(
+                result[stage], polyTanhQuad(stageArgument[stage]));
+        }
+        return result;
+    };
+    const auto advanceOne = [](const QuadState& origin,
+                               const QuadState& slope, float distance) {
+        QuadState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = quadMultiplyAddScalar(
+                origin[stage], slope[stage], distance);
+        return result;
+    };
+    const auto advanceTwo = [](const QuadState& origin, float stepSize,
+                               const QuadState& firstSlope,
+                               float firstWeight,
+                               const QuadState& secondSlope,
+                               float secondWeight) {
+        QuadState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            Quad weighted = quadMultiplyScalar(
+                secondSlope[stage], secondWeight);
+            weighted = quadMultiplyAddScalar(
+                weighted, firstSlope[stage], firstWeight);
+            result[stage] = quadMultiplyAddScalar(
+                origin[stage], weighted, stepSize);
+        }
+        return result;
+    };
+    const auto advanceThree = [](const QuadState& origin, float stepSize,
+                                 const QuadState& firstSlope,
+                                 float firstWeight,
+                                 const QuadState& secondSlope,
+                                 float secondWeight,
+                                 const QuadState& thirdSlope,
+                                 float thirdWeight) {
+        QuadState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            Quad weighted = quadMultiplyScalar(
+                secondSlope[stage], secondWeight);
+            weighted = quadMultiplyAddScalar(
+                weighted, firstSlope[stage], firstWeight);
+            weighted = quadMultiplyAddScalar(
+                weighted, thirdSlope[stage], thirdWeight);
+            result[stage] = quadMultiplyAddScalar(
+                origin[stage], weighted, stepSize);
+        }
+        return result;
+    };
+    for (const std::size_t start : { 0u, 3u })
+    {
+        const QuadState origin = state;
+        const QuadState k1 = derivative(origin, drives[start]);
+        const QuadState k2 = derivative(
+            advanceOne(origin, k1, 1.0f / 6.0f), drives[start + 1u]);
+        const QuadState k3 = derivative(
+            advanceTwo(origin, 0.5f, k1, 1.0f / 6.0f,
+                       k2, 1.0f / 6.0f), drives[start + 1u]);
+        const QuadState k4 = derivative(
+            advanceTwo(origin, 0.5f, k1, 1.0f / 8.0f,
+                       k3, 3.0f / 8.0f), drives[start + 2u]);
+        const QuadState k5 = derivative(
+            advanceThree(origin, 0.5f, k1, 0.5f,
+                         k3, -1.5f, k4, 2.0f), drives[start + 3u]);
+        state = advanceThree(origin, 0.5f, k1, 1.0f / 6.0f,
+                             k4, 2.0f / 3.0f, k5, 1.0f / 6.0f);
+    }
+
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+    {
+        std::array<float, 4> values;
+        quadStore(state[stage], values);
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane)
+            lanes[lane].cascade->state[stage] = values[lane];
+    }
+
+#undef quadSplat
+#undef quadAdd
+#undef quadSubtract
+#undef quadMultiply
+#undef quadMultiplyScalar
+#undef quadMultiplyAdd
+#undef quadMultiplyAddScalar
+#undef quadAnyGreaterEqual
+
+    for (std::size_t laneIndex = 0; laneIndex < lanes.size(); ++laneIndex)
+    {
+        auto& lane = lanes[laneIndex];
+        auto& cascade = *lane.cascade;
+        for (std::size_t point = cascade.inputHistory.size() - 1u;
+             point > 0u; --point)
+            cascade.inputHistory[point] = cascade.inputHistory[point - 1u];
+        cascade.inputHistory[0] = lane.input;
+        cascade.inputHistoryCount = std::min(cascade.inputHistoryCount + 1, 2);
+        cascade.previousOmegaStep = lane.omega;
+        cascade.previousFeedback = lane.feedback;
+        cascade.previousHeadroom = lane.headroom;
+        const bool valid = std::all_of(
+            cascade.state.begin(), cascade.state.end(), [](double value) {
+                return std::abs(value) <= 64.0;
+            });
+        if (!valid)
+        {
+            cascade.state.fill(0.0);
+            cascade.inputHistory.fill(lane.input);
+            cascade.inputHistoryCount = 2;
+            outputs[laneIndex] = 0.0f;
+        }
+        else
+        {
+            outputs[laneIndex] = static_cast<float>(cascade.state[3]);
+        }
+    }
+    return true;
+}
 #undef YOUKNOW106_MERSON_NOINLINE
 #endif
 
@@ -7277,6 +7669,98 @@ std::array<float, 2> YouKnow106Engine::renderVoicePair(
             ? finishVoiceFilter(second, filtered[1]) : 0.0f
     };
 }
+
+std::array<float, 4> YouKnow106Engine::renderVoiceQuad(
+    const std::array<Voice*, 4>& voices,
+    const EngineParameters& parameters, float noiseSample) noexcept
+{
+    std::array<VoiceFilterFrame, 4> frames;
+    for (std::size_t lane = 0; lane < voices.size(); ++lane)
+        frames[lane] = prepareVoiceFilter(
+            *voices[lane], parameters, noiseSample);
+
+    std::array<float, 4> filtered {};
+    bool processed = std::all_of(
+        frames.begin(), frames.end(), [](const VoiceFilterFrame& frame) {
+            return frame.needsFilter && !frame.hasTrajectory;
+        });
+    if (processed)
+    {
+        std::array<OtaCascade*, 4> cascades;
+        std::array<float, 4> inputs;
+        std::array<float, 4> omegaSteps;
+        std::array<float, 4> feedbacks;
+        std::array<float, 4> headrooms;
+        for (std::size_t lane = 0; lane < voices.size(); ++lane)
+        {
+            cascades[lane] = &voices[lane]->filter;
+            inputs[lane] = frames[lane].input;
+            omegaSteps[lane] = frames[lane].omegaStep;
+            feedbacks[lane] = voices[lane]->feedback;
+            headrooms[lane] = frames[lane].headroom;
+        }
+        processed = OtaCascade::tryProcessSettledMersonQuad(
+            cascades, inputs, omegaSteps, feedbacks, headrooms,
+            parameters.enableVcfEarlyEffect, parameters.calibration,
+            filtered);
+    }
+
+    if (!processed)
+    {
+        const auto processPair = [&](std::size_t firstLane) {
+            const std::size_t secondLane = firstLane + 1u;
+            bool pairProcessed = false;
+            if (frames[firstLane].needsFilter
+                && frames[secondLane].needsFilter
+                && !frames[firstLane].hasTrajectory
+                && !frames[secondLane].hasTrajectory)
+                pairProcessed = OtaCascade::tryProcessSettledRk4Pair(
+                    voices[firstLane]->filter, frames[firstLane].input,
+                    frames[firstLane].omegaStep,
+                    voices[firstLane]->feedback, frames[firstLane].headroom,
+                    voices[secondLane]->filter, frames[secondLane].input,
+                    frames[secondLane].omegaStep,
+                    voices[secondLane]->feedback,
+                    frames[secondLane].headroom,
+                    parameters.enableVcfEarlyEffect, parameters.calibration,
+                    filtered[firstLane], filtered[secondLane])
+                    || OtaCascade::tryProcessSettledMersonPair(
+                        voices[firstLane]->filter, frames[firstLane].input,
+                        frames[firstLane].omegaStep,
+                        voices[firstLane]->feedback,
+                        frames[firstLane].headroom,
+                        voices[secondLane]->filter,
+                        frames[secondLane].input,
+                        frames[secondLane].omegaStep,
+                        voices[secondLane]->feedback,
+                        frames[secondLane].headroom,
+                        parameters.enableVcfEarlyEffect,
+                        parameters.calibration,
+                        filtered[firstLane], filtered[secondLane]);
+            if (pairProcessed)
+                return;
+            for (const std::size_t lane : { firstLane, secondLane })
+                if (frames[lane].needsFilter)
+                    filtered[lane] = voices[lane]->filter.process<true>(
+                        frames[lane].input, frames[lane].omegaStep,
+                        voices[lane]->feedback, frames[lane].headroom,
+                        parameters.enableVcfEarlyEffect,
+                        parameters.calibration,
+                        frames[lane].hasTrajectory
+                            ? &frames[lane].trajectory : nullptr,
+                        parameters.vcfTanhMode,
+                        parameters.vcfSolverMode);
+        };
+        processPair(0u);
+        processPair(2u);
+    }
+
+    std::array<float, 4> result {};
+    for (std::size_t lane = 0; lane < voices.size(); ++lane)
+        if (frames[lane].needsFilter)
+            result[lane] = finishVoiceFilter(*voices[lane], filtered[lane]);
+    return result;
+}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -7827,6 +8311,32 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     && !defined(YOUKNOW106_WORK_AUDIT)
                     if constexpr (useCubicEarly)
                     {
+                        if (slot + 3 < maxVoices && voice.active
+                            && voices_[static_cast<std::size_t>(slot + 1)].active
+                            && voices_[static_cast<std::size_t>(slot + 2)].active
+                            && voices_[static_cast<std::size_t>(slot + 3)].active
+                            && parameters.vcfTanhMode
+                                   == VcfTanhMode::PolyZoned
+                            && parameters.vcfSolverMode
+                                   == VcfSolverMode::Rk4Single)
+                        {
+                            for (int offset = 1; offset < 4; ++offset)
+                                updateVoiceForInterval(slot + offset);
+                            const std::array<Voice*, 4> group {
+                                &voice,
+                                &voices_[static_cast<std::size_t>(slot + 1)],
+                                &voices_[static_cast<std::size_t>(slot + 2)],
+                                &voices_[static_cast<std::size_t>(slot + 3)]
+                            };
+                            const auto outputs = renderVoiceQuad(
+                                group, parameters, noiseSample);
+                            for (std::size_t lane = 0; lane < group.size();
+                                 ++lane)
+                                accountRenderedVoice(
+                                    *group[lane], outputs[lane]);
+                            slot += 4;
+                            continue;
+                        }
                         if (slot + 1 < maxVoices && voice.active
                             && voices_[static_cast<std::size_t>(slot + 1)].active
                             && parameters.vcfTanhMode
