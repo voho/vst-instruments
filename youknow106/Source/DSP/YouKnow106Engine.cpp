@@ -2196,9 +2196,35 @@ void YouKnow106Engine::beginRangeClockTransition(
     if (previous == next)
         return;
 
-    const double rateRatio = rangeClockHz(next) / rangeClockHz(previous);
-    const double oldClocksToReload = rangeClockClocksToEdge_;
+    const double previousClockHz = rangeClockHz(previous);
+    const double nextClockHz = rangeClockHz(next);
+    const double rateRatio = nextClockHz / previousClockHz;
+    const double clockTolerance = std::max(
+        1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * previousClockHz;
+    const double oldClocksToFalling = rangeClockClocksToFallingEdge_;
+    double oldClocksToReload = rangeClockClocksToReload_;
+    if (!rangeClockTransitionPending_)
+    {
+        const double rawTickClocks = previousClockHz / masterClockHz;
+        const double highClocks = 1.0 - rawTickClocks;
+        // At exact reload equality, the old preset wins before the PF write.
+        // The new preset is therefore captured at the following reload. This
+        // compatibility policy is independent of PIT /WR ordering at falling.
+        oldClocksToReload = oldClocksToFalling
+                                > highClocks + clockTolerance
+            ? oldClocksToFalling - highClocks
+            : oldClocksToFalling + rawTickClocks;
+    }
+
+    const bool fallingBeforeReload =
+        oldClocksToFalling + clockTolerance < oldClocksToReload;
     const double newClocksToReload = oldClocksToReload * rateRatio;
+    const double newRawTickClocks = nextClockHz / masterClockHz;
+    const double firstNewFallingAfterReload =
+        newClocksToReload + 1.0 - newRawTickClocks;
+    const double newClocksToFalling = fallingBeforeReload
+        ? oldClocksToFalling * rateRatio
+        : firstNewFallingAfterReload;
     for (auto& voice : voices_)
     {
         auto& dco = voice.dco;
@@ -2206,19 +2232,61 @@ void YouKnow106Engine::beginRangeClockTransition(
             || !(dco.pitClocksToEvent > 0.0))
             continue;
 
-        // IC35 has only one phase. Preserve the integer number of shared
-        // rising edges after its pending reload, whether this is the first
-        // switch or a later PF write replacing the preset before that reload.
-        // Round away accumulated residue, including a near-zero/near-one
-        // boundary that the shared clock coalesced to one full clock.
-        const double clocksAfterReload = std::max(
+        // Preserve the number of TP5 falling/count edges still owed. A PF
+        // write made during TP5's one-raw-tick low interval changes the very
+        // next falling edge; a write made earlier leaves the imminent old
+        // falling edge intact and changes the following interval.
+        const double fallingEdgesAfterNext = std::max(
             0.0, std::round(
-                dco.pitClocksToEvent - oldClocksToReload));
-        dco.pitClocksToEvent = newClocksToReload + clocksAfterReload;
+                dco.pitClocksToEvent - oldClocksToFalling));
+        dco.pitClocksToEvent = newClocksToFalling
+                             + fallingEdgesAfterNext;
     }
 
-    rangeClockClocksToEdge_ = newClocksToReload;
+    rangeClockClocksToFallingEdge_ = newClocksToFalling;
+    rangeClockClocksToReload_ = newClocksToReload;
     rangeClockTransitionPending_ = true;
+}
+
+double YouKnow106Engine::rangeClockClocksToNextFallingEdge(
+    double elapsedSeconds, DcoRange range) const noexcept
+{
+    const double clockHz = rangeClockHz(range);
+    const double clocksAdvanced = std::max(0.0, elapsedSeconds) * clockHz;
+    const double clockTolerance = std::max(
+        1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * clockHz;
+    const auto stablePhase = [clockTolerance](double clocks) {
+        double phase = std::fmod(clocks, 1.0);
+        if (phase < 0.0)
+            phase += 1.0;
+        if (phase <= clockTolerance || 1.0 - phase <= clockTolerance)
+            phase = 1.0;
+        return phase;
+    };
+
+    if (!rangeClockTransitionPending_)
+        return stablePhase(
+            rangeClockClocksToFallingEdge_ - clocksAdvanced);
+
+    if (clocksAdvanced + clockTolerance < rangeClockClocksToReload_)
+    {
+        if (clocksAdvanced + clockTolerance
+            < rangeClockClocksToFallingEdge_)
+        {
+            return rangeClockClocksToFallingEdge_ - clocksAdvanced;
+        }
+
+        // The old-modulus falling edge has happened, but its reload has not.
+        // The following falling edge is one selected period minus one raw
+        // 8 MHz tick after that pending reload.
+        return 1.0 - std::max(
+            0.0, clocksAdvanced - rangeClockClocksToFallingEdge_);
+    }
+
+    const double clocksAfterReload =
+        std::max(0.0, clocksAdvanced - rangeClockClocksToReload_);
+    return stablePhase(
+        1.0 - clockHz / masterClockHz - clocksAfterReload);
 }
 
 void YouKnow106Engine::advanceRangeClock(DcoRange range) noexcept
@@ -2227,28 +2295,22 @@ void YouKnow106Engine::advanceRangeClock(DcoRange range) noexcept
     const double intervalSeconds = 1.0 / oversampledRate_;
     const double clockTolerance = std::max(
         1.0e-15, intervalSeconds * 1.0e-9) * clockHz;
-    double clocksAdvanced = clockHz * intervalSeconds;
+    const double clocksAdvanced = clockHz * intervalSeconds;
+    const double nextFalling = rangeClockClocksToNextFallingEdge(
+        intervalSeconds, range);
     if (rangeClockTransitionPending_)
     {
-        if (clocksAdvanced + clockTolerance < rangeClockClocksToEdge_)
+        if (clocksAdvanced + clockTolerance < rangeClockClocksToReload_)
         {
-            rangeClockClocksToEdge_ -= clocksAdvanced;
+            rangeClockClocksToReload_ -= clocksAdvanced;
+            rangeClockClocksToFallingEdge_ = nextFalling;
             return;
         }
 
-        clocksAdvanced = std::max(
-            0.0, clocksAdvanced - rangeClockClocksToEdge_);
-        rangeClockClocksToEdge_ = 1.0;
+        rangeClockClocksToReload_ = 0.0;
         rangeClockTransitionPending_ = false;
     }
-
-    double phase = std::fmod(
-        rangeClockClocksToEdge_ - clocksAdvanced, 1.0);
-    if (phase < 0.0)
-        phase += 1.0;
-    if (phase <= clockTolerance || 1.0 - phase <= clockTolerance)
-        phase = 1.0;
-    rangeClockClocksToEdge_ = phase;
+    rangeClockClocksToFallingEdge_ = nextFalling;
 }
 
 void YouKnow106Engine::writeDcoMode3Control(
@@ -2318,7 +2380,7 @@ void YouKnow106Engine::programDcoCount(
         voice.dcoCv = voice.dcoCvTarget;
     }
     writeDcoMode3Control(
-        voice, rangeClockClocksToEdge_, 1.0f, true);
+        voice, rangeClockClocksToFallingEdge_, 1.0f, true);
 
     // Direct cold-start fallback anchors the control store here. IC29 B-2's
     // reset branch then reaches LSB after 55 CPU states, and both paths take
@@ -5122,7 +5184,8 @@ void YouKnow106Engine::reset()
     // The two oscillators have no recoverable startup relation. One full
     // selected period is the deterministic arbitrary IC35 phase; unlike the
     // old card-local policy it is one phase shared by all six PIT inputs.
-    rangeClockClocksToEdge_ = 1.0;
+    rangeClockClocksToFallingEdge_ = 1.0;
+    rangeClockClocksToReload_ = 0.0;
     rangeClockTransitionPending_ = false;
     controlScanPhase_ = 1.0;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
@@ -5325,7 +5388,8 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         // A restored pre-audio panel image is the power-up selection, not a
         // timed PF write from the constructor's default range. Adopt its
         // modulus without manufacturing an old-range cycle first.
-        rangeClockClocksToEdge_ = 1.0;
+        rangeClockClocksToFallingEdge_ = 1.0;
+        rangeClockClocksToReload_ = 0.0;
         rangeClockTransitionPending_ = false;
     }
     // Switch positions land immediately. Main VOLUME is the only continuous
@@ -5824,7 +5888,7 @@ void YouKnow106Engine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexce
             && dco.cpuStatesToWrite <= pitResetDiToControlStates;
         if (resetPrestageIsProtected)
             prestageDcoPitchTransaction(
-                voice, rangeClockClocksToEdge_, 1.0f, true);
+                voice, rangeClockClocksToFallingEdge_, 1.0f, true);
 
         const bool lsbIsProtected =
             dco.pitWriteState == Dco::PitWriteState::awaitingLsb
@@ -6940,8 +7004,6 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
     const double eventToleranceSeconds = std::max(
         1.0e-15, intervalSeconds * 1.0e-9);
     const double pitClockHz = rangeClockHz(range);
-    double rangeClockTransitionClocks = rangeClockTransitionPending_
-        ? rangeClockClocksToEdge_ : 0.0;
     const double thresholdStart = std::isfinite(previousThresholdVolts)
         ? static_cast<double>(previousThresholdVolts) : 6.0;
     const double thresholdEnd = std::isfinite(thresholdVolts)
@@ -6976,21 +7038,8 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                   (intervalSeconds - elapsed) / intervalSeconds, 0.0, 1.0))
             : 0.0f;
     };
-    const auto sharedClocksToNextEdge = [&](double atElapsed,
-                                             double transitionClocks) {
-        const double clockTolerance = eventToleranceSeconds * pitClockHz;
-        if (rangeClockTransitionPending_
-            && transitionClocks > clockTolerance)
-            return transitionClocks;
-
-        double clocks = std::fmod(
-            rangeClockClocksToEdge_ - atElapsed * pitClockHz, 1.0);
-        if (clocks < 0.0)
-            clocks += 1.0;
-        if (clocks <= clockTolerance
-            || 1.0 - clocks <= clockTolerance)
-            clocks = 1.0;
-        return clocks;
+    const auto clocksToNextPitInputFalling = [&](double atElapsed) {
+        return rangeClockClocksToNextFallingEdge(atElapsed, range);
     };
 
     // A live card-current edit changes the physical interpretation of the
@@ -7017,9 +7066,9 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
     // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
     // can contain 126 OUT transitions plus 63 reset completions and 63 supply
     // hits. A fixed pitch transaction adds one pre-stage and two byte events;
-    // a range handoff can add one divider-reload boundary. 512 leaves a real
-    // margin over the 255-event supported worst case while
-    // still bounding malformed state without allocating anything.
+    // 512 leaves a real margin over the 254-event supported worst case while
+    // still bounding malformed state without allocating anything. IC35 reload
+    // is chassis-global and does not add one event to each card's walk.
     constexpr int maximumEventsPerInterval = 512;
     for (int eventIndex = 0;
          eventIndex < maximumEventsPerInterval
@@ -7036,10 +7085,6 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             dco.pitWriteState == Dco::PitWriteState::idle
                 ? std::numeric_limits<double>::infinity()
                 : std::max(0.0, dco.cpuStatesToWrite) / voiceCpuStateHz;
-        const double rangeClockTransitionSeconds =
-            rangeClockTransitionClocks > 0.0
-                ? rangeClockTransitionClocks / pitClockHz
-                : std::numeric_limits<double>::infinity();
         const double resetSeconds = dco.resetSecondsRemaining > 0.0
             ? dco.resetSecondsRemaining
             : std::numeric_limits<double>::infinity();
@@ -7062,8 +7107,7 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                                      / dco.rampSlopePerSecond)
                    : std::numeric_limits<double>::infinity());
         const double segment = std::min(
-            { remaining, pitSeconds, cpuWriteSeconds,
-              rangeClockTransitionSeconds, resetSeconds,
+            { remaining, pitSeconds, cpuWriteSeconds, resetSeconds,
               positiveRailSeconds });
 
         if (addCorrections && !comparatorPinnedForInterval && segment > 0.0)
@@ -7109,29 +7153,12 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                 0.0, dco.resetSecondsRemaining - segment);
         if (dco.pitState == Dco::PitState::awaitingCount)
         {
-            // CE is stopped, not the selected CLK. Retain its phase
-            // analytically while the two count bytes are in flight. Map an
-            // exact boundary to one full clock: if the MSB shares that
-            // timestamp, the input edge has already happened and initial load
-            // belongs to the following clock.
-            if (rangeClockTransitionClocks > 0.0)
-            {
-                dco.pitClocksToEvent = std::max(
-                    0.0, dco.pitClocksToEvent - segment * pitClockHz);
-            }
-            else
-            {
-                double phase = std::fmod(
-                    dco.pitClocksToEvent - segment * pitClockHz, 1.0);
-                if (phase < 0.0)
-                    phase += 1.0;
-                const double phaseTolerance =
-                    eventToleranceSeconds * pitClockHz;
-                if (phase <= phaseTolerance
-                    || 1.0 - phase <= phaseTolerance)
-                    phase = 1.0;
-                dco.pitClocksToEvent = phase;
-            }
+            // CE is stopped, not TP5. Follow the chassis-global falling/count
+            // phase analytically while the two count bytes are in flight.
+            // Exact equality is PIT-first policy, so the completed count waits
+            // for the following falling edge.
+            dco.pitClocksToEvent = clocksToNextPitInputFalling(
+                elapsed + segment);
         }
         else if (dco.pitState != Dco::PitState::stopped)
             dco.pitClocksToEvent = std::max(
@@ -7139,9 +7166,6 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
         if (dco.pitWriteState != Dco::PitWriteState::idle)
             dco.cpuStatesToWrite = std::max(
                 0.0, dco.cpuStatesToWrite - segment * voiceCpuStateHz);
-        if (rangeClockTransitionClocks > 0.0)
-            rangeClockTransitionClocks = std::max(
-                0.0, rangeClockTransitionClocks - segment * pitClockHz);
         elapsed += segment;
 
         const bool resetComplete =
@@ -7152,23 +7176,9 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
             pitSeconds <= segment + eventToleranceSeconds;
         const bool cpuWriteEvent =
             cpuWriteSeconds <= segment + eventToleranceSeconds;
-        const bool rangeClockTransitionEvent =
-            rangeClockTransitionSeconds
-                <= segment + eventToleranceSeconds;
         if (!resetComplete && !positiveRailHit && !pitEvent
-            && !cpuWriteEvent && !rangeClockTransitionEvent)
+            && !cpuWriteEvent)
             break;
-
-        if (rangeClockTransitionEvent)
-            rangeClockTransitionClocks = 0.0;
-        if (rangeClockTransitionEvent
-            && dco.pitState == Dco::PitState::awaitingCount)
-        {
-            // The old-modulus reload edge happened before a coincident MSB.
-            // CE is still stopped, so retain one full new-clock period to the
-            // following edge on which that completed count can load.
-            dco.pitClocksToEvent = 1.0;
-        }
 
         // Complete an older C54 discharge before processing a coincident new
         // OUT edge. The ordering is deterministic; the two events cannot
@@ -7274,9 +7284,7 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                 // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
                 // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
                 prestageDcoPitchTransaction(
-                    voice,
-                    sharedClocksToNextEdge(
-                        elapsed, rangeClockTransitionClocks),
+                    voice, clocksToNextPitInputFalling(elapsed),
                     eventSamplesAgo(elapsed), addCorrections);
             }
             else if (dco.pitWriteState == Dco::PitWriteState::awaitingLsb)

@@ -227,10 +227,27 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::rangeClockHz(DcoRange::Eight);
     }
 
+    static double rangeClockHz(DcoRange range) noexcept
+    {
+        return YouKnow106Engine::rangeClockHz(range);
+    }
+
+    static double masterClockHz() noexcept
+    {
+        return YouKnow106Engine::masterClockHz;
+    }
+
     static double internalIntervalSeconds(
         const YouKnow106Engine& engine) noexcept
     {
         return 1.0 / engine.oversampledRate_;
+    }
+
+    static void setInternalRateForTimingTest(
+        YouKnow106Engine& engine, double rate) noexcept
+    {
+        engine.oversampledRate_ = rate;
+        engine.inverseOversampledRate_ = static_cast<float>(1.0 / rate);
     }
 
     static void setMode3Running(YouKnow106Engine& engine, int slot,
@@ -253,8 +270,9 @@ struct YouKnow106TestAccess
         voice.dcoPitchTransactionColdStart = false;
         voice.dcoPitchTransactionCvTarget = voice.dcoCvTarget;
         const double fraction = clocksToEvent - std::floor(clocksToEvent);
-        engine.rangeClockClocksToEdge_ = fraction > 1.0e-12
+        engine.rangeClockClocksToFallingEdge_ = fraction > 1.0e-12
             ? fraction : 1.0;
+        engine.rangeClockClocksToReload_ = 0.0;
         engine.rangeClockTransitionPending_ = false;
         engine.panelGlidePrimed_ = true;
         engine.updateActiveDcoPeriod(dco, range);
@@ -565,24 +583,25 @@ struct YouKnow106TestAccess
             .dco.pitClocksToEvent;
     }
 
-    static double rangeClockTransitionClocks(
-        const YouKnow106Engine& engine, int /*slot*/) noexcept
-    {
-        return engine.rangeClockTransitionPending_
-            ? engine.rangeClockClocksToEdge_ : 0.0;
-    }
-
     static void setRangeClockPhase(YouKnow106Engine& engine,
                                    double clocksToEdge) noexcept
     {
-        engine.rangeClockClocksToEdge_ = clocksToEdge;
+        engine.rangeClockClocksToFallingEdge_ = clocksToEdge;
+        engine.rangeClockClocksToReload_ = 0.0;
         engine.rangeClockTransitionPending_ = false;
     }
 
-    static double rangeClockClocksToEdge(
+    static double rangeClockFallingClocks(
         const YouKnow106Engine& engine) noexcept
     {
-        return engine.rangeClockClocksToEdge_;
+        return engine.rangeClockClocksToFallingEdge_;
+    }
+
+    static double rangeClockReloadClocks(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.rangeClockTransitionPending_
+            ? engine.rangeClockClocksToReload_ : 0.0;
     }
 
     static bool rangeClockTransitionPending(
@@ -592,10 +611,20 @@ struct YouKnow106TestAccess
     }
 
     static void setRangeClockTransition(
-        YouKnow106Engine& engine, double clocksToEdge) noexcept
+        YouKnow106Engine& engine, double clocksToFalling,
+        double clocksToReload) noexcept
     {
-        engine.rangeClockClocksToEdge_ = clocksToEdge;
+        engine.rangeClockClocksToFallingEdge_ = clocksToFalling;
+        engine.rangeClockClocksToReload_ = clocksToReload;
         engine.rangeClockTransitionPending_ = true;
+    }
+
+    static double rangeClockClocksToNextFallingEdge(
+        const YouKnow106Engine& engine, double elapsedSeconds,
+        DcoRange range) noexcept
+    {
+        return engine.rangeClockClocksToNextFallingEdge(
+            elapsedSeconds, range);
     }
 
     static void advanceRangeClock(YouKnow106Engine& engine,
@@ -3283,9 +3312,8 @@ void testPitByteTransactionsFollowRecoveredCpuTiming()
     const auto advance = [](YouKnow106Engine& engine, DcoRange range,
                             int frames = 1) {
         for (int frame = 0; frame < frames; ++frame)
-            YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
-                engine, 0, range, 20.0f, 20.0f,
-                false, false, false);
+            YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+                engine, 0, range);
     };
 
     struct PhaseCase
@@ -3364,47 +3392,107 @@ void testPitByteTransactionsFollowRecoveredCpuTiming()
                "selected PIT clock");
     }
 
-    // Count-only starts with the LSB. At this exact 2.75 us tie, the old
-    // complete pair must enter CE at the OUT edge before the MSB completes the
-    // new pair, leaving that new value pending for the following transition.
-    YouKnow106Engine collision;
-    collision.prepare(elevenCpuStatesRate, blockSize, false);
+    // Policy A compares the completed MSB's /WR trailing/latch edge only
+    // with TP5 falling/count. It is independent of IC35 reload. Sweep nearly
+    // one selected period at every RANGE: an earlier write supplies the count
+    // consumed at this edge, while exact equality deliberately counts first.
     constexpr std::uint32_t active = 0x1234u;
     constexpr std::uint32_t oldPending = 0x2345u;
-    YouKnow106TestAccess::setMode3Running(
-        collision, 0, active, true, 5.5, DcoRange::Eight);
-    YouKnow106TestAccess::stageMode3Count(collision, 0, oldPending);
-    YouKnow106TestAccess::programDcoCount(
-        collision, 0, requested, false);
-    expect(YouKnow106TestAccess::activeDcoDivider(collision, 0) == active
-               && YouKnow106TestAccess::pendingDcoDivider(collision, 0)
-                      == oldPending
-               && YouKnow106TestAccess::pendingDcoDividerValid(collision, 0)
-               && YouKnow106TestAccess::pitWriteState(collision, 0)
-                      == YouKnow106TestAccess::awaitingMsbWriteState()
-               && YouKnow106TestAccess::cpuStatesToWrite(collision, 0)
-                      == 11.0,
-           "the running-path LSB overwrote the older complete count pair");
-    advance(collision, DcoRange::Eight);
-    expect(YouKnow106TestAccess::activeDcoDivider(collision, 0) == oldPending
-               && !YouKnow106TestAccess::pitOutHigh(collision, 0)
-               && YouKnow106TestAccess::pendingDcoDivider(collision, 0)
-                      == requested
-               && YouKnow106TestAccess::pendingDcoDividerValid(collision, 0)
-               && YouKnow106TestAccess::pitWriteState(collision, 0)
-                      == YouKnow106TestAccess::idlePitWriteState(),
-           "an exact OUT/MSB collision did not apply PIT first and leave the "
-           "new count pending");
 
-    collision.reset();
-    expect(YouKnow106TestAccess::pitState(collision, 0)
+    // Retain one end-to-end count-only transaction: its LSB must not erase an
+    // older complete pair, and exact PIT/MSB coincidence consumes that older
+    // pair before the new MSB completes.
+    YouKnow106Engine realCollision;
+    realCollision.prepare(elevenCpuStatesRate, blockSize, false);
+    YouKnow106TestAccess::setMode3Running(
+        realCollision, 0, active, true, 5.5, DcoRange::Eight);
+    YouKnow106TestAccess::stageMode3Count(
+        realCollision, 0, oldPending);
+    YouKnow106TestAccess::programDcoCount(
+        realCollision, 0, requested, false);
+    expect(YouKnow106TestAccess::activeDcoDivider(realCollision, 0) == active
+               && YouKnow106TestAccess::pendingDcoDivider(realCollision, 0)
+                      == oldPending
+               && YouKnow106TestAccess::pendingDcoDividerValid(
+                   realCollision, 0),
+           "the running-path LSB overwrote an older complete count pair");
+    advance(realCollision, DcoRange::Eight);
+    expect(YouKnow106TestAccess::activeDcoDivider(realCollision, 0)
+                   == oldPending
+               && !YouKnow106TestAccess::pitOutHigh(realCollision, 0)
+               && YouKnow106TestAccess::pendingDcoDivider(realCollision, 0)
+                      == requested
+               && YouKnow106TestAccess::pendingDcoDividerValid(
+                   realCollision, 0),
+           "an exact PIT/MSB collision did not apply PIT first");
+
+    constexpr double pitEventSeconds = 1.5e-6;
+    constexpr std::array writeOffsetsInPeriods {
+        -0.49, -0.25, -0.05, 0.0, 0.05, 0.25, 0.49
+    };
+    constexpr std::array ranges {
+        DcoRange::Four, DcoRange::Eight, DcoRange::Sixteen
+    };
+    for (const auto range : ranges)
+    {
+        const double clockHz = YouKnow106TestAccess::rangeClockHz(range);
+        const double periodSeconds = 1.0 / clockHz;
+        for (const double offsetInPeriods : writeOffsetsInPeriods)
+        {
+            for (int repetition = 0; repetition < 2; ++repetition)
+            {
+                YouKnow106Engine collision;
+                collision.prepare(250000.0, blockSize, false);
+                YouKnow106TestAccess::setMode3Running(
+                    collision, 0, active, true,
+                    pitEventSeconds * clockHz, range);
+                YouKnow106TestAccess::stageMode3Count(
+                    collision, 0, oldPending);
+                const double writeSeconds = pitEventSeconds
+                    + offsetInPeriods * periodSeconds;
+                YouKnow106TestAccess::setAwaitingPitMsb(
+                    collision, 0, requested,
+                    writeSeconds * 4000000.0);
+                YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
+                    collision, 0, range, 20.0f, 20.0f,
+                    false, false, false);
+
+                const bool writeBeforeFalling = offsetInPeriods < 0.0;
+                expect(YouKnow106TestAccess::activeDcoDivider(
+                               collision, 0)
+                           == (writeBeforeFalling ? requested : oldPending)
+                           && !YouKnow106TestAccess::pitOutHigh(collision, 0)
+                           && YouKnow106TestAccess::pitWriteState(
+                                  collision, 0)
+                                  == YouKnow106TestAccess::idlePitWriteState()
+                           && YouKnow106TestAccess::pendingDcoDividerValid(
+                                  collision, 0)
+                                  != writeBeforeFalling
+                           && (!YouKnow106TestAccess::pendingDcoDividerValid(
+                                   collision, 0)
+                               || YouKnow106TestAccess::pendingDcoDivider(
+                                      collision, 0) == requested),
+                       "Policy A lost deterministic /WR-vs-falling order");
+            }
+        }
+    }
+
+    YouKnow106Engine resetTransaction;
+    resetTransaction.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setAwaitingPitMsb(
+        resetTransaction, 0, requested, 7.0);
+    resetTransaction.reset();
+    expect(YouKnow106TestAccess::pitState(resetTransaction, 0)
                    == YouKnow106TestAccess::stoppedPitState()
-               && YouKnow106TestAccess::pitWriteState(collision, 0)
+               && YouKnow106TestAccess::pitWriteState(resetTransaction, 0)
                       == YouKnow106TestAccess::idlePitWriteState()
-               && YouKnow106TestAccess::pitWriteDivider(collision, 0)
-                      == YouKnow106TestAccess::activeDcoDivider(collision, 0)
-               && YouKnow106TestAccess::cpuStatesToWrite(collision, 0) == 0.0
-               && !YouKnow106TestAccess::pendingDcoDividerValid(collision, 0),
+               && YouKnow106TestAccess::pitWriteDivider(resetTransaction, 0)
+                      == YouKnow106TestAccess::activeDcoDivider(
+                          resetTransaction, 0)
+               && YouKnow106TestAccess::cpuStatesToWrite(
+                      resetTransaction, 0) == 0.0
+               && !YouKnow106TestAccess::pendingDcoDividerValid(
+                   resetTransaction, 0),
            "reset retained an in-flight PIT byte transaction");
 }
 
@@ -3428,9 +3516,8 @@ void testPitByteTimingIsProcessingGridInvariant()
 
     const auto advance = [](YouKnow106Engine& engine, int frames) {
         for (int frame = 0; frame < frames; ++frame)
-            YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
-                engine, 0, DcoRange::Eight, 20.0f, 20.0f,
-                false, false, false);
+            YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+                engine, 0, DcoRange::Eight);
     };
     // The same 20.833333 us is one 48 kHz/1x internal frame, four 48
     // kHz/4x frames, and four 192 kHz/1x host/internal frames.
@@ -4197,7 +4284,7 @@ void testPitchPrestageConsumesResetDiscoveredByItsOwnScan()
     // The retained IC35 reload lands before the fractional T-389 control
     // store. Mode programming must use the analytically advanced shared TP5
     // phase, not the interval's stale left-boundary value.
-    YouKnow106TestAccess::setRangeClockTransition(engine, 0.75);
+    YouKnow106TestAccess::setRangeClockTransition(engine, 1.5, 0.75);
     YouKnow106TestAccess::setDcoResetPending(engine, 0, false);
     const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
     const double phaseStep =
@@ -4223,7 +4310,7 @@ void testPitchPrestageConsumesResetDiscoveredByItsOwnScan()
                       == YouKnow106TestAccess::awaitingLsbWriteState()
                && std::abs(
                       YouKnow106TestAccess::pitClocksToEvent(engine, 0)
-                      - YouKnow106TestAccess::rangeClockClocksToEdge(engine))
+                      - YouKnow106TestAccess::rangeClockFallingClocks(engine))
                       < 1.0e-10
                && !YouKnow106TestAccess::dcoResetPending(engine, 0),
            "T-389 did not apply the reset discovered by its own releasing "
@@ -4809,129 +4896,417 @@ void testLfoDelayStartsFadeOnHoldoffCrossingPass()
 
 void testRangeDividerCompletesItsCurrentSynchronousCount()
 {
-    // Module-board IC35 is not a mux between three clock taps. PF7/PF6 set
-    // the synchronous 40H161 preset (14/12/8), and inverted carry drives both
-    // /LD and every M82C53 CLK input. A switch therefore leaves the current
-    // 8 MHz count alone, loads the latest stable preset on the synchronous
-    // reload edge following terminal carry, and only then adopts the new
-    // selected-clock period.
+    // IC35 terminal carry makes TP5 fall and clocks all six PITs. One raw
+    // 8 MHz tick later IC35 reloads its preset; the corresponding TP5 rise is
+    // observable only after propagation. RANGE therefore has its own reload
+    // policy, separate from PIT /WR ordering at the earlier falling edge.
     YouKnow106Engine cold;
     cold.prepare(48000.0, blockSize, false);
     auto parameters = plainPatch();
     parameters.range = DcoRange::Sixteen;
     cold.setParameters(parameters);
     expect(!YouKnow106TestAccess::rangeClockTransitionPending(cold)
-               && YouKnow106TestAccess::rangeClockClocksToEdge(cold) == 1.0,
-           "a startup RANGE snapshot manufactured an old-modulus cycle");
+               && YouKnow106TestAccess::rangeClockFallingClocks(cold) == 1.0
+               && YouKnow106TestAccess::rangeClockReloadClocks(cold) == 0.0,
+           "a startup RANGE snapshot manufactured an IC35 handoff");
     YouKnow106TestAccess::programDcoCount(cold, 0, 128u, true);
     expect(YouKnow106TestAccess::pitClocksToEvent(cold, 0) == 1.0,
-           "cold mode programming did not use the shared startup phase");
+           "cold mode programming did not use TP5's falling/count phase");
 
-    YouKnow106Engine engine;
-    engine.prepare(192000.0, blockSize, false);
-    parameters.range = DcoRange::Eight;
-    engine.setParameters(parameters);
-    YouKnow106TestAccess::setMode3Running(
-        engine, 0, 128u, true, 103.25, DcoRange::Eight);
-    const double oldPeriod =
-        YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
-
-    parameters.range = DcoRange::Four;
-    engine.setParameters(parameters);
-    expectNear(YouKnow106TestAccess::rangeClockTransitionClocks(engine, 0),
-               0.5, 1.0e-12,
-               "a range write did not retain the old divider-cycle remainder");
-    expectNear(YouKnow106TestAccess::pitClocksToEvent(engine, 0),
-               103.5, 1.0e-12,
-               "a range write retimed later PIT edges with the old modulus");
-
-    const double newClocksPerFrame =
-        YouKnow106TestAccess::eightFootClockHz() * 2.0
-        * YouKnow106TestAccess::internalIntervalSeconds(engine);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        engine, 0, DcoRange::Four);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(engine, 0) == 0.0
-               && std::abs(YouKnow106TestAccess::pitClocksToEvent(engine, 0)
-                           - (103.5 - newClocksPerFrame)) < 1.0e-10
-               && YouKnow106TestAccess::pitOutHigh(engine, 0)
-               && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
-                      == oldPeriod,
-           "the synchronous reload edge truncated the active PIT half-cycle: "
-               + std::to_string(YouKnow106TestAccess::rangeClockTransitionClocks(
-                   engine, 0)) + ", "
-               + std::to_string(YouKnow106TestAccess::pitClocksToEvent(
-                   engine, 0)) + ", "
-               + std::to_string(YouKnow106TestAccess::dcoPeriodSamples(
-                   engine, 0)));
-    int framesToEdge = 1;
-    while (YouKnow106TestAccess::pitOutHigh(engine, 0)
-           && framesToEdge < 32)
+    enum class ReloadRelation { Before, Exact, After };
+    struct HandoffCase
     {
-        YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-            engine, 0, DcoRange::Four);
-        ++framesToEdge;
+        DcoRange previous;
+        DcoRange next;
+        double previousFalling;
+        double expectedFalling;
+        double expectedReload;
+        double expectedDco;
+        ReloadRelation relation;
+        const char* label;
+    };
+
+    // Before/after are 62.5 ns on either side of reload. Expected values are
+    // hard-coded in destination-clock periods so this fixture is independent
+    // of the production transition algebra.
+    constexpr std::array handoffs {
+        HandoffCase { DcoRange::Four, DcoRange::Eight,
+                      0.75, 0.875, 0.125, 3.875,
+                      ReloadRelation::Before, "4->8 before reload" },
+        HandoffCase { DcoRange::Four, DcoRange::Eight,
+                      0.50, 0.25, 0.50, 3.25,
+                      ReloadRelation::Exact, "4->8 exact reload" },
+        HandoffCase { DcoRange::Four, DcoRange::Eight,
+                      0.25, 0.125, 0.375, 3.125,
+                      ReloadRelation::After, "4->8 after reload" },
+        HandoffCase { DcoRange::Four, DcoRange::Sixteen,
+                      0.75, 0.9375, 0.0625, 3.9375,
+                      ReloadRelation::Before, "4->16 before reload" },
+        HandoffCase { DcoRange::Four, DcoRange::Sixteen,
+                      0.50, 0.125, 0.25, 3.125,
+                      ReloadRelation::Exact, "4->16 exact reload" },
+        HandoffCase { DcoRange::Four, DcoRange::Sixteen,
+                      0.25, 0.0625, 0.1875, 3.0625,
+                      ReloadRelation::After, "4->16 after reload" },
+        HandoffCase { DcoRange::Eight, DcoRange::Four,
+                      0.875, 0.75, 0.25, 3.75,
+                      ReloadRelation::Before, "8->4 before reload" },
+        HandoffCase { DcoRange::Eight, DcoRange::Four,
+                      0.75, 1.5, 2.0, 4.5,
+                      ReloadRelation::Exact, "8->4 exact reload" },
+        HandoffCase { DcoRange::Eight, DcoRange::Four,
+                      0.625, 1.25, 1.75, 4.25,
+                      ReloadRelation::After, "8->4 after reload" },
+        HandoffCase { DcoRange::Eight, DcoRange::Sixteen,
+                      0.875, 0.9375, 0.0625, 3.9375,
+                      ReloadRelation::Before, "8->16 before reload" },
+        HandoffCase { DcoRange::Eight, DcoRange::Sixteen,
+                      0.75, 0.375, 0.50, 3.375,
+                      ReloadRelation::Exact, "8->16 exact reload" },
+        HandoffCase { DcoRange::Eight, DcoRange::Sixteen,
+                      0.625, 0.3125, 0.4375, 3.3125,
+                      ReloadRelation::After, "8->16 after reload" },
+        HandoffCase { DcoRange::Sixteen, DcoRange::Four,
+                      0.9375, 0.75, 0.25, 3.75,
+                      ReloadRelation::Before, "16->4 before reload" },
+        HandoffCase { DcoRange::Sixteen, DcoRange::Four,
+                      0.875, 3.5, 4.0, 6.5,
+                      ReloadRelation::Exact, "16->4 exact reload" },
+        HandoffCase { DcoRange::Sixteen, DcoRange::Four,
+                      0.8125, 3.25, 3.75, 6.25,
+                      ReloadRelation::After, "16->4 after reload" },
+        HandoffCase { DcoRange::Sixteen, DcoRange::Eight,
+                      0.9375, 0.875, 0.125, 3.875,
+                      ReloadRelation::Before, "16->8 before reload" },
+        HandoffCase { DcoRange::Sixteen, DcoRange::Eight,
+                      0.875, 1.75, 2.0, 4.75,
+                      ReloadRelation::Exact, "16->8 exact reload" },
+        HandoffCase { DcoRange::Sixteen, DcoRange::Eight,
+                      0.8125, 1.625, 1.875, 4.625,
+                      ReloadRelation::After, "16->8 after reload" },
+    };
+
+    for (const auto& handoff : handoffs)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(192000.0, blockSize, false);
+        parameters.range = handoff.previous;
+        engine.setParameters(parameters);
+        YouKnow106TestAccess::setMode3Running(
+            engine, 0, 128u, true,
+            3.0 + handoff.previousFalling, handoff.previous);
+        const double oldPeriod =
+            YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
+
+        parameters.range = handoff.next;
+        engine.setParameters(parameters);
+        const std::string context = handoff.label;
+        const double actualFalling =
+            YouKnow106TestAccess::rangeClockFallingClocks(engine);
+        const double actualReload =
+            YouKnow106TestAccess::rangeClockReloadClocks(engine);
+        expect(YouKnow106TestAccess::rangeClockTransitionPending(engine)
+                   && YouKnow106TestAccess::activeDcoDivider(engine, 0)
+                          == 128u
+                   && YouKnow106TestAccess::pitOutHigh(engine, 0)
+                   && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
+                          == oldPeriod,
+               context + " changed active PIT state before a count edge");
+        expectNear(actualFalling, handoff.expectedFalling, 1.0e-12,
+                   context + " chose the wrong TP5 falling edge");
+        expectNear(actualReload, handoff.expectedReload, 1.0e-12,
+                   context + " chose the wrong IC35 reload");
+        expectNear(YouKnow106TestAccess::pitClocksToEvent(engine, 0),
+                   handoff.expectedDco, 1.0e-12,
+                   context + " changed the remaining PIT edge ordinal");
+
+        const double clockHz =
+            YouKnow106TestAccess::rangeClockHz(handoff.next);
+        const double rawTickClocks =
+            clockHz / YouKnow106TestAccess::masterClockHz();
+        expectNear(
+            YouKnow106TestAccess::rangeClockClocksToNextFallingEdge(
+                engine, handoff.expectedFalling / clockHz, handoff.next),
+            1.0, 1.0e-12,
+            context + " replayed an exactly consumed falling edge");
+        expectNear(
+            YouKnow106TestAccess::rangeClockClocksToNextFallingEdge(
+                engine, handoff.expectedReload / clockHz, handoff.next),
+            1.0 - rawTickClocks, 1.0e-12,
+            context + " did not leave reload-to-falling high time");
+
+        if (handoff.relation == ReloadRelation::Before)
+        {
+            expect(actualReload < actualFalling,
+                   context + " did not capture the stable new preset");
+            expectNear(actualFalling - actualReload,
+                       1.0 - rawTickClocks, 1.0e-12,
+                       context + " has the wrong reload-to-falling interval");
+        }
+        else
+        {
+            // At exact equality the old reload wins before the PF write. The
+            // new preset, like an after-reload write, waits one old cycle.
+            expect(actualFalling < actualReload,
+                   context + " did not retain the stable old preset");
+            expectNear(actualReload - actualFalling,
+                       rawTickClocks, 1.0e-12,
+                       context + " lost the nominal 125 ns count-to-reload gap");
+        }
     }
-    expect(!YouKnow106TestAccess::pitOutHigh(engine, 0)
-               && YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
-                      == oldPeriod / 2.0,
-           "the first post-switch PIT edge did not enter the new range");
 
-    // Product tie policy orders the selected edge before an exactly coincident
-    // PF write, so the next old-modulus cycle has already started. The data
-    // sheet does not specify capture inside the asynchronous setup/hold
-    // aperture; this deterministic convention preserves one whole old cycle.
-    YouKnow106Engine exact;
-    exact.prepare(192000.0, blockSize, false);
+    // Exact TP5 falling is not exact IC35 reload. PIT count wins at the
+    // former, then a PF update can still reach reload one raw tick later.
+    // Coalesce a tiny card-local residue so RANGE cannot invent an input edge.
+    YouKnow106Engine exactFalling;
+    exactFalling.prepare(192000.0, blockSize, false);
     parameters.range = DcoRange::Eight;
-    exact.setParameters(parameters);
+    exactFalling.setParameters(parameters);
     YouKnow106TestAccess::setMode3Running(
-        exact, 0, 128u, true, 3.0, DcoRange::Eight);
+        exactFalling, 0, 256u, true, 10.0 + 1.0e-12,
+        DcoRange::Eight);
+    YouKnow106TestAccess::setRangeClockPhase(exactFalling, 1.0);
     parameters.range = DcoRange::Four;
-    exact.setParameters(parameters);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(exact, 0) == 2.0
-               && YouKnow106TestAccess::pitClocksToEvent(exact, 0) == 4.0,
-           "an exact-edge range write skipped the in-progress divider cycle");
+    exactFalling.setParameters(parameters);
+    expectNear(YouKnow106TestAccess::rangeClockFallingClocks(exactFalling),
+               1.0, 1.0e-12,
+               "an exact falling-edge PF write moved the next PIT count");
+    expectNear(YouKnow106TestAccess::rangeClockReloadClocks(exactFalling),
+               0.5, 1.0e-12,
+               "an exact falling-edge PF write missed the upcoming reload");
+    expectNear(YouKnow106TestAccess::pitClocksToEvent(exactFalling, 0),
+               10.0, 1.0e-12,
+               "a coalesced falling residue added one PIT input edge");
 
-    // Card-local PIT events can be far apart, but the selected input edge
-    // cannot: all six CLK pins are tied to TP5. A range write therefore
-    // replaces every old local fraction with one shared reload phase while
-    // preserving each counter's remaining integer edge count.
+    // Every card sees the same TP5. Integer PIT edge ordinals can differ, but
+    // all six retain the same physical falling fraction and reload deadline.
     YouKnow106Engine shared;
     shared.prepare(192000.0, blockSize, false);
     parameters.range = DcoRange::Eight;
     shared.setParameters(parameters);
-    YouKnow106TestAccess::setMode3Running(
-        shared, 0, 256u, true, 103.25, DcoRange::Eight);
-    YouKnow106TestAccess::setMode3Running(
-        shared, 1, 256u, false, 200.75, DcoRange::Eight);
-    YouKnow106TestAccess::setRangeClockPhase(shared, 0.4);
+    for (int slot = 0; slot < 6; ++slot)
+        YouKnow106TestAccess::setMode3Running(
+            shared, slot, 256u, (slot & 1) == 0,
+            100.4 + 7.0 * static_cast<double>(slot), DcoRange::Eight);
     parameters.range = DcoRange::Four;
     shared.setParameters(parameters);
-    expectNear(YouKnow106TestAccess::rangeClockTransitionClocks(shared, 0),
+    expectNear(YouKnow106TestAccess::rangeClockFallingClocks(shared),
                0.8, 1.0e-12,
-               "the shared TP5 phase was not retained across RANGE");
-    expectNear(YouKnow106TestAccess::pitClocksToEvent(shared, 0),
-               103.8, 1.0e-12,
-               "voice one lost its remaining shared PIT edge count");
-    expectNear(YouKnow106TestAccess::pitClocksToEvent(shared, 1),
-               200.8, 1.0e-12,
-               "voice two did not adopt the same shared reload edge");
-    for (int slot = 0; slot < 2; ++slot)
+               "six-card handoff lost the shared TP5 falling phase");
+    expectNear(YouKnow106TestAccess::rangeClockReloadClocks(shared),
+               1.3, 1.0e-12,
+               "six-card handoff collapsed reload onto TP5 falling");
+    for (int slot = 0; slot < 6; ++slot)
+        expectNear(
+            YouKnow106TestAccess::pitClocksToEvent(shared, slot),
+            100.8 + 7.0 * static_cast<double>(slot), 1.0e-12,
+            "a voice card acquired a private TP5 phase");
+    for (int slot = 0; slot < 6; ++slot)
         YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
             shared, slot, DcoRange::Four, 20.0f, 20.0f,
             false, false, false);
     YouKnow106TestAccess::advanceRangeClock(shared, DcoRange::Four);
-    expect(!YouKnow106TestAccess::rangeClockTransitionPending(shared)
-               && std::abs(std::fmod(
-                      YouKnow106TestAccess::pitClocksToEvent(shared, 0), 1.0)
-                           - std::fmod(
-                               YouKnow106TestAccess::pitClocksToEvent(
-                                   shared, 1), 1.0)) < 1.0e-12,
-           "one physical TP5 reload became different per-card phases");
+    expect(!YouKnow106TestAccess::rangeClockTransitionPending(shared),
+           "the shared reload survived one physical chassis-clock advance");
+    for (int slot = 0; slot < 6; ++slot)
+    {
+        double phase = std::fmod(
+            YouKnow106TestAccess::pitClocksToEvent(shared, slot), 1.0);
+        if (phase <= 1.0e-12)
+            phase = 1.0;
+        expectNear(phase,
+                   YouKnow106TestAccess::rangeClockFallingClocks(shared),
+                   1.0e-10,
+                   "six card walks produced private falling phases");
+    }
 
-    // The retained edge is physical wall time, not an audio-grid offset.
-    // Equal elapsed time must leave the same countdown at 48 kHz/1x,
-    // 48 kHz/4x and 192 kHz/1x.
+    // A retained old-modulus falling deadline may exceed one new clock. It
+    // must not be reduced modulo one before that physical edge occurs.
+    YouKnow106Engine repeated;
+    repeated.prepare(192000.0, blockSize, false);
+    parameters.range = DcoRange::Sixteen;
+    repeated.setParameters(parameters);
+    YouKnow106TestAccess::setMode3Running(
+        repeated, 0, 8u, true, 2.75, DcoRange::Sixteen);
+    parameters.range = DcoRange::Four;
+    repeated.setParameters(parameters);
+    expectNear(YouKnow106TestAccess::rangeClockFallingClocks(repeated),
+               3.0, 1.0e-12,
+               "a slow-to-fast handoff reduced its first falling deadline");
+    expectNear(YouKnow106TestAccess::rangeClockReloadClocks(repeated),
+               3.5, 1.0e-12,
+               "a slow-to-fast handoff lost its later reload deadline");
+    expectNear(YouKnow106TestAccess::pitClocksToEvent(repeated, 0),
+               5.0, 1.0e-12,
+               "a slow-to-fast handoff lost a PIT edge ordinal");
+    const double fourClockHz =
+        YouKnow106TestAccess::rangeClockHz(DcoRange::Four);
+    const auto fallingAfter = [&](double clocks) {
+        return YouKnow106TestAccess::rangeClockClocksToNextFallingEdge(
+            repeated, clocks / fourClockHz, DcoRange::Four);
+    };
+    expectNear(fallingAfter(2.5), 0.5, 1.0e-12,
+               "a >1 falling deadline was reduced modulo one");
+    expectNear(fallingAfter(3.0), 1.0, 1.0e-12,
+               "the preserved falling edge was replayed at equality");
+    expectNear(fallingAfter(3.25), 0.75, 1.0e-12,
+               "the low interval invented an early PIT count");
+    expectNear(fallingAfter(3.5), 0.5, 1.0e-12,
+               "reload did not leave the 4-foot high interval");
+    expectNear(fallingAfter(4.0), 1.0, 1.0e-12,
+               "the first new-modulus falling edge was replayed");
+
+    // A later PF write before reload replaces only the pending preset. Wall
+    // time is rescaled and the remaining PIT falling-edge ordinals survive.
+    parameters.range = DcoRange::Eight;
+    repeated.setParameters(parameters);
+    expectNear(YouKnow106TestAccess::rangeClockFallingClocks(repeated),
+               1.5, 1.0e-12,
+               "a repeated PF write moved the retained falling wall time");
+    expectNear(YouKnow106TestAccess::rangeClockReloadClocks(repeated),
+               1.75, 1.0e-12,
+               "a repeated PF write moved the retained reload wall time");
+    expectNear(YouKnow106TestAccess::pitClocksToEvent(repeated, 0),
+               3.5, 1.0e-12,
+               "a repeated PF write changed a PIT edge ordinal");
+
+    // Observe initial load after falling (1.5 clocks) but before reload (1.75
+    // clocks). This fails if reload is accidentally treated as the PIT edge.
+    constexpr std::uint32_t replacement = 11u;
+    YouKnow106Engine loadBetweenEdges;
+    loadBetweenEdges.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setInternalRateForTimingTest(
+        loadBetweenEdges, 1250000.0);
+    YouKnow106TestAccess::setMode3Running(
+        loadBetweenEdges, 0, 8u, true, 100.0, DcoRange::Eight);
+    YouKnow106TestAccess::setRangeClockTransition(
+        loadBetweenEdges, 1.5, 1.75);
+    YouKnow106TestAccess::programDcoCount(
+        loadBetweenEdges, 0, replacement, true);
+    expect(YouKnow106TestAccess::pitState(loadBetweenEdges, 0)
+                   == YouKnow106TestAccess::awaitingCountState()
+               && YouKnow106TestAccess::pitClocksToEvent(
+                      loadBetweenEdges, 0) == 1.5,
+           "mode programming used reload instead of TP5 falling");
+    YouKnow106TestAccess::stageMode3Count(
+        loadBetweenEdges, 0, replacement);
+    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+        loadBetweenEdges, 0, DcoRange::Eight);
+    expect(YouKnow106TestAccess::rangeClockTransitionPending(
+                   loadBetweenEdges)
+               && YouKnow106TestAccess::rangeClockReloadClocks(
+                      loadBetweenEdges) > 0.0
+               && YouKnow106TestAccess::activeDcoDivider(
+                      loadBetweenEdges, 0)
+                      == replacement,
+           "the completed count did not load between falling and reload: "
+               + std::to_string(YouKnow106TestAccess::activeDcoDivider(
+                   loadBetweenEdges, 0)) + ", "
+               + std::to_string(YouKnow106TestAccess::rangeClockReloadClocks(
+                   loadBetweenEdges)) + ", "
+               + std::to_string(YouKnow106TestAccess::rangeClockTransitionPending(
+                   loadBetweenEdges)));
+
+    // Reload changes only future TP5 cadence. It cannot retune the active PIT
+    // half-cycle; that period changes only when PIT OUT next transitions.
+    YouKnow106Engine periodGuard;
+    periodGuard.prepare(192000.0, blockSize, false);
+    YouKnow106TestAccess::setInternalRateForTimingTest(
+        periodGuard, 8000000.0);
+    parameters.range = DcoRange::Eight;
+    periodGuard.setParameters(parameters);
+    YouKnow106TestAccess::setMode3Running(
+        periodGuard, 0, 128u, true, 3.875, DcoRange::Eight);
+    const double oldPeriod =
+        YouKnow106TestAccess::dcoPeriodSamples(periodGuard, 0);
+    parameters.range = DcoRange::Four;
+    periodGuard.setParameters(parameters);
+    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+        periodGuard, 0, DcoRange::Four);
+    expect(!YouKnow106TestAccess::rangeClockTransitionPending(periodGuard)
+               && YouKnow106TestAccess::pitOutHigh(periodGuard, 0)
+               && YouKnow106TestAccess::dcoPeriodSamples(periodGuard, 0)
+                      == oldPeriod,
+           "IC35 reload retuned an in-progress PIT half-cycle: "
+               + std::to_string(YouKnow106TestAccess::dcoPeriodSamples(
+                   periodGuard, 0)) + ", "
+               + std::to_string(oldPeriod) + ", "
+               + std::to_string(YouKnow106TestAccess::pitOutHigh(
+                   periodGuard, 0)) + ", "
+               + std::to_string(YouKnow106TestAccess::rangeClockTransitionPending(
+                   periodGuard)));
+    for (int frame = 0;
+         frame < 16 && YouKnow106TestAccess::pitOutHigh(periodGuard, 0);
+         ++frame)
+    {
+        YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+            periodGuard, 0, DcoRange::Four);
+    }
+    expect(!YouKnow106TestAccess::pitOutHigh(periodGuard, 0),
+           "the period guard never reached its next PIT OUT transition");
+    expectNear(YouKnow106TestAccess::dcoPeriodSamples(periodGuard, 0),
+               oldPeriod / 2.0, 1.0e-12,
+               "the next PIT OUT transition did not adopt new RANGE");
+
+    // Reload classification and PIT counting are deliberately independent.
+    // Coalescing a reload inside the numerical aperture must not toggle OUT.
+    YouKnow106Engine reloadInside;
+    YouKnow106Engine reloadOutside;
+    reloadInside.prepare(192000.0, blockSize, false);
+    reloadOutside.prepare(192000.0, blockSize, false);
+    const double frameClocks =
+        YouKnow106TestAccess::rangeClockHz(DcoRange::Four)
+        * YouKnow106TestAccess::internalIntervalSeconds(reloadInside);
+    const double aperture = frameClocks * 1.0e-9;
+    const auto armReloadBoundary = [&](YouKnow106Engine& timed,
+                                       double reload) {
+        parameters.range = DcoRange::Four;
+        timed.setParameters(parameters);
+        YouKnow106TestAccess::setMode3Running(
+            timed, 0, 256u, true, 100.0, DcoRange::Four);
+        YouKnow106TestAccess::setRangeClockTransition(
+            timed, reload + 0.5, reload);
+        YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+            timed, 0, DcoRange::Four);
+    };
+    armReloadBoundary(reloadInside, frameClocks + 0.5 * aperture);
+    armReloadBoundary(reloadOutside, frameClocks + 2.0 * aperture);
+    expect(!YouKnow106TestAccess::rangeClockTransitionPending(reloadInside)
+               && YouKnow106TestAccess::pitOutHigh(reloadInside, 0)
+               && YouKnow106TestAccess::rangeClockFallingClocks(reloadInside)
+                      == 0.5,
+           "a coalesced IC35 reload was treated as a PIT count");
+    expect(YouKnow106TestAccess::rangeClockTransitionPending(reloadOutside)
+               && YouKnow106TestAccess::pitOutHigh(reloadOutside, 0)
+               && YouKnow106TestAccess::rangeClockReloadClocks(reloadOutside)
+                      > aperture,
+           "an out-of-aperture IC35 reload was consumed early");
+
+    // The once-per-interval shared phase and a running card must also consume
+    // the same stable TP5 falling edge on both sides of the aperture.
+    for (const double apertureMultiple : { -0.5, 0.5, 2.0 })
+    {
+        YouKnow106Engine stable;
+        stable.prepare(192000.0, blockSize, false);
+        const double eventClocks = frameClocks
+                                 + apertureMultiple * aperture;
+        YouKnow106TestAccess::setMode3Running(
+            stable, 0, 256u, true, eventClocks, DcoRange::Four);
+        YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
+            stable, 0, DcoRange::Four);
+        const bool edgeConsumed = apertureMultiple < 1.0;
+        expect(YouKnow106TestAccess::pitOutHigh(stable, 0)
+                       == !edgeConsumed
+                   && (edgeConsumed
+                       ? YouKnow106TestAccess::rangeClockFallingClocks(stable)
+                              == 1.0
+                       : YouKnow106TestAccess::rangeClockFallingClocks(stable)
+                              > aperture),
+               "a card and the shared clock disagreed at TP5 falling");
+    }
+
+    // Equal wall time must leave the same physical countdowns on every
+    // processing grid.
     YouKnow106Engine at48k;
     YouKnow106Engine at48kHq;
     YouKnow106Engine at192k;
@@ -4955,23 +5330,23 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
     advance(at48k, 1);
     advance(at48kHq, 4);
     advance(at192k, 4);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(at48k, 0) == 0.0
-               && YouKnow106TestAccess::rangeClockTransitionClocks(
-                      at48kHq, 0) == 0.0
-               && YouKnow106TestAccess::rangeClockTransitionClocks(
-                      at192k, 0) == 0.0
-               && std::abs(YouKnow106TestAccess::pitClocksToEvent(at48k, 0)
-                           - YouKnow106TestAccess::pitClocksToEvent(
-                               at48kHq, 0)) < 1.0e-9
-               && std::abs(YouKnow106TestAccess::pitClocksToEvent(at48k, 0)
-                           - YouKnow106TestAccess::pitClocksToEvent(
-                               at192k, 0)) < 1.0e-9,
-           "equal wall time changed a range handoff across processing grids");
+    const auto sameCountdowns = [](const YouKnow106Engine& left,
+                                   const YouKnow106Engine& right) {
+        return std::abs(
+                   YouKnow106TestAccess::pitClocksToEvent(left, 0)
+                   - YouKnow106TestAccess::pitClocksToEvent(right, 0))
+                   < 1.0e-9
+            && std::abs(
+                   YouKnow106TestAccess::rangeClockFallingClocks(left)
+                   - YouKnow106TestAccess::rangeClockFallingClocks(right))
+                   < 1.0e-9;
+    };
+    expect(sameCountdowns(at48k, at48kHq)
+               && sameCountdowns(at48k, at192k),
+           "equal wall time changed PIT/IC35 phase across processing grids");
 
-    // A live quality rebuild changes only the sample coordinate. If RANGE has
-    // moved while the old PIT half-cycle/ramp period is still in flight, that
-    // retained physical period scales with the grid; it must not be rebuilt
-    // early from the newly selected steady-state frequency.
+    // A live quality rebuild changes sample coordinates, not physical PIT or
+    // IC35 countdowns.
     YouKnow106Engine rebuilt;
     rebuilt.prepare(48000.0, blockSize, true);
     parameters.range = DcoRange::Eight;
@@ -4984,229 +5359,32 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
     rebuilt.setParameters(parameters);
     const double pitBeforeRebuild =
         YouKnow106TestAccess::pitClocksToEvent(rebuilt, 0);
-    const double rangeBeforeRebuild =
-        YouKnow106TestAccess::rangeClockTransitionClocks(rebuilt, 0);
+    const double fallingBeforeRebuild =
+        YouKnow106TestAccess::rangeClockFallingClocks(rebuilt);
+    const double reloadBeforeRebuild =
+        YouKnow106TestAccess::rangeClockReloadClocks(rebuilt);
     YouKnow106TestAccess::rebuildAtOversamplingFactor(rebuilt, 1);
     expectNear(YouKnow106TestAccess::dcoPeriodSamples(rebuilt, 0),
                periodBeforeRebuild / 4.0, 1.0e-12,
-               "a quality rebuild adopted the new RANGE before PIT OUT");
+               "a quality rebuild adopted RANGE before PIT OUT");
     expect(YouKnow106TestAccess::pitClocksToEvent(rebuilt, 0)
                    == pitBeforeRebuild
-               && YouKnow106TestAccess::rangeClockTransitionClocks(
-                      rebuilt, 0) == rangeBeforeRebuild,
+               && YouKnow106TestAccess::rangeClockFallingClocks(rebuilt)
+                      == fallingBeforeRebuild
+               && YouKnow106TestAccess::rangeClockReloadClocks(rebuilt)
+                      == reloadBeforeRebuild,
            "a quality rebuild retimed physical PIT/IC35 countdowns");
 
-    // The card walk and the once-per-interval shared clock must classify the
-    // same right-edge aperture identically. Otherwise one card can consume a
-    // reload that the global clock replays in the following interval.
-    YouKnow106Engine boundary;
-    boundary.prepare(192000.0, blockSize, false);
-    const double boundaryAdvance =
-        YouKnow106TestAccess::eightFootClockHz() * 2.0
-        * YouKnow106TestAccess::internalIntervalSeconds(boundary);
-    const double boundaryTolerance = boundaryAdvance * 1.0e-9;
-    const double insideBoundary = boundaryAdvance
-                                + 0.5 * boundaryTolerance;
-    YouKnow106TestAccess::setMode3Running(
-        boundary, 0, 256u, true, insideBoundary, DcoRange::Four);
-    YouKnow106TestAccess::setRangeClockTransition(
-        boundary, insideBoundary);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        boundary, 0, DcoRange::Four);
-    expect(!YouKnow106TestAccess::rangeClockTransitionPending(boundary)
-               && !YouKnow106TestAccess::pitOutHigh(boundary, 0),
-           "the DCO and shared range clock disagreed inside the edge aperture");
-
-    YouKnow106Engine outsideBoundary;
-    outsideBoundary.prepare(192000.0, blockSize, false);
-    const double afterBoundary = boundaryAdvance
-                               + 2.0 * boundaryTolerance;
-    YouKnow106TestAccess::setMode3Running(
-        outsideBoundary, 0, 256u, true, afterBoundary, DcoRange::Four);
-    YouKnow106TestAccess::setRangeClockTransition(
-        outsideBoundary, afterBoundary);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        outsideBoundary, 0, DcoRange::Four);
-    expect(YouKnow106TestAccess::rangeClockTransitionPending(outsideBoundary)
-               && YouKnow106TestAccess::pitOutHigh(outsideBoundary, 0),
-           "the DCO and shared range clock pulled an out-of-aperture edge early");
-
-    YouKnow106Engine stableBoundary;
-    stableBoundary.prepare(192000.0, blockSize, false);
-    const double boundaryFraction = boundaryAdvance
-                                  - std::floor(boundaryAdvance);
-    YouKnow106TestAccess::setMode3Running(
-        stableBoundary, 0, 256u, true,
-        boundaryAdvance + 0.5 * boundaryTolerance, DcoRange::Four);
-    YouKnow106TestAccess::setRangeClockPhase(
-        stableBoundary, boundaryFraction + 0.5 * boundaryTolerance);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        stableBoundary, 0, DcoRange::Four);
-    expect(!YouKnow106TestAccess::pitOutHigh(stableBoundary, 0)
-               && YouKnow106TestAccess::rangeClockClocksToEdge(
-                      stableBoundary) == 1.0,
-           "a stable TP5 edge aperture desynchronised PIT and shared phase: "
-               + std::to_string(YouKnow106TestAccess::pitOutHigh(
-                   stableBoundary, 0)) + ", "
-               + std::to_string(YouKnow106TestAccess::rangeClockClocksToEdge(
-                   stableBoundary)) + ", "
-               + std::to_string(YouKnow106TestAccess::pitClocksToEvent(
-                   stableBoundary, 0)));
-
-    YouKnow106Engine stableOutside;
-    stableOutside.prepare(192000.0, blockSize, false);
-    YouKnow106TestAccess::setMode3Running(
-        stableOutside, 0, 256u, true,
-        boundaryAdvance + 2.0 * boundaryTolerance, DcoRange::Four);
-    YouKnow106TestAccess::setRangeClockPhase(
-        stableOutside, boundaryFraction + 2.0 * boundaryTolerance);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        stableOutside, 0, DcoRange::Four);
-    expect(YouKnow106TestAccess::pitOutHigh(stableOutside, 0)
-               && YouKnow106TestAccess::rangeClockClocksToEdge(
-                      stableOutside) > boundaryTolerance,
-           "a stable TP5 edge outside the aperture was consumed early");
-
-    YouKnow106Engine stableBeforeBoundary;
-    stableBeforeBoundary.prepare(192000.0, blockSize, false);
-    YouKnow106TestAccess::setMode3Running(
-        stableBeforeBoundary, 0, 256u, true,
-        boundaryAdvance - 0.5 * boundaryTolerance, DcoRange::Four);
-    YouKnow106TestAccess::setRangeClockPhase(
-        stableBeforeBoundary,
-        boundaryFraction - 0.5 * boundaryTolerance);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        stableBeforeBoundary, 0, DcoRange::Four);
-    expect(!YouKnow106TestAccess::pitOutHigh(stableBeforeBoundary, 0)
-               && YouKnow106TestAccess::rangeClockClocksToEdge(
-                      stableBeforeBoundary) == 1.0,
-           "a TP5 edge just before the stable right boundary was replayed");
-
-    // A stopped CE still observes the shared clock. Its retained phase and
-    // IC35 must coalesce both sides of the numerical aperture identically.
-    const auto expectAwaitingPhase = [boundaryFraction,
-                                      &parameters](double offset) {
-        YouKnow106Engine awaiting;
-        awaiting.prepare(192000.0, blockSize, false);
-        parameters.range = DcoRange::Four;
-        awaiting.setParameters(parameters);
-        YouKnow106TestAccess::setRangeClockPhase(
-            awaiting, boundaryFraction + offset);
-        YouKnow106TestAccess::programDcoCount(
-            awaiting, 0, 256u, true);
-        YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-            awaiting, 0, DcoRange::Four);
-        expect(YouKnow106TestAccess::pitState(awaiting, 0)
-                       == YouKnow106TestAccess::awaitingCountState()
-                   && YouKnow106TestAccess::pitClocksToEvent(awaiting, 0)
-                          == 1.0
-                   && YouKnow106TestAccess::rangeClockClocksToEdge(awaiting)
-                          == 1.0,
-               offset < 0.0
-                   ? "CE and IC35 disagreed just before a shared edge"
-                   : "CE and IC35 disagreed just after a shared edge");
-    };
-    expectAwaitingPhase(-0.5 * boundaryTolerance);
-    expectAwaitingPhase(0.5 * boundaryTolerance);
-
-    // The stable clock maps a boundary-aperture remainder to one full clock.
-    // A running PIT that did not toggle on that selected edge can still carry
-    // the tiny continuous residue. Re-anchor from the shared phase so RANGE
-    // does not manufacture one extra input edge in that state.
-    YouKnow106Engine coalescedRange;
-    coalescedRange.prepare(192000.0, blockSize, false);
-    parameters.range = DcoRange::Eight;
-    coalescedRange.setParameters(parameters);
-    const double coalescedResidue = 0.25 * boundaryTolerance;
-    YouKnow106TestAccess::setMode3Running(
-        coalescedRange, 0, 256u, true,
-        10.0 + coalescedResidue, DcoRange::Eight);
-    YouKnow106TestAccess::setRangeClockPhase(coalescedRange, 1.0);
-    parameters.range = DcoRange::Four;
-    coalescedRange.setParameters(parameters);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(
-                   coalescedRange, 0) == 2.0
-               && YouKnow106TestAccess::pitClocksToEvent(
-                      coalescedRange, 0) == 11.0,
-           "a coalesced TP5 boundary added an extra PIT input edge");
-
-    // A complete count present just before the retained reload loads there.
-    // At or just after that edge, PIT/reload wins before the MSB and the count
-    // waits for the following new-modulus edge.
-    YouKnow106Engine msbBefore;
-    YouKnow106Engine msbExact;
-    YouKnow106Engine msbAfter;
-    const auto runMsbCase = [&parameters](YouKnow106Engine& timed,
-                                          double cpuStates) {
-        timed.prepare(192000.0, blockSize, false);
-        parameters.range = DcoRange::Sixteen;
-        timed.setParameters(parameters);
-        YouKnow106TestAccess::setMode3Running(
-            timed, 0, 256u, true, 100.0, DcoRange::Sixteen);
-        parameters.range = DcoRange::Four;
-        timed.setParameters(parameters);
-        YouKnow106TestAccess::programDcoCount(timed, 0, 1000u, true);
-        YouKnow106TestAccess::setAwaitingPitMsb(
-            timed, 0, 1000u, cpuStates);
-        YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-            timed, 0, DcoRange::Four);
-    };
-    runMsbCase(msbBefore, 3.5);
-    runMsbCase(msbExact, 4.0);
-    runMsbCase(msbAfter, 4.5);
-    const double beforeCountdown =
-        YouKnow106TestAccess::pitClocksToEvent(msbBefore, 0);
-    const double exactCountdown =
-        YouKnow106TestAccess::pitClocksToEvent(msbExact, 0);
-    const double afterCountdown =
-        YouKnow106TestAccess::pitClocksToEvent(msbAfter, 0);
-    expect(YouKnow106TestAccess::activeDcoDivider(msbBefore, 0) == 1000u
-               && YouKnow106TestAccess::activeDcoDivider(msbExact, 0) == 1000u
-               && YouKnow106TestAccess::activeDcoDivider(msbAfter, 0) == 1000u
-               && std::abs(exactCountdown - beforeCountdown - 1.0) < 1.0e-10
-               && std::abs(afterCountdown - exactCountdown) < 1.0e-10,
-           "shared reload did not order MSB before/exact/after cases");
-
-    // A second PF write before reload changes only the pending preset. The
-    // preserved wall time is rescaled again, while the number of later PIT
-    // input edges remains unchanged. Mode programming during that long first
-    // interval must retain the whole interval, not just its fractional part.
-    YouKnow106Engine repeated;
-    repeated.prepare(192000.0, blockSize, false);
-    parameters.range = DcoRange::Sixteen;
-    repeated.setParameters(parameters);
-    YouKnow106TestAccess::setMode3Running(
-        repeated, 0, 8u, true, 2.75, DcoRange::Sixteen);
-    parameters.range = DcoRange::Four;
-    repeated.setParameters(parameters);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(repeated, 0) == 3.0
-               && YouKnow106TestAccess::pitClocksToEvent(repeated, 0) == 5.0,
-           "the first pre-reload range write lost its absolute edge time");
-    parameters.range = DcoRange::Eight;
-    repeated.setParameters(parameters);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(repeated, 0) == 1.5
-               && YouKnow106TestAccess::pitClocksToEvent(repeated, 0) == 3.5,
-           "a later pre-reload range write did not replace the pending preset");
-
-    constexpr std::uint32_t replacement = 11u;
-    YouKnow106TestAccess::programDcoCount(
-        repeated, 0, replacement, true);
-    expect(YouKnow106TestAccess::pitState(repeated, 0)
-                   == YouKnow106TestAccess::awaitingCountState()
-               && YouKnow106TestAccess::pitClocksToEvent(repeated, 0) == 1.5,
-           "mode programming shortened a retained old-modulus clock interval");
-    YouKnow106TestAccess::stageMode3Count(repeated, 0, replacement);
-    YouKnow106TestAccess::advanceDcoAndSharedRangeClock(
-        repeated, 0, DcoRange::Eight);
-    expect(YouKnow106TestAccess::rangeClockTransitionClocks(repeated, 0) == 0.0
-               && YouKnow106TestAccess::activeDcoDivider(repeated, 0)
-                      == replacement,
-           "the completed count did not load on the preserved reload edge");
-
+    expect(YouKnow106TestAccess::rangeClockTransitionPending(repeated)
+               && YouKnow106TestAccess::rangeClockReloadClocks(repeated)
+                      == 1.75,
+           "the reset fixture no longer held an in-flight reload");
     repeated.reset();
     expect(!YouKnow106TestAccess::rangeClockTransitionPending(repeated)
-               && YouKnow106TestAccess::rangeClockClocksToEdge(repeated)
-                      == 1.0,
+               && YouKnow106TestAccess::rangeClockFallingClocks(repeated)
+                      == 1.0
+               && YouKnow106TestAccess::rangeClockReloadClocks(repeated)
+                      == 0.0,
            "reset retained a pending range-divider handoff");
 }
 
@@ -5971,8 +6149,10 @@ void testPitStateMatchesFastFreewheel()
         rendered, 0, 100u, true, 50.0);
     YouKnow106TestAccess::setMode3Running(
         freewheeled, 0, 100u, true, 50.0);
-    YouKnow106TestAccess::setRangeClockTransition(rendered, 0.75);
-    YouKnow106TestAccess::setRangeClockTransition(freewheeled, 0.75);
+    // A deliberately long but phase-valid synthetic handoff keeps reload
+    // pending past the first parity observation (falling-to-reload is .25).
+    YouKnow106TestAccess::setRangeClockTransition(rendered, 20.0, 20.25);
+    YouKnow106TestAccess::setRangeClockTransition(freewheeled, 20.0, 20.25);
     const auto armPhysicalPrestage = [](YouKnow106Engine& engine) {
         const std::size_t ordinal = YouKnow106TestAccess::pitchOrdinal(0);
         const double phaseStep =
@@ -5988,6 +6168,7 @@ void testPitStateMatchesFastFreewheel()
     armPhysicalPrestage(freewheeled);
 
     bool transactionMatched = true;
+    bool observedPendingReload = false;
     for (int sample = 0; sample < 200; ++sample)
     {
         YouKnow106TestAccess::advanceDcoPitAndRamp(rendered, 0, true);
@@ -5996,6 +6177,10 @@ void testPitStateMatchesFastFreewheel()
             rendered, DcoRange::Eight);
         YouKnow106TestAccess::advanceRangeClock(
             freewheeled, DcoRange::Eight);
+        observedPendingReload = observedPendingReload
+            || (YouKnow106TestAccess::rangeClockTransitionPending(rendered)
+                && YouKnow106TestAccess::rangeClockReloadClocks(rendered)
+                       > 0.0);
         transactionMatched = transactionMatched
             && YouKnow106TestAccess::activeDcoDivider(rendered, 0)
                    == YouKnow106TestAccess::activeDcoDivider(freewheeled, 0)
@@ -6025,14 +6210,18 @@ void testPitStateMatchesFastFreewheel()
             && YouKnow106TestAccess::pendingDcoDividerValid(rendered, 0)
                    == YouKnow106TestAccess::pendingDcoDividerValid(
                        freewheeled, 0)
-            && YouKnow106TestAccess::rangeClockClocksToEdge(rendered)
-                   == YouKnow106TestAccess::rangeClockClocksToEdge(freewheeled)
+            && YouKnow106TestAccess::rangeClockFallingClocks(rendered)
+                   == YouKnow106TestAccess::rangeClockFallingClocks(
+                       freewheeled)
+            && YouKnow106TestAccess::rangeClockReloadClocks(rendered)
+                   == YouKnow106TestAccess::rangeClockReloadClocks(
+                       freewheeled)
             && YouKnow106TestAccess::rangeClockTransitionPending(rendered)
                    == YouKnow106TestAccess::rangeClockTransitionPending(
                        freewheeled);
     }
 
-    expect(transactionMatched
+    expect(transactionMatched && observedPendingReload
                && YouKnow106TestAccess::activeDcoDivider(rendered, 0)
                == YouKnow106TestAccess::activeDcoDivider(freewheeled, 0)
                && YouKnow106TestAccess::pitOutHigh(rendered, 0)

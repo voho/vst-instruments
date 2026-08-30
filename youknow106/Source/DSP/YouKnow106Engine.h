@@ -1227,6 +1227,8 @@ private:
             running
         };
 
+        // Rising/falling name the M82C53 OUT transition produced on a TP5
+        // falling/count edge; they are not names for TP5 itself.
         enum class PitEvent : std::uint8_t
         {
             initialLoad,
@@ -1881,6 +1883,8 @@ private:
                          bool writesControlWord) noexcept;
     void beginRangeClockTransition(DcoRange previous,
                                    DcoRange next) noexcept;
+    [[nodiscard]] double rangeClockClocksToNextFallingEdge(
+        double elapsedSeconds, DcoRange range) const noexcept;
     void advanceRangeClock(DcoRange range) noexcept;
     void updateActiveDcoPeriod(Dco& dco, DcoRange range) noexcept;
     void advanceDcoPitAndRamp(Voice& voice, DcoRange range,
@@ -2166,11 +2170,14 @@ private:
     RateTransition rateTransition_ { RateTransition::Idle };
     float rateTransitionGain_ { 1.0f };
     float rateTransitionStep_ { 1.0f };
-    // IC35 and TP5 are one clock source shared by all six PITs. This is the
-    // wall time to its next rising edge expressed in periods of the currently
-    // selected range clock. During a RANGE handoff it can exceed one: the old
-    // synchronous count must finish before the new modulus begins.
-    double rangeClockClocksToEdge_ { 1.0 };
+    // IC35 terminal carry makes TP5 fall, and every M82C53 counts on that
+    // falling edge. One raw 8 MHz tick later IC35 synchronously reloads; TP5
+    // then rises after propagation. Keep those phases separate so PIT /WR
+    // ties are compared with the former and PF RANGE writes with the latter.
+    // Both countdowns use periods of the currently requested range clock and
+    // can exceed one while an old-modulus cycle completes.
+    double rangeClockClocksToFallingEdge_ { 1.0 };
+    double rangeClockClocksToReload_ { 0.0 };
     bool rangeClockTransitionPending_ { false };
     // Fractional pass scheduler. Keeping phase in passes avoids truncating
     // 4.2 ms to a whole internal-sample count at arbitrary host rates.
