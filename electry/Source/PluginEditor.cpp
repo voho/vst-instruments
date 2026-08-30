@@ -1651,8 +1651,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     keyboard.setKeyWidth (24.0f);
     keyboard.setBlackNoteLengthProportion (0.64f);
     keyboard.setOctaveForMiddleC (4);
-    keyboard.setTitle (
-        "MIDI keyboard: hold A#0 for vibrato or B0 for tremolo picking; E1 to D6 plays");
+    keyboard.setTitle ("MIDI keyboard: " + keyboardHintLabel.getText());
     keyboard.setComponentID ("keyboard");
     keyboard.setHasFocusOutline (true);
     addAndMakeVisible (keyboard);

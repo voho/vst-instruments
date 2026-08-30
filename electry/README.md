@@ -2546,6 +2546,20 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 complete accessible keyboard instructions
+
+- The focusable MIDI keyboard's accessible title mentioned only the two
+  momentary gestures and playable range, while its visible footer also explains
+  all ten C0..A0 pick-stroke and play-style keyswitches. The title now derives
+  from that footer verbatim, so the two instruction surfaces cannot drift and
+  assistive-technology focus announces every playable keyboard region.
+- The processor/editor contract creates the keyboard's native accessibility
+  handler and requires its exact title to equal `"MIDI keyboard: "` plus the
+  visible hint. The processor suite passes, and the 1080x860 editor render
+  remains byte-identical with SHA-256
+  `e7187094719025a49206bc6fb2e401ffb225fedbe2a1b2d5c09372ac094fc374`.
+  No painting, layout, audio or DSP path changed.
+
 ### 2026-08-30 demo 06 whole-step wheel score
 
 - Demo 06 described a wheel bend "up a step", but `pitchBend(0.75)` asks the

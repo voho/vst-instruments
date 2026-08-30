@@ -4956,13 +4956,11 @@ void testEditorRendering()
         expect (keyboard->getWantsKeyboardFocus()
                     && keyboard->hasFocusOutline(),
                 "keyboard is not visibly keyboard-focusable");
-        expect (keyboard->getTitle().contains ("D6")
-                    && keyboard->getTitle().contains ("A#0")
-                    && keyboard->getTitle().contains ("B0")
-                    && keyboard->getTitle().containsIgnoreCase ("tremolo")
-                    && ! keyboard->getTitle().contains ("E6")
-                    && ! keyboard->getTitle().contains ("B6"),
-                "keyboard title presents out-of-range E6..B6 keys as pitched notes");
+        auto keyboardAccessibility = keyboard->createAccessibilityHandler();
+        expect (hintLabel != nullptr && keyboardAccessibility != nullptr
+                    && keyboardAccessibility->getTitle()
+                        == "MIDI keyboard: " + hintLabel->getText(),
+                "keyboard accessibility omits its visible keyswitch instructions");
         expect (hintLabel != nullptr
                     && hintLabel->getText().contains ("E1..D6")
                     && hintLabel->getText().contains ("A#0")
