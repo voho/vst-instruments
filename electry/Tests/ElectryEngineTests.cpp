@@ -1302,6 +1302,29 @@ struct ElectryEngineTestAccess
             .slideNoiseLevel;
     }
 
+    static float slideAverageBandCentreHz(const ElectryEngine& engine,
+                                          int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .slideAverageBandCentreHz;
+    }
+
+    static std::array<float, 2> slideBandCoefficients(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        return { voice.slideBandHigh, voice.slideBandLow };
+    }
+
+    static void updateSlideControlAt(ElectryEngine& engine, int stringIndex,
+                                     float blend) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        voice.legatoBlend = clampf(blend - voice.legatoIncrement, 0.0f, 1.0f);
+        engine.updateVoiceControl(voice);
+    }
+
     static float releaseGainTarget(const ElectryEngine& engine,
                                    int stringIndex) noexcept
     {
@@ -10532,8 +10555,10 @@ void testSlideArticulation()
         int settleSamples { 0 };
         int stringIndex { -1 };
         int fret { -1 };
+        int controlFrames { 1 };
         float frictionAmplitude { 0.0f };
         float excitationAmplitude { 0.0f };
+        std::array<int, 3> sweepSamples {{ -1, -1, -1 }};
     };
 
     const auto renderSlide = [&] (int fromNote, int toNote, float fingerNoise,
@@ -10560,6 +10585,7 @@ void testSlideArticulation()
 
         Slide result;
         result.stringIndex = TestAccess::stringForNote(engine, toNote);
+        result.controlFrames = TestAccess::hostFramesPerControlPeriod(engine);
         result.fret = result.stringIndex >= 0
             ? TestAccess::snapshot(engine, result.stringIndex).fret : -1;
         result.frictionAmplitude = result.stringIndex >= 0
@@ -10584,6 +10610,14 @@ void testSlideArticulation()
                            result.audio.right.data() + at, samples);
             if (settled || result.stringIndex < 0)
                 continue;
+            constexpr std::array<float, 3> sweepBlends {{ 0.2f, 0.5f, 0.8f }};
+            for (std::size_t point = 0; point < sweepBlends.size(); ++point)
+            {
+                if (result.sweepSamples[point] < 0
+                    && TestAccess::legatoBlend(engine, result.stringIndex)
+                           >= sweepBlends[point])
+                    result.sweepSamples[point] = at + samples;
+            }
             if (TestAccess::legatoBlend(engine, result.stringIndex) >= 1.0f)
             {
                 result.settleSamples = at + samples;
@@ -11081,6 +11115,171 @@ void testSlideArticulation()
                && silentSlide.excitationAmplitude == 0.0f,
            "a travelling finger injected a new pick-like string attack");
 
+    // The level already follows the normalized smoothstep velocity
+    // 6 b (1 - b). The two friction poles must follow that same coordinate:
+    // 1.125 times the average centre near each quarter and 1.5 times at the
+    // midpoint, subject only to the existing 200 Hz and 0.40-rate clamps.
+    // Probe the control update directly so block size and oversampling do not
+    // turn an exact coefficient contract into an audio-grid tolerance.
+    struct BandPoint
+    {
+        float blend { 0.0f };
+        double centreHz { 0.0 };
+        std::array<float, 2> coefficients {{ 0.0f, 0.0f }};
+    };
+    struct BandTrace
+    {
+        int stringIndex { -1 };
+        double internalRate { 0.0 };
+        float averageCentreHz { 0.0f };
+        float frictionAmplitude { 0.0f };
+        std::array<float, 2> contactCoefficients {{ 0.0f, 0.0f }};
+        std::array<BandPoint, 3> points {};
+    };
+    const auto traceBand = [] (double hostRate, int fromNote, int toNote,
+                               float fingerNoise, float bendTime,
+                               PlayStyle style)
+    {
+        ElectryEngine engine;
+        engine.prepare(hostRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.fingerNoise = fingerNoise;
+        parameters.bendTimeSeconds = bendTime;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(fromNote, 0.85f);
+        StereoBuffer establish(static_cast<int>(0.30 * hostRate));
+        renderInto(engine, establish);
+        engine.noteOn(styleKeyswitch(style), 1.0f);
+        engine.noteOn(toNote, 0.85f);
+
+        BandTrace trace;
+        trace.stringIndex = TestAccess::stringForNote(engine, toNote);
+        trace.internalRate = TestAccess::internalSampleRate(engine);
+        if (trace.stringIndex < 0)
+            return trace;
+        trace.averageCentreHz = TestAccess::slideAverageBandCentreHz(
+            engine, trace.stringIndex);
+        trace.frictionAmplitude = TestAccess::slideNoiseAmplitude(
+            engine, trace.stringIndex);
+        trace.contactCoefficients = TestAccess::slideBandCoefficients(
+            engine, trace.stringIndex);
+        constexpr std::array<float, 3> blends {{ 0.25f, 0.50f, 0.75f }};
+        for (std::size_t point = 0; point < blends.size(); ++point)
+        {
+            TestAccess::updateSlideControlAt(
+                engine, trace.stringIndex, blends[point]);
+            trace.points[point].blend = TestAccess::legatoBlend(
+                engine, trace.stringIndex);
+            trace.points[point].centreHz = TestAccess::slideBandCentreHz(
+                engine, trace.stringIndex);
+            trace.points[point].coefficients =
+                TestAccess::slideBandCoefficients(engine, trace.stringIndex);
+        }
+        return trace;
+    };
+
+    constexpr float twoPi = 6.28318530717958647692f;
+    for (const double hostRate : { 44100.0, 48000.0, 96000.0,
+                                   192000.0, 384000.0 })
+    {
+        const auto trace = traceBand(
+            hostRate, 45, 57, 0.8f, 0.80f, PlayStyle::Slide);
+        const float ceiling = 0.40f * static_cast<float>(trace.internalRate);
+        expect(trace.stringIndex == 3 && trace.frictionAmplitude > 0.0f
+                   && trace.averageCentreHz > 200.0f
+                   && 1.5f * trace.averageCentreHz < ceiling,
+               "invalid unclamped slide-band fixture at "
+                   + std::to_string(hostRate) + " Hz");
+        constexpr std::array<float, 3> expectedBlends {{
+            0.25f, 0.50f, 0.75f
+        }};
+        for (std::size_t index = 0; index < trace.points.size(); ++index)
+        {
+            const auto& point = trace.points[index];
+            const float motion = 6.0f * point.blend
+                               * (1.0f - point.blend);
+            const float expectedCentre = electry::clampf(
+                trace.averageCentreHz * motion, 200.0f, ceiling);
+            const float inverseRate = 1.0f
+                / static_cast<float>(trace.internalRate);
+            const float expectedHigh = std::exp(
+                -twoPi * std::min(1.6f * expectedCentre,
+                                  0.45f * static_cast<float>(trace.internalRate))
+                * inverseRate);
+            const float expectedLow = std::exp(
+                -twoPi * 0.6f * expectedCentre * inverseRate);
+            expect(std::abs(point.blend - expectedBlends[index]) < 2.0e-6f,
+                   "the exact slide-band blend probe missed its target");
+            expect(std::abs(point.centreHz - expectedCentre)
+                       < std::max(0.05, 2.0e-4 * expectedCentre),
+                   "the friction centre missed normalized finger speed at "
+                       + std::to_string(hostRate) + " Hz");
+            expect(std::abs(point.coefficients[0] - expectedHigh) < 2.0e-6f
+                       && std::abs(point.coefficients[1] - expectedLow)
+                              < 2.0e-6f,
+                   "the friction poles missed their control-rate centre at "
+                       + std::to_string(hostRate) + " Hz");
+        }
+        expect(std::abs(trace.points[0].centreHz / trace.averageCentreHz
+                            - 1.125) < 2.0e-3
+                   && std::abs(trace.points[1].centreHz
+                                   / trace.averageCentreHz - 1.5) < 2.0e-3,
+               "the friction centre did not follow the smoothstep-velocity "
+               "ratios");
+        expect(std::abs(trace.points[0].centreHz
+                            / trace.points[2].centreHz - 1.0) < 2.0e-3,
+               "symmetric slide speeds produced asymmetric friction bands");
+    }
+
+    const auto floorTrace = traceBand(
+        48000.0, 85, 86, 0.8f, 2.0f, PlayStyle::Slide);
+    expect(floorTrace.stringIndex == 7
+               && floorTrace.averageCentreHz * 1.5f < 200.0f,
+           "invalid low-clamp slide-band fixture");
+    for (const auto& point : floorTrace.points)
+        expect(std::abs(point.centreHz - 200.0) < 0.05,
+               "the moving slide band escaped its 200 Hz floor");
+
+    const auto ceilingTrace = traceBand(
+        44100.0, 35, 47, 0.8f, 0.04f, PlayStyle::Slide);
+    const double ceilingHz = 0.40 * ceilingTrace.internalRate;
+    expect(ceilingTrace.stringIndex == 1
+               && ceilingTrace.averageCentreHz < ceilingHz
+               && ceilingTrace.averageCentreHz * 1.5f > ceilingHz,
+           "invalid high-clamp slide-band fixture (string "
+               + std::to_string(ceilingTrace.stringIndex) + ", average "
+               + std::to_string(ceilingTrace.averageCentreHz) + " Hz, ceiling "
+               + std::to_string(ceilingHz) + " Hz)");
+    expect(ceilingTrace.points[0].centreHz < ceilingHz * 0.99
+               && std::abs(ceilingTrace.points[1].centreHz - ceilingHz)
+                      < ceilingHz * 2.0e-4
+               && ceilingTrace.points[2].centreHz < ceilingHz * 0.99,
+           "the moving slide band missed its rate-relative ceiling");
+
+    const auto silentBand = traceBand(
+        sampleRate, 45, 57, 0.0f, 0.80f, PlayStyle::Slide);
+    expect(silentBand.averageCentreHz > 0.0f
+               && silentBand.frictionAmplitude == 0.0f,
+           "invalid zero-Finger-Noise slide-band fixture");
+    for (const auto& point : silentBand.points)
+        expect(point.coefficients == silentBand.contactCoefficients,
+               "zero Finger Noise did not bypass slide-band updates exactly");
+
+    const auto hammerBand = traceBand(
+        sampleRate, 45, 47, 0.8f, 0.80f, PlayStyle::Hammer);
+    expect(hammerBand.stringIndex == 3
+               && hammerBand.averageCentreHz == 0.0f
+               && hammerBand.frictionAmplitude == 0.0f,
+           "invalid non-Slide band-bypass fixture");
+    for (const auto& point : hammerBand.points)
+        expect(point.coefficients == hammerBand.contactCoefficients,
+               "a non-Slide gesture updated the friction band");
+
     const int frictionStart = slideStart;
     const int frictionLength = std::max(1024, longSlide.settleSamples);
     const auto scrapeEnergy = [&] (const Slide& withNoise, const Slide& without)
@@ -11143,8 +11342,10 @@ void testSlideArticulation()
         engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
         engine.noteOn(57, 0.85f);
         const int stringIndex = TestAccess::stringForNote(engine, 57);
-        return stringIndex >= 0
-            ? TestAccess::slideBandCentreHz(engine, stringIndex) : 0.0;
+        if (stringIndex < 0)
+            return 0.0;
+        TestAccess::updateSlideControlAt(engine, stringIndex, 0.5f);
+        return TestAccess::slideBandCentreHz(engine, stringIndex);
     };
     const double fastCentre = bandCentre(0.20f);
     const double slowCentre = bandCentre(0.80f);
@@ -11168,6 +11369,99 @@ void testSlideArticulation()
     };
     const auto fastFriction = differenceOf(fastSlide, fastSilent);
     const auto slowFriction = differenceOf(slowSlide, slowSilent);
+
+    // Removing an otherwise identical silent scrape leaves only the contact
+    // generator. The recovered poles above carry the directional oracle: a
+    // loaded pickup followed by one finite noise realization does not preserve
+    // reliable centroid ordering. Here each early/middle/late window instead
+    // proves that the moving source remains audible and finite, and that no
+    // control-period phase acquires a disproportionate first-difference spike.
+    expect(slowSlide.sweepSamples == slowSilent.sweepSamples
+               && slowSlide.sweepSamples[0] > 0
+               && slowSlide.sweepSamples[2]
+                      < static_cast<int>(slowFriction.size()),
+           "invalid friction-only early/mid/late sweep fixture");
+    const int sweepWindow = static_cast<int>(0.06 * sampleRate);
+    std::array<double, 3> sweepCentres {};
+    std::array<double, 3> sweepRms {};
+    for (std::size_t point = 0; point < sweepCentres.size(); ++point)
+    {
+        const int start = std::max(
+            0, slowSlide.sweepSamples[point] - sweepWindow / 2);
+        sweepCentres[point] = broadbandCentroid(
+            slowFriction, start, sweepWindow);
+        double energy = 0.0;
+        for (int sample = start; sample < start + sweepWindow; ++sample)
+        {
+            const double value = slowFriction[
+                static_cast<std::size_t>(sample)];
+            energy += value * value;
+        }
+        sweepRms[point] = std::sqrt(energy / sweepWindow);
+    }
+    std::cout << "PROBE slide friction early/mid/late centroids: "
+              << sweepCentres[0] << "/" << sweepCentres[1] << "/"
+              << sweepCentres[2] << " Hz; RMS " << sweepRms[0] << "/"
+              << sweepRms[1] << "/" << sweepRms[2] << "\n";
+    expect(std::isfinite(sweepCentres[0])
+               && std::isfinite(sweepCentres[1])
+               && std::isfinite(sweepCentres[2])
+               && sweepCentres[0] > 300.0
+               && sweepCentres[1] > 300.0
+               && sweepCentres[2] > 300.0
+               && sweepRms[0] > 1.0e-7
+               && sweepRms[1] > 1.0e-7
+               && sweepRms[2] > 1.0e-7,
+           "friction-only output was absent or non-finite (early "
+               + std::to_string(sweepCentres[0]) + " Hz, middle "
+               + std::to_string(sweepCentres[1]) + " Hz, late "
+               + std::to_string(sweepCentres[2]) + " Hz)");
+
+    std::vector<double> phaseStepEnergy(
+        static_cast<std::size_t>(slowSlide.controlFrames), 0.0);
+    std::vector<int> phaseStepCount(
+        static_cast<std::size_t>(slowSlide.controlFrames), 0);
+    double maximumStep = 0.0;
+    bool finiteSweep = true;
+    const int sweepFirst = slowSlide.sweepSamples[0];
+    const int sweepLast = slowSlide.sweepSamples[2];
+    for (int sample = sweepFirst + 1; sample <= sweepLast; ++sample)
+    {
+        const double current = slowFriction[static_cast<std::size_t>(sample)];
+        const double previous = slowFriction[
+            static_cast<std::size_t>(sample - 1)];
+        const double step = current - previous;
+        finiteSweep = finiteSweep && std::isfinite(current)
+                                  && std::isfinite(step);
+        maximumStep = std::max(maximumStep, std::abs(step));
+        const std::size_t phase = static_cast<std::size_t>(
+            (sample - sweepFirst) % slowSlide.controlFrames);
+        phaseStepEnergy[phase] += step * step;
+        ++phaseStepCount[phase];
+    }
+    double phaseMean = 0.0;
+    double phaseMaximum = 0.0;
+    for (std::size_t phase = 0; phase < phaseStepEnergy.size(); ++phase)
+    {
+        const double rms = std::sqrt(
+            phaseStepEnergy[phase]
+            / std::max(phaseStepCount[phase], 1));
+        phaseMean += rms;
+        phaseMaximum = std::max(phaseMaximum, rms);
+    }
+    phaseMean /= static_cast<double>(phaseStepEnergy.size());
+    const double phaseRatio = phaseMaximum
+        / std::max(phaseMean, 1.0e-12);
+    std::cout << "PROBE slide friction maximum step/control-phase ratio: "
+              << maximumStep << "/" << phaseRatio << "\n";
+    expect(finiteSweep && maximumStep < 0.25
+               && phaseMaximum < 1.35 * phaseMean,
+           "the moving friction band produced a non-finite, unbounded or "
+           "control-period click (maximum step "
+               + std::to_string(maximumStep) + ", phase ratio "
+               + std::to_string(phaseRatio)
+               + ")");
+
     const double fastCentroid = broadbandCentroid(
         fastFriction, slideStart, std::max(1024, fastSlide.settleSamples));
     const double slowCentroid = broadbandCentroid(

@@ -2490,6 +2490,42 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 finger-speed slide spectrum
+
+- Pakarinen, Penttinen and Bank's measured wound-string handling-noise study
+  ([JASA DOI 10.1121/1.2786607](https://doi.org/10.1121/1.2786607),
+  [author manuscript](https://aaltodoc.aalto.fi/bitstreams/475276ab-f408-4ef4-a46f-5528bb8ca63d/download))
+  reports both harmonic frequency and RMS amplitude proportional to sliding
+  speed, with the measured gesture accelerating and then decelerating.
+  Pakarinen, Puputti and Valimaki's
+  [Virtual Slide Guitar](https://doi.org/10.1162/comj.2008.32.3.42)
+  and its
+  [NIME contact-generator companion](https://www.nime.org/proceedings/2008/nime2008_049.pdf)
+  likewise drive the contact spectrum and level from sliding velocity.
+- Electry's friction level already followed the normalized smoothstep-velocity
+  proxy `6 b (1 - b)`, but its two-pole band remained fixed at the whole
+  gesture's average centre. The band now follows that same proxy at the
+  existing control rate, retaining the 200 Hz and `0.40 * internal rate`
+  clamps. This deliberately does not claim an exact metre-domain finger
+  derivative: Electry interpolates fret/log-frequency position, and its winding
+  pitch remains the existing voicing estimate.
+- Recovered-pole state tests require the unclamped `1.125 / 1.5 / 1.125`
+  centre ratios at quarter/mid/three-quarter travel from 44.1 through 384 kHz,
+  symmetry, both clamps, and exact zero-Finger-Noise and non-Slide bypass.
+  A paired friction-only output rail requires finite, nonzero early/middle/late
+  windows and no control-period first-difference spike. These are source-model
+  direction and stability checks, not a spectrum fit, capture comparison or
+  real-recording parity claim.
+- A same-compiler canonical render changed exactly the four Slide demos 03,
+  17, 21 and 22; the other 19 WAV pairs were byte-identical. Whole-file null
+  RMS was -71.49, -58.44, -72.55 and -55.23 dBFS respectively, 36.43--57.37 dB
+  below each candidate's RMS. Seven warmed outer benchmark pairs reversed
+  baseline/candidate order: ratio-of-medians cost was 0.581% at 96 kHz and
+  1.218% at 384 kHz, inside the 1%/2% Slide-stress gates. Runtime adds one
+  float per voice and two exponentials per control tick only while an audible
+  Slide is in flight; the sample loop is unchanged, while silent and non-Slide
+  friction coefficients and output remain exact bypasses.
+
 ### 2026-08-30 roving focus for exclusive choices
 
 - The [WAI-ARIA radio-group pattern](https://www.w3.org/WAI/ARIA/apg/patterns/radio/)

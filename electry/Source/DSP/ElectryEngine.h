@@ -1321,12 +1321,14 @@ private:
         // string's winding, and the ridges pass under it at v / w, where v is
         // the finger's speed along the string and w the winding pitch - which
         // is exactly the squeak a slide makes and why it rises in pitch with
-        // the speed of the hand. Two one-poles form a band there; the level
-        // follows the derivative of the glide's own smoothstep, so the squeak
-        // swells and dies with the movement and is exactly zero when the
-        // finger is still. A plain string has no winding and barely squeaks.
+        // the speed of the hand. Two one-poles form a band there; the
+        // band and level follow the derivative of the glide's own smoothstep,
+        // so the squeak rises, swells and dies with the movement and is exactly
+        // zero when the finger is still. A plain string has no winding and
+        // barely squeaks.
         float slideNoiseAmplitude { 0.0f };
         float slideNoiseLevel { 0.0f };
+        float slideAverageBandCentreHz { 0.0f };
         float slideBandHigh { 0.5f };
         float slideBandLow { 0.9f };
         OnePole slideShaperHigh {};
