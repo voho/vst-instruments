@@ -392,6 +392,18 @@ public:
     // 3063 pitch units (11.96484375 semitones), not an ideal twelve.
     [[nodiscard]] static std::int32_t dcoPitchBendWordOffset(
         float normalisedBipolar, float depth) noexcept;
+    // The stored DCO-LFO slider selects a byte from B-2's nonlinear depth
+    // table. A compact generator preserves that table's exact observable law
+    // without distributing a ROM dump.
+    [[nodiscard]] static std::uint8_t dcoLfoDepthScale(
+        std::uint8_t storedDepth) noexcept;
+    // B-2 multiplies the panel scaler by the shared delay byte, adds the CC1
+    // path, saturates that combined depth, then multiplies the 14-bit triangle
+    // accumulator into the same signed 8.8 master-pitch word.
+    [[nodiscard]] static std::int32_t dcoLfoPitchWordOffset(
+        std::uint16_t accumulator, bool positivePolarity,
+        std::uint8_t delayByte, std::uint8_t storedDepth,
+        std::uint8_t modWheel, std::uint8_t benderSensitivity) noexcept;
 
     // Convenience adapter for a requested middle-range frequency. Production
     // constructs the 8.8 coordinate directly; this keeps the circuit-law seam
@@ -1123,8 +1135,6 @@ private:
     // summing point. Voiced, like the droop coefficient it multiplies.
     static constexpr float railToCutoffCountsPerVolt = 35.0f;
     static constexpr float vcfKeyFollowCentreMidi = 60.0f; // C4
-    // Pitch modulation budgets in cents.
-    static constexpr float lfoPitchCents = 400.0f;
     enum class EnvelopeStage { Idle, Attack, Decay, Sustain, Release };
 
     // Hash-matched B-2 firmware mechanics: a 14-bit integer advanced once per
@@ -1926,8 +1936,7 @@ private:
         Voice& voice, const EngineParameters& parameters,
         float lfoGated) noexcept;
     [[nodiscard]] std::uint32_t updateVoiceEnvelopeAndPitch(
-        Voice& voice, const EngineParameters& parameters,
-        float lfoGated) noexcept;
+        Voice& voice, const EngineParameters& parameters) noexcept;
     void updateVoiceVcfTarget(Voice& voice,
                               const EngineParameters& parameters,
                               float lfoGated) noexcept;
@@ -2161,6 +2170,7 @@ private:
     float lfoPolarity_ { 1.0f };
     float lfoValue_ { 0.0f };
     float lfoDelayLevel_ { 0.0f };
+    std::uint8_t lfoDelayByte_ { 0u };
     // The modulator, its delay envelope and the note generators all advance on
     // the converter scan, so the modulator's output is a staircase at that rate
     // rather than a continuous triangle.
@@ -2208,8 +2218,8 @@ private:
     float pitchBendTarget_ { 0.0f };
     float pitchBend_ { 0.0f };
     std::int32_t dcoPitchBendWord_ { 0 };
+    std::int32_t dcoLfoPitchWord_ { 0 };
     float modWheelTarget_ { 0.0f };
-    float modWheel_ { 0.0f };
     bool sustainPedalDown_ { false };
 
     float outputSlewStateLeft_ { 0.0f };

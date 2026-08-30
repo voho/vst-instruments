@@ -403,6 +403,47 @@ std::int32_t YouKnow106Engine::dcoPitchBendWordOffset(
         dcoBendCommand(normalisedBipolar), controlAdcByte(depth));
 }
 
+std::uint8_t YouKnow106Engine::dcoLfoDepthScale(
+    std::uint8_t storedDepth) noexcept
+{
+    // Exact compact form of B-2's 128-byte DCO-LFO depth table at 0x0a80.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1765-L1773
+    const int depth = std::min<int>(storedDepth, 127);
+    if (depth < 3)
+        return 0u;
+    if (depth < 65)
+        return static_cast<std::uint8_t>(depth - 2);
+    if (depth < 96)
+        return static_cast<std::uint8_t>(2 * depth - 66);
+    if (depth < 125)
+        return static_cast<std::uint8_t>(4 * depth - 256);
+    if (depth == 125)
+        return 248u;
+    return 255u;
+}
+
+std::int32_t YouKnow106Engine::dcoLfoPitchWordOffset(
+    std::uint16_t accumulator, bool positivePolarity,
+    std::uint8_t delayByte, std::uint8_t storedDepth,
+    std::uint8_t modWheel, std::uint8_t benderSensitivity) noexcept
+{
+    // The two high-byte products and saturating add at 0x032d..0x0338 produce
+    // one depth byte. The 16x8 multiply at 0x033b..0x034f then divides by
+    // eight, which is (accumulator * depth) >> 11 in pitch-word units.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L541-L560
+    const std::uint32_t panel =
+        (static_cast<std::uint32_t>(dcoLfoDepthScale(storedDepth))
+         * delayByte) >> 8u;
+    const std::uint32_t controller =
+        (2u * std::min<std::uint32_t>(modWheel, 127u)
+         * benderSensitivity) >> 8u;
+    const std::uint32_t depth = std::min(255u, panel + controller);
+    const std::uint32_t word =
+        (std::min<std::uint32_t>(accumulator, 0x1fffu) * depth) >> 11u;
+    return positivePolarity ? static_cast<std::int32_t>(word)
+                            : -static_cast<std::int32_t>(word);
+}
+
 std::uint32_t YouKnow106Engine::dcoDivider(double frequencyHz) noexcept
 {
     if (!(frequencyHz > 0.0) || !std::isfinite(frequencyHz))
@@ -4217,6 +4258,7 @@ void YouKnow106Engine::reset()
     lfoPolarity_ = 1.0f;
     lfoValue_ = 0.0f;
     lfoDelayLevel_ = 0.0f;
+    lfoDelayByte_ = 0u;
     updateSharedScan(activeParameters_, lfoValue_ * lfoDelayLevel_);
     resonanceCv_ = resonanceCvTarget_;
     sharedVca_ = sharedVcaTarget_;
@@ -4255,7 +4297,7 @@ void YouKnow106Engine::reset()
     modWheelTarget_ = 0.0f;
     pitchBend_ = 0.0f;
     dcoPitchBendWord_ = 0;
-    modWheel_ = 0.0f;
+    dcoLfoPitchWord_ = 0;
     sustainPedalDown_ = false;
     generation_ = 0;
     activeVoiceCount_ = 0;
@@ -4669,6 +4711,7 @@ void YouKnow106Engine::rearmLfoDelay() noexcept
     lfoDelayHoldoff_ = 0u;
     lfoDelayFade_ = 0u;
     lfoDelayLevel_ = 0.0f;
+    lfoDelayByte_ = 0u;
 }
 
 int YouKnow106Engine::findVoiceForNote(int midiNote) const noexcept
@@ -5136,21 +5179,20 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
         lfoDelayHoldoff_ = std::min<std::uint32_t>(
             0x4000u,
             lfoDelayHoldoff_ + envelopeAttackIncrement(parameters.lfoDelay));
-        lfoDelayLevel_ = 0.0f;
+        lfoDelayByte_ = 0u;
     }
     else if (lfoDelayFade_ < 0x10000u)
     {
         lfoDelayFade_ = std::min<std::uint32_t>(
             0x10000u,
             lfoDelayFade_ + lfoDelayFadeIncrement(parameters.lfoDelay));
-        if (lfoDelayFade_ >= 0x10000u)
-            lfoDelayLevel_ = 1.0f;
-        else
-            lfoDelayLevel_ = static_cast<float>(lfoDelayFade_ >> 8u) / 255.0f;
+        lfoDelayByte_ = lfoDelayFade_ >= 0x10000u
+            ? 255u : static_cast<std::uint8_t>(lfoDelayFade_ >> 8u);
     }
     else
-        lfoDelayLevel_ = 1.0f;
+        lfoDelayByte_ = 255u;
 
+    lfoDelayLevel_ = static_cast<float>(lfoDelayByte_) / 255.0f;
     displayLfo_ = lfoValue_ * lfoDelayLevel_;
 }
 
@@ -5169,21 +5211,15 @@ std::uint32_t YouKnow106Engine::updateVoiceScan(
     Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
 {
     const std::uint32_t count = updateVoiceEnvelopeAndPitch(
-        voice, parameters, lfoGated);
+        voice, parameters);
     updateVoiceVcfTarget(voice, parameters, lfoGated);
     updateVoiceVcaTarget(voice, parameters);
     return count;
 }
 
 std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
-    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+    Voice& voice, const EngineParameters& parameters) noexcept
 {
-
-    // Stored tone controls and the relevant sensitivity controls are consumed
-    // on their seven-bit grid. Portamento is deliberately absent here: that
-    // non-stored performance pot uses an eight-bit ADC code and raw>>1 selector.
-    const auto byte7 = [](float value) { return storedControlFraction(value); };
-
     // --- Envelope ---------------------------------------------------------
     // A linear attack and multiplicative falling segments, advanced once per
     // scan. The published minimum of 1.5 ms is shorter than one scan pass, so
@@ -5265,23 +5301,13 @@ std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
         voice.currentMidi = voice.targetMidi;
     }
 
-    // The bender's own modulation axis and the panel's modulator slider are
-    // summed by the firmware, so pushing both reaches deeper than either
-    // alone -- up to twice one slider's span, the byte arithmetic's own
-    // bound.
-    const float lfoPitchDepth = std::min(
-        2.0f, byte7(parameters.dcoLfoDepth)
-                  + byte7(parameters.benderLfoDepth) * modWheel_);
-    const float cents = lfoPitchDepth * lfoPitchCents * lfoGated;
-    const double midi = static_cast<double>(voice.currentMidi)
-                      + static_cast<double>(cents) / 100.0;
     const std::int32_t controlOffset =
         static_cast<std::int32_t>(
             masterTunePitchWordOffset(parameters.masterTuneCents))
-        + dcoPitchBendWord_;
+        + dcoPitchBendWord_ + dcoLfoPitchWord_;
 
     const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(
-        midi, controlOffset));
+        static_cast<double>(voice.currentMidi), controlOffset));
     // Roland explicitly says DCO CV contains no RANGE data: RANGE changes the
     // timer clock and selects the ramp resistor, not this compensation hold.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
@@ -5448,7 +5474,7 @@ void YouKnow106Engine::performConverterWrite(
                     // construction-only/direct-test fallback deterministic;
                     // every subsequent physical transaction is pre-staged.
                     const std::uint32_t count = updateVoiceEnvelopeAndPitch(
-                        voice, parameters, lfoGated);
+                        voice, parameters);
                     programDcoCount(
                         voice, count, voice.dcoResetPending);
                     voice.dcoResetPending = false;
@@ -6284,7 +6310,7 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                 // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
                 const float previousCvTarget = voice.dcoCvTarget;
                 const std::uint32_t count = updateVoiceEnvelopeAndPitch(
-                    voice, activeParameters_, converterPassLfoGated_);
+                    voice, activeParameters_);
                 const float cvTarget = voice.dcoCvTarget;
                 voice.dcoCvTarget = previousCvTarget;
 
@@ -6912,10 +6938,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 dcoPitchBendWord_ = dcoBendWordForCommand(
                     dcoBendCommand(pitchBendTarget_),
                     controlAdcByte(parameters.benderDcoDepth));
-                modWheel_ =
-                    std::floor(modWheelTarget_ * 127.0f + 0.5f) / 127.0f;
-
                 advanceLfo(parameters);
+                dcoLfoPitchWord_ = dcoLfoPitchWordOffset(
+                    lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
+                    storedControlByte(parameters.dcoLfoDepth),
+                    storedControlByte(modWheelTarget_),
+                    controlAdcByte(parameters.benderLfoDepth));
                 converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
 
                 // Slots above the six physical cards are an explicit product

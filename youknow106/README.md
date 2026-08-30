@@ -495,8 +495,14 @@ path ([assigner reduction](https://github.com/ErroneousBosh/j106roms/blob/26926a
 [B-2 arithmetic](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1006-L1059)).
 That gives the real two-high-byte centre dead zone and +/-3063 pitch units
 (+/-11.96484375 semitones) at full sensitivity instead of an ideal continuous
-12-semitone multiplier. The DCO-LFO adapter is the remaining upstream integer
-law to implement, not a pitch-pair research unknown.
+12-semitone multiplier. DCO-LFO pitch now follows B-2's nonlinear
+[128-position depth law](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1765-L1773)
+and truncating [panel-delay/CC1 arithmetic](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L541-L560).
+A compact generator avoids distributing ROM bytes. The panel path is gated by
+the eight-bit delay value, CC1 is not, their sum saturates to one byte, and the
+shared signed pitch word tops out at 1019 units (+/-3.98046875 semitones)
+rather than adding two independent four-semitone spans. This closes the known
+upstream integer adapters feeding the paired pitch conversion.
 For plug-in notes and modulation outside the physical keybed, the final word
 saturates at 0/65535 rather than reproducing the firmware's unsigned wrap; that
 is a deliberate host-safety policy for the instrument's expanded MIDI range.
@@ -543,6 +549,11 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   two-bin centre, and the sensitivity product tops out at +/-11.96484375
   semitones rather than an ideal continuous twelve. VCF bend remains on its
   existing independent path.
+- DCO LFO pitch now uses B-2's nonlinear 128-position depth law and exact
+  truncating panel-delay/CC1 products. CC1 remains independent of the panel
+  delay, the two paths saturate before a single scan-held pitch-word multiply,
+  and combined vibrato tops out at +/-3.98046875 semitones instead of the old
+  additive eight-semitone span.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.
