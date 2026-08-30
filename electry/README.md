@@ -2490,6 +2490,28 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 demo 06 whole-step wheel score
+
+- Demo 06 described a wheel bend "up a step", but `pitchBend(0.75)` asks the
+  engine's fixed ±2-semitone wheel for 1.5 semitones. The score now uses
+  `1.0`, the same whole-tone command used elsewhere in the canonical renderer,
+  so held MIDI 71 reaches MIDI 73 rather than an equal-tempered pitch halfway
+  between MIDI 72 and 73. No DSP, effect, timing or allocation code changed.
+- Same-compiler debugger traces at the end of the 750 ms hold show the old
+  target and settled bend at exactly 1.5 semitones and the corrected pair at
+  exactly 2.0. Before the changed command, both raw stereo prefixes contain
+  66,149 frames and compare byte-for-byte; their left/right SHA-256 values are
+  `dc21229e230cae734258dc69214b7713924ac2e2e83d7ca70f17254dab1518f9` and
+  `bec0289be42dbc4c5f10b533ec26159d8ca15696168796e1b1b5547f7b50b6d3`.
+- Exactly demo 06 changes in a full same-compiler canonical render; the other
+  22 WAV pairs are byte-identical. The corrected WAV remains 568,889 frames of
+  44.1-kHz stereo PCM16, at −3.000097 dBFS peak and −12.678875 dBFS RMS, with
+  SHA-256
+  `5fdc24468d6d46dec559a22d7c725a674f3545ea5fb57e7cf8ff4c7f6f628294`.
+  Its whole-file old/new PCM null is −6.835834 dBFS because the intended pitch
+  change also changes phase through the nonlinear amp, delay and room. This is
+  musical-score correctness, not measurement or real-recording evidence.
+
 ### 2026-08-30 accessible numeric knob entry
 
 - Electry deliberately keeps each rotary control's editable numeric value as a
@@ -2531,7 +2553,8 @@ the realistic result is to ship nothing.
   `6ca8ec6d5be414691e6df2e759706dc8688869f7b697435485c97075ab475501` and
   `85f006029e7ffc11818b41dd2a6e974c5c403e2e098a9fef27840914e97b955a`.
   Exactly demo 06 changes in the canonical render; the other 22 WAV pairs are
-  byte-identical. The corrected normalized WAV SHA-256 is
+  byte-identical. At that Slide-score checkpoint the corrected normalized WAV
+  SHA-256 was
   `1f801c33d55d3500b807fd6e887f508992852c17038c9d2f4457de0fa01b2df1`.
 - The normalized candidate is 568,889 frames of 44.1-kHz stereo PCM16
   (12.899977 seconds), with −3.000097 dBFS peak and −12.689882 dBFS RMS. Its

@@ -540,7 +540,7 @@ Take renderLeadThroughAmp()
     take.style(PlayStyle::Sustain);
     take.noteOn(71, 0.95f);
     take.wait(0.35);
-    take.pitchBend(0.75f);
+    take.pitchBend(1.0f);
     take.wait(0.75);
     take.pitchBend(0.0f);
     take.wait(0.45);
