@@ -2158,6 +2158,42 @@ paired-round medians were 0.403% and 0.764%, below the frozen 3% ceiling.
 The CPU result has SHA-256
 `982c791df5695d54512c4f4ab150b2d54297e27d7a81d2e0cdf62cd64d906f48`.
 
+A descriptive exact-eight follow-up reused that frozen estimator core on the
+[8ridgelite](https://github.com/JamesStubbsEng/8ridgelite) repository's
+20-second `Natural/0_e1.wav` and `Natural/13_e2.wav` stereo files. Their
+SHA-256 values are
+`1a9e05a3a2eeae067bdddd4fc102d50deb0c749bddfb0632c5e1f4a2ac866c5a`
+and `c95c1989892142246b291354bb808e98991a529fb52818920554581165f09018`.
+The wrapper changed only the nominal `f0`, inspected each unnamed channel
+separately and prepended 100 ms of zero solely to clear the estimator's onset
+boundary; its SHA-256 is
+`45f2bf57a016247e2f40f88a195e335fa022586ec4afec45df3d9d4c66cc02f1`.
+No threshold or analysis window moved. Shipping E1/E2 model WAV SHA-256 values
+are `2c877332b1a6ac3bfd6d2603c815374219030997cd430fd8710b1b6cbb0e176b`
+and `ef93361c9a08ce66b2a8012774ddaf583a389e0a9101c25e04f7697e35ac4a4f`;
+the candidate pair is
+`dc157a90b71616358fe6b257bb022ba9782acd20507713f870504e7e84b80047`
+and `c986857cde98202773583550bc84f8c707f5a96b5cac0c7c4568e349960f0948`.
+
+One E1 channel lacked the frozen individual-partial/aggregate coverage. The
+other three channel/note observations and same-compiler model renders were:
+
+| observation | real attack / slope | shipping | candidate |
+| --- | ---: | ---: | ---: |
+| E1 channel 2 | +8.201 c / −31.283 c/s | +0.041 c / +0.061 c/s | +2.361 c / −9.455 c/s |
+| E2 channel 1 | +1.652 c / −6.995 c/s | +0.0047 c / −0.0207 c/s | +2.020 c / −7.603 c/s |
+| E2 channel 2 | +4.523 c / −17.456 c/s | +0.0047 c / −0.0207 c/s | +2.020 c / −7.603 c/s |
+
+Across aggregate and H1 attack/slope errors, the candidate improves all 12
+comparisons by 18.278% to 91.291%, but its median reduction is only 33.116%:
+below the existing 50% promotion rail. Two complete executions were
+byte-identical. The source provides one take per pitch and documents neither
+channel identities, guitar/tuning/string nor recording chain; this was also a
+descriptive follow-up, not a frozen TRAIN/HOLDOUT experiment. It strengthens
+the independent exact-eight direction check, but it neither calibrates the
+force/core/decay coefficients nor authorizes enabling the candidate. No
+third-party audio is committed.
+
 The default-off candidate is committed at `7807944`; its read-only final
 receipt has SHA-256
 `1b826e0b5683d7c035cb5bbf8a7e2caea7b0f0470eadcdb8a225f82169071144`.
