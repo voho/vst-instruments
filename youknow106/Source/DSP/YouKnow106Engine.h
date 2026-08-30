@@ -1927,6 +1927,8 @@ private:
     void finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept;
     void restartVoiceBoardScanAfterSerialVoiceCommand() noexcept;
     void noteOffInternal(int midiNote) noexcept;
+    [[nodiscard]] static bool pitchChangeRequestsDcoReset(
+        const Voice& voice, int voiceMidi) noexcept;
     void initialiseVoice(Voice& voice, int slot, int midiNote,
                          float velocity) noexcept;
     void silenceVoice(Voice& voice) noexcept;

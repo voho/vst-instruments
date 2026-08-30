@@ -5654,10 +5654,8 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
 {
     const auto& parameters = activeParameters_;
     const bool wasSounding = voice.active;
-    const bool voiceWasRunning = voice.keyDown || voice.sustained;
     const int voiceMidi = midiNote + parameters.keyTranspose;
-    const bool pitchChanged = !voice.hasVoicePitchHistory
-                           || voice.lastVoiceMidi != voiceMidi;
+    const bool resetDco = pitchChangeRequestsDcoReset(voice, voiceMidi);
 
     // reset() permanently binds array slot N to card N. Every caller passes the
     // voice from that same slot, so this defensive assignment is a no-op and the
@@ -5713,7 +5711,7 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     // control-word path, but the voice CPU consumes it only on that voice's
     // next scan update. Explicit OUT polarity then decides whether forcing high
     // produces the positive C54/sub edge.
-    if (pitchChanged && !voiceWasRunning)
+    if (resetDco)
         voice.dcoResetPending = true;
 
     if (!wasSounding)
@@ -5816,10 +5814,13 @@ void YouKnow106Engine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexce
     {
         auto& voice = voices_[static_cast<std::size_t>(slot)];
         auto& dco = voice.dco;
+        const bool pitchScanWouldRequestReset = voice.rootMidi >= 0
+            && pitchChangeRequestsDcoReset(
+                voice, voice.rootMidi + activeParameters_.keyTranspose);
         const bool resetPrestageIsProtected =
             dco.pitWriteState
                     == Dco::PitWriteState::awaitingPitchPrestage
-            && voice.dcoResetPending
+            && (voice.dcoResetPending || pitchScanWouldRequestReset)
             && dco.cpuStatesToWrite <= pitResetDiToControlStates;
         if (resetPrestageIsProtected)
             prestageDcoPitchTransaction(
@@ -6197,6 +6198,13 @@ std::uint32_t YouKnow106Engine::updateVoiceScan(
     return count;
 }
 
+bool YouKnow106Engine::pitchChangeRequestsDcoReset(
+    const Voice& voice, int voiceMidi) noexcept
+{
+    return (!voice.hasVoicePitchHistory || voice.lastVoiceMidi != voiceMidi)
+        && !voice.keyDown && !voice.sustained;
+}
+
 std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
@@ -6249,12 +6257,10 @@ std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
         // therefore becomes the CPU's new reset-comparison history too. If
         // this stayed at the note-on value, replaying the same resulting board
         // pitch after release would falsely restart the free-running DCO.
-        const bool pitchChanged = !voice.hasVoicePitchHistory
-                               || voice.lastVoiceMidi != voiceMidi;
         // With either run bit set this is a legato pitch message and the DCO
         // stays free-running. During an ordinary release both bits are clear,
         // so the voice CPU applies its normal different-pitch reset rule.
-        if (pitchChanged && !voice.keyDown && !voice.sustained)
+        if (pitchChangeRequestsDcoReset(voice, voiceMidi))
             voice.dcoResetPending = true;
         voice.lastVoiceMidi = voiceMidi;
         voice.hasVoicePitchHistory = true;

@@ -3620,6 +3620,99 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                       *beforeResetDi, 0),
            "a pre-DI reset-path Voice On fabricated a PIT transaction");
 
+    // A released voice can discover its reset only when T-389 scans a panel
+    // pitch change. The reset flag is still clear when the serial handler
+    // tests the four-state DI window, but that old-voice transaction is just
+    // as protected as an already-armed reset.
+    auto transposedResetParameters = resetParameters;
+    transposedResetParameters.keyTranspose = 12;
+    enum class LatentResetRunState
+    {
+        Released,
+        KeyDown,
+        Sustained
+    };
+    const auto latentResetPrestageFixture =
+        [&](double cpuStates, LatentResetRunState runState) {
+            auto engine = std::make_unique<YouKnow106Engine>();
+            engine->setParameters(resetParameters);
+            engine->prepare(192000.0, blockSize, false);
+            engine->noteOn(36, 1.0f);
+            (void) YouKnow106TestAccess::updateVoiceScan(
+                *engine, 0, resetParameters);
+            YouKnow106TestAccess::setDcoResetPending(
+                *engine, 0, false);
+            if (runState == LatentResetRunState::Sustained)
+                engine->setSustainPedal(true);
+            if (runState != LatentResetRunState::KeyDown)
+                engine->noteOff(36);
+            engine->setParameters(transposedResetParameters);
+            YouKnow106TestAccess::setMode3Running(
+                *engine, 0, active, true, 10000.25);
+            YouKnow106TestAccess::setConverterScheduler(
+                *engine, 0.75, 17u);
+            YouKnow106TestAccess::setDcoResetPending(
+                *engine, 0, false);
+            YouKnow106TestAccess::setAwaitingPitchPrestage(
+                *engine, 0, cpuStates);
+            return engine;
+        };
+    auto latentReference = latentResetPrestageFixture(
+        4.0, LatentResetRunState::Released);
+    const std::uint32_t releasedTransposedCount =
+        YouKnow106TestAccess::updateVoiceScan(
+            *latentReference, 0, transposedResetParameters);
+
+    for (const double protectedStates : { 4.0, 3.5 })
+    {
+        auto protectedLatent = latentResetPrestageFixture(
+            protectedStates, LatentResetRunState::Released);
+        protectedLatent->noteOn(96, 1.0f);
+        expectRestarted(
+            *protectedLatent,
+            protectedStates == 4.0
+                ? "a latent-reset DI-boundary Voice On"
+                : "a latent-reset post-DI Voice On");
+        expect(YouKnow106TestAccess::pitState(*protectedLatent, 0)
+                       == YouKnow106TestAccess::awaitingInitialLoadState()
+                   && YouKnow106TestAccess::pendingDcoDividerValid(
+                          *protectedLatent, 0)
+                   && YouKnow106TestAccess::pendingDcoDivider(
+                          *protectedLatent, 0) == releasedTransposedCount
+                   && YouKnow106TestAccess::lastVoiceMidi(
+                          *protectedLatent, 0) == 108,
+               "a protected latent reset did not retain the released, "
+               "transposed voice payload");
+    }
+
+    auto beforeLatentResetDi = latentResetPrestageFixture(
+        4.5, LatentResetRunState::Released);
+    beforeLatentResetDi->noteOn(96, 1.0f);
+    expectRestarted(*beforeLatentResetDi,
+                    "a pre-DI latent-reset Voice On");
+    expect(YouKnow106TestAccess::pitState(*beforeLatentResetDi, 0)
+                   == YouKnow106TestAccess::runningPitState()
+               && !YouKnow106TestAccess::pendingDcoDividerValid(
+                      *beforeLatentResetDi, 0),
+           "a pre-DI latent reset fabricated a protected PIT transaction");
+
+    for (const auto runState : { LatentResetRunState::KeyDown,
+                                 LatentResetRunState::Sustained })
+    {
+        auto runningLatent = latentResetPrestageFixture(4.0, runState);
+        runningLatent->noteOn(96, 1.0f);
+        expectRestarted(
+            *runningLatent,
+            runState == LatentResetRunState::KeyDown
+                ? "a key-down latent-reset negative control"
+                : "a sustained latent-reset negative control");
+        expect(YouKnow106TestAccess::pitState(*runningLatent, 0)
+                       == YouKnow106TestAccess::runningPitState()
+                   && !YouKnow106TestAccess::pendingDcoDividerValid(
+                          *runningLatent, 0),
+               "a running voice fabricated latent reset protection");
+    }
+
     auto runningPrestage = resetPrestageFixture(36, 0.0, false);
     runningPrestage->noteOn(96, 1.0f);
     expectRestarted(*runningPrestage, "a running pre-prestage Voice On");
