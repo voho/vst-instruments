@@ -2636,6 +2636,41 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 held owner over different-note legacy tails
+
+- A scalar legacy Hammer or Slide could still follow a closer released voice
+  sounding a different note instead of the reachable string whose fret was
+  explicitly held. The existing eight-string continuation scan now also
+  remembers its nearest valid held owner. That owner replaces the ordinary
+  nearest result only when the result is a releasing legacy tail with no held
+  owner or pending repick. Repeated targets, sustain-pedal and MPE ownership,
+  pending contacts, Hammer's strict nine-fret reach, nearest selection among
+  several held strings and multi-note chord assignment keep their precedence.
+- In demo 17 at engine clock 212,562, the old allocator sent Slide 69 to the
+  closer released MIDI-67 tail on zero-based string 5 (fret 12 to 14) while
+  MIDI 62 remained held on string 4 (fret 12 to 19). The corrected gesture is
+  the performed 62-to-69 Slide on string 4. Demo 21 had the same error at
+  clock 286,650: its corrected Slide continues held MIDI 67 to 72 on string 5
+  rather than moving the released MIDI-69 tail on string 6.
+- Narrow regressions cover different-target Slide and Hammer collisions, the
+  exact demo-17 opening prefix, the closest of multiple held sources and the
+  distance-ten Hammer fallback. The new fixture linked against untouched
+  `95350798` fails ten assertions, while the complete candidate engine suite
+  passes together with the existing repeated-target, sustain, MPE, pending,
+  reach and chord rails.
+- A full 23-demo same-compiler render changes exactly demos 17 and 21; the
+  other 21 WAV pairs are byte-identical. Demo 17 remains 1,024,540 frames of
+  44.1-kHz stereo PCM16 (23.232200 s), at -3.000097 dBFS peak and
+  -14.672762 dBFS RMS, with SHA-256
+  `94d63831c69d72fd27fc07fc5147b855f25f666b9ed4c8aab3db9d5895ebb6a8`.
+  Demo 21 remains 741,315 frames (16.809864 s), at -3.000097 dBFS peak and
+  -14.986199 dBFS RMS, with SHA-256
+  `53cf95e4fc329a36d5836c40d6ef2b3218946a48b48c9341cdcccb6ef9f7565f`.
+- The realtime cost is a pair of integer minima and held-owner comparisons in
+  the existing bounded event-time eight-string scan. There is no allocation,
+  sample-loop work, parameter/state/ABI change or change to the multi-note
+  chord solver.
+
 ### 2026-08-30 open-string fretboard marker
 
 - The live fretboard's finger-position badge was also drawn for fret zero.

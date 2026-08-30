@@ -2417,6 +2417,14 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
         const int fret = fretOn(stringIndex);
         return fret >= 0 && fret <= fretCount;
     };
+    const auto plainReleasedLegacyTail = [this, expressionId] (
+        std::size_t index)
+    {
+        const auto& voice = voices_[index];
+        return expressionId == legacyExpressionId
+            && heldNoteCounts_[index] == 0 && voice.releasing
+            && ! voice.pendingRepick.active;
+    };
 
     // A member channel moving pitch keeps its physical string whenever that
     // string can reach the new fret.
@@ -2456,11 +2464,7 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
         if (! voice.active || voice.midiNote != midiNote
             || voice.expressionId != expressionId || ! playable(s))
             continue;
-        const bool plainReleasedLegacyTail =
-            expressionId == legacyExpressionId
-            && heldNoteCounts_[index] == 0 && voice.releasing
-            && ! voice.pendingRepick.active;
-        if (! plainReleasedLegacyTail)
+        if (! plainReleasedLegacyTail(index))
             return s;
         releasedTargetTail = s;
         break;
@@ -2474,6 +2478,8 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
     {
         int best = -1;
         int bestDistance = playStyle == PlayStyle::Slide ? fretCount + 1 : 10;
+        int bestHeld = -1;
+        int bestHeldDistance = bestDistance;
         for (int s = 0; s < stringCount; ++s)
         {
             const auto index = static_cast<std::size_t>(s);
@@ -2495,9 +2501,25 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
                 bestDistance = distance;
                 best = s;
             }
+            if (heldNoteCounts_[index] > 0
+                && heldExpressionIds_[index] == expressionId
+                && distance < bestHeldDistance)
+            {
+                bestHeldDistance = distance;
+                bestHeld = s;
+            }
         }
         if (best >= 0)
+        {
+            // A held finger is the only explicit source of a fretting-hand
+            // continuation. Let it outrank a closer fingerless release tail,
+            // while sustained, pending and member-channel ownership retain
+            // the existing nearest-source result.
+            if (bestHeld >= 0 && plainReleasedLegacyTail(
+                    static_cast<std::size_t>(best)))
+                return bestHeld;
             return best;
+        }
     }
     if (releasedTargetTail >= 0)
         return releasedTargetTail;

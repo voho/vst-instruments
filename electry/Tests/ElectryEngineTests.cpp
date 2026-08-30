@@ -5827,7 +5827,7 @@ void testPitchWheelBendsSympatheticStrings()
                + std::to_string(atBent) + " at the bent pitch)");
 }
 
-void testHeldLegatoSourceOutranksReleasedTargetTail()
+void testHeldLegatoSourceOutranksPlainReleaseTails()
 {
     constexpr double sampleRate = 44100.0;
     constexpr int targetNote = 45;
@@ -5922,6 +5922,121 @@ void testHeldLegatoSourceOutranksReleasedTargetTail()
                "the held-legato collision correction produced invalid audio");
     }
 
+    // The same ownership error is not limited to a tail already sounding the
+    // destination. MIDI 46 is one fret from the released A2 string but six
+    // frets from the held E2 string; the explicit finger must still win. Use
+    // the one-event chord path used by every scalar note in the demo renderer.
+    constexpr int differentTarget = 46;
+    for (const auto style : { PlayStyle::Slide, PlayStyle::Hammer })
+    {
+        auto engine = prepareCollision();
+        const auto tailBefore = TestAccess::snapshot(*engine, tailString);
+        expect(TestAccess::chosenString(*engine, differentTarget, style)
+                   == sourceString,
+               std::string(style == PlayStyle::Slide ? "Slide" : "Hammer")
+                   + " preferred a closer different-note release tail");
+        engine->noteOn(styleKeyswitch(style), 1.0f);
+        const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+            { differentTarget, 0.85f }
+        }};
+        engine->noteOnChord(event);
+
+        const auto moved = TestAccess::snapshot(*engine, sourceString);
+        const auto tail = TestAccess::snapshot(*engine, tailString);
+        expect(moved.active && moved.keyDown
+                   && moved.midiNote == differentTarget
+                   && moved.playStyle == style
+                   && TestAccess::legatoBlend(*engine, sourceString) == 0.0f
+                   && std::abs(TestAccess::legatoFromFrequency(
+                                  *engine, sourceString)
+                               - midiHz(sourceNote)) < 1.0e-3,
+               "different-target legato did not continue its held source");
+        expect(tail.active && tail.releasing && ! tail.keyDown
+                   && tail.midiNote == targetNote
+                   && tail.startOrder == tailBefore.startOrder,
+               "different-target legato consumed the plain release tail");
+        const float slide = TestAccess::slideNoiseAmplitude(*engine,
+                                                            sourceString);
+        expect(style == PlayStyle::Slide
+                   ? slide > 0.0f && moved.excitationAmplitude == 0.0f
+                   : slide == 0.0f && moved.excitationAmplitude > 0.0f,
+               "different-target held source began the wrong contact");
+    }
+
+    // Demo 17's opening lead leaves MIDI 67 ringing without a finger on
+    // string 5, then holds MIDI 62 on string 4 and asks that finger to Slide
+    // to 69. The closer 67 tail must remain a tail rather than becoming the
+    // performed gesture.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupSelector = PickupSelector::Bridge;
+        parameters.pickupType = 0.42f;
+        parameters.toneKnob = 0.92f;
+        parameters.bodyResonance = 0.42f;
+        parameters.stringAge = 0.06f;
+        parameters.pickPosition = 0.27f;
+        parameters.pickHardness = 0.78f;
+        parameters.fingerNoise = 0.52f;
+        parameters.artifactAmount = 0.12f;
+        parameters.bendTimeSeconds = 0.16f;
+        parameters.sympatheticAmount = 0.28f;
+        parameters.outputGain = 1.55f;
+        parameters.outputMode = electry::OutputMode::Stereo;
+        engine.setParameters(parameters);
+        engine.reset();
+        const auto trigger = [&] (int note, float velocity)
+        {
+            const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+                { note, velocity }
+            }};
+            engine.noteOnChord(event);
+        };
+        wait(engine, 0.25);
+        for (const int note : { 64, 67, 69, 72, 70, 67 })
+        {
+            trigger(note, note == 72 ? 0.98f : 0.86f);
+            wait(engine, 0.27);
+            engine.noteOff(note);
+            wait(engine, 0.05);
+        }
+        trigger(62, 0.90f);
+        wait(engine, 0.24);
+
+        constexpr int demoSourceString = 4;
+        constexpr int demoTailString = 5;
+        const auto sourceBefore = TestAccess::snapshot(engine,
+                                                       demoSourceString);
+        const auto tailBefore = TestAccess::snapshot(engine, demoTailString);
+        expect(sourceBefore.active && sourceBefore.keyDown
+                   && ! sourceBefore.releasing && sourceBefore.midiNote == 62
+                   && sourceBefore.fret == 12
+                   && tailBefore.active && ! tailBefore.keyDown
+                   && tailBefore.releasing && tailBefore.midiNote == 67
+                   && tailBefore.fret == 12,
+               "demo-17 opening Slide fixture missed held s4/released s5");
+
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        trigger(69, 0.84f);
+        const auto moved = TestAccess::snapshot(engine, demoSourceString);
+        const auto tail = TestAccess::snapshot(engine, demoTailString);
+        expect(moved.active && moved.keyDown && moved.midiNote == 69
+                   && moved.playStyle == PlayStyle::Slide
+                   && TestAccess::legatoBlend(engine, demoSourceString) == 0.0f
+                   && std::abs(TestAccess::legatoFromFrequency(
+                                  engine, demoSourceString)
+                               - midiHz(62)) < 1.0e-3
+                   && TestAccess::slideNoiseAmplitude(engine,
+                                                      demoSourceString) > 0.0f
+                   && moved.excitationAmplitude == 0.0f,
+               "demo-17 opening Slide did not move its held MIDI-62 finger");
+        expect(tail.active && ! tail.keyDown && tail.releasing
+                   && tail.midiNote == 67
+                   && tail.startOrder == tailBefore.startOrder,
+               "demo-17 opening Slide consumed its MIDI-67 release tail");
+    }
+
     // Every neighbouring ownership path keeps its established priority.
     auto noHeld = prepareCollision();
     noHeld->noteOff(sourceNote);
@@ -5966,8 +6081,18 @@ void testHeldLegatoSourceOutranksReleasedTargetTail()
     auto nearest = prepareCollision();
     nearest->noteOn(43, 0.8f);
     expect(TestAccess::stringForNote(*nearest, 43) == 1
-               && chosen(*nearest, PlayStyle::Slide) == 1,
+               && chosen(*nearest, PlayStyle::Slide) == 1
+               && TestAccess::chosenString(*nearest, differentTarget,
+                                           PlayStyle::Slide) == 1,
            "held-tail priority replaced closest-string legato selection");
+
+    // Hammer's established reach is strictly below ten frets. The E2 finger
+    // is exactly ten frets from MIDI 50, so it may not displace the reachable
+    // A2-string release tail merely because it is held.
+    auto hammerReach = prepareCollision();
+    expect(TestAccess::chosenString(*hammerReach, 50, PlayStyle::Hammer)
+               == tailString,
+           "held-tail priority extended Hammer reach to ten frets");
 }
 
 void testHammerOnLegatoContinuity()
@@ -19701,7 +19826,7 @@ int main()
     testStiffnessFollowsLiveTension();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
-    testHeldLegatoSourceOutranksReleasedTargetTail();
+    testHeldLegatoSourceOutranksPlainReleaseTails();
     testHammerOnLegatoContinuity();
     testPullOffLegatoDirection();
 #if ELECTRY_DECOUPLED_PICK_RELEASE
