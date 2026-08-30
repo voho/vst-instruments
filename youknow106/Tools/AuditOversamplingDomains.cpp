@@ -53,7 +53,10 @@ constexpr int timingRepetitions = 7;
 [[maybe_unused]] constexpr int counterBlocks = 8;
 constexpr std::uint64_t fnvOffset = 14695981039346656037ull;
 constexpr std::uint64_t fnvPrime = 1099511628211ull;
-constexpr std::array<int, 6> chordNotes { 36, 48, 55, 60, 64, 67 };
+constexpr std::array<int, 16> chordNotes {
+    36, 48, 55, 60, 64, 67, 71, 74,
+    77, 81, 84, 86, 89, 93, 96, 100
+};
 
 enum class ScenarioKind
 {
@@ -63,7 +66,8 @@ enum class ScenarioKind
     SixVoicePlainDry,
     SingleVoiceResonantDry,
     SixVoiceResonantDry,
-    SixVoiceFullMixerChorusTwo
+    SixVoiceFullMixerChorusTwo,
+    SixteenVoiceFullMixerChorusTwo
 };
 
 struct Scenario
@@ -95,6 +99,8 @@ constexpr std::array tanhScenarios {
                "six-voice-resonant-dry", 6 },
     Scenario { ScenarioKind::SixVoiceFullMixerChorusTwo,
                "six-voice-full-mixer-chorus-ii", 6 },
+    Scenario { ScenarioKind::SixteenVoiceFullMixerChorusTwo,
+               "sixteen-voice-full-mixer-chorus-ii", 16 },
 };
 
 EngineParameters parametersFor(ScenarioKind kind,
@@ -153,6 +159,7 @@ EngineParameters parametersFor(ScenarioKind kind,
             parameters.chorus = ChorusMode::Off;
             break;
         case ScenarioKind::SixVoiceFullMixerChorusTwo:
+        case ScenarioKind::SixteenVoiceFullMixerChorusTwo:
             // Reuse testCpuBudget's representative full-path panel shape;
             // this audit deliberately keeps its declared Character-one
             // profile, chord and Chorus Noise setting rather than claiming
@@ -216,8 +223,10 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
     PreparedSnapshot snapshot;
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
                             requestedFactor);
-    snapshot.engine.setParameters(parametersFor(
-        scenario.kind, tanhMode, fastEarlyMode, solverMode));
+    auto parameters = parametersFor(
+        scenario.kind, tanhMode, fastEarlyMode, solverMode);
+    parameters.polyphony = std::max(parameters.polyphony, scenario.heldNotes);
+    snapshot.engine.setParameters(parameters);
     for (int note = 0; note < scenario.heldNotes; ++note)
         snapshot.engine.noteOn(chordNotes[static_cast<std::size_t>(note)],
                                1.0f);

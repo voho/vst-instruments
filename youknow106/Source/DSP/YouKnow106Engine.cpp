@@ -7416,7 +7416,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     && !defined(YOUKNOW106_WORK_AUDIT)
                     if constexpr (useCubicEarly)
                     {
-                        if (slot + 1 < hardwareVoices && voice.active
+                        if (slot + 1 < maxVoices && voice.active
                             && voices_[static_cast<std::size_t>(slot + 1)].active
                             && parameters.vcfTanhMode
                                    == VcfTanhMode::PolyZoned

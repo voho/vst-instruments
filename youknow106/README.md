@@ -636,7 +636,10 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   the candidate cut median thread CPU by 21.61% to 23.91% across the six-voice
   low-cutoff, plain and resonant dry audits; every arm64 raw-float audio
   fingerprint stayed bit-identical, as did the complete scalar/SIMD cascade
-  state on arm64 and x86_64.
+  state on arm64 and x86_64. Extending that same path to the ten optional
+  product-extension slots cut the 16-voice full-mixer/Chorus-II audit from the
+  faster 433.047 ms bracketing baseline to 339.764 ms at 48 kHz/4x, a 21.54%
+  median thread-CPU reduction with the raw-float fingerprint still identical.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Kept the modelled instrument warm across a transport stop, so the chassis
