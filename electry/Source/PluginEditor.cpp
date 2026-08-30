@@ -705,6 +705,13 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
         setSelectedIndex (0);
 }
 
+std::unique_ptr<juce::AccessibilityHandler>
+ElectryChoiceStrip::createAccessibilityHandler()
+{
+    return std::make_unique<juce::AccessibilityHandler> (
+        *this, juce::AccessibilityRole::group);
+}
+
 void ElectryChoiceStrip::activateChoice (int index)
 {
     if (index < 0 || index >= static_cast<int> (buttons.size()))
@@ -1651,8 +1658,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     keyboard.setKeyWidth (24.0f);
     keyboard.setBlackNoteLengthProportion (0.64f);
     keyboard.setOctaveForMiddleC (4);
-    keyboard.setTitle (
-        "MIDI keyboard: hold A#0 for vibrato or B0 for tremolo picking; E1 to D6 plays");
+    keyboard.setTitle ("MIDI keyboard: " + keyboardHintLabel.getText());
     keyboard.setComponentID ("keyboard");
     keyboard.setHasFocusOutline (true);
     addAndMakeVisible (keyboard);

@@ -974,8 +974,9 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   triangle and uses 6.576 MiB for both tube families. Runtime
   trilinear interpolation stays below 0.0003 normalized output and 0.0004
   current-demand error in the checked domain; its own interpolated idle is
-  subtracted before the sag clamp. The two half-drive outputs remain 0.48185
-  and 0.643711 after equal small-signal normalization. A terminal may cross
+  subtracted before the sag clamp. After screen-grid loading, the two half-drive
+  outputs are 0.481573 and 0.607341 after equal small-signal normalization. A
+  terminal may cross
   zero and load its driver through the diode, but the uTracer-fitted
   plate/screen-current surface is conservatively clamped at `Vg=0`: this is an
   AB1-bounded power-transfer surface with bounded overload grid conduction, not
@@ -2011,6 +2012,61 @@ Commercial calibration/private-evaluation rights, stable player and guitar IDs,
 and train/holdout separation are mandatory; the final engineering gate needs
 at least three train clusters and exactly two untouched active holdout clusters.
 
+#### Reactive loudspeaker-load research
+
+Published bidirectional guitar-amplifier models support a causal electrical
+speaker load inside the tube/load solve, not an impedance-shaped EQ after it.
+[Pakarinen, Tikander and Karjalainen](https://dafx.de/paper-archive/2009/papers/paper_16.pdf)
+and [Macak and Schimmel](https://dafx.de/paper-archive/2011/Papers/05_e.pdf)
+used measured transformer/speaker data; their result does not authorize deriving
+a cabinet load from nominal impedance or an acoustic recording.
+
+A defensible small-signal free-air driver starts with the passive network
+`Zs(s) = Re + s Le + (Rp || s Lp || 1/(s Cp))`, where
+`Rp = Re Qms/Qes`, `Lp = Re/(2 π fs Qes)` and
+`Cp = Qes/(2 π fs Re)`. The official
+[Jensen C12K 8 Ω](https://www.jensentone.com/vintage-ceramic/c12k) fields
+`Re=6.75 Ω`, `Le=0.84 mH`, `fs=115 Hz`, `Qms=16.4` and `Qes=0.90`
+give `Rp=123.0 Ω`, `Lp=10.38 mH` and `Cp=184.5 µF`. They identify only one
+rounded, low-level driver model. They do not identify its open cabinet, and
+Jensen's rounded mechanical fields give slightly different derived values.
+The current official Celestion
+[G12M](https://celestion.com/product/g12m-greenback/) and
+[Vintage 30](https://celestion.com/product/vintage-30/) pages do not publish
+enough Q/complex-impedance data to derive matching British or Modern networks.
+[Celestion's own guidance](https://celestion.com/blog/thinking-of-using-thiele-small-parameters-to-design-a-guitar-speaker-cab-think/)
+also warns that small-signal T/S data do not characterize an open-back guitar
+cabinet.
+
+For an ideal centre-tapped transformer with turns ratio `n`, half-primary
+voltage `v` and differential plate current `dI`, `vs=2v/n`, `is=n dI/2`, so
+`v=(n^2/4) Zs dI`. Choosing `n^2=Raa/Znom` recovers Electry's current
+`v=(Raa/4)dI` resistive load. A real candidate must therefore close the
+reactive companion against the American/British power-pair current in the same
+oversampled frame, feed the converged current to sag and the loaded secondary
+to negative feedback. Filtering the existing fixed-load table output would
+leave all three interactions wrong. Modern has no push-pull pair, `Raa` or
+defined secondary port, so a post-waveshaper version cannot make the same
+claim.
+
+The passive network itself is cheap: roughly three to five states and about 20
+scalar operations per internal sample and channel. The nonlinear coupling is
+the blocker. A direct runtime evaluation reaches nested plate and screen roots;
+adding reactive history as another dense table axis is too large. A local
+Norton/tangent solve is admissible only if an offline exact implicit oracle
+holds plate swing below 1% error and supply demand below 2% throughout both
+models' rail, grid and load-history domains. It must also retain positive-real
+impedance, stable poles, closed-loop feedback margin and less than 3% paired
+96-kHz CPU overhead.
+
+Existing EG-IPT DI/microphone pairs and acoustic cabinet IRs cannot validate
+this circuit because they contain no simultaneous speaker-terminal voltage and
+current. Promotion requires a calibrated series-sense capture of complex
+`Z=V/I`, cold/remount/specimen repeats and multiple levels, followed by fixed
+dummy-load/real-cab E1, E2, two-tone and transient reamps. Until that exists,
+the result is a deliberate no-go: Electry retains its bounded resistive
+American/British load and makes no reactive loudspeaker-reflected-load claim.
+
 #### Energy-derived attack-pitch research
 
 The first-ranked low-CPU pitch experiment is now a common string-tension glide,
@@ -2101,6 +2157,42 @@ Stereo measured median overhead of 0.397% for Sustain and 0.735% for Palm;
 paired-round medians were 0.403% and 0.764%, below the frozen 3% ceiling.
 The CPU result has SHA-256
 `982c791df5695d54512c4f4ab150b2d54297e27d7a81d2e0cdf62cd64d906f48`.
+
+A descriptive exact-eight follow-up reused that frozen estimator core on the
+[8ridgelite](https://github.com/JamesStubbsEng/8ridgelite) repository's
+20-second `Natural/0_e1.wav` and `Natural/13_e2.wav` stereo files. Their
+SHA-256 values are
+`1a9e05a3a2eeae067bdddd4fc102d50deb0c749bddfb0632c5e1f4a2ac866c5a`
+and `c95c1989892142246b291354bb808e98991a529fb52818920554581165f09018`.
+The wrapper changed only the nominal `f0`, inspected each unnamed channel
+separately and prepended 100 ms of zero solely to clear the estimator's onset
+boundary; its SHA-256 is
+`45f2bf57a016247e2f40f88a195e335fa022586ec4afec45df3d9d4c66cc02f1`.
+No threshold or analysis window moved. Shipping E1/E2 model WAV SHA-256 values
+are `2c877332b1a6ac3bfd6d2603c815374219030997cd430fd8710b1b6cbb0e176b`
+and `ef93361c9a08ce66b2a8012774ddaf583a389e0a9101c25e04f7697e35ac4a4f`;
+the candidate pair is
+`dc157a90b71616358fe6b257bb022ba9782acd20507713f870504e7e84b80047`
+and `c986857cde98202773583550bc84f8c707f5a96b5cac0c7c4568e349960f0948`.
+
+One E1 channel lacked the frozen individual-partial/aggregate coverage. The
+other three channel/note observations and same-compiler model renders were:
+
+| observation | real attack / slope | shipping | candidate |
+| --- | ---: | ---: | ---: |
+| E1 channel 2 | +8.201 c / −31.283 c/s | +0.041 c / +0.061 c/s | +2.361 c / −9.455 c/s |
+| E2 channel 1 | +1.652 c / −6.995 c/s | +0.0047 c / −0.0207 c/s | +2.020 c / −7.603 c/s |
+| E2 channel 2 | +4.523 c / −17.456 c/s | +0.0047 c / −0.0207 c/s | +2.020 c / −7.603 c/s |
+
+Across aggregate and H1 attack/slope errors, the candidate improves all 12
+comparisons by 18.278% to 91.291%, but its median reduction is only 33.116%:
+below the existing 50% promotion rail. Two complete executions were
+byte-identical. The source provides one take per pitch and documents neither
+channel identities, guitar/tuning/string nor recording chain; this was also a
+descriptive follow-up, not a frozen TRAIN/HOLDOUT experiment. It strengthens
+the independent exact-eight direction check, but it neither calibrates the
+force/core/decay coefficients nor authorizes enabling the candidate. No
+third-party audio is committed.
 
 The default-off candidate is committed at `7807944`; its read-only final
 receipt has SHA-256
@@ -2202,6 +2294,60 @@ cell, plus identity, energy, lifecycle, level, tuning and stability rails and
 at most 1% median overhead at 96 kHz and 3% worst case at 384 kHz. The permissible
 result is narrower than “realistic plectrum”: more accurate phase-dependent
 open E1/E2 repicks on the captured rig and protocol.
+
+#### Exact-eight pickup-circuit identification gate
+
+Public high-output pickup specifications do not falsify Electry's current
+2 kHz/Q1 loaded-humbucker anchor. The
+[UIUC complex-impedance programme](https://courses.physics.illinois.edu/phys406/sp2017/406emi_guitar_pickup_results.html)
+measured a Seymour Duncan JB specimen at 16.43 kOhm DC, 9.83 H at 1 kHz,
+61 pF at 10 kHz and a 5.175 kHz unloaded peak with Q 2.843 and 0.627 MOhm
+peak impedance. Its read-only
+[workbook](https://courses.physics.illinois.edu/phys406/sp2017/Experimental_Results/Pickup_Data/Guitar_Bass_Pickup_Data.xls)
+had SHA-256
+`05eae58f51192f47fd1ecaecc26695a4e260cdc5496b5f2cc6943413b96852bd`.
+The same workbook's loading sheet contains only Fender single coils, not a
+loaded JB or metal eight-string pickup. The accompanying
+[measurement method](https://courses.physics.illinois.edu/phys406/sp2017/Lab_Handouts/Electric_Guitar_Pickup_Measurements.pdf)
+also shows why one fixed RLC is not identified: pickup inductance and loss are
+frequency-dependent. Indeed, `(Rdc + jwL) || C` from those three summary cells
+predicts a 6.499 kHz/Q24.43/9.816 MOhm peak rather than the measured one.
+
+The exact-eight summaries close no more of the circuit. Seymour Duncan's
+[comparison data](https://www.seymourduncan.com/blog/latest-updates/pickup-comparison-chart)
+give the passive Nazgul 8 as 18.76 kOhm/3.85 kHz and Pegasus 8 as
+17.31 kOhm/4.00 kHz, without L, C, Q, phase, peak level or test load. A
+3.85 kHz peak permits, for example, 5, 10 or 20 H with 342, 171 or 85.5 pF;
+adding the same 600 pF cable moves those ideal resonances to 2.319, 1.813 or
+1.359 kHz. A family of equally admissible fits to the UIUC JB summaries,
+500 kOhm volume/tone controls, a 1 MOhm input and 400--1,200 pF cable spans
+about 2.81--1.47 kHz and Q 1.15--1.60. The shipping anchor is therefore not a
+measurement of a named pickup, but neither can these public peaks select a
+better replacement.
+
+Active exact-eight pickups are a different model class. Fishman's official
+[Fluence Modern 8 specifications](https://fishman.com/dp/fluence-open-core-modern-8-string-pickups/)
+publish 630/720 Hz Voice-1 peaks, 550 Hz plus 8 kHz or 1.3 kHz Voice-2 peaks,
+4.7/4.5 kHz Voice-3 peaks, 2 kOhm output impedance and 25 kOhm controls. Those
+labels omit gain, bandwidth, phase and filter order, and the two-peak voice
+cannot be inferred as one passive resonator. A 2 kOhm output driving even
+1,200 pF has a simple RC corner near 66.3 kHz, so passive cable loading cannot
+explain the published voice peaks. An active voice must not be smuggled into
+the passive Pickup Type endpoint by retuning one biquad.
+
+Promotion requires an explicitly named exact-eight family and voice. At least
+three passive specimens need raw complex `Re/Im Z(f)` under unloaded, exact
+harness, selector, measured-cable, interface and tone-position conditions;
+active targets instead need magnetic-excitation-to-output transfer and output
+impedance versus frequency, level and voice. Registered clean DIs then freeze
+pickup height, string set, cable/interface and repeated levels before a
+specimen/condition TRAIN/HOLDOUT split. A candidate must halve held-out
+complex-transfer error with no worse p95 or maximum, win a blinded matched
+reamp comparison, allocate nothing in the callback and add under 1% median
+eight-string CPU at 96 kHz. The first implementation is the smallest stable
+fit—normally one biquad plus one pole for passive, or at most two biquads per
+active voice—not a WDF network by default. No third-party measurement file is
+committed.
 
 #### Pickup-magnet back-action research
 
@@ -2490,6 +2636,81 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 demo 03 physical Slide score
+
+- Demo 03 promised Slide intervals of two frets, twelve frets up and twelve
+  frets down, but only its first gesture followed the held source. In the old
+  second gesture MIDI 40 remained held on zero-based physical string index 1
+  while the target reused the released MIDI 42 tail on index 2; its
+  `legatoFromFrequency` was
+  92.4986038 Hz, so the audible move was 42→52 (ten frets), not 40→52. The old
+  final gesture sent 40→40: its held-owner count became two, Slide blend stayed
+  at one, source frequency and friction stayed zero, and a plectrum Contact
+  started instead of a descending finger move.
+- The score now states the three source/target pairs explicitly as 40→42,
+  40→52 and 53→41. A 600 ms gap lets the preceding fingerless release tail
+  retire before the next source is chosen. The exact 44.1-kHz lifecycle
+  regression requires every source and target on zero-based physical string
+  index 2 (the wound E2), zero initial Slide blend from the named source
+  frequency, positive friction, zero pick excitation and a cleared destination
+  owner after release.
+- A full same-compiler canonical render changes exactly demo 03; the other 22
+  WAV pairs are byte-identical. The corrected file is 654,884 frames
+  (14.849977 s) of 44.1-kHz mono PCM16 at −3.000097 dBFS peak and
+  −34.896833 dBFS RMS, with SHA-256
+  `91ebed5d6c153f27a559d3af2105bd00c5108e945edf79c262c494bf47890202`.
+  The previous 13.349977 s file had SHA-256
+  `a87271d14df85c28ccd37f38877f7cf843694d5a9769f1d66fa515b6da538ae6`.
+  No product DSP or realtime loop changed, so plug-in CPU is identical; this is
+  musical-score correctness, not measurement or real-recording evidence.
+
+### 2026-08-30 accessible exclusive-choice groups
+
+- Each of the six titled pickup, play-style, keyswitch-mode, output-mode and
+  amp-model strips now exposes a native accessibility `group` around its
+  existing radio-button children. Its accessible title stays identical to the
+  visible strip context, while the selected child remains the strip's only Tab
+  stop. This changes no painting, layout, parameters or audio path.
+- The editor contract creates every strip's native handler and requires its
+  `group` role and exact title in addition to the existing 60-native/35-logical
+  Tab-stop, selection, arrow-key and activation rails.
+
+### 2026-08-30 complete accessible keyboard instructions
+
+- The focusable MIDI keyboard's accessible title mentioned only the two
+  momentary gestures and playable range, while its visible footer also explains
+  all ten C0..A0 pick-stroke and play-style keyswitches. The title now derives
+  from that footer verbatim, so the two instruction surfaces cannot drift and
+  assistive-technology focus announces every playable keyboard region.
+- The processor/editor contract creates the keyboard's native accessibility
+  handler and requires its exact title to equal `"MIDI keyboard: "` plus the
+  visible hint. The processor suite passes, and the 1080x860 editor render
+  remains byte-identical with SHA-256
+  `e7187094719025a49206bc6fb2e401ffb225fedbe2a1b2d5c09372ac094fc374`.
+  No painting, layout, audio or DSP path changed.
+
+### 2026-08-30 demo 06 whole-step wheel score
+
+- Demo 06 described a wheel bend "up a step", but `pitchBend(0.75)` asks the
+  engine's fixed ±2-semitone wheel for 1.5 semitones. The score now uses
+  `1.0`, the same whole-tone command used elsewhere in the canonical renderer,
+  so held MIDI 71 reaches MIDI 73 rather than an equal-tempered pitch halfway
+  between MIDI 72 and 73. No DSP, effect, timing or allocation code changed.
+- Same-compiler debugger traces at the end of the 750 ms hold show the old
+  target and settled bend at exactly 1.5 semitones and the corrected pair at
+  exactly 2.0. Before the changed command, both raw stereo prefixes contain
+  66,149 frames and compare byte-for-byte; their left/right SHA-256 values are
+  `dc21229e230cae734258dc69214b7713924ac2e2e83d7ca70f17254dab1518f9` and
+  `bec0289be42dbc4c5f10b533ec26159d8ca15696168796e1b1b5547f7b50b6d3`.
+- Exactly demo 06 changes in a full same-compiler canonical render; the other
+  22 WAV pairs are byte-identical. The corrected WAV remains 568,889 frames of
+  44.1-kHz stereo PCM16, at −3.000097 dBFS peak and −12.678875 dBFS RMS, with
+  SHA-256
+  `5fdc24468d6d46dec559a22d7c725a674f3545ea5fb57e7cf8ff4c7f6f628294`.
+  Its whole-file old/new PCM null is −6.835834 dBFS because the intended pitch
+  change also changes phase through the nonlinear amp, delay and room. This is
+  musical-score correctness, not measurement or real-recording evidence.
+
 ### 2026-08-30 accessible numeric knob entry
 
 - Electry deliberately keeps each rotary control's editable numeric value as a
@@ -2531,7 +2752,8 @@ the realistic result is to ship nothing.
   `6ca8ec6d5be414691e6df2e759706dc8688869f7b697435485c97075ab475501` and
   `85f006029e7ffc11818b41dd2a6e974c5c403e2e098a9fef27840914e97b955a`.
   Exactly demo 06 changes in the canonical render; the other 22 WAV pairs are
-  byte-identical. The corrected normalized WAV SHA-256 is
+  byte-identical. At that Slide-score checkpoint the corrected normalized WAV
+  SHA-256 was
   `1f801c33d55d3500b807fd6e887f508992852c17038c9d2f4457de0fa01b2df1`.
 - The normalized candidate is 568,889 frames of 44.1-kHz stereo PCM16
   (12.899977 seconds), with −3.000097 dBFS peak and −12.689882 dBFS RMS. Its

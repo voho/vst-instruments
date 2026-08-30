@@ -399,17 +399,22 @@ Take renderPlayStyles()
             // A slide needs something to slide from, and its length follows
             // the interval: two frets, then twelve, then twelve back down.
             take.pick(PickStyle::Down);
-            for (const int target : { 42, 52, 40 })
+            static constexpr std::array<std::array<int, 2>, 3> slides {{
+                {{ 40, 42 }}, {{ 40, 52 }}, {{ 53, 41 }}
+            }};
+            for (const auto& notes : slides)
             {
+                const int source = notes[0];
+                const int target = notes[1];
                 take.style(PlayStyle::Sustain);
-                take.noteOn(40, 0.9f);
+                take.noteOn(source, 0.9f);
                 take.wait(0.22);
                 take.style(PlayStyle::Slide);
                 take.noteOn(target, 0.8f);
                 take.wait(0.60);
                 take.noteOff(target);
-                take.noteOff(40);
-                take.wait(0.10);
+                take.noteOff(source);
+                take.wait(0.60);
             }
             continue;
         }
@@ -540,7 +545,7 @@ Take renderLeadThroughAmp()
     take.style(PlayStyle::Sustain);
     take.noteOn(71, 0.95f);
     take.wait(0.35);
-    take.pitchBend(0.75f);
+    take.pitchBend(1.0f);
     take.wait(0.75);
     take.pitchBend(0.0f);
     take.wait(0.45);

@@ -4311,6 +4311,13 @@ void testEditorRendering()
 
         expect (strip->getTitle().isNotEmpty(),
                 std::string (componentId) + " has no accessibility context");
+        auto accessibility = strip->createAccessibilityHandler();
+        expect (accessibility != nullptr
+                    && accessibility->getRole()
+                           == juce::AccessibilityRole::group
+                    && accessibility->getTitle() == strip->getTitle(),
+                std::string (componentId)
+                    + " is not exposed as a titled accessibility group");
         int buttonCount = 0;
         int selectedCount = 0;
         int tabStopCount = 0;
@@ -4956,13 +4963,11 @@ void testEditorRendering()
         expect (keyboard->getWantsKeyboardFocus()
                     && keyboard->hasFocusOutline(),
                 "keyboard is not visibly keyboard-focusable");
-        expect (keyboard->getTitle().contains ("D6")
-                    && keyboard->getTitle().contains ("A#0")
-                    && keyboard->getTitle().contains ("B0")
-                    && keyboard->getTitle().containsIgnoreCase ("tremolo")
-                    && ! keyboard->getTitle().contains ("E6")
-                    && ! keyboard->getTitle().contains ("B6"),
-                "keyboard title presents out-of-range E6..B6 keys as pitched notes");
+        auto keyboardAccessibility = keyboard->createAccessibilityHandler();
+        expect (hintLabel != nullptr && keyboardAccessibility != nullptr
+                    && keyboardAccessibility->getTitle()
+                        == "MIDI keyboard: " + hintLabel->getText(),
+                "keyboard accessibility omits its visible keyswitch instructions");
         expect (hintLabel != nullptr
                     && hintLabel->getText().contains ("E1..D6")
                     && hintLabel->getText().contains ("A#0")
