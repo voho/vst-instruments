@@ -4467,6 +4467,14 @@ void testEditorRendering()
 
     auto* factoryProgramControl = dynamic_cast<juce::ComboBox*> (
         findControl ("factoryProgram"));
+    juce::Label* factoryProgramCaption = nullptr;
+    for (auto* child : editor->getChildren())
+        if (auto* label = dynamic_cast<juce::Label*> (child);
+            label != nullptr && label->getText() == "RIG")
+            factoryProgramCaption = label;
+    expect (factoryProgramCaption != nullptr
+                && ! factoryProgramCaption->isAccessible(),
+            "redundant RIG caption remains in the accessibility tree");
     expect (factoryProgramControl != nullptr,
             "editor is missing the factory-rig selector");
     if (factoryProgramControl != nullptr)

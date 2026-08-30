@@ -1416,6 +1416,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     factoryProgramLabel.setColour (juce::Label::textColourId,
                                    colours::binding.withAlpha (0.8f));
     factoryProgramLabel.setJustificationType (juce::Justification::centredLeft);
+    factoryProgramLabel.setAccessible (false);
     addAndMakeVisible (factoryProgramLabel);
 
     for (int index = 0; index < electryProcessor.getNumPrograms(); ++index)
