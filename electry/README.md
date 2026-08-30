@@ -2809,6 +2809,170 @@ requires predeclared superiority. Until those commissioned captures and the
 frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
+#### Capture-gated moving saddle witness point
+
+Electry currently treats each saddle witness point as fixed. Fretting and
+tension gestures move the speaking period, but the bridge endpoint itself does
+not move with string amplitude. The separate saddle-rattle path adds quiet
+hardware noise, and the support-friction experiment below asks whether a
+gesture leaves tension memory; neither represents a contact point travelling
+over a rounded saddle crown while the string vibrates.
+
+[Ihsan, van Horssen and Tuwankotta's 2024 moving-boundary
+study](https://doi.org/10.1016/j.jsv.2024.118311) supplies a genuinely different
+mechanism. For a smooth endpoint obstacle `R_B`, their scalar planar free
+string occupies `S(t) < X < L` and satisfies, with linear density `rho`,
+
+```
+U_tt - (T / rho) U_XX = 0
+U(S(t), t)   = R_B(S(t))
+U_X(S(t), t) = R'_B(S(t))
+U(L, t)      = H
+```
+
+The attachment-detachment coordinate `S(t)` depends on the vibration. With
+`s(t) = S(t) / L`, their `x = (X/L - s(t)) / (1 - s(t))` transformation fixes
+the spatial interval but makes the boundary problem nonlinear. For small
+oscillations around a parabolic obstacle, particular combinations of obstacle
+length, far-end height and equilibrium contact give leading-order Dirichlet-,
+Neumann- or Robin-type cases. Selected nondimensional cases are numerically
+corroborated against direct PDE integration; for longer times the authors
+report that only the characteristic-coordinate approximation remains close.
+This is not a guitar experiment, saddle measurement or recorded-audio fit.
+
+If a conventional guitar saddle exhibits the same class of contact motion,
+`L_eff(t) = L - S(t)` gives the first-order engineering inference
+`delta f / f approximately delta S / (L - S_0)` for the paper's ideal free
+domain at fixed tension and linear density.
+Audio-rate witness motion could therefore produce phase modulation, sidebands
+and modal interaction instead of only a static intonation offset. The paper
+does not establish that this motion is measurable on a metal electric-guitar
+saddle, or that its scalar, one-dimensional, small-oscillation, constant-tension
+assumptions transfer, or that its continuously differentiable single-hump
+obstacle represents a guitar saddle.
+It omits string stiffness, friction, afterlength, bridge admittance, damping and
+magnetic pickup observation, and publishes no transferable crown radius or
+coefficient. No public exact-eight DI found here records the endpoint closely
+enough to infer `S(t)` from sound.
+
+The mechanism must therefore be seen before it is heard into the model. Use one
+production-representative eight-string with its actual rounded saddles for five
+separately installed/remounted string instances assigned before acquisition:
+exactly three TRAIN clusters and two hash-locked HOLDOUT clusters. Start with
+open E1 and E2; any fretted extension is a separately preregistered experiment.
+Define the settling procedure and log the measured three-dimensional crown
+profile and
+roughness, saddle material and setback, scale, gauge/core/wrap, winding
+orientation, break angle, action, relief, afterlength, tension, string age,
+temperature and humidity. Mechanically repeat registered safe release
+displacement and force waveforms at registered amplitudes in both transverse
+axes with a nonmagnetic fixture. Damp the seven non-target strings and randomise
+the complete trial order before capture.
+
+First pass a known-motion optical preflight under the same gauges, crown,
+lighting and working distance. Freeze the spatial modulation-transfer function,
+scale, frame rate, exposure-blur bound, bandwidth and minimum detectable
+contact travel. Then synchronise two orthogonal, backlit, global-shutter
+telecentric views, or a validated mirror/stereo equivalent, with untouched
+bridge DI and bridge force or acceleration. Register both string centreline
+views to rigid saddle fiducials and the measured crown. A common clock plus the
+same optical and electrical timing event at the start and end of every take
+bounds exposure-midpoint error, trigger jitter, clock drift and analog group
+delay. If occlusion prevents the preflight motion from being recovered, the
+gate stops.
+
+Before TRAIN opens, freeze lens calibration, the geometric centreline/tangency
+estimator that converts the two views to the neck-side `S(t)`, registered
+subpixel reconstruction, regions of interest, exclusions and raw-file hashes.
+Also freeze a cluster-level amplitude/phase statistic, an autocorrelation-aware
+simultaneous uncertainty interval, a static/pinned-string null distribution,
+minimum detectable effect and phase/sign tolerance for every primary
+string/axis/amplitude cell. Keep all raw frames and channels; no algorithm,
+frame, path or timing correction may change after its paired audio is seen.
+
+The optical null keeps the production saddle and observes a pinned string plus
+its rigid fiducials. A separate safe clamped witness must demonstrate `S(t)`
+below the frozen systematic floor; otherwise it is called only a high-curvature
+control. Crown-radius and break-angle interventions are separate, randomized
+controls, never claimed to change only one acoustic property. Their actual
+static witness, downforce, afterlength and bridge transfer are measured, and
+mass, compliance and friction changes remain nuisance variables rather than
+evidence for the mechanism.
+
+TRAIN provisionally passes only if every primary E1/E2, release-axis and
+amplitude cell resolves non-constant `S(t)` above the frozen cluster-level
+effect threshold in all three clusters, with repeatable phase and sign and a
+predeclared control-effect size. The reconstructed string must also meet the
+paper's contact and tangency conditions within frozen uncertainty, without a
+visible gap, bounce or impact; otherwise the observation is different physics.
+Failure leaves the fixed endpoint in place regardless of a listening
+preference. Both HOLDOUT bundles remain sealed at this stage.
+
+TRAIN alone may then identify one runtime compression hypothesis. Start with a
+memoryless map and reject it if matched instantaneous inputs with different
+histories predict different `S(t)`; otherwise allow at most two additional
+stable bounded scalar states per physical `Voice`, shared by both
+polarisations. The input is a causal previous-sample proxy of the existing
+local transverse state. Update candidate state only after both axis returns,
+then apply one shared physical saddle offset additively to the next sample's two
+fractional read delays; do not mutate the pitch target/smoother, create an
+algebraic loop or add a second delay read. Express offset and slew bounds in
+metres and seconds, then rate-convert them. Freeze reset, repick, steal, refret
+and release lifecycles, plus the offset sign and the round-trip conversion from
+metres to samples. The first candidate is active-voice-only: sympathetic-only
+rendering forces both candidate states and its offset to zero, so the existing
+one-axis sympathetic path is not silently assigned an unmeasured rule. Do not
+port the paper's PDE solver into the audio thread or add a user parameter.
+
+A zero-input non-regeneration rail disables excitation, artifacts, acoustic
+feedback and inter-string bridge injection. Its frozen observable is
+`R_W = sum(vertical_return^2 + horizontal_return^2)` before pickup/body
+processing over each preregistered window. Matched ON/OFF renders start from
+identical frozen line, filter and candidate states; the rail allows stored
+candidate energy to return locally but permits no positive late-window slope or
+cumulative ON-minus-OFF excess beyond the repeat-measured interpolation
+tolerance, and requires bounded eventual decay. A default-off compile-time
+experiment must leave the frozen render corpus byte-identical on the same build
+and architecture.
+
+Before either HOLDOUT bundle opens, freeze candidate structure, states,
+coefficients and initialization; the complete optical/audio estimator; latency
+correction; analysis windows; complex demodulation; H1-H12 and non-overlapping
+sideband bins; phase wrapping; gain normalization; partial weights; noise-floor
+exclusions; aggregation; and equivalence margins. Its normalized scalar error
+`E` must include both registered complex harmonic trajectories and sidebands.
+The capture manifest records this complete definition and its implementation
+hash. `E_fixed` is the error of shipping fixed-endpoint Electry against that
+same measured bundle under identical excitation, alignment, normalization and
+estimation; it is not the physical high-curvature control.
+
+Each HOLDOUT is then opened once as one synchronized camera/force/DI bundle.
+Separately for E1 and E2 in each bundle, the direct TRAIN mechanism criteria and
+tangency test must repeat, `E_candidate <= 0.5 * E_fixed`, measured `S(t)` phase
+must fall inside its frozen tolerance, and fundamental cents error, T60,
+transient error and energy decay must remain inside their equivalence margins.
+
+The same candidate must win whole-file-RMS-matched dry and high-gain blind
+comparisons without degrading ordinary soft notes. On one logged machine and
+Release compiler, at fixed block sizes 32, 128 and 512 after warmup, at least 24
+order-balanced ON/OFF pairs run in every rate/block/path cell. Before timing,
+freeze one deterministic MIDI, parameter, seed and render-duration fixture;
+report each cell and take the worse block-size median for each of the
+one-active/seven-idle and eight-active paths. The relative paired-median runtime
+increase must stay below 1% at 96 kHz in each path and below 3% for the worse
+path at 384 kHz.
+
+The stability matrix enumerates 44.1, 48, 88.2, 96, 96.001, 192 and 384 kHz;
+minimum/maximum candidate state, delay and slew; open E1 through 22nd-fret E4;
+registered bend extrema; reset, repick, steal, refret, release and
+active-to-sympathetic transitions; and the frozen short/long render durations.
+Every cell must remain finite and output-bounded, respect delay/state limits,
+pass the zero-input observable and reach its eventual-decay threshold. The 50%
+error reduction, equivalence margins, confidence level and CPU budgets are
+Electry engineering preregistrations, not results or thresholds from Ihsan et
+al. Until every gate succeeds, moving-saddle synthesis remains a falsifiable
+lead, not shipping realism or a market-superiority claim.
+
 #### Capture-gated support-friction pitch memory
 
 Electry's bend trajectory is currently memoryless. The legacy wheel or resolved
