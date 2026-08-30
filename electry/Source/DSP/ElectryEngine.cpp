@@ -5395,6 +5395,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     // covers shrinks as the slide moves up the neck, exactly as the frets do.
     voice.slideNoiseAmplitude = 0.0f;
     voice.slideNoiseLevel = 0.0f;
+    voice.slideAverageBandCentreHz = 0.0f;
     voice.slideShaperHigh.reset();
     voice.slideShaperLow.reset();
     if (playStyle == PlayStyle::Slide && frets > 0.0f)
@@ -5417,7 +5418,8 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
         const float windingMetres = spec.wound
             ? 0.001f * (0.100f + 0.130f * diameterMm)
             : 0.0008f;
-        const float centre = clampf(speed / windingMetres, 200.0f,
+        voice.slideAverageBandCentreHz = speed / windingMetres;
+        const float centre = clampf(voice.slideAverageBandCentreHz, 200.0f,
                                     0.40f * static_cast<float>(sampleRate_));
         voice.slideBandHigh = std::exp(-twoPi * std::min(
             1.6f * centre, 0.45f * static_cast<float>(sampleRate_))
@@ -5675,6 +5677,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.touchFraction = 0.0f;
     voice.slideNoiseAmplitude = 0.0f;
     voice.slideNoiseLevel = 0.0f;
+    voice.slideAverageBandCentreHz = 0.0f;
     voice.slideShaperHigh.reset();
     voice.slideShaperLow.reset();
     voice.vibratoSemitones = 0.0f;
@@ -5977,15 +5980,25 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
                                    0.0f, 1.0f);
         if (voice.legatoBlend >= 1.0f)
             voice.lastConfiguredLiveFret = -999.0f;
-        // The friction follows how fast the finger is actually moving, which
-        // is the derivative of the glide's own smoothstep, 6 b (1 - b). It is
-        // therefore zero at both ends and the squeak swells and dies with the
-        // movement instead of switching on and off.
+        // The friction follows the glide's normalized smoothstep-velocity
+        // proxy, 6 b (1 - b). It is therefore zero at both ends and the squeak
+        // swells and dies with the movement instead of switching on and off.
         if (voice.slideNoiseAmplitude > 0.0f)
         {
             const float b = voice.legatoBlend;
-            voice.slideNoiseLevel = voice.slideNoiseAmplitude
-                                  * 6.0f * b * (1.0f - b);
+            const float motion = 6.0f * b * (1.0f - b);
+            voice.slideNoiseLevel = voice.slideNoiseAmplitude * motion;
+            if (voice.legatoBlend < 1.0f)
+            {
+                const float centre = clampf(
+                    voice.slideAverageBandCentreHz * motion, 200.0f,
+                    0.40f * static_cast<float>(sampleRate_));
+                voice.slideBandHigh = std::exp(-twoPi * std::min(
+                    1.6f * centre, 0.45f * static_cast<float>(sampleRate_))
+                    * inverseSampleRate_);
+                voice.slideBandLow = std::exp(
+                    -twoPi * 0.6f * centre * inverseSampleRate_);
+            }
             if (voice.legatoBlend >= 1.0f)
             {
                 voice.slideNoiseAmplitude = 0.0f;
