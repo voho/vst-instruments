@@ -4828,6 +4828,16 @@ void testEditorRendering()
         setParameterValue (semanticProcessor,
                            electry::parameters::sympathetic, 0.0f);
         ElectryFretboardDisplay semanticDisplay;
+        semanticDisplay.setSize (664, 114);
+        const auto renderSemanticDisplay = [&semanticDisplay]
+        {
+            juce::Image image (juce::Image::ARGB, semanticDisplay.getWidth(),
+                               semanticDisplay.getHeight(), true);
+            juce::Graphics graphics (image);
+            semanticDisplay.paintEntireComponent (graphics, true);
+            return image;
+        };
+        const auto silentDisplay = renderSemanticDisplay();
         auto semanticAccessibility = semanticDisplay.createAccessibilityHandler();
         const auto accessibleTitle = [&]
         {
@@ -4847,6 +4857,21 @@ void testEditorRendering()
             (juce::uint8) 110), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
+        const auto openState = semanticProcessor.getStringVisualState (0);
+        const auto openDisplay = renderSemanticDisplay();
+        const int openRowY = juce::roundToInt (
+            static_cast<float> (semanticDisplay.getHeight())
+            * electry::visuals::stringRowFraction (
+                  0, electry::ElectryEngine::stringCount, 0.085f));
+        bool tuningSpacerUnchanged = true;
+        for (int y = openRowY - 2; y <= openRowY + 2; ++y)
+            for (int x = 43; x <= 45; ++x)
+                tuningSpacerUnchanged = tuningSpacerUnchanged
+                    && silentDisplay.getPixelAt (x, y)
+                        == openDisplay.getPixelAt (x, y);
+        expect (openState.sounding && openState.fret == 0
+                    && tuningSpacerUnchanged,
+                "an open-string position marker invaded the tuning-label spacer");
         expect (accessibleTitle().contains ("physical string 8")
                     && accessibleTitle().contains ("open E1")
                     && accessibleTitle().contains ("downstroke")

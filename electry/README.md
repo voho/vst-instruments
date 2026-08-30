@@ -2636,6 +2636,35 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 open-string fretboard marker
+
+- The live fretboard's finger-position badge was also drawn for fret zero.
+  At the shipped 664x114 display size its circle entered the tuning-label
+  spacer and its second copy of the open pitch crowded the permanent tuning
+  label. Open strings now use the existing bright string, tuning label,
+  motion and level meter; the position badge is reserved for actual frets.
+- The editor regression renders the silent display and a confirmed sounding
+  open E1, then requires the unaffected 3x5-pixel tuning spacer to remain
+  byte-identical. The old renderer fails that exact comparison. The normal
+  at-rest 1080x860 editor PNG remains byte-identical at SHA-256
+  `e7187094719025a49206bc6fb2e401ffb225fedbe2a1b2d5c09372ac094fc374`.
+  This changes no layout, input path, accessibility semantics, audio or CPU.
+
+### 2026-08-30 exact-zero compressor gain fast path
+
+- The compressor's detector and envelope still follow every sample while its
+  control is at exact zero, preserving a warm automation start, but its
+  otherwise inaudible soft-knee power calculation is now skipped. The existing
+  gain law and every non-zero setting are unchanged.
+- On an M1 Max, 31 alternating paired Release trials of 1,048,576 hot stereo
+  frames put the isolated zero-compressor FX path at 0.612--0.615 paired median
+  candidate/baseline across 44.1--384 kHz; every row's p10--p90 stayed within
+  0.607--0.623. Enabled-hot and below-threshold 96 kHz controls were 0.999 and
+  0.981. A full 96 kHz eight-string metal engine-plus-FX row was 0.997 median,
+  with a noisy 0.912--1.022 p10--p90, so it is a non-regression check rather
+  than an end-to-end speed claim. The detector recurrence test passes and all
+  23 canonical WAVs remain byte-identical.
+
 ### 2026-08-30 demo 03 physical Slide score
 
 - Demo 03 promised Slide intervals of two frets, twelve frets up and twelve
