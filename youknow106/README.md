@@ -37,13 +37,13 @@ the high-pass ladder and the deterministic Unit Character profile.
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −15.2 dBFS | +12.2 dB |
-| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −15.1 dBFS | +12.1 dB |
+| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −14.9 dBFS | +11.9 dB |
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −26.3 dBFS | +23.3 dB |
 | `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −25.3 dBFS | +22.3 dB |
 | `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −28.1 dBFS | +25.1 dB |
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, then in mode II | 15.8 s | −16.3 dBFS | +13.3 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −10.8 dBFS | +7.8 dB |
-| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −22.9 dBFS | +19.9 dB |
+| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −22.1 dBFS | +19.1 dB |
 | `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −15.1 dBFS | +12.1 dB |
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −23.0 dBFS | +20.0 dB |
 <!-- peaks-table-end -->
@@ -568,7 +568,9 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   uses the exact pass-latched partial-product/DAC code. The loaded hardware
   slider reaches the printed 50–95% range near byte 101, while the preserved
   seven-bit overrange can enter the comparator-pinning region; the onset byte
-  continues to gate DCO and VCF modulation only.
+  continues to gate DCO and VCF modulation only. Four affected plug-in-only
+  factory VR1 positions were minimally lowered to retain the fixed loudness
+  contract.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

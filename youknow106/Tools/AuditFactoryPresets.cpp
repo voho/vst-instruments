@@ -60,6 +60,8 @@ constexpr double meterFloorDb = -140.0;
 constexpr double meterFloorLinear = 1.0e-7;
 constexpr double previewCeiling = 0.8912509381337456; // -1 dBFS
 constexpr int previewFadeFrames = 2400;               // 50 ms at 48 kHz
+constexpr std::string_view ownershipFileName =
+    ".youknow106-factory-preset-audit-owned-v1";
 constexpr std::string_view ownershipMarker =
     "<!-- youknow106-factory-preset-audit-owned-v1 -->";
 
@@ -621,6 +623,12 @@ bool ensureOwnedDirectory (const std::filesystem::path& directory)
     if (error || ! std::filesystem::is_directory (directory))
         return false;
 
+    const auto marker = directory / ownershipFileName;
+    if (std::filesystem::is_regular_file (marker))
+        return true;
+
+    // Read the original README marker for directories created before the
+    // repository adopted one README per instrument.
     const auto readme = directory / "README.md";
     if (std::filesystem::exists (readme))
     {
@@ -642,11 +650,11 @@ bool ensureOwnedDirectory (const std::filesystem::path& directory)
 
     // Claim an empty/new directory before rendering. Subsequent runs may only
     // reach exact filenames below after finding this unique marker.
-    return writeText (readme, std::string (ownershipMarker)
-        + "\n\nFactory audit output is being generated.\n");
+    return writeText (marker, "youknow106 factory preset audit output v1\n");
 }
 
-int run (bool smoke, const std::filesystem::path& directory)
+int run (bool smoke, const std::filesystem::path& directory,
+         bool writeStandaloneReport)
 {
     if (! ensureOwnedDirectory (directory))
         return 1;
@@ -782,8 +790,10 @@ int run (bool smoke, const std::filesystem::path& directory)
     const double corpusMedianDb = corpusMedianGatedDb (rows);
     if (! writeText (directory / "metrics.csv",
                      makeCsv (rows, corpusMedianDb, ! smoke))
-        || ! writeText (directory / "README.md",
-                        makeReport (rows, smoke, commonGain, corpusMedianDb)))
+        || (writeStandaloneReport
+            && ! writeText (directory / "README.md",
+                            makeReport (rows, smoke, commonGain,
+                                        corpusMedianDb))))
     {
         std::fprintf (stderr, "could not write audit reports in %s\n",
                       directory.string().c_str());
@@ -870,5 +880,8 @@ int main (int argc, char** argv)
     }
     if (smoke && ! pathWasProvided)
         directory = "factory-preset-audit-smoke";
-    return run (smoke, directory);
+    // The repository's default output belongs under the instrument's one
+    // canonical README, which already explains this audit. Explicit/smoke
+    // destinations remain self-describing standalone bundles.
+    return run (smoke, directory, pathWasProvided || smoke);
 }
