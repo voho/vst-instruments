@@ -4236,6 +4236,34 @@ void testEditorRendering()
                 "knob lacks its full accessible name, reset help, or visible "
                 "keyboard focus: "
                     + knobs[first]->getName().toStdString());
+
+        juce::Label* valueLabel = nullptr;
+        int editableValueLabelCount = 0;
+        for (auto* child : knobs[first]->slider.getChildren())
+            if (auto* label = dynamic_cast<juce::Label*> (child);
+                label != nullptr && label->isEditable())
+            {
+                valueLabel = label;
+                ++editableValueLabelCount;
+            }
+        auto valueAccessibility = valueLabel != nullptr
+            ? valueLabel->createAccessibilityHandler() : nullptr;
+        const auto valueHelp = valueAccessibility != nullptr
+            ? valueAccessibility->getHelp() : juce::String {};
+        expect (editableValueLabelCount == 1
+                    && valueAccessibility != nullptr
+                    && valueAccessibility->getRole()
+                           == juce::AccessibilityRole::editableText
+                    && valueAccessibility->getActions().contains (
+                           juce::AccessibilityActionType::press)
+                    && valueLabel->getText().isNotEmpty()
+                    && valueAccessibility->getTitle() == valueLabel->getText()
+                    && valueHelp.startsWith (fullParameterName + ". ")
+                    && valueHelp == knobs[first]->slider.getTooltip()
+                    && valueHelp.contains (
+                           "Double-click to reset to its default"),
+                "editable knob value lacks its parameter context or edit action: "
+                    + knobs[first]->getName().toStdString());
         for (auto* child : knobs[first]->getChildren())
             expect (knobs[first]->getLocalBounds().contains (child->getBounds()),
                     "knob child escaped its control bounds: "

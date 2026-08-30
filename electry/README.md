@@ -2490,6 +2490,26 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 accessible numeric knob entry
+
+- Electry deliberately keeps each rotary control's editable numeric value as a
+  second Tab stop, but JUCE's stock slider value label is accessibility-ignored.
+  Those 25 stops therefore exposed neither an editable-text role, their visible
+  value nor an edit action. Electry now retains JUCE's decimal editor, colours
+  and mouse-wheel blocking in a normal `Label`, whose native accessibility
+  handler exposes the direct-entry field.
+- Each slider's existing tooltip and reset guidance now begins with its
+  canonical host parameter name. The current value label receives that exact
+  help, while JUCE's native text-box recreation path inherits it from the
+  parent slider. Regression coverage requires exactly one editable value label
+  per knob, its unchanged displayed-value title, editable-text role, press
+  action and canonical help, while preserving 60 native and 35 logical Tab
+  stops. The test-only assertion fails all 25 fields on the prior code.
+- This changes accessibility semantics only: DSP, parameters and layout are
+  untouched, while copied JUCE colours keep the drawn state unchanged. The
+  regenerated 1080x860 editor PNG is byte-identical at
+  SHA-256 `e7187094719025a49206bc6fb2e401ffb225fedbe2a1b2d5c09372ac094fc374`.
+
 ### 2026-08-30 demo 06 reachable Slide score
 
 - Demo 06 described a Slide from MIDI 67 to 74, but the actual prefix put 67
