@@ -2760,6 +2760,27 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 performed-fret pick-contact geometry
+
+- A pick position `x` and contact width `w` are fixed metres from the bridge,
+  so their delay coordinates are `2x/c` and `w/c`. A reserved pick that arrived
+  during an unfinished Hammer or Slide instead combined the performed period
+  with `voice.fret`, the written destination. It now recovers the existing
+  fractional legato fret at contact; finger-only legato geometry is unchanged.
+- Adding only the new invariant to unmodified `76f3e6ec` fails once for Hammer
+  and once for Slide. The corrected engine and the complete DSP matrix pass all
+  nine tests; no coefficient, parameter or persistent state was added.
+- Canonical Ubuntu/GCC 13.3 renders of the merged parent and candidate change
+  only demo 22 at its in-flight chord slide, beginning at 12.567506 s; the
+  other 22 WAVs are byte-identical. Its SHA-256 moves from
+  `1b276823cacd4a6d91d95841b93b5fac8068dc16d4d8544b5b05132e0cb9781e`
+  to `6cfc639ea158be89adb6b06c96439a04d7ce6117ac46742c3e9b8c6db5a62654`.
+- The branch runs only when an excitation starts and evaluates one logarithm
+  only for a plectrum meeting a moving legato string; the sample loop is
+  unchanged. At 96 kHz the existing candidate guard measured 0.126768x for
+  eight strings in the worst Both/Stereo case and 0.150846x during an
+  eight-string wheel glide.
+
 ### 2026-08-30 demo 08 clean sympathetic lifecycle
 
 - Demo 08 struck MIDI 28, 35, 40, 47, 52 and 56 twice but sent only one

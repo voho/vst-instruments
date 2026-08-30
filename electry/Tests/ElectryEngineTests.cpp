@@ -7287,6 +7287,39 @@ void testAttackStateTransitions()
                    && TestAccess::legatoBlend(engine, 1) < 1.0f,
                "pick contact snapped an unfinished legato glide to its fret");
 
+        // The pick and its contact patch are fixed distances from the bridge.
+        // If the plectrum reaches the string during a fret glide, convert those
+        // metres with the fractional fret under the finger at contact, not the
+        // written destination that the glide has not reached yet.
+        const float contactBlend = TestAccess::legatoBlend(engine, 1);
+        const float contactOffset = 12.0f * std::log2(
+            TestAccess::legatoFromFrequency(engine, 1)
+            / contacted.baseFrequency)
+            * (1.0f - electry::smoothStep(contactBlend));
+        const float liveFret = static_cast<float>(contacted.fret)
+                             + contactOffset;
+        const float fretStretch = std::exp2(liveFret / 12.0f);
+        const float openLength = TestAccess::scaleLengthMetres(engine);
+        const float openFraction = electry::lerp(
+            0.025f, 0.48f, parameters.pickPosition)
+            + contacted.strokeContactOffsetMetres / openLength;
+        const float expectedCentre = electry::clampf(
+                                       openFraction * fretStretch,
+                                       0.02f, 0.98f)
+                                   * contacted.lastCompensatedPeriod;
+        const float contactMetres = 0.001f * electry::lerp(
+            1.5f, 0.5f, parameters.pickHardness);
+        const float expectedHalfWidth = 0.5f
+            * contactMetres / std::max(openLength / fretStretch, 0.05f)
+            * contacted.lastCompensatedPeriod;
+        expect(std::abs(contacted.excitationCombDelay - expectedCentre)
+                       < 1.0e-6f * expectedCentre
+                   && std::abs(contacted.excitationCombWidth
+                               - expectedHalfWidth)
+                       < 1.0e-6f * expectedHalfWidth,
+               "a travelling pick used the written fret instead of its "
+               "performed metre geometry");
+
         engine.noteOff(35);
         expect(TestAccess::snapshot(engine, 1).keyDown,
                "the old fret released the moved string");

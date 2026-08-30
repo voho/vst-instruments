@@ -4692,7 +4692,24 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // added to the open-string fraction before the fret stretch, exactly as the
     // nominal position is: the hand is a few millimetres out of place, not a
     // few millimetres of the sounding length out of place.
-    const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
+    // A reserved plectrum can arrive while an earlier legato finger is still
+    // travelling. `voice.fret` is already the written destination, so recover
+    // the performed fractional fret before converting fixed metres to the
+    // sounding-length coordinate. Finger-only Hammer/Slide contacts retain
+    // their destination geometry: this correction belongs to the pick that
+    // physically meets the moving string.
+    float contactFret = static_cast<float>(voice.fret);
+    if (plectrumContact && voice.legatoBlend < 1.0f
+        && voice.legatoFromFrequency > 0.0f)
+    {
+        const float fromSemitones = 12.0f * std::log2(
+            voice.legatoFromFrequency / voice.baseFrequency);
+        contactFret = clampf(
+            contactFret
+                + fromSemitones * (1.0f - smoothStep(voice.legatoBlend)),
+            0.0f, static_cast<float>(fretCount));
+    }
+    const float fretStretch = std::exp2(contactFret / 12.0f);
     const float strokePluckFraction = pluckFraction
         + strokeContactOffsetMetres / scaleLengthMetres();
     // A valid pick point does not stop existing when it crosses the speaking
