@@ -1704,13 +1704,77 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
     };
 
     const auto& specs = stringSpecs();
+    const bool legatoStyle = playStyle_ == PlayStyle::Hammer
+                          || playStyle_ == PlayStyle::Slide;
     std::array<float, stringCount> performedFrets {};
-    if (playStyle_ == PlayStyle::Hammer || playStyle_ == PlayStyle::Slide)
+    if (legatoStyle)
     {
         for (std::size_t index = 0; index < performedFrets.size(); ++index)
             performedFrets[index] = voices_[index].active
                 ? performedFret(voices_[index])
                 : static_cast<float>(voices_[index].fret);
+    }
+    std::array<bool, stringCount> expressionMatchesAvailable {};
+    std::array<bool, stringCount> heldMatchesAvailable {};
+    std::array<bool, stringCount> soundingMatchesAvailable {};
+    std::array<unsigned int, stringCount> continuationStrings {};
+    std::array<std::array<float, stringCount>, stringCount>
+        continuationDistances {};
+
+    // Availability and continuation depend on the note and the pre-event
+    // voices, never on a trial assignment. Solve them once instead of scanning
+    // all eight strings again for every complete hand shape below.
+    for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
+    {
+        const auto note = static_cast<std::size_t>(noteIndex);
+        const int midiNote = notes[note];
+        const ExpressionId expressionId = expressionIds[note];
+        for (int candidateString = 0; candidateString < stringCount;
+             ++candidateString)
+        {
+            const auto candidate = static_cast<std::size_t>(candidateString);
+            const int fret = midiNote - specs[candidate].openMidiNote;
+            if (fret < 0 || fret > fretCount)
+                continue;
+            expressionMatchesAvailable[note] = expressionMatchesAvailable[note]
+                || (expressionId != legacyExpressionId
+                    && ((heldNoteCounts_[candidate] > 0
+                         && heldExpressionIds_[candidate] == expressionId)
+                        || (voices_[candidate].active
+                            && voices_[candidate].expressionId == expressionId)));
+            heldMatchesAvailable[note] = heldMatchesAvailable[note]
+                || (heldNoteCounts_[candidate] > 0
+                    && heldMidiNotes_[candidate] == midiNote
+                    && heldExpressionIds_[candidate] == expressionId);
+            soundingMatchesAvailable[note] = soundingMatchesAvailable[note]
+                || (voices_[candidate].active
+                    && voices_[candidate].midiNote == midiNote
+                    && voices_[candidate].expressionId == expressionId);
+        }
+
+        if (expressionMatchesAvailable[note] || heldMatchesAvailable[note]
+            || soundingMatchesAvailable[note]
+            || ! legatoStyle)
+            continue;
+        for (int candidateString = 0; candidateString < stringCount;
+             ++candidateString)
+        {
+            const auto candidate = static_cast<std::size_t>(candidateString);
+            const auto& candidateVoice = voices_[candidate];
+            const int fret = midiNote - specs[candidate].openMidiNote;
+            if (! candidateVoice.active || fret < 0 || fret > fretCount
+                || candidateVoice.expressionId != expressionId
+                || (playStyle_ == PlayStyle::Slide && fret < 1))
+                continue;
+            const float distance = std::abs(
+                static_cast<float>(fret) - performedFrets[candidate]);
+            const bool reachable = playStyle_ == PlayStyle::Slide
+                                || distance < 10;
+            if (! reachable)
+                continue;
+            continuationStrings[note] |= 1u << candidateString;
+            continuationDistances[note][candidate] = distance;
+        }
     }
     std::array<int, stringCount> assignment {};
     std::array<int, stringCount> bestAssignment {};
@@ -1729,41 +1793,14 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
 
         for (int noteIndex = 0; noteIndex < noteCount; ++noteIndex)
         {
-            const int midiNote = notes[static_cast<std::size_t>(noteIndex)];
-            const ExpressionId expressionId =
-                expressionIds[static_cast<std::size_t>(noteIndex)];
+            const auto note = static_cast<std::size_t>(noteIndex);
+            const int midiNote = notes[note];
+            const ExpressionId expressionId = expressionIds[note];
             const int stringIndex = assignment[static_cast<std::size_t>(noteIndex)];
             const auto index = static_cast<std::size_t>(stringIndex);
             const auto& voice = voices_[index];
             usedStrings[index] = true;
             score.strings[static_cast<std::size_t>(noteIndex)] = stringIndex;
-
-            bool expressionMatchAvailable = false;
-            bool heldMatchAvailable = false;
-            bool soundingMatchAvailable = false;
-            for (int candidateString = 0; candidateString < stringCount;
-                 ++candidateString)
-            {
-                const auto candidate = static_cast<std::size_t>(candidateString);
-                const int fret = midiNote - specs[candidate].openMidiNote;
-                if (fret < 0 || fret > fretCount)
-                    continue;
-                expressionMatchAvailable = expressionMatchAvailable
-                    || (expressionId != legacyExpressionId
-                        && ((heldNoteCounts_[candidate] > 0
-                             && heldExpressionIds_[candidate] == expressionId)
-                            || (voices_[candidate].active
-                                && voices_[candidate].expressionId
-                                       == expressionId)));
-                heldMatchAvailable = heldMatchAvailable
-                    || (heldNoteCounts_[candidate] > 0
-                        && heldMidiNotes_[candidate] == midiNote
-                        && heldExpressionIds_[candidate] == expressionId);
-                soundingMatchAvailable = soundingMatchAvailable
-                    || (voices_[candidate].active
-                        && voices_[candidate].midiNote == midiNote
-                        && voices_[candidate].expressionId == expressionId);
-            }
 
             const bool expressionMatch = expressionId != legacyExpressionId
                 && ((heldNoteCounts_[index] > 0
@@ -1775,47 +1812,23 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
             const bool soundingMatch = voice.active
                                     && voice.midiNote == midiNote
                                     && voice.expressionId == expressionId;
-            score.expressionBindingMisses += expressionMatchAvailable
+            score.expressionBindingMisses += expressionMatchesAvailable[note]
                                            && ! expressionMatch;
-            score.heldBindingMisses += heldMatchAvailable && ! heldMatch;
-            score.soundingBindingMisses += ! heldMatchAvailable
-                && soundingMatchAvailable && ! soundingMatch;
+            score.heldBindingMisses += heldMatchesAvailable[note] && ! heldMatch;
+            score.soundingBindingMisses += ! heldMatchesAvailable[note]
+                && soundingMatchesAvailable[note] && ! soundingMatch;
 
-            if (! expressionMatchAvailable && ! heldMatchAvailable
-                && ! soundingMatchAvailable
-                && (playStyle_ == PlayStyle::Hammer
-                    || playStyle_ == PlayStyle::Slide))
+            if (! expressionMatchesAvailable[note]
+                && ! heldMatchesAvailable[note]
+                && ! soundingMatchesAvailable[note]
+                && legatoStyle)
             {
-                bool continuationAvailable = false;
-                bool continuation = false;
-                float selectedDistance = 0.0f;
-                for (int candidateString = 0; candidateString < stringCount;
-                     ++candidateString)
-                {
-                    const auto candidate = static_cast<std::size_t>(candidateString);
-                    const auto& candidateVoice = voices_[candidate];
-                    const int fret = midiNote - specs[candidate].openMidiNote;
-                    if (! candidateVoice.active || fret < 0 || fret > fretCount
-                        || candidateVoice.expressionId != expressionId
-                        || (playStyle_ == PlayStyle::Slide && fret < 1))
-                        continue;
-                    const float distance = std::abs(
-                        static_cast<float>(fret)
-                            - performedFrets[candidate]);
-                    const bool reachable = playStyle_ == PlayStyle::Slide
-                                        || distance < 10;
-                    if (! reachable)
-                        continue;
-                    continuationAvailable = true;
-                    if (candidateString == stringIndex)
-                    {
-                        continuation = true;
-                        selectedDistance = distance;
-                    }
-                }
-                score.legatoMisses += continuationAvailable && ! continuation;
+                const bool continuation = (continuationStrings[note]
+                                           & (1u << stringIndex)) != 0;
+                score.legatoMisses += continuationStrings[note] != 0
+                                  && ! continuation;
                 if (continuation)
-                    score.legatoDistance += selectedDistance;
+                    score.legatoDistance += continuationDistances[note][index];
             }
 
             const bool occupied = voice.active || heldNoteCounts_[index] > 0;
