@@ -2012,6 +2012,72 @@ Commercial calibration/private-evaluation rights, stable player and guitar IDs,
 and train/holdout separation are mandatory; the final engineering gate needs
 at least three train clusters and exactly two untouched active holdout clusters.
 
+#### Angle-conditioned plectrum-scrape research
+
+[Lindroos, Penttinen and Välimäki's measured electric-guitar
+study](https://doi.org/10.1162/COMJ_a_00066) separates the noise made while a
+plectrum slides over the string from the pulse at release. On a Fender
+Stratocaster recorded simultaneously through an under-saddle piezo and magnetic
+pickup, a larger plectrum/string angle produced a longer scrape at a higher
+level relative to that pulse; the authors also identify this detail as
+especially audible through distortion. Their analyzed bursts span 20-130 ms
+and 10-40 dB below the pulse, while Electry's current hardness-derived scrape
+spans about 0.8-4.8 ms. Those six-string ranges establish a missing mechanism,
+not coefficients that transfer to a Drop-E eight-string.
+
+The minimum candidate would reuse only existing event-time state.
+`drawStrokeVariation()` already latches one deterministic, chord-shared
+`strokeAngleOffset`; `startExcitation()` already resolves `noiseLevel`,
+`noiseMs` and the wound/plain noise pole before arming `noiseAmplitude` and
+`noiseLength`. The angle currently rotates only the two excitation-polarisation
+weights in `updateStyleWeights()`. A later default-off trial may therefore fit
+one log-domain slope for scrape/pulse level and one for duration, with exact
+identity at zero angle and when Pick Noise is zero. It must not add another
+random draw, filter, parameter, render-loop branch or angle-dependent bandwidth:
+the paper supports duration and relative level, not a cutoff change.
+
+That reuse has a hard falsifier. Electry's stored value is an offset in the
+attack's polarisation plane; the paper varies the physical angle between pick
+and string. A registered three-dimensional pick trajectory must show that
+these are the same coordinate. If they are not, the two-scalar candidate is
+rejected rather than relabeling the existing value or inventing another latent
+control.
+
+The capture uses the production eight-string, string set, pick, pickup height
+and position, with raw bridge DI plus a high-bandwidth contact channel and an
+optical or force release marker. Randomized cells cover E1, E2 and one plain
+string, up/down strokes, at least two force strata, registered pick angles and
+at least 20 accepted repeats per cell. Exclusions and maximum attempts are
+frozen first. TRAIN fits only the two slopes; complete angle/string/direction
+cells remain untouched HOLDOUT. Primary measures are contact-to-release scrape
+duration and scrape-to-pulse RMS ratio. Promotion requires the registered
+direction to exceed within-cell repeatability on both low wound strings, at
+least 50% lower HOLDOUT median absolute error in both measures, no worse p95 or
+maximum error and no direction reversal in any holdout cell. Otherwise both
+slopes remain zero.
+
+Only after that dry gate may an RMS-matched high-gain real/baseline/candidate
+listening test judge audible realism. A later implementation must keep its
+disabled renders byte-identical and remain finite from 44.1 through 384 kHz.
+Nine or more warmed alternating ABBA/BAAB benchmark rounds must exercise eight
+strings at the maximum supported contact rate, with at most 0.25% paired-median
+overhead at 96 kHz and 1% worst-case overhead at 384 kHz. Event-time arithmetic
+is not permission to skip that measurement.
+
+MIDI Note Off velocity is a separate no-go. The MIDI 1.0 detailed specification
+[recommends 64 when a sender has no release-velocity
+measurement](https://midi.org/community/midi-specifications/writing-midi-software-send-note-off-or-zero-velocity-note-on),
+so preserving a true `0x8n` value and treating zero-velocity Note On as an
+unknown, neutral 64 would be an objective transport change. It does not supply
+a guitar mapping. In Cuzzucoli and Lombardo's [physical plucking
+model](https://www.cglib.org/wp-content/uploads/cglib.org/Musicology/Physical%20model%20of%20the%20plucking%20process%20in%20the%20classical%20guitar.pdf),
+the gradual "string release" that suppresses upper modes is the finger or pick
+leaving the displaced string at note onset. Their separate end-of-note damping
+section varies flesh-contact damping, not noise duration or bandwidth. Until
+exact-eight stopping gestures identify a direction and curve, mapping Note Off
+velocity to Electry's release-noise burst remains unsupported; the existing
+unassigned-release-velocity boundary stands.
+
 #### Reactive loudspeaker-load research
 
 Published bidirectional guitar-amplifier models support a causal electrical
