@@ -1654,18 +1654,19 @@ Take renderTremoloPickingStudy()
     }
     take.endTremoloPicking();
     take.noteOff(currentNote);
+    parameters.tremoloRateHz = 12.0f;
+    parameters.palmMute = 0.0f;
+    take.setEngineParameters(parameters);
     // Pre-hold the gesture through the rest. Its hidden onset must wait for
     // the next stopped finger instead of ageing in silence and dropping that
-    // note into a fully developed, random-phase excursion.
+    // note into a fully developed, random-phase excursion. The same rest lets
+    // the bridge hand leave the strings before the unmuted lead attack.
     take.vibrato(0.42f);
     take.wait(0.24);
 
     // Pick the high lead, hammer its destination, then deliberately leave
     // Hammer latched while B0 supplies the alternating wrist. The fretting
     // gesture must stay legato while every tremolo repick remains a real pick.
-    parameters.tremoloRateHz = 12.0f;
-    parameters.palmMute = 0.0f;
-    take.setEngineParameters(parameters);
     take.noteOn(74, 0.86f);
     take.wait(0.10);
     take.style(PlayStyle::Hammer);

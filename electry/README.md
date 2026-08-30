@@ -2636,6 +2636,27 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 demo 22 bridge-hand release before lead
+
+- Demo 22 called its upper line unmuted, but moved Mute Pressure from 12% to
+  zero only after the 240 ms rest. At the MIDI-74 attack the target was zero
+  while the smoothed, blended and applied bridge-hand state remained
+  `0.119999997`, adding a `0.01737459` palm-impact velocity to the Sustain
+  note. The zero target now begins before that existing rest, which also keeps
+  its pre-held vibrato timing unchanged and lets the hand reach exact bypass
+  before the lead.
+- The regression runs both orderings at the score's 44.1 kHz/256-frame clock:
+  the late-clear control retains nonzero Palm contact, while the corrected
+  rest reaches exact-zero blend and produces no palm impact on MIDI 74. This
+  is a score-only correction; product DSP and realtime CPU are unchanged.
+- A same-compiler render changes exactly demo 22; the other 22 WAV pairs are
+  byte-identical. Both versions remain 696,118 frames (15.784989 s) of
+  44.1-kHz stereo PCM16. The corrected file is -3.000097 dBFS peak and
+  -15.430583 dBFS RMS, with SHA-256
+  `f224d266fe4e4937692f2f606a4592fdb4a8a8c43acf807eba32526fa51fad40`;
+  the same-compiler baseline was
+  `979c6927d13d870edb1f6c99ed409ddef3c3e96a1e47c9138ca1d23c9b60e317`.
+
 ### 2026-08-30 held owner over different-note legacy tails
 
 - A scalar legacy Hammer or Slide could still follow a closer released voice

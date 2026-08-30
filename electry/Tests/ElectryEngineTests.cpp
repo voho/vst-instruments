@@ -470,6 +470,11 @@ struct ElectryEngineTestAccess
         return engine.palmMutePressure_;
     }
 
+    static float palmMuteBlend(const ElectryEngine& engine) noexcept
+    {
+        return engine.palmMuteBlend_;
+    }
+
     // The acoustic-return FIFO pushAcousticReturn() appends to and the render
     // loop drains, read straight off the engine so its guards and fixed
     // silent lead-in can be checked independently of the later string drive.
@@ -14369,6 +14374,46 @@ void testPalmMuteHandContactDynamics()
                  "hand contact: " << medianUnityDelta << " dB\n";
 }
 
+void testTremoloStudyClearsPalmBeforeHighLead()
+{
+    constexpr double sampleRate = 44100.0;
+    const auto inspect = [] (bool clearDuringRest)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 256);
+        EngineParameters parameters;
+        parameters.palmMute = 0.12f;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        parameters.palmMute = 0.0f;
+        if (clearDuringRest)
+            engine.setParameters(parameters);
+        StereoBuffer rest(static_cast<int>(0.24 * sampleRate));
+        renderInto(engine, rest);
+        if (! clearDuringRest)
+            engine.setParameters(parameters);
+
+        engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        engine.noteOn(74, 0.86f);
+        const int stringIndex = TestAccess::stringForNote(engine, 74);
+        expect(stringIndex >= 0,
+               "demo 22 high-lead fixture did not allocate MIDI 74");
+        return std::pair {
+            TestAccess::palmMuteBlend(engine),
+            stringIndex >= 0
+                ? TestAccess::palmImpactVelocity(engine, stringIndex) : 0.0f
+        };
+    };
+
+    const auto lateClear = inspect(false);
+    const auto restClear = inspect(true);
+    expect(lateClear.first > 0.11f && lateClear.second > 0.0f,
+           "demo 22 late-clear control no longer demonstrates stale Palm contact");
+    expect(restClear.first == 0.0f && restClear.second == 0.0f,
+           "demo 22 rest did not clear Palm before its unmuted high lead");
+}
+
 void testPalmMuteSpectralLoss()
 {
     constexpr double sampleRate = 48000.0;
@@ -19879,6 +19924,7 @@ int main()
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
     testPalmMuteHandContactDynamics();
+    testTremoloStudyClearsPalmBeforeHighLead();
     testPalmMuteSpectralLoss();
     testRapidPalmMuteChugs();
     testScoreMatchedC2PalmProxy();
