@@ -974,8 +974,9 @@ speaker/cabinet path; it is not an EQ preset after one shared distortion curve.
   triangle and uses 6.576 MiB for both tube families. Runtime
   trilinear interpolation stays below 0.0003 normalized output and 0.0004
   current-demand error in the checked domain; its own interpolated idle is
-  subtracted before the sag clamp. The two half-drive outputs remain 0.48185
-  and 0.643711 after equal small-signal normalization. A terminal may cross
+  subtracted before the sag clamp. After screen-grid loading, the two half-drive
+  outputs are 0.481573 and 0.607341 after equal small-signal normalization. A
+  terminal may cross
   zero and load its driver through the diode, but the uTracer-fitted
   plate/screen-current surface is conservatively clamped at `Vg=0`: this is an
   AB1-bounded power-transfer surface with bounded overload grid conduction, not
