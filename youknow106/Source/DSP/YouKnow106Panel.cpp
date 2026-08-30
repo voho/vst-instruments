@@ -65,7 +65,7 @@ constexpr Placement placements[controlCount] = {
       "Sets the speed of the one shared LFO used by vibrato, PWM and filter modulation.",
       ControlKind::Slider, 2, 0, 0, 1, -1, 0 },
     { parameters::lfoDelay, "DELAY",
-      "Sets how long the shared LFO is held back and faded into DCO, PWM and VCF modulation when a new phrase starts.",
+      "Sets how long the shared LFO is held back and faded into DCO and VCF modulation when a new phrase starts. It does not delay PWM.",
       ControlKind::Slider, 2, 1, 0, 1, -1, 0 },
 
     // DCO
@@ -85,7 +85,7 @@ constexpr Placement placements[controlCount] = {
       "In MAN mode this sets a fixed pulse width of roughly 50-95%; in LFO mode it sets the maximum LFO sweep width.",
       ControlKind::Slider, 3, 2, 0, 1, -1, 0 },
     { parameters::pwmMode, "LFO",
-      "Makes the shared, delay-gated LFO sweep pulse width; PWM sets the depth.",
+      "Makes the raw shared LFO sweep pulse width; LFO DELAY does not apply. PWM sets the depth.",
       ControlKind::Radio, 3, 3, 0, 2, 1, 0 },
     { parameters::pwmMode, "MAN",
       "Makes the PWM slider set one fixed manual pulse width.",

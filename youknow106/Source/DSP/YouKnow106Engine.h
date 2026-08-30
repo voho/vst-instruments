@@ -1972,8 +1972,7 @@ private:
     // Shared converter destinations are computed once per pass. Their proven
     // ownership is modelled; their individual RC constants and physical write
     // offsets are not yet known.
-    void updateSharedScan(const EngineParameters& parameters,
-                          float lfoGated) noexcept;
+    void updateSharedScan(const EngineParameters& parameters) noexcept;
     // Called at the internal sample rate: turns continuously slewed analogue
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.
@@ -2135,6 +2134,8 @@ private:
         ConverterTimingProfile::NormalizedServiceChart };
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
+    // Delayed float path for VCF and extension-voice scans. DCO pitch uses its
+    // exact integer word, while PWM reads the pass-held raw lfoValue_.
     float converterPassLfoGated_ { 0.0f };
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};

@@ -110,10 +110,10 @@ forty-year-old unit will null against the plug-in.
   on a fractional scheduler with per-destination smoothing constants
   (anchored order and constants; the intra-pass offsets are compatibility
   policy, with a pixel-measured chart-geometry profile selectable).
-- Envelope recurrence, sustain mapping, DAC truncation, the delay-gated LFO
-  reaching pitch, filter and pulse width together, and the portamento glide
-  law are the exact digital behaviour of the hash-identified B-2 firmware
-  (ROM-resolved); key assignment — including note dropping instead of
+- Envelope recurrence, sustain mapping, DAC truncation, the onset-scaled LFO
+  reaching DCO and VCF while PWM reads the raw accumulator, and the portamento
+  glide law are the exact digital behaviour of the hash-identified B-2
+  firmware (ROM-resolved); key assignment — including note dropping instead of
   stealing, the momentary POLY contacts and Solo Unison — is ROM-resolved
   for the A-5 assigner image.
 - The portamento knob passes through its loaded 50KB pot law (derived).
@@ -446,7 +446,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
 | OQ-04 | Loaded post-BBD support-chain transfer. Topology is anchored at designator level on both sides of the BBD and the charge-transfer coefficient to the datasheet's 40 kHz/12 kHz row; the loaded tap-summing pole is open | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
-| OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s, and the printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
+| OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator and bypasses that onset byte. The printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
 | OQ-16 | Main noise spectrum and self-oscillation startup. Level is settled; the shape class is settled from designators (33.9 Hz high-pass, 4822.877 Hz pole), independently corroborated by a restorer's description | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy | P2 |
@@ -557,6 +557,8 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 - The LFO delay fade now begins on the same 4.2 ms converter pass that crosses
   the holdoff threshold, matching B-2 instead of inserting a silent extra pass;
   its exact state-completion range is 8.4 ms to 4.3512 s.
+- PWM now follows B-2's raw LFO accumulator path, independently of LFO DELAY;
+  the onset byte continues to gate DCO and VCF modulation only.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

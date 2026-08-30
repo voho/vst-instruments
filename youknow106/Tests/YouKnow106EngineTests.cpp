@@ -8575,95 +8575,115 @@ void testModulationDelayRearmsForANewPhrase()
            "a new phrase started with the previous phrase's modulation depth");
 }
 
-void testModulationDelayGatesPulseWidthToo()
+void testPwmUsesRawLfoOutsideDelayEnvelope()
 {
-    // There is one LFO and one delay attenuator, and the CPU scales the value
-    // once before it distributes it. PWM therefore has to arrive gated exactly
-    // as the pitch and cutoff writes do, and as the panel LFO display already
-    // shows. Both distribution paths are checked: the scanned converter write
-    // that a held note exercises, and the idle-priming path setParameters runs
-    // when the output is empty.
+    // B-2 computes PWM from the raw accumulator after the onset-scaled DCO/VCF
+    // work. Compare otherwise identical short and long delays through both the
+    // normal fractional PWM write and the phase-zero direct-write diagnostic.
+    // Every PWM state must remain identical while VCF proves that the two
+    // onset envelopes really did diverge.
+    using Profile = YouKnow106Engine::ConverterTimingProfile;
     constexpr double sampleRate = 48000.0;
-    // LFO RATE 0.75 is 7.4405 Hz, a 134.4 ms period, so a window shorter than
-    // one full cycle reads an alignment-dependent span rather than the depth:
-    // at t = 6.00 s, full release either way, an 83 ms probe reads 0.4129 and
-    // this 200 ms one reads 0.4166.
-    constexpr double windowSeconds = 0.200;
-    constexpr int windowSamples = static_cast<int>(windowSeconds * sampleRate);
-
-    auto parameters = plainPatch();
-    parameters.sawEnabled = false;
-    parameters.pulseEnabled = true;
-    parameters.pwmSource = PwmSource::Lfo;
-    parameters.pwmDepth = 1.0f;
-    parameters.lfoRate = 0.75f;
-    parameters.lfoDelay = 1.0f;
-
-    std::vector<float> left(blockSize, 0.0f);
-    std::vector<float> right(blockSize, 0.0f);
-    const auto advance = [&](YouKnow106Engine& engine, double seconds) {
-        const int samples = static_cast<int>(seconds * sampleRate);
-        for (int done = 0; done < samples; done += blockSize)
-            engine.process(left.data(), right.data(),
-                           std::min(blockSize, samples - done));
+    constexpr int windowSamples = static_cast<int>(sampleRate * 0.2);
+    constexpr std::array<Profile, 2> profiles {
+        Profile::NormalizedServiceChart, Profile::PhaseZeroDiagnostic
     };
-    const auto dutySpanOverWindow = [&](YouKnow106Engine& engine) {
-        float lowest = 1.0f;
-        float highest = 0.0f;
+
+    for (const Profile profile : profiles)
+    {
+        YouKnow106Engine immediate;
+        YouKnow106Engine delayed;
+        immediate.prepare(sampleRate, blockSize, false);
+        delayed.prepare(sampleRate, blockSize, false);
+        immediate.selectConverterTimingProfile(profile);
+        delayed.selectConverterTimingProfile(profile);
+        immediate.reset();
+        delayed.reset();
+
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Lfo;
+        parameters.pwmDepth = 1.0f;
+        parameters.lfoRate = 0.75f;
+        parameters.dcoLfoDepth = 0.0f;
+        parameters.vcfLfoDepth = 1.0f;
+        parameters.lfoDelay = 0.0f;
+        immediate.setParameters(parameters);
+        parameters.lfoDelay = 1.0f;
+        delayed.setParameters(parameters);
+        immediate.noteOn(60, 1.0f);
+        delayed.noteOn(60, 1.0f);
+
+        // Startup raw LFO is zero, so both LFO-mode snapshots sit at the
+        // comparator midpoint independently of either onset setting.
+        expectNear(YouKnow106TestAccess::pwmHeld(immediate),
+                   YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
+                   "raw-LFO PWM startup did not begin at its midpoint");
+        expect(YouKnow106TestAccess::pwmHeld(immediate)
+                   == YouKnow106TestAccess::pwmHeld(delayed),
+               "LFO DELAY changed the startup PWM snapshot");
+
+        bool pwmStatesMatch = true;
+        bool delayLevelsDiverged = false;
+        bool cutoffTargetsDiverged = false;
+        bool positivePeakMapped = false;
+        bool negativePeakMapped = false;
+        float minimumTarget = std::numeric_limits<float>::infinity();
+        float maximumTarget = -std::numeric_limits<float>::infinity();
+        float immediateLeft = 0.0f;
+        float immediateRight = 0.0f;
+        float delayedLeft = 0.0f;
+        float delayedRight = 0.0f;
         for (int sample = 0; sample < windowSamples; ++sample)
         {
-            engine.process(left.data(), right.data(), 1);
-            const float duty = YouKnow106TestAccess::pulseDuty(engine, 0);
-            lowest = std::min(lowest, duty);
-            highest = std::max(highest, duty);
+            immediate.process(&immediateLeft, &immediateRight, 1);
+            delayed.process(&delayedLeft, &delayedRight, 1);
+            pwmStatesMatch = pwmStatesMatch
+                && YouKnow106TestAccess::lfoValue(immediate)
+                       == YouKnow106TestAccess::lfoValue(delayed)
+                && YouKnow106TestAccess::pwmTarget(immediate)
+                       == YouKnow106TestAccess::pwmTarget(delayed)
+                && YouKnow106TestAccess::pwmFirstPoleHeld(immediate)
+                       == YouKnow106TestAccess::pwmFirstPoleHeld(delayed)
+                && YouKnow106TestAccess::pwmHeld(immediate)
+                       == YouKnow106TestAccess::pwmHeld(delayed)
+                && YouKnow106TestAccess::pulseDuty(immediate, 0)
+                       == YouKnow106TestAccess::pulseDuty(delayed, 0);
+            delayLevelsDiverged = delayLevelsDiverged
+                || YouKnow106TestAccess::lfoDelayLevel(immediate)
+                       != YouKnow106TestAccess::lfoDelayLevel(delayed);
+            cutoffTargetsDiverged = cutoffTargetsDiverged
+                || YouKnow106TestAccess::cutoffTarget(immediate, 0)
+                       != YouKnow106TestAccess::cutoffTarget(delayed, 0);
+            minimumTarget = std::min(
+                minimumTarget, YouKnow106TestAccess::pwmTarget(immediate));
+            maximumTarget = std::max(
+                maximumTarget, YouKnow106TestAccess::pwmTarget(immediate));
+            positivePeakMapped = positivePeakMapped
+                || (YouKnow106TestAccess::lfoValue(immediate) == 1.0f
+                    && YouKnow106TestAccess::pwmTarget(immediate)
+                           == YouKnow106Engine::pwmControlVolts(1.0f));
+            negativePeakMapped = negativePeakMapped
+                || (YouKnow106TestAccess::lfoValue(immediate) == -1.0f
+                    && YouKnow106TestAccess::pwmTarget(immediate)
+                           == YouKnow106Engine::pwmControlVolts(0.0f));
         }
-        return static_cast<double>(highest - lowest);
-    };
 
-    YouKnow106Engine engine;
-    engine.prepare(sampleRate, blockSize, false);
-    engine.setParameters(parameters);
-    engine.noteOn(60, 1.0f);
-
-    // DELAY 1.0 has a 3.2802 s silent hold, so nothing has released here.
-    advance(engine, 0.05);
-    expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 0.0f,
-           "the delay envelope had already released at t = 0.05 s");
-    const double heldSpan = dutySpanOverWindow(engine);
-    expect(heldSpan < 0.005,
-           "the pulse width swept " + std::to_string(heldSpan)
-               + " while the delay envelope was still shut");
-
-    // Well past the hold and the stepped fade, where the gated and the raw
-    // value are the same float and the routing can make no difference.
-    advance(engine, 6.0 - 0.05 - windowSeconds);
-    expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 1.0f,
-           "the delay envelope had not fully released at t = 6.00 s");
-    const double releasedSpan = dutySpanOverWindow(engine);
-    expectNear(releasedSpan, 0.4166, 0.4166 * 0.01,
-               "gating the converter write changed full-depth pulse-width "
-               "modulation");
-
-    // The same gated distribution seeds the one startup snapshot before audio
-    // time begins. Once process() runs, even an empty output path stays on the
-    // converter schedule; ordinary silence is not another restore window.
-    YouKnow106Engine idle;
-    idle.prepare(sampleRate, blockSize, false);
-    idle.setParameters(parameters);
-    // pwmControlVolts(0.5) is +3.3 V, the middle of the comparator's travel.
-    expectNear(YouKnow106TestAccess::pwmHeld(idle),
-               YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
-               "the startup snapshot did not prime gated PWM");
-    // 30 ms of idle running puts the LFO on its positive peak with the delay
-    // envelope still shut, which is where the two values are furthest apart.
-    advance(idle, 0.030);
-    expect(YouKnow106TestAccess::lfoValue(idle) == 1.0f,
-           "the idle LFO did not reach its positive peak in 30 ms");
-    expect(YouKnow106TestAccess::lfoDelayLevel(idle) == 0.0f,
-           "the idle delay envelope had already released after 30 ms");
-    expectNear(YouKnow106TestAccess::pwmHeld(idle),
-               YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
-               "the scanned PWM hold used the ungated idle LFO");
+        const std::string profileName =
+            profile == Profile::NormalizedServiceChart
+                ? "normalized" : "phase-zero";
+        expect(delayLevelsDiverged && cutoffTargetsDiverged,
+               profileName + " fixture did not exercise delayed VCF onset");
+        expect(pwmStatesMatch,
+               profileName + " PWM still followed the onset envelope");
+        expectNear(minimumTarget, YouKnow106Engine::pwmControlVolts(1.0f),
+                   1.0e-6, profileName + " PWM missed its positive peak");
+        expectNear(maximumTarget, YouKnow106Engine::pwmControlVolts(0.0f),
+                   1.0e-6, profileName + " PWM missed its negative peak");
+        expect(positivePeakMapped && negativePeakMapped,
+               profileName + " PWM inverted the raw LFO polarity");
+    }
 }
 
 void testScanTimingSurvivesAProcessingRateChange()
@@ -11914,11 +11934,8 @@ void testPanelLayout()
            "the panel width disagrees with the editor contract");
 }
 
-// The panel help is part of the instrument contract, not decoration. The
-// engine routes one delay-gated LFO value to pitch, PWM and cutoff; stale help
-// used to describe the pre-fix PWM exception even after that exception had
-// left the DSP, directly contradicting the behavior the modulation suite
-// fences.
+// The panel help is part of the instrument contract, not decoration. B-2's
+// onset byte reaches DCO and VCF; PWM is computed later from the raw LFO.
 void testPanelHelpMatchesTheModulationRouting()
 {
     const panel::Control* delay = nullptr;
@@ -11941,13 +11958,16 @@ void testPanelHelpMatchesTheModulationRouting()
 
     const std::string delayHelp(delay->tooltip);
     const std::string pwmHelp(pwmLfo->tooltip);
-    expect(delayHelp.find("DCO, PWM and VCF") != std::string::npos,
-           "LFO DELAY help does not name all three gated destinations");
-    expect(pwmHelp.find("delay-gated LFO") != std::string::npos,
-           "PWM LFO help does not describe the routed delay envelope");
-    expect(delayHelp.find("does not delay PWM") == std::string::npos
-               && pwmHelp.find("LFO DELAY does not apply") == std::string::npos,
-           "the panel still describes the removed raw-LFO PWM path");
+    expect(delayHelp.find("DCO and VCF") != std::string::npos
+               && delayHelp.find("does not delay PWM") != std::string::npos,
+           "LFO DELAY help does not describe its two firmware destinations");
+    expect(pwmHelp.find("raw shared LFO") != std::string::npos
+               && pwmHelp.find("LFO DELAY does not apply")
+                      != std::string::npos,
+           "PWM LFO help does not describe the raw accumulator path");
+    expect(delayHelp.find("DCO, PWM and VCF") == std::string::npos
+               && pwmHelp.find("delay-gated LFO") == std::string::npos,
+           "the panel still claims that LFO DELAY reaches PWM");
 }
 
 void testSettledRk4HalfPairMatchesScalar()
@@ -12174,6 +12194,7 @@ int main()
         testPitchBendUsesRecoveredIntegerWord();
         testDcoLfoUsesRecoveredIntegerWord();
         testLfoDelayStartsFadeOnHoldoffCrossingPass();
+        testPwmUsesRawLfoOutsideDelayEnvelope();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -12317,7 +12338,7 @@ int main()
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
-    testModulationDelayGatesPulseWidthToo();
+    testPwmUsesRawLfoOutsideDelayEnvelope();
     testScanTimingSurvivesAProcessingRateChange();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();

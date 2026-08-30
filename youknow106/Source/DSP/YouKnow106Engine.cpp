@@ -4260,7 +4260,7 @@ void YouKnow106Engine::reset()
     lfoValue_ = 0.0f;
     lfoDelayLevel_ = 0.0f;
     lfoDelayByte_ = 0u;
-    updateSharedScan(activeParameters_, lfoValue_ * lfoDelayLevel_);
+    updateSharedScan(activeParameters_);
     resonanceCv_ = resonanceCvTarget_;
     sharedVca_ = sharedVcaTarget_;
     pwmVoltsFirstPole_ = pwmVoltsTarget_;
@@ -4515,7 +4515,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         // assembled by a test/host sequence that has not yet processed audio.
         passiveHoldEventLatch_ = {};
         exactVcfControlInterval_.fill(false);
-        updateSharedScan(next, lfoValue_ * lfoDelayLevel_);
+        updateSharedScan(next);
         resonanceCv_ = resonanceCvTarget_;
         sharedVca_ = sharedVcaTarget_;
         pwmVoltsFirstPole_ = pwmVoltsTarget_;
@@ -5402,8 +5402,8 @@ float YouKnow106Engine::velocityGain(const EngineParameters& parameters,
     return 1.0f - parameters.velocityDepth * (1.0f - voice.velocity);
 }
 
-void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
-                                        float lfoGated) noexcept
+void YouKnow106Engine::updateSharedScan(
+    const EngineParameters& parameters) noexcept
 {
     resonanceCvTarget_ = converterDacFraction(parameters.resonance);
     sharedVcaTarget_ = converterDacFraction(parameters.vcaLevel);
@@ -5421,7 +5421,7 @@ void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
 
     float pwmAmount = converterDacFraction(parameters.pwmDepth);
     if (parameters.pwmSource == PwmSource::Lfo)
-        pwmAmount *= 0.5f * (1.0f + lfoGated);
+        pwmAmount *= 0.5f * (1.0f + lfoValue_);
     pwmVoltsTarget_ = pwmControlVolts(clamp01(pwmAmount));
 }
 
@@ -5488,10 +5488,11 @@ void YouKnow106Engine::performConverterWrite(
             }
             break;
         case ConverterDestination::Pwm:
-            // DELAY is one attenuator in front of the distribution, not one
-            // per destination: the firmware scales the single LFO value once
-            // and then writes it out, so PWM sees the same gated product the
-            // pitch and cutoff writes see and the panel LFO display shows.
+            // B-2 computes FF4F directly from the raw LFO accumulator and PWM
+            // depth, independently of the onset byte used by DCO and VCF, then
+            // writes that saved word on the following envelope loop.
+            // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L900-L905
+            // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197
             if (passiveHoldTargetOverride != nullptr)
             {
                 pwmVoltsTarget_ = *passiveHoldTargetOverride;
@@ -5505,7 +5506,7 @@ void YouKnow106Engine::performConverterWrite(
             {
                 float amount = converterDacFraction(parameters.pwmDepth);
                 if (parameters.pwmSource == PwmSource::Lfo)
-                    amount *= 0.5f * (1.0f + lfoGated);
+                    amount *= 0.5f * (1.0f + lfoValue_);
                 pwmVoltsTarget_ = pwmControlVolts(clamp01(amount));
             }
             break;
@@ -5574,7 +5575,7 @@ float YouKnow106Engine::passiveHoldWriteTarget(
             {
                 float amount = converterDacFraction(parameters.pwmDepth);
                 if (parameters.pwmSource == PwmSource::Lfo)
-                    amount *= 0.5f * (1.0f + lfoGated);
+                    amount *= 0.5f * (1.0f + lfoValue_);
                 return pwmControlVolts(clamp01(amount));
             }
         case ConverterDestination::Vcf:
