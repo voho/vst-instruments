@@ -79,6 +79,11 @@ struct ElectryFxTestAccess
         return fx.targetParameters_;
     }
 
+    static std::array<float, 2> compressorState(const ElectryFx& fx) noexcept
+    {
+        return { fx.compressorAttack_, fx.compressorEnvelope_ };
+    }
+
     static float diodeStep(double inputVolts, double rate,
                            double& outputVolts,
                            double& previousDerivative) noexcept
@@ -1204,6 +1209,28 @@ void testExactDryBypass()
            "the gain stage is engaged with both gain controls at zero");
     expect(fx.gainStageLatencySamples() == 0.0f,
            "a bypassed chain reports non-zero latency");
+
+    // A bypassed compressor still follows the signal, so opening its control
+    // starts from the current level rather than a cold detector. Above the
+    // threshold its gain computer is inaudible and can be skipped, but this
+    // envelope recurrence must remain exactly where it was.
+    ElectryFx hotBypass;
+    hotBypass.prepare(sampleRate);
+    const std::vector<float> hot(4096, 0.5f);
+    left = hot;
+    right = hot;
+    const auto [attack, initialEnvelope] = FxAccess::compressorState(hotBypass);
+    float expectedEnvelope = initialEnvelope;
+    for (std::size_t sample = 0; sample < hot.size(); ++sample)
+        expectedEnvelope = attack * expectedEnvelope
+                         + (1.0f - attack) * hot[sample];
+    hotBypass.process(left.data(), right.data(), static_cast<int>(left.size()));
+    const auto finalEnvelope = FxAccess::compressorState(hotBypass)[1];
+    expect(std::memcmp(left.data(), hot.data(), hot.size() * sizeof(float)) == 0
+               && std::memcmp(right.data(), hot.data(), hot.size() * sizeof(float)) == 0,
+           "a hot signal changed while the compressor was exactly bypassed");
+    expect(finalEnvelope == expectedEnvelope && finalEnvelope > 0.1f,
+           "the bypassed compressor did not preserve its warm detector state");
 
     // Each control on its own must also do something audible at 100%, so an
     // exact bypass at zero cannot be confused with a control that is simply

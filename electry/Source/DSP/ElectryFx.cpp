@@ -3168,7 +3168,7 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         constexpr float kneeWidth = 0.6f;
         float compressedGain = 1.0f;
         const float over = compressorEnvelope_ / threshold;
-        if (over > 1.0f)
+        if (compressorMix_ > 0.0f && over > 1.0f)
         {
             const float knee = smoothStep((over - 1.0f) / kneeWidth);
             compressedGain = std::pow(over, -0.72f * knee);

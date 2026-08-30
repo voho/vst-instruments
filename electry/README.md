@@ -2636,6 +2636,21 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 exact-zero compressor gain fast path
+
+- The compressor's detector and envelope still follow every sample while its
+  control is at exact zero, preserving a warm automation start, but its
+  otherwise inaudible soft-knee power calculation is now skipped. The existing
+  gain law and every non-zero setting are unchanged.
+- On an M1 Max, 31 alternating paired Release trials of 1,048,576 hot stereo
+  frames put the isolated zero-compressor FX path at 0.612--0.615 paired median
+  candidate/baseline across 44.1--384 kHz; every row's p10--p90 stayed within
+  0.607--0.623. Enabled-hot and below-threshold 96 kHz controls were 0.999 and
+  0.981. A full 96 kHz eight-string metal engine-plus-FX row was 0.997 median,
+  with a noisy 0.912--1.022 p10--p90, so it is a non-regression check rather
+  than an end-to-end speed claim. The detector recurrence test passes and all
+  23 canonical WAVs remain byte-identical.
+
 ### 2026-08-30 demo 03 physical Slide score
 
 - Demo 03 promised Slide intervals of two frets, twelve frets up and twelve
