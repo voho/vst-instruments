@@ -2582,6 +2582,17 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 accessible exclusive-choice groups
+
+- Each of the six titled pickup, play-style, keyswitch-mode, output-mode and
+  amp-model strips now exposes a native accessibility `group` around its
+  existing radio-button children. Its accessible title stays identical to the
+  visible strip context, while the selected child remains the strip's only Tab
+  stop. This changes no painting, layout, parameters or audio path.
+- The editor contract creates every strip's native handler and requires its
+  `group` role and exact title in addition to the existing 60-native/35-logical
+  Tab-stop, selection, arrow-key and activation rails.
+
 ### 2026-08-30 complete accessible keyboard instructions
 
 - The focusable MIDI keyboard's accessible title mentioned only the two

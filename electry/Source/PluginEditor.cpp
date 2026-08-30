@@ -705,6 +705,13 @@ ElectryChoiceStrip::ElectryChoiceStrip (juce::String title,
         setSelectedIndex (0);
 }
 
+std::unique_ptr<juce::AccessibilityHandler>
+ElectryChoiceStrip::createAccessibilityHandler()
+{
+    return std::make_unique<juce::AccessibilityHandler> (
+        *this, juce::AccessibilityRole::group);
+}
+
 void ElectryChoiceStrip::activateChoice (int index)
 {
     if (index < 0 || index >= static_cast<int> (buttons.size()))

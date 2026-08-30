@@ -83,6 +83,7 @@ public:
     void setTooltipText (const juce::String& text);
     int getSelectedIndex() const noexcept { return selectedIndex; }
 
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
     void paint (juce::Graphics&) override;
     void resized() override;
 

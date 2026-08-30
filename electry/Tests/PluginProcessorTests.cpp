@@ -4311,6 +4311,13 @@ void testEditorRendering()
 
         expect (strip->getTitle().isNotEmpty(),
                 std::string (componentId) + " has no accessibility context");
+        auto accessibility = strip->createAccessibilityHandler();
+        expect (accessibility != nullptr
+                    && accessibility->getRole()
+                           == juce::AccessibilityRole::group
+                    && accessibility->getTitle() == strip->getTitle(),
+                std::string (componentId)
+                    + " is not exposed as a titled accessibility group");
         int buttonCount = 0;
         int selectedCount = 0;
         int tabStopCount = 0;
