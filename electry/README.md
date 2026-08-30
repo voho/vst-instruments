@@ -3104,6 +3104,32 @@ the realistic result is to ship nothing.
   same-renderer editor PNG is byte-identical because no layout or painting code
   changed.
 
+### 2026-08-30 performed-pitch release damping
+
+- Note release applies one gain per completed string loop, but armed that gain
+  from the written base frequency plus legato only. A settled two-semitone bend
+  therefore changed the nominal 60 ms release T60 to 53.454 ms upward or
+  67.348 ms downward. The gain now uses the compensated sounding period, both
+  when Note Off arms it and when an already-ringing tail changes pitch.
+- Legacy wheel bend remains live after Note Off. An MPE member bend freezes with
+  its lifted finger while its zone-master bend remains live; the release rate
+  follows exactly that same lifecycle. The untouched implementation fails the
+  three nonzero arm-time cases and both live-tail cases, while a Note-Off-only
+  mutant fails exactly the latter two; the unbent and frozen-member controls
+  pass both mutations.
+- A same-compiler render changes only bend/legato/vibrato demos 06, 14, 17, 21,
+  22 and 23; the other 17 demos are byte-identical. All ten unnormalised dry
+  evaluation WAVs and their manifest are byte-identical. A dedicated held +2
+  semitone dry release is 2.40 dB higher at 40--60 ms and 4.58 dB higher at
+  60--80 ms, removing the former early cutoff.
+- The solve is event/control-rate only and reuses existing state. Damping-only
+  compensation and steady tails skip the power calculation unless the cached
+  period actually moved; nine paired eight-string bent-release runs measured a
+  1.0066x median candidate/baseline time ratio, with no audio-sample branch.
+  Auditing the separate six-millisecond delay smoother found at most 60.141 ms
+  through the fastest Bend Time and 60.052 ms in the octave-slide fixture, so
+  no extra sub-percent current-delay tracking mechanism was added.
+
 ### 2026-08-30 contact-period finger release makeup
 
 - Finger-contact modal projection already follows the period sounding at

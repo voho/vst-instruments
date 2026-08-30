@@ -130,6 +130,12 @@ constexpr float fittedLossPeakDbPerSecond = 22.9327503f;
 constexpr float deadHandT60 = 1.600f;
 constexpr float sympatheticOpenHandT60 = 4.0f;
 constexpr float sympatheticStoppedHandT60 = 0.045f;
+constexpr float releaseT60 = 0.060f;
+
+float releaseLoopGain(float period, float sampleRate) noexcept
+{
+    return std::pow(10.0f, -3.0f * period / (releaseT60 * sampleRate));
+}
 
 float sympatheticHandMuteForT60(float t60) noexcept
 {
@@ -3616,7 +3622,13 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
 
         voice.compensatedPeriodVertical = period - loopPhaseDelay(voice.vertical);
         voice.compensatedPeriodHorizontal = period - loopPhaseDelay(voice.horizontal);
+        // A damping-only compensation also enters this block. Do not pay for
+        // another release-rate solve unless the sounding period moved.
+        const bool releasePeriodMoved = period != voice.lastCompensatedPeriod;
         voice.lastCompensatedPeriod = period;
+        if (voice.releasing && releasePeriodMoved)
+            voice.releaseGainTarget = releaseLoopGain(period,
+                static_cast<float>(sampleRate_));
         voice.compensationDirty = false;
     }
 
@@ -5620,17 +5632,8 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     // The fretting or picking hand damps the string over tens of
     // milliseconds; the loop then decays with roughly a 60 ms T60.
     const float sampleRate = static_cast<float>(sampleRate_);
-    float releaseFrequency = voice.baseFrequency;
-    if (voice.legatoBlend < 1.0f && voice.legatoFromFrequency > 0.0f)
-    {
-        const float fromSemitones = 12.0f * std::log2(
-            voice.legatoFromFrequency / voice.baseFrequency);
-        releaseFrequency *= std::exp2(
-            fromSemitones * (1.0f - smoothStep(voice.legatoBlend)) / 12.0f);
-    }
-    const float period = sampleRate / std::max(releaseFrequency, 20.0f);
-    voice.releaseGainTarget =
-        std::pow(10.0f, -3.0f * period / (0.060f * sampleRate));
+    voice.releaseGainTarget = releaseLoopGain(
+        voice.lastCompensatedPeriod, sampleRate);
     voice.releaseGainCoefficient =
         1.0f - std::exp(-1.0f / (0.022f * sampleRate));
 

@@ -5563,6 +5563,116 @@ void testPitchWheelUsesUniformSemitoneInterval()
     }
 }
 
+void testReleaseDampingUsesPerformedPitch()
+{
+    // The release gain is applied once per completed string period. Its
+    // per-loop target therefore has to follow the pitch sounding when the
+    // finger lifts and while a live wheel keeps moving the tail, or a
+    // two-semitone move changes the nominal 60 ms damping time by about
+    // twelve percent.
+    constexpr double sampleRate = 48000.0;
+    constexpr int note = 47;
+    constexpr ElectryEngine::ExpressionId expressionId = 9;
+    const auto targetFor = [] (const ElectryEngine& engine,
+                               const TestAccess::VoiceSnapshot& voice)
+    {
+        return std::pow(10.0f, -3.0f * voice.lastCompensatedPeriod
+            / (0.060f * static_cast<float>(
+                TestAccess::internalSampleRate(engine))));
+    };
+
+    const auto check = [&] (float legacyWheel, float memberSemitones,
+                            float masterSemitones)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.bendTimeSeconds = 0.04f;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        const bool expression = memberSemitones != 0.0f
+                             || masterSemitones != 0.0f;
+        if (expression)
+        {
+            engine.setExpressionPitchBend(expressionId, memberSemitones);
+            engine.snapExpressionPitchBendToTarget(expressionId);
+            engine.setExpressionMasterPitchBend(expressionId,
+                                                 masterSemitones);
+        }
+        else
+        {
+            engine.setPitchBend(legacyWheel);
+        }
+        engine.noteOn(note, 0.8f, expression
+            ? expressionId : ElectryEngine::legacyExpressionId);
+        StereoBuffer settle(static_cast<int>(0.30 * sampleRate));
+        renderInto(engine, settle);
+
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        const auto before = TestAccess::snapshot(engine, stringIndex);
+        engine.noteOff(note, expression
+            ? expressionId : ElectryEngine::legacyExpressionId);
+        const float expected = targetFor(engine, before);
+        const float armedTarget = stringIndex >= 0
+            ? TestAccess::releaseGainTarget(engine, stringIndex) : 0.0f;
+        expect(stringIndex >= 0
+                   && std::abs(armedTarget - expected) < 2.0e-7f,
+               "note release damping ignored its performed pitch at "
+                   + std::to_string(before.lastCompensatedSemitones)
+                   + " semitones");
+
+        // A released MPE member is frozen, but its zone master and the legacy
+        // wheel intentionally remain live. Member traffic must leave both the
+        // pitch and loss alone; either live control must move them together.
+        if (expression)
+        {
+            engine.setExpressionPitchBend(expressionId, -4.0f);
+            engine.snapExpressionPitchBendToTarget(expressionId);
+            StereoBuffer memberTraffic(64);
+            renderInto(engine, memberTraffic);
+            const auto frozen = TestAccess::snapshot(engine, stringIndex);
+            expect(std::abs(frozen.lastCompensatedSemitones
+                            - before.lastCompensatedSemitones) < 1.0e-6f
+                       && std::abs(TestAccess::releaseGainTarget(
+                                       engine, stringIndex) - armedTarget)
+                              < 2.0e-7f,
+                   "released MPE member traffic changed its frozen pitch or "
+                   "damping");
+            engine.setExpressionMasterPitchBend(expressionId, 2.0f);
+        }
+        else if (legacyWheel == 0.0f)
+        {
+            engine.setPitchBend(1.0f);
+        }
+        else
+        {
+            return;
+        }
+
+        StereoBuffer movingTail(1024);
+        renderInto(engine, movingTail);
+        const auto moved = TestAccess::snapshot(engine, stringIndex);
+        const float movedExpected = targetFor(engine, moved);
+        expect(moved.active && moved.releasing
+                   && std::abs(TestAccess::releaseGainTarget(
+                                   engine, stringIndex) - movedExpected)
+                          < 2.0e-7f
+                   && std::abs(movedExpected - expected) > 1.0e-4f,
+               expression
+                   ? "release damping did not follow live MPE master bend"
+                   : "release damping did not follow live legacy wheel bend");
+    };
+
+    check(0.0f, 0.0f, 0.0f);
+    check(1.0f, 0.0f, 0.0f);
+    check(-1.0f, 0.0f, 0.0f);
+    check(0.0f, 3.5f, -1.25f);
+}
+
 void testStiffnessFollowsLiveTension()
 {
     constexpr double sampleRate = 48000.0;
@@ -19983,6 +20093,7 @@ int main()
     testDelayedRepickPreservesFrozenExpressionPitch();
     testSamePitchExpressionOwnersReleaseIndependently();
     testPitchWheelUsesUniformSemitoneInterval();
+    testReleaseDampingUsesPerformedPitch();
     testStiffnessFollowsLiveTension();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
