@@ -2572,14 +2572,17 @@ void selfTest(const AuditResult& audit)
     constexpr std::array<bool, 6> expectedBbdSgaGate {
         false, false, true, false, false, true
     };
+    // Re-pinned after the same-size 44.1 kHz decimator transition was
+    // requalified on the recovered B-2 pitch grid. Admission classes and all
+    // absolute gates above are unchanged; only factor-2/4 boundary metrics move.
     constexpr std::array<double, 6> expectedVcfRkDb {
-        -145.593, -113.526, -112.144, -144.364, -114.710, -113.339
+        -145.593, -112.009, -110.523, -144.364, -113.258, -111.809
     };
     constexpr std::array<double, 6> expectedVcfHotRmsDb {
-        -12.538, -30.414, -50.351, -14.269, -33.028, -50.064
+        -12.538, -30.413, -50.323, -14.269, -33.028, -50.049
     };
     constexpr std::array<double, 6> expectedVcfHotOffMaskDb {
-        -44.602, -85.968, -133.278, -48.081, -88.898, -140.552
+        -44.602, -85.968, -132.429, -48.081, -88.897, -141.055
     };
     constexpr std::array<double, 6> expectedVcfHotOracleOffMaskDb {
         -93.242, -93.242, -93.242, -93.163, -93.163, -93.163
@@ -2591,10 +2594,10 @@ void selfTest(const AuditResult& audit)
         0.003, 0.003, 0.003, 0.010, 0.007, 0.005
     };
     constexpr std::array<double, 6> expectedBbdAnalyticDb {
-        -3.511, -18.390, -53.442, -5.263, -20.051, -56.101
+        -3.511, -18.390, -53.429, -5.263, -20.051, -56.108
     };
     constexpr std::array<double, 6> expectedBbdHighToneDb {
-        -3.511, -18.390, -53.442, -5.263, -20.051, -56.101
+        -3.511, -18.390, -53.429, -5.263, -20.051, -56.108
     };
     constexpr std::array<double, 6> expectedBbdBgaDb {
         4.764, 0.070, 0.011, 3.406, 0.016, 0.008

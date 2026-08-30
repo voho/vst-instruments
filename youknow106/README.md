@@ -95,8 +95,13 @@ forty-year-old unit will null against the plug-in.
 
 **Digital control system**
 
-- Pitch is one 8 MHz reference divided by a 16-bit integer count, quantised
-  exactly as the hardware's is. RANGE changes IC35's synchronous preset,
+- Pitch is one 8 MHz reference divided by a 16-bit integer count. The recovered
+  B-2 path uses one unsigned 8.8 coordinate, clamps its high byte to table
+  indices 0..102, and truncation-interpolates a paired timer count and 12-bit
+  DCO-CV code. Those mechanics are ROM-resolved; compact smooth anchor
+  generators avoid embedding the proprietary 104-word tables and stay within
+  four timer counts (1.272 cents over the complete coordinate) and one CV code
+  of the hash-matched image (derived). RANGE changes IC35's synchronous preset,
   not the PIT count: the current count completes, the latest stable preset
   loads on the existing synchronous reload edge following terminal carry,
   and subsequent TP5 periods use the new ÷2/÷4/÷8 cadence (anchored).
@@ -122,7 +127,10 @@ forty-year-old unit will null against the plug-in.
   give an approximately 12 Vpp Miller ramp; its PWM anchors are consistent
   with a nominal 0 to approximately +12 V excursion. The internal custom-IC
   reset curve remains unmeasured. The scan-and-slew amplitude transient on
-  pitch changes is rendered in the slope of each rise (derived).
+  pitch changes is rendered in the slope of each rise. Ramp charge follows the
+  paired DAC-code × active-divider product about the B-2 `0x5400` centre
+  anchor, retaining its small settled ripple and the real level loss after the
+  CV table saturates instead of normalising every pitch back to unity (derived).
 - All six DCOs free-run behind their closed VCAs with staggered phase; a
   note opens a card that already has history. Oscillator edges are
   bandlimited (BLEP/BLAMP) as a numerical product mechanism.
@@ -467,6 +475,26 @@ documents 16-state automatic entry, which would make one insertion 188 states
 timing differences. The engine therefore keeps the deterministic
 zero-interrupt profile instead of inventing a pin edge or jitter distribution.
 
+The nominal B-2 conversion on either side of those timing anchors is now
+closed as well. The recovered firmware builds one unsigned 8.8 pitch word,
+clamps high bytes below `0x30` and at or above `0x97`, and uses the remaining
+fraction to truncation-interpolate the paired PIT count and 12-bit DCO-CV code
+([pitch conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L682-L780),
+[DAC write](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302)).
+The proprietary 104-word tables are not distributed: compact derived anchor
+generators reproduce the complete hash-matched coordinate within 1.272 cents
+and one DAC code while preserving the exact clamp, truncation, CV saturation
+and upper-bound count discontinuity. Ramp charge is expressed without guessed
+volts as DAC code times the active divider, referenced to the centre pair
+`0x0100 * 0x1dfb`. This exposes the hardware's approximately 6.02 dB/octave
+high-note level loss once the CV reaches 4095. The current continuous
+tune/LFO/bend controls are explicitly rounded into this word at the final
+adapter; replacing those three upstream adapters with their recovered integer
+laws is the remaining implementation work, not a pitch-pair research unknown.
+For plug-in notes and modulation outside the physical keybed, the final word
+saturates at 0/65535 rather than reproducing the firmware's unsigned wrap; that
+is a deliberate host-safety policy for the instrument's expanded MIDI range.
+
 ## Release history
 
 ### 1.1.0 — unreleased
@@ -491,6 +519,16 @@ zero-interrupt profile instead of inventing a pin edge or jitter distribution.
   longer fabricates a hold step. Physical mux timestamps and interrupt jitter
   remain open under OQ-08, while the separate CPU/PIT oscillators rule out one
   fixed inter-clock phase.
+- Replaced the ideal nearest-count pitch conversion and frequency-normalized
+  ramp hold with the recovered B-2 unsigned 8.8 paired PIT/DCO-CV mechanism.
+  Policy-safe derived anchors stay within 1.272 cents and one DAC code of the
+  hash-matched image without distributing Roland's tables; exact truncation,
+  clamps, upper-count discontinuity and CV saturation now drive the existing
+  atomic pitch transaction and its audible high-note level taper. The shifted
+  physical pitch grid also exposed a 44.1 kHz reconstruction transition
+  corner; the same-size kernels now keep the expanded matrix at or below
+  -71.62 dBc alias, with at most 0.0026 dB error through 15 kHz and 0.144 dB
+  at the worst near-20 kHz line, without adding latency or hot-loop work.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

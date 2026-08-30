@@ -84,8 +84,18 @@ struct YouKnow106TestAccess
         voice.dco.pitOutHigh = true;
         voice.dco.pitClocksToEvent = static_cast<double>(
             YouKnow106Engine::Dco::mode3HalfClocks(divider, true));
-        voice.dcoCv = static_cast<float>(frequency);
-        voice.dcoCvTarget = static_cast<float>(frequency);
+        // This audit isolates numerical DCO reconstruction at a declared unit
+        // ramp scale. The production hold is now a 12-bit DAC code rather than
+        // the old hertz proxy, so choose the code whose code*count product is
+        // the centre reference. Physical B-2 pair ripple and high-note CV
+        // saturation have their own engine regression; letting either alter
+        // this fixture would compare a changed pulse duty with the analytic
+        // duty requested below and mislabel that mismatch as aliasing.
+        const float unitScaleCode =
+            YouKnow106Engine::dcoRampReferenceProduct
+            / static_cast<float>(divider);
+        voice.dcoCv = unitScaleCode;
+        voice.dcoCvTarget = unitScaleCode;
         voice.dco.renderScale = 1.0f;
         const double periodSeconds = voice.dco.periodSamples / internalRate;
         const double resetSeconds = static_cast<double>(
@@ -1096,37 +1106,40 @@ int run(bool selfTest)
     // The expected classification is intentionally explicit.  Calibrate this
     // only from a reviewed full-matrix run: the self-test is a deterministic
     // regression on that evidence, not a mechanism that blesses every result.
+    // Re-pinned for the recovered B-2 timer grid, the DAC-code/count unit-scale
+    // fixture, and the resulting audit-qualified reconstruction transition.
+    // The absolute -70 dBc alias and gain gates above are unchanged.
     constexpr std::array<double, 6> expectedAliasDb {
-        -83.476933, -82.436627, -82.432588,
-        -84.879008, -92.976529, -92.978397
+        -80.408599, -71.619277, -71.618509,
+        -85.819116, -92.967523, -92.955911
     };
     constexpr std::array<double, 6> expectedControlSpurDb {
-        -92.954176, -92.954176, -92.954176,
-        -92.958785, -92.958785, -92.958785
+        -92.959288, -92.959288, -92.959288,
+        -92.960717, -92.960717, -92.960717
     };
     constexpr std::array<double, 6> expectedControlGainDb {
         0.000032, 0.000032, 0.000032,
-        0.000034, 0.000034, 0.000034
+        0.000036, 0.000036, 0.000036
     };
     constexpr std::array<double, 6> expectedStrictGainDb {
-        0.002208, 0.000536, 0.000196,
-        0.002242, 0.000448, 0.000179
+        0.002566, 0.000523, 0.000400,
+        0.002165, 0.000387, 0.000365
     };
     constexpr std::array<double, 6> expectedStrictSignedDb {
-        -0.002208, -0.000536, -0.000196,
-        -0.002242, -0.000448, 0.000179
+        -0.002566, -0.000523, 0.000400,
+        -0.002165, -0.000387, 0.000365
     };
     constexpr std::array<double, 6> expectedTopGainDb {
-        0.035644, 0.021486, 0.020735,
-        0.004093, 0.001001, 0.000528
+        0.143575, 0.018322, 0.017587,
+        0.003947, 0.000957, 0.000809
     };
     constexpr std::array<double, 6> expectedTopSignedDb {
-        -0.035644, -0.021486, -0.020735,
-        -0.004093, -0.001001, 0.000528
+        -0.143575, -0.018322, -0.017587,
+        -0.003947, -0.000957, 0.000809
     };
-    constexpr std::array<int, 6> expectedFoldCandidates { 1, 1, 1, 5, 0, 0 };
+    constexpr std::array<int, 6> expectedFoldCandidates { 1, 2, 2, 6, 0, 0 };
     constexpr std::array<int, 6> expectedBoundaryCandidates { 0, 1, 1, 0, 0, 0 };
-    constexpr std::array<int, 6> expectedPregridCandidates { 1, 0, 0, 5, 0, 0 };
+    constexpr std::array<int, 6> expectedPregridCandidates { 1, 1, 1, 6, 0, 0 };
     constexpr std::array<double, 6> expectedScanQuantisationUs {
         22.656019, 11.318150, 5.659075,
         20.652174, 10.326087, 5.163043

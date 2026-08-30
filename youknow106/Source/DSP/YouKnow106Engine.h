@@ -370,10 +370,21 @@ public:
     // Counter clock the range divider feeds the note timer: the 8 MHz master
     // divided by 8, 4 or 2 for 16', 8' and 4'.
     [[nodiscard]] static double rangeClockHz(DcoRange range) noexcept;
-    // The integer the note timer is programmed with. The timer is never told
-    // which range is selected -- the range divider changes the clock arriving
-    // at it, not the count -- so the count is always computed against the
-    // middle range's clock and the switch transposes by whole octaves.
+    // One B-2 pitch conversion produces both values which the voice CPU later
+    // writes as a single logical transaction: the M82C53 count and the
+    // unshifted 12-bit ramp-current DAC code. `pitchWord` is the firmware's
+    // unsigned 8.8 semitone coordinate, including its 0x1818 master offset.
+    struct DcoPitchPair
+    {
+        std::uint32_t divider;
+        std::uint16_t cvCode;
+    };
+    [[nodiscard]] static DcoPitchPair dcoPitchPair(
+        std::uint16_t pitchWord) noexcept;
+
+    // Convenience adapter for a requested middle-range frequency. Production
+    // constructs the 8.8 coordinate directly; this keeps the circuit-law seam
+    // useful without making a hertz value part of the firmware model.
     [[nodiscard]] static std::uint32_t dcoDivider(double frequencyHz) noexcept;
     // The frequency that count actually produces at the selected range. Pitch
     // is quantised to this grid, which is why slow bends and vibrato staircase
@@ -932,6 +943,12 @@ private:
     // its finite slope.
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
+    // At B-2 coordinate 0x5400 the pair is code 0x0100 and count 0x1dfb.
+    // Their product is a gain-free centre anchor for the approximately 12 Vpp
+    // ramp: other pairs retain the B-2 law's small settled amplitude ripple,
+    // and its saturated upper codes can no longer be normalized back to unity.
+    static constexpr float dcoRampReferenceProduct =
+        0x0100u * 0x1dfbu;
     // Compatibility ceiling for delayed hybrid cycles: the schematic powers
     // the ramp MC5534A from +/-15 V but does not specify its installed output
     // swing. +15 V is therefore an ideal supply bound, not a measured clamp.
@@ -1695,20 +1712,19 @@ private:
         // moving at high internal rates after their float-sized increment has
         // fallen below half an ULP of the present state.
         double vcaControl { 0.0 };
-        // Oscillator compensation CV, kept in the frequency it stands for.
-        // The timer's count steps instantly; this voltage slews, and the
-        // ratio of the two is the momentary amplitude error a pitch step
-        // leaves on the ramp -- expressed as the slope of each rise, frozen
+        // Oscillator compensation hold in the firmware's unshifted 12-bit DAC
+        // code. The timer's count steps independently; this code slews, and
+        // code*active-count is the momentary ramp-amplitude coordinate frozen
         // per cycle (`Dco::renderScale`). It reaches the pulse only through
         // the comparator's edge times.
-        float dcoCvTarget { 261.6f };
-        float dcoCv { 261.6f };
+        float dcoCvTarget { 256.0f };
+        float dcoCv { 256.0f };
         // A physical card computes one paired PIT/CV transaction at T-389.
         // The PIT bytes then run independently; only this captured hold target
         // is committed when the converter cursor reaches T.
         bool dcoPitchTransactionValid { false };
         bool dcoPitchTransactionColdStart { false };
-        float dcoPitchTransactionCvTarget { 261.6f };
+        float dcoPitchTransactionCvTarget { 256.0f };
         std::uint16_t attackIncrement { envelopePeak };
         std::uint16_t decayMultiplier { 0x8000u };
         std::uint16_t releaseMultiplier { 0x8000u };
@@ -1960,7 +1976,6 @@ private:
     // above were split out to prevent.
     [[nodiscard]] static float rampCurrentScaleFor(
         const VoiceCard& card, float calibration) noexcept;
-    [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
     // so it follows the shared held threshold for inactive cards as well.

@@ -272,20 +272,91 @@ double YouKnow106Engine::rangeClockHz(DcoRange range) noexcept
     }
 }
 
+namespace
+{
+// The hash-matched B-2 image stores two proprietary 104-word pitch tables.
+// Keep the recovered clamp/interpolation mechanism exact without putting
+// either table (or a reversible residual dump) in this project. These compact
+// smooth generators were fitted against the semantic words at 0x0f30 and
+// 0x0e60:
+// https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1845-L1883
+//
+// Across all 104 anchors the divider generator is within four counts (56 are
+// exact), and after the firmware interpolation it stays within 1.272 cents at
+// every valid 8.8 coordinate. The CV generator is the intended 32-code/octave
+// exponential, saturates at 4095, and differs from the recovered image by at
+// most one code. These anchors are therefore derived, not ROM-resolved; the
+// surrounding unsigned clamp and truncating interpolation below are exact.
+std::uint32_t derivedDcoDividerAnchor(int index) noexcept
+{
+    const double octave = std::exp2(-static_cast<double>(index) / 12.0);
+    const double value = -0.25 + 61382.5 * octave
+                       + 169.0 * octave * octave;
+    return static_cast<std::uint32_t>(std::floor(value + 0.5));
+}
+
+std::uint16_t derivedDcoCvAnchor(int index) noexcept
+{
+    const double value = 32.0 * std::exp2(
+        static_cast<double>(index) / 12.0);
+    return static_cast<std::uint16_t>(std::min(
+        4095.0, std::floor(value + 0.5)));
+}
+
+std::uint16_t aggregatePitchWord(double midiNote) noexcept
+{
+    // B-2 starts the shared master coordinate at 0x1818, then adds the
+    // per-voice 8.8 portamento word. The engine's portamento state already
+    // advances on that 1/256-semitone grid. Tune/LFO/bend still arrive through
+    // the established continuous product controls, so their final float-to-
+    // word rounding is explicitly an adapter until those upstream integer
+    // paths are replaced separately.
+    constexpr double b2MasterPitchWord = 0x1818;
+    const double units = b2MasterPitchWord + midiNote * 256.0;
+    const double bounded = std::clamp(units, 0.0, 65535.0);
+    return static_cast<std::uint16_t>(std::floor(bounded + 0.5));
+}
+} // namespace
+
+YouKnow106Engine::DcoPitchPair YouKnow106Engine::dcoPitchPair(
+    std::uint16_t pitchWord) noexcept
+{
+    // B-2 uses h=48..150 as table indices 0..102. Entry 103 is lookahead
+    // only; both clamps discard the fractional byte. The two products are
+    // unsigned and divide by 256 with truncation, exactly as the paired MUL
+    // sequences at 0x0440..0x0489 do.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L682-L780
+    const int high = pitchWord >> 8u;
+    int index = 0;
+    std::uint32_t fraction = pitchWord & 0xffu;
+    if (high <= 0x2f)
+        fraction = 0u;
+    else if (high >= 0x97)
+    {
+        index = 0x66;
+        fraction = 0u;
+    }
+    else
+        index = high - 0x30;
+
+    const std::uint32_t divider = derivedDcoDividerAnchor(index);
+    const std::uint32_t nextDivider = derivedDcoDividerAnchor(index + 1);
+    const std::uint32_t cvCode = derivedDcoCvAnchor(index);
+    const std::uint32_t nextCvCode = derivedDcoCvAnchor(index + 1);
+    return {
+        divider - fraction * (divider - nextDivider) / 256u,
+        static_cast<std::uint16_t>(
+            cvCode + fraction * (nextCvCode - cvCode) / 256u)
+    };
+}
+
 std::uint32_t YouKnow106Engine::dcoDivider(double frequencyHz) noexcept
 {
     if (!(frequencyHz > 0.0) || !std::isfinite(frequencyHz))
         return maximumDivider;
 
-    const double exact = rangeClockHz(DcoRange::Eight) / frequencyHz;
-    if (!(exact > 0.0) || !std::isfinite(exact))
-        return maximumDivider;
-
-    const double rounded = std::floor(exact + 0.5);
-    const double limited = std::clamp(rounded,
-                                      static_cast<double>(minimumDivider),
-                                      static_cast<double>(maximumDivider));
-    return static_cast<std::uint32_t>(limited);
+    const double midiNote = 69.0 + 12.0 * std::log2(frequencyHz / 440.0);
+    return dcoPitchPair(aggregatePitchWord(midiNote)).divider;
 }
 
 double YouKnow106Engine::dcoQuantisedFrequency(std::uint32_t divider,
@@ -1621,14 +1692,21 @@ YouKnow106Engine::correctionTables() noexcept
         constexpr int length = correctionTableLength;
         constexpr double step = 1.0 / correctionOversample;
 
+        // A finite reconstruction kernel needs a transition band of its own.
+        // Centring the ideal cutoff exactly on Nyquist left the newly recovered
+        // B-2 note-84/8' grid's 24.109 kHz pulse harmonic only 66.1 dB down
+        // when it folded to 19.991 kHz at a 44.1 kHz host. A 1.5%-of-Nyquist
+        // guard restores more than 80 dB rejection there while retaining the
+        // complete 0..15 kHz strict band and staying within 0.15 dB at 20 kHz.
+        constexpr double cutoff = 0.985;
         std::array<double, length> impulse {};
         for (int i = 0; i < length; ++i)
         {
             const double t = static_cast<double>(i) * step
                            - correctionHalfWidth;
             const double sinc = std::abs(t) < 1.0e-12
-                ? 1.0
-                : std::sin(3.14159265358979323846 * t)
+                ? cutoff
+                : std::sin(3.14159265358979323846 * cutoff * t)
                     / (3.14159265358979323846 * t);
             const double phase = static_cast<double>(i)
                                / static_cast<double>(length - 1);
@@ -3470,13 +3548,12 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
     // band inside the transition -- 0.85 dB down at 20 kHz, and content
     // folding onto 19.1 kHz rejected by only 31.7 dB.
     //
-    // Kaiser trades stopband depth for transition width continuously. At
-    // beta = 7.857 (the standard design value for an 80 dB stopband), 95 taps
-    // are the selected comfortably passing common-host design in the expanded
-    // 44.1/48 kHz DCO audit: the shorter 63-tap boundary leaked the 25.1 kHz
-    // sixth pulse harmonic back onto 19.0 kHz at 44.1 kHz. The longer boundary
-    // keeps that line below the declared -70 dBc numerical-fidelity gate while
-    // retaining the 20 kHz passband contract.
+    // Kaiser trades stopband depth for transition width continuously. At 95
+    // taps the selected common-host design passes the expanded 44.1/48 kHz DCO
+    // audit: the shorter 63-tap boundary leaked the 25.1 kHz sixth pulse
+    // harmonic back onto 19.0 kHz at 44.1 kHz. The longer boundary keeps that
+    // line below the declared -70 dBc numerical-fidelity gate while retaining
+    // the 20 kHz passband contract.
     //
     // The Bessel function is written out below rather than taken from the
     // standard special-function header, which is not available on every
@@ -3495,7 +3572,12 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
         }
         return sum;
     };
-    constexpr double kaiserBeta = 7.857;
+    // The B-2 pitch grid also places that same 24.109 kHz line just inside the
+    // last 44.1 kHz decimator's transition. Beta 7.7 narrows that transition
+    // enough to retain about 1.5 dB of margin over the -70 dBc gate while the
+    // measured far stopband remains approximately 80 dB. Tap count, latency
+    // and hot-loop work are unchanged.
+    constexpr double kaiserBeta = 7.7;
     const double besselDenominator = besselI0(kaiserBeta);
 
     constexpr int centre = (halfbandTaps - 1) / 2;
@@ -5142,20 +5224,19 @@ std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     const double midi = static_cast<double>(voice.currentMidi)
                       + static_cast<double>(cents) / 100.0;
 
-    const std::uint32_t requestedDivider = dcoDivider(midiToHz(midi));
+    const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(midi));
     // Roland explicitly says DCO CV contains no RANGE data: RANGE changes the
     // timer clock and selects the ramp resistor, not this compensation hold.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
-    const double frequency = dcoQuantisedFrequency(
-        requestedDivider, DcoRange::Eight);
-    // The compensation voltage the firmware writes for this pitch. The
-    // requested count is staged below by the converter destination. A
+    // This is the unshifted 12-bit code the firmware writes for the same 8.8
+    // pitch coordinate. The paired count is staged below by the converter
+    // destination. A
     // running M82C53 count-only write leaves the active CE/period untouched
-    // until the next OUT transition. This target still reaches the
-    // integrator through the hold capacitor's slew, and the ratio of the two is
-    // the momentary amplitude error every pitch step leaves.
-    voice.dcoCvTarget = frequency > 0.0 ? static_cast<float>(frequency) : 1.0f;
-    return requestedDivider;
+    // until the next OUT transition. The code reaches the integrator through
+    // the hold capacitor's slew; code*active-count is the relative ramp charge
+    // rather than a fabricated hertz proxy.
+    voice.dcoCvTarget = static_cast<float>(pitch.cvCode);
+    return pitch.divider;
 }
 
 void YouKnow106Engine::updateVoiceVcfTarget(
@@ -5722,43 +5803,44 @@ void YouKnow106Engine::updatePulseComparator(
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
 }
 
-float YouKnow106Engine::dcoCompensationRatio(const Voice& voice) noexcept
-{
-    // The ratio of the slewed compensation voltage to the one the current
-    // pitch calls for -- the momentary amplitude error a pitch step leaves
-    // until the 522 us hold catches up.
-    // A construction-only cold transaction has no earlier physical hold to
-    // inherit. Preserve the existing deterministic initialization policy if
-    // its freshly loaded count launches before T: that first cell is nominal,
-    // then T installs the captured hold as both live target and settled value.
-    if (voice.dcoPitchTransactionValid
-        && voice.dcoPitchTransactionColdStart
-        && voice.dco.pitWriteState == Dco::PitWriteState::idle)
-        return 1.0f;
-    const float requestedCv = voice.dcoPitchTransactionValid
-        && voice.dco.pitWriteState == Dco::PitWriteState::idle
-        ? voice.dcoPitchTransactionCvTarget : voice.dcoCvTarget;
-    return std::clamp(
-        voice.dcoCv / std::max(requestedCv, 1.0e-3f), 0.25f, 4.0f);
-}
-
 float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
 {
+    const bool capturedCountReady = voice.dcoPitchTransactionValid
+                                 && voice.dco.pitWriteState
+                                        == Dco::PitWriteState::idle;
+    const float targetCode = capturedCountReady
+        ? voice.dcoPitchTransactionCvTarget : voice.dcoCvTarget;
+
+    // A construction-only cold transaction has no earlier physical hold to
+    // inherit. Initialise that first cell from its captured pair rather than
+    // from an arbitrary power-on code. T then installs the same captured code
+    // as both live target and settled value.
+    if (capturedCountReady && voice.dcoPitchTransactionColdStart)
+    {
+        const float scale = targetCode
+                          * static_cast<float>(voice.dco.divider)
+                          / dcoRampReferenceProduct;
+        return std::clamp(scale, 0.25f, 4.0f);
+    }
+
     // The frozen per-cycle slope stands in for the integral of the slewing
-    // compensation current across the rise it charges. Weighting the launch
-    // ratio by tau/period is that integral to first order: a cycle much
-    // longer than the hold's 522 us sees an almost settled current, and a
-    // cycle shorter than it sees the launch value. Exact in both limits --
-    // and what keeps a stale hold from painting its full error across a
-    // 15 ms bass cycle that the hold in truth corrects within its first
-    // millisecond.
-    const float ratio = dcoCompensationRatio(voice);
+    // compensation current across the rise it charges. Weighting the held-code
+    // error by tau/period is that integral to first order: a long bass cycle
+    // sees nearly the target code, while a short cycle keeps more of the launch
+    // value. Multiplying the resulting code by the active count retains the
+    // B-2 pair's settled ripple and its real high-note CV saturation; the
+    // centre anchor removes any need to guess DAC volts or integrator gain.
     const float tauSamples = dcoHoldSlewSecondsVoiced
                            * static_cast<float>(oversampledRate_);
     const float weight = std::min(
         1.0f, tauSamples / static_cast<float>(
                   std::max(voice.dco.periodSamples, 1.0)));
-    return 1.0f + (ratio - 1.0f) * weight;
+    const float effectiveCode = targetCode
+                              + (voice.dcoCv - targetCode) * weight;
+    const float scale = effectiveCode
+                      * static_cast<float>(voice.dco.divider)
+                      / dcoRampReferenceProduct;
+    return std::clamp(scale, 0.25f, 4.0f);
 }
 
 bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept

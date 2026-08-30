@@ -371,6 +371,32 @@ struct YouKnow106TestAccess
         voice.dcoCvTarget = target;
     }
 
+    static float dcoCvCodeForScale(const YouKnow106Engine& engine, int slot,
+                                   float scale) noexcept
+    {
+        const auto count = engine.voices_[static_cast<std::size_t>(slot)]
+                               .dco.divider;
+        return scale * YouKnow106Engine::dcoRampReferenceProduct
+             / static_cast<float>(count);
+    }
+
+    static float dcoLaunchScale(const YouKnow106Engine& engine,
+                                int slot) noexcept
+    {
+        return engine.dcoLaunchScale(
+            engine.voices_[static_cast<std::size_t>(slot)]);
+    }
+
+    static void setColdDcoPitchTransaction(YouKnow106Engine& engine, int slot,
+                                           float capturedCvCode) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.dcoPitchTransactionValid = true;
+        voice.dcoPitchTransactionColdStart = true;
+        voice.dcoPitchTransactionCvTarget = capturedCvCode;
+        voice.dco.pitWriteState = YouKnow106Engine::Dco::PitWriteState::idle;
+    }
+
     static void setRampCurrentError(YouKnow106Engine& engine, int card,
                                     float error) noexcept
     {
@@ -3450,6 +3476,58 @@ void testRangeDoesNotRetargetDcoCompensationCv()
            "the RANGE edit stopped changing the PIT-derived DCO period");
 }
 
+void testDcoPitchPairKeepsSettledRampProductAndCvSaturation()
+{
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
+
+    const auto scaleFor = [&](std::uint16_t pitchWord) {
+        const auto pair = YouKnow106Engine::dcoPitchPair(pitchWord);
+        YouKnow106TestAccess::setMode3Running(
+            engine, 0, pair.divider, true, 100.0);
+        YouKnow106TestAccess::setDcoLaunchState(
+            engine, 0,
+            YouKnow106TestAccess::dcoPeriodSamples(engine, 0),
+            static_cast<float>(pair.cvCode),
+            static_cast<float>(pair.cvCode));
+        return YouKnow106TestAccess::dcoLaunchScale(engine, 0);
+    };
+
+    // The declared centre pair is the gain-free 12 Vpp reference. One table
+    // octave below CV saturation retains essentially the same charge product;
+    // one octave above it has half the count but the same maximum code, so the
+    // authentic settled ramp falls by approximately 6.02 dB. Normalising each
+    // pitch back to unity would erase the main audible consequence of using
+    // the paired B-2 law.
+    const float centre = scaleFor(0x5400u);
+    const float saturationOnset = scaleFor(0x8400u);
+    const float octaveAbove = scaleFor(0x9000u);
+    expect(centre == 1.0f,
+           "the B-2 centre pair moved away from its ramp-product anchor");
+    expectNear(saturationOnset, 4095.0 * 479.0 / 1964800.0, 1.0e-7,
+               "the first saturated DCO CV pair was normalized to unity");
+    expectNear(octaveAbove, 4095.0 * 240.0 / 1964800.0, 1.0e-7,
+               "the saturated DCO CV stopped losing six dB per octave");
+    expectNear(20.0 * std::log10(octaveAbove / saturationOnset),
+               -6.0, 0.05,
+               "the B-2 high-note ramp did not fall by one octave in level");
+
+    // Construction has no earlier physical hold to inherit. Its deterministic
+    // first cycle must still use the captured pair's product, not the old
+    // normalized-unity convention, before T settles that same code.
+    const auto coldPair = YouKnow106Engine::dcoPitchPair(0x9000u);
+    YouKnow106TestAccess::setMode3Running(
+        engine, 0, coldPair.divider, true, 100.0);
+    YouKnow106TestAccess::setDcoLaunchState(
+        engine, 0, YouKnow106TestAccess::dcoPeriodSamples(engine, 0),
+        256.0f, 256.0f);
+    YouKnow106TestAccess::setColdDcoPitchTransaction(
+        engine, 0, static_cast<float>(coldPair.cvCode));
+    expectNear(YouKnow106TestAccess::dcoLaunchScale(engine, 0), octaveAbove,
+               1.0e-7,
+               "a cold B-2 transaction normalized its captured pair to unity");
+}
+
 void testRangeDividerCompletesItsCurrentSynchronousCount()
 {
     // Module-board IC35 is not a mux between three clock taps. PF7/PF6 set
@@ -4461,8 +4539,10 @@ void testComparatorEndpointPinsAndTransitionTiming()
         YouKnow106TestAccess::internalIntervalSeconds(rescaledSuffix);
     YouKnow106TestAccess::setDcoRampScales(
         rescaledSuffix, 0, 1.0f, 1.0f);
+    const float suffixUnitCode = YouKnow106TestAccess::dcoCvCodeForScale(
+        rescaledSuffix, 0, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
-        rescaledSuffix, 0, 1.0, 2.0f, 1.0f);
+        rescaledSuffix, 0, 1.0, 2.0f * suffixUnitCode, suffixUnitCode);
     YouKnow106TestAccess::setDcoResetState(
         rescaledSuffix, 0, -0.5, -1.0 / suffixInterval,
         0.5 * suffixInterval);
@@ -4568,9 +4648,11 @@ void testPitEventBudgetCoversWorstCaseInterval()
     YouKnow106TestAccess::programDcoCount(engine, 0, 8u, false);
     YouKnow106TestAccess::primeDcoControlEdgeFixture(engine, 0);
     YouKnow106TestAccess::setDcoRampScales(engine, 0, 4.0f, 1.0f);
+    const float eventBudgetUnitCode =
+        YouKnow106TestAccess::dcoCvCodeForScale(engine, 0, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
         engine, 0, YouKnow106TestAccess::dcoPeriodSamples(engine, 0),
-        4.0f, 1.0f);
+        4.0f * eventBudgetUnitCode, eventBudgetUnitCode);
     YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
         engine, 0, DcoRange::Four,
         20.0f, 20.0f, false, false, true);
@@ -7232,7 +7314,11 @@ void testFixedOutputBoundaryCorpus()
         // physical C54/comparator event walk. Only this six-card Unison
         // headroom probe moved outside its existing guard; the other five
         // fixtures retain their previous product boundaries.
-        Baseline { 0.504946, 1.01722, 1.01898, 68, 266 },
+        // Re-pinned after replacing the normalized frequency proxy with the
+        // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
+        // change this low-note stack's phase and reconstructed crossings;
+        // the fixture, window and four-percent guards remain unchanged.
+        Baseline { 0.50492, 1.01656, 1.01782, 60, 246 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
@@ -7814,7 +7900,7 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
         // milestone now honours the earlier T-389 transaction boundary.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 110.0, 233.0, 355.0 }
+                          ? std::array<double, 3> { 110.0, 232.5, 355.0 }
                           : std::array<double, 3> { 91.0, 214.0, 337.0 },
                       0.0, mode + " output-onset-proxy");
     }
@@ -9040,8 +9126,8 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     const CouplingRun open = measure(0.00f);
     const CouplingRun middle = measure(0.50f);
     const CouplingRun narrow = measure(1.00f);
-    expectNear(open.duty, 0.5043, 1.0e-3,
-               "the coupling fixture's PWM panel 0.00 left its 0.5043 duty");
+    expectNear(open.duty, 0.501946, 1.0e-3,
+               "the coupling fixture's PWM panel 0.00 left its B-2-pair duty");
     expectNear(narrow.duty, 0.9436, 1.0e-3,
                "the coupling fixture's PWM panel 1.00 left its 0.9436 duty");
     for (const auto& run : { open, middle, narrow })
@@ -9067,7 +9153,7 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     // sub-5 Hz part of the note gate, so this figure must fall. It guards
     // only against a coupling that trades the narrow duty for the wide one.
     expect(open.subAudioDb <= -39.5,
-           "the sub-20 Hz thump at duty 0.5043 rose above its uncoupled "
+           "the sub-20 Hz thump at the open duty rose above its uncoupled "
            "-42.49 dB (got " + std::to_string(open.subAudioDb) + " dB)");
 }
 
@@ -11785,6 +11871,7 @@ int main()
         testQualitySwitchWaitsForConverterAnchoredPitchTransaction();
         testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
         testRangeDoesNotRetargetDcoCompensationCv();
+        testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -11868,6 +11955,7 @@ int main()
     testQualitySwitchWaitsForConverterAnchoredPitchTransaction();
     testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
     testRangeDoesNotRetargetDcoCompensationCv();
+    testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();

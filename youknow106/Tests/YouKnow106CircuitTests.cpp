@@ -1198,49 +1198,94 @@ void testCascadeTracksHotContinuousReference()
 
 void testNoteTimerLaw()
 {
-    // One reference divided by an integer: pitch is quantised, and how coarsely
-    // depends on how large that integer is.
+    // One reference divided by the B-2 firmware's interpolated integer count.
+    // RANGE changes only the reference clock, so the paired count/CV law is
+    // identical in all three positions.
     struct Case { DcoRange range; double clock; };
     const Case cases[] = { { DcoRange::Sixteen, 1.0e6 },
                            { DcoRange::Eight, 2.0e6 },
                            { DcoRange::Four, 4.0e6 } };
+
+    // The compact generators deliberately do not embed Roland's 104-word ROM
+    // tables. These public B-2 vectors pin the exact unsigned clamp and
+    // truncating interpolation around their declared approximation: no more
+    // than four timer counts or one CV code at an anchor, and exact at the
+    // upper saturation/discontinuity where one count is most audible.
+    struct PitchVector
+    {
+        std::uint16_t word;
+        std::uint32_t divider;
+        std::uint16_t cvCode;
+        std::uint32_t dividerTolerance;
+        std::uint16_t cvTolerance;
+    };
+    constexpr std::array vectors {
+        PitchVector { 0x2fffu, 61550u,   32u, 4u, 1u },
+        PitchVector { 0x3000u, 61550u,   32u, 4u, 1u },
+        PitchVector { 0x83ffu,   480u, 4094u, 0u, 0u },
+        PitchVector { 0x8400u,   479u, 4095u, 0u, 0u },
+        PitchVector { 0x9600u,   169u, 4095u, 0u, 0u },
+        PitchVector { 0x96ffu,   161u, 4095u, 0u, 0u },
+        PitchVector { 0x9700u,   169u, 4095u, 0u, 0u },
+    };
+    for (const auto& vector : vectors)
+    {
+        const auto pair = YouKnow106Engine::dcoPitchPair(vector.word);
+        expect(std::abs(static_cast<long long>(pair.divider)
+                        - static_cast<long long>(vector.divider))
+                   <= vector.dividerTolerance,
+               "derived B-2 divider anchor left its declared error bound");
+        expect(std::abs(static_cast<int>(pair.cvCode)
+                        - static_cast<int>(vector.cvCode))
+                   <= vector.cvTolerance,
+               "derived B-2 CV anchor left its declared error bound");
+    }
+    expect(YouKnow106Engine::dcoPitchPair(0x0000u).divider
+               == YouKnow106Engine::dcoPitchPair(0x2fffu).divider
+               && YouKnow106Engine::dcoPitchPair(0xffffu).divider
+                      == YouKnow106Engine::dcoPitchPair(0x9700u).divider,
+           "the B-2 lower or upper coordinate clamp retained a fraction");
+    expect(YouKnow106Engine::dcoPitchPair(0x96ffu).divider
+               < YouKnow106Engine::dcoPitchPair(0x9700u).divider,
+           "the real B-2 upper-clamp count discontinuity disappeared");
 
     for (const auto& item : cases)
     {
         expectNear(YouKnow106Engine::rangeClockHz(item.range), item.clock, 1.0,
                    "range divider clock");
 
-        // The instrument's own keyboard is five octaves from C2, and the
-        // 16-bit counters cannot reach further down than that at 16' anyway.
-        // The range switch transposes by whole octaves, so the count is the
-        // same in every range and the tuning error is too.
+        // Neutral B-2 starts at 0x1818 rather than turning MIDI frequency
+        // directly into its nearest timer integer. That intentional offset
+        // and the recovered interpolation leave the physical C2-C7 keyboard
+        // about 0.2..3.7 cents sharp in the image; the derived anchors remain
+        // within five cents while preserving one count across all ranges.
         const double octaves = std::log2(item.clock / 2.0e6);
         double worstCents = 0.0;
         for (int note = 36; note <= 96; ++note)
         {
             const double wanted = 440.0 * std::pow(2.0, (note - 69) / 12.0);
             const auto divider = YouKnow106Engine::dcoDivider(wanted);
+            const auto pitchWord = static_cast<std::uint16_t>(
+                (note << 8) + 0x1818);
+            const auto pair = YouKnow106Engine::dcoPitchPair(pitchWord);
             const double produced =
                 YouKnow106Engine::dcoQuantisedFrequency(divider, item.range);
             const double sounding = wanted * std::pow(2.0, octaves);
-            expectNear(static_cast<double>(divider),
-                       std::floor(2.0e6 / wanted + 0.5), 0.5,
-                       "programmed divider is not the nearest integer");
+            expect(divider == pair.divider,
+                   "the hertz adapter left the production 8.8 pitch grid");
             worstCents = std::max(worstCents,
                                   std::abs(1200.0 * std::log2(produced / sounding)));
         }
-        // Quantisation grows with pitch; even at the top of the range it stays
-        // well inside a cent at these clocks.
-        expect(worstCents < 1.0,
-               "note timer quantisation exceeds one cent across the keyboard");
+        expect(worstCents < 5.0,
+               "the derived B-2 law left its five-cent keybed bound");
     }
 
-    // The counters are 16 bits wide, so the lowest note the 16' range can
-    // produce is its clock divided by 65535 -- about 15.3 Hz. Asking for
-    // anything lower does not transpose further down, it simply stops.
+    // B-2 clamps below coordinate 0x3000 to its first table entry rather than
+    // using all 65535 counter states. In 16' the derived count therefore
+    // floors near 16.25 Hz; lower positive requests do not transpose further.
     const auto floored = YouKnow106Engine::dcoDivider(8.0);
     expectNear(YouKnow106Engine::dcoQuantisedFrequency(floored, DcoRange::Sixteen),
-               15.26, 0.02, "the 16' range does not floor at the counter's width");
+               16.25, 0.02, "the 16' range does not use the B-2 low clamp");
     expect(YouKnow106Engine::dcoQuantisedFrequency(
                YouKnow106Engine::dcoDivider(4.0), DcoRange::Sixteen)
            == YouKnow106Engine::dcoQuantisedFrequency(floored, DcoRange::Sixteen),
@@ -1256,13 +1301,10 @@ void testNoteTimerLaw()
 void testNoteTimerDividerDefensiveGuard()
 {
     // dcoDivider's only production call site (updateVoiceEnvelopeAndPitch)
-    // feeds it midiToHz() of a finite, panel-derived MIDI note, so its
-    // "!(frequencyHz > 0.0) || !std::isfinite(frequencyHz)" early return had
-    // never fired outside testNoteTimerLaw's own strictly-positive fixtures
-    // above. Pin the documented saturate-downward contract directly: every
-    // one of these inputs must resolve to the same widest divider the 16'
-    // range floors at rather than to zero, a negative count or a NaN divider
-    // propagating into the note timer.
+    // is now only the circuit-test hertz adapter; production constructs the
+    // firmware word directly. Pin its invalid-input guard independently of
+    // B-2's narrower valid low-coordinate clamp: hostile values still return
+    // a safe nonzero 16-bit count rather than reaching log2 or the PIT.
     constexpr auto maximumDivider = std::uint32_t { 65535u };
     expect(YouKnow106Engine::dcoDivider(0.0) == maximumDivider,
            "a zero frequency did not saturate to the widest divider");
