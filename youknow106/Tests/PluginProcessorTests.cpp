@@ -5613,10 +5613,14 @@ void testClickingTheSelectedRadioKeepsItsLampLit()
 // ButtonAttachment it also ran for parameter-driven lamp updates, so a host
 // automating Chorus I silently wrote Chorus II as well -- but only while the
 // editor happened to be open, which made the rendered mode depend on whether
-// the window was on screen.
+// the window was on screen. Automation can also leave the raw 11 pair until
+// the processor's compatibility timer runs; the DSP calls that mode II, so the
+// lamps and the action of its visibly lit key must call it mode II as well.
 void testChorusInterlockOnlyRunsForARealPress()
 {
     YouKnow106AudioProcessor processor;
+    setParameterValue (processor, parameters::chorusI, 1.0f);
+    setParameterValue (processor, parameters::chorusII, 1.0f);
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     expect (editor != nullptr, "cannot test the chorus interlock without an editor");
     if (editor == nullptr)
@@ -5626,14 +5630,40 @@ void testChorusInterlockOnlyRunsForARealPress()
         findDescendantNamed (*editor, "I"));
     auto* chorusTwo = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "II"));
-    expect (chorusOne != nullptr && chorusTwo != nullptr,
-            "the editor's two chorus buttons were not found");
-    if (chorusOne == nullptr || chorusTwo == nullptr)
+    auto* chorusOff = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "OFF"));
+    expect (chorusOff != nullptr && chorusOne != nullptr && chorusTwo != nullptr,
+            "the editor's three chorus buttons were not found");
+    if (chorusOff == nullptr || chorusOne == nullptr || chorusTwo == nullptr)
         return;
+
+    const auto expectLamps = [chorusOff, chorusOne, chorusTwo] (
+                                 bool off, bool one, bool two,
+                                 const char* transition)
+    {
+        expect (chorusOff->getToggleState() == off
+                    && chorusOne->getToggleState() == one
+                    && chorusTwo->getToggleState() == two,
+                std::string ("the chorus lamps do not show ") + transition
+                    + " (actual "
+                    + (chorusOff->getToggleState() ? "1" : "0")
+                    + (chorusOne->getToggleState() ? "1" : "0")
+                    + (chorusTwo->getToggleState() ? "1" : "0") + ")");
+    };
 
     expect (! chorusOne->getClickingTogglesState()
                 && ! chorusTwo->getClickingTogglesState(),
             "the chorus keys still drive their own lamps");
+    expectLamps (false, false, true, "canonical Chorus II for the I+II pair");
+
+    // II is the key the player can see lit for 11. Pressing it must therefore
+    // switch the effect off, rather than reveal the otherwise hidden I bit.
+    chorusTwo->onClick();
+    expect (parameterValue (processor, parameters::chorusI) < 0.5f
+                && parameterValue (processor, parameters::chorusII) < 0.5f,
+            "pressing canonical Chorus II did not clear the raw I+II pair");
+    expectLamps (true, false, false,
+                 "Off after pressing canonical Chorus II");
 
     // A host lane -- or a preset recall, or a patch dump -- writing one of the
     // pair must leave the other exactly where it was.
@@ -5653,12 +5683,26 @@ void testChorusInterlockOnlyRunsForARealPress()
             "pressing the Chorus I key did not engage it");
     expect (parameterValue (processor, parameters::chorusII) < 0.5f,
             "pressing the Chorus I key left Chorus II engaged");
+    expectLamps (false, true, false, "Chorus I after a live switch");
 
     // And pressing the lit key switches the chorus off, as on the panel.
     chorusOne->onClick();
     expect (parameterValue (processor, parameters::chorusI) < 0.5f
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
             "pressing the lit Chorus I key did not switch the chorus off");
+    expectLamps (true, false, false, "Off after a live switch");
+
+    chorusTwo->onClick();
+    expect (parameterValue (processor, parameters::chorusI) < 0.5f
+                && parameterValue (processor, parameters::chorusII) > 0.5f,
+            "pressing the Chorus II key did not engage it");
+    expectLamps (false, false, true, "Chorus II after a live switch");
+
+    chorusOne->onClick();
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
+                && parameterValue (processor, parameters::chorusII) < 0.5f,
+            "switching back to Chorus I did not interlock the pair");
+    expectLamps (false, true, false, "Chorus I after switching back from II");
 
     // The lamps read their own parameters when the window opens, so a session
     // or patch recalled while the editor was shut shows the right key lit.

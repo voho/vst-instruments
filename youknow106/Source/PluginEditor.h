@@ -290,6 +290,7 @@ private:
     // gesture. It owns no parameter; the two contacts remain authoritative.
     void attachUnisonButton (juce::Button&);
     void attachChorusOffButton (juce::Button&);
+    void refreshChorusButtons();
     void attachPortamentoToggle (juce::Button&);
     void attachKeyTransposeButton (juce::Button&);
     void attachExclusiveButton (juce::Button&, const char* parameterId,

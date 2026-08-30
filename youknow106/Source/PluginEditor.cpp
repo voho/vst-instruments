@@ -2733,6 +2733,41 @@ void YouKnow106AudioProcessorEditor::attachButton (juce::Button& button,
         audioProcessor.parameters, parameterId, button));
 }
 
+void YouKnow106AudioProcessorEditor::refreshChorusButtons()
+{
+    using namespace youknow106;
+
+    const auto isOn = [this] (const char* id)
+    {
+        if (const auto* value = audioProcessor.parameters.getRawParameterValue (id))
+            return value->load (std::memory_order_relaxed) > 0.5f;
+        return false;
+    };
+    const auto mode = chorusModeFor (isOn (parameters::chorusI),
+                                     isOn (parameters::chorusII));
+
+    const auto& controls = panel::controls();
+    for (std::size_t index = 0; index < controls.size(); ++index)
+    {
+        auto* button = panelControls[index].button.get();
+        if (button == nullptr)
+            continue;
+
+        const auto* id = controls[index].parameterId;
+        const bool isOff = std::strcmp (id, parameters::legacyChorus) == 0;
+        const bool isOne = std::strcmp (id, parameters::chorusI) == 0;
+        const bool isTwo = std::strcmp (id, parameters::chorusII) == 0;
+        if (! isOff && ! isOne && ! isTwo)
+            continue;
+
+        button->setToggleState (
+            isOff ? mode == ChorusMode::Off
+                  : isOne ? mode == ChorusMode::One
+                          : mode == ChorusMode::Two,
+            juce::dontSendNotification);
+    }
+}
+
 void YouKnow106AudioProcessorEditor::attachExclusiveButton (
     juce::Button& button, const char* parameterId, const char* otherParameterId)
 {
@@ -2752,16 +2787,10 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
         return;
 
     button.setClickingTogglesState (false);
-    // Both parameters refresh the lamp: releasing the companion is what turns
-    // this one's own lamp off during a host recall.
-    const auto refresh = [this, &button, parameterId] (float)
-    {
-        if (const auto* value =
-                audioProcessor.parameters.getRawParameterValue (parameterId))
-            button.setToggleState (
-                value->load (std::memory_order_relaxed) > 0.5f,
-                juce::dontSendNotification);
-    };
+    // The raw 11 pair is a compatibility/automation midpoint which the DSP
+    // canonicalises to mode II. Refresh all three lamps from that same mode so
+    // they cannot temporarily describe a state the instrument is not playing.
+    const auto refresh = [this] (float) { refreshChorusButtons(); };
 
     auto attachment = std::make_unique<juce::ParameterAttachment> (
         *attachedParameter, refresh, nullptr);
@@ -2790,11 +2819,41 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
             }
         };
 
-        // Pressing the lit key switches the chorus off, as on the panel.
-        const bool ownWasOn = isOn (parameterId);
-        set (parameterId, ! ownWasOn);
-        if (! ownWasOn && isOn (otherParameterId))
-            set (otherParameterId, false);
+        const bool oneWasOn = isOn (parameters::chorusI);
+        const bool twoWasOn = isOn (parameters::chorusII);
+        const auto currentMode = chorusModeFor (oneWasOn, twoWasOn);
+        const auto selectedMode = std::strcmp (parameterId,
+                                               parameters::chorusI) == 0
+                                ? ChorusMode::One : ChorusMode::Two;
+        const bool ownWasOn = selectedMode == ChorusMode::One ? oneWasOn
+                                                               : twoWasOn;
+        const bool otherWasOn = selectedMode == ChorusMode::One ? twoWasOn
+                                                                 : oneWasOn;
+
+        if (currentMode == selectedMode)
+        {
+            // Pressing the visibly lit key switches the chorus off. Clear the
+            // hidden raw companion first when 11 arrived from automation, so
+            // the rendered mode remains selected until the final release.
+            if (otherWasOn)
+                set (otherParameterId, false);
+            if (ownWasOn)
+                set (parameterId, false);
+        }
+        else
+        {
+            // Engaging first keeps the audio on the old or target mode until
+            // the interlocked companion releases; 11 itself renders as II.
+            if (! ownWasOn)
+                set (parameterId, true);
+            if (otherWasOn)
+                set (otherParameterId, false);
+        }
+
+        // A ParameterAttachment may defer its callback when a host invokes
+        // this action outside JUCE's registered message thread. The completed
+        // physical press still has one unambiguous visual result now.
+        refreshChorusButtons();
     };
 
     auto* attachmentPointer = attachment.get();
@@ -2983,18 +3042,7 @@ void YouKnow106AudioProcessorEditor::attachChorusOffButton (juce::Button& button
         return;
 
     button.setClickingTogglesState (false);
-    const auto refresh = [this, &button] (float)
-    {
-        const auto isOn = [this] (const char* id)
-        {
-            if (const auto* value = audioProcessor.parameters.getRawParameterValue (id))
-                return value->load (std::memory_order_relaxed) > 0.5f;
-            return false;
-        };
-        button.setToggleState (! isOn (parameters::chorusI)
-                                   && ! isOn (parameters::chorusII),
-                               juce::dontSendNotification);
-    };
+    const auto refresh = [this] (float) { refreshChorusButtons(); };
 
     auto firstAttachment = std::make_unique<juce::ParameterAttachment> (
         *first, refresh, nullptr);
@@ -3009,6 +3057,7 @@ void YouKnow106AudioProcessorEditor::attachChorusOffButton (juce::Button& button
                 target->setValueNotifyingHost (target->convertTo0to1 (0.0f));
                 target->endChangeGesture();
             }
+        refreshChorusButtons();
     };
 
     auto* firstPointer = firstAttachment.get();
