@@ -111,11 +111,12 @@ forty-year-old unit will null against the plug-in.
   (anchored order and constants; the intra-pass offsets are compatibility
   policy, with a pixel-measured chart-geometry profile selectable).
 - Envelope recurrence, sustain mapping, DAC truncation, the onset-scaled LFO
-  reaching DCO and VCF while PWM reads the raw accumulator, and the portamento
-  glide law are the exact digital behaviour of the hash-identified B-2
-  firmware (ROM-resolved); key assignment — including note dropping instead of
-  stealing, the momentary POLY contacts and Solo Unison — is ROM-resolved
-  for the A-5 assigner image.
+  reaching DCO and VCF, and the portamento glide law are the exact digital
+  behaviour of the hash-identified B-2 firmware. PWM separately reads the raw
+  accumulator, forms and pass-latches B-2's exact 12-bit DAC code, and preserves
+  its seven-bit overrange (ROM-resolved); key assignment — including note
+  dropping instead of stealing, the momentary POLY contacts and Solo Unison —
+  is ROM-resolved for the A-5 assigner image.
 - The portamento knob passes through its loaded 50KB pot law (derived).
 
 **Oscillator**
@@ -125,8 +126,14 @@ forty-year-old unit will null against the plug-in.
   divide-by-two sub (anchored topology). Roland's
   [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9)
   give an approximately 12 Vpp Miller ramp; its PWM anchors are consistent
-  with a nominal 0 to approximately +12 V excursion. The internal custom-IC
-  reset curve remains unmeasured. The scan-and-slew amplitude transient on
+  with a nominal 0 to approximately +12 V excursion. B-2's [PWM arithmetic](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197)
+  and [12-bit converter write](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302)
+  reproduce the full −0.8 to +6 V calibrated path. The uniquely loaded
+  [PWM panel pot](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11)
+  normally stops near stored byte 101 and the printed 95% point; raw values
+  above that physical travel remain accessible through the seven-bit patch
+  format and can pin the comparator high. The internal custom-IC reset curve
+  remains unmeasured. The scan-and-slew amplitude transient on
   pitch changes is rendered in the slope of each rise. Ramp charge follows the
   paired DAC-code × active-divider product about the B-2 `0x5400` centre
   anchor, retaining its small settled ripple and the real level loss after the
@@ -446,7 +453,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
 | OQ-04 | Loaded post-BBD support-chain transfer. Topology is anchored at designator level on both sides of the BBD and the charge-transfer coefficient to the datasheet's 40 kHz/12 kHz row; the loaded tap-summing pole is open | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
-| OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator and bypasses that onset byte. The printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
+| OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly; Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) and [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bound the loaded physical slider while retaining raw SysEx overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
 | OQ-16 | Main noise spectrum and self-oscillation startup. Level is settled; the shape class is settled from designators (33.9 Hz high-pass, 4822.877 Hz pole), independently corroborated by a restorer's description | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy | P2 |
@@ -557,8 +564,11 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 - The LFO delay fade now begins on the same 4.2 ms converter pass that crosses
   the holdoff threshold, matching B-2 instead of inserting a silent extra pass;
   its exact state-completion range is 8.4 ms to 4.3512 s.
-- PWM now follows B-2's raw LFO accumulator path, independently of LFO DELAY;
-  the onset byte continues to gate DCO and VCF modulation only.
+- PWM now follows B-2's raw LFO accumulator independently of LFO DELAY and
+  uses the exact pass-latched partial-product/DAC code. The loaded hardware
+  slider reaches the printed 50–95% range near byte 101, while the preserved
+  seven-bit overrange can enter the comparator-pinning region; the onset byte
+  continues to gate DCO and VCF modulation only.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

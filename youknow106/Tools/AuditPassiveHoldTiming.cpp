@@ -261,6 +261,9 @@ struct YouKnow106TestAccess
         engine.targetParameters_ = engine.activeParameters_;
         engine.refreshVoiceRampCurrentScales();
         engine.converterPassLfoGated_ = -0.37f;
+        engine.lfoAccumulator_ = 0x0bd7u;
+        engine.lfoPolarity_ = -1.0f;
+        stagePwmPassCode(engine, engine.activeParameters_);
         engine.passiveHoldEventLatch_ = {};
         engine.assignmentRescanPending_ = false;
         engine.assignmentRescanPassArmed_ = false;
@@ -389,6 +392,26 @@ struct YouKnow106TestAccess
         return 0.0f;
     }
 
+    static void stagePwmPassCode(YouKnow106Engine& engine,
+                                 const EngineParameters& parameters) noexcept
+    {
+        engine.converterPassPwmDacCode_ = parameters.pulseEnabled
+            ? YouKnow106Engine::pwmDacCode(
+                  parameters.pwmDepth, parameters.pwmSource,
+                  engine.lfoAccumulator_, engine.lfoPolarity_ >= 0.0f)
+            : 0u;
+    }
+
+    static void mutateStagedPwmPayloadAfterPeek(
+        YouKnow106Engine& engine) noexcept
+    {
+        // A panel edit cannot rewrite FF4F in the middle of a B-2 pass. Move
+        // the staged word explicitly to model the next pass and prove that the
+        // fractional-event latch still commits the payload it already peeked.
+        engine.converterPassPwmDacCode_ =
+            engine.converterPassPwmDacCode_ == 0u ? 0x0fffu : 0u;
+    }
+
     static void setCursor(YouKnow106Engine& engine, std::size_t ordinal,
                           double requestedPosition,
                           int internalSubstep = 0) noexcept
@@ -485,15 +508,6 @@ struct YouKnow106TestAccess
         engine.performConverterWrite(
             YouKnow106Engine::converterWriteOrder()[ordinal], parameters,
             lfoGated, &target);
-    }
-
-    static void setActiveAutomation(YouKnow106Engine& engine,
-                                    const EngineParameters& parameters,
-                                    float lfoGated) noexcept
-    {
-        engine.activeParameters_ = parameters;
-        engine.targetParameters_ = parameters;
-        engine.converterPassLfoGated_ = lfoGated;
     }
 
     static constexpr bool scalarLatchIsAllocationFree() noexcept
@@ -1390,17 +1404,8 @@ void runBlockWrapAutomationAudit(Metrics& metrics)
             EngineParameters after = parameters;
             float afterLfo = lfo;
             Access::setAutomationAfterPeek(engine, after, afterLfo);
-            // Pulse Off's physical target is pinned at -0.8 V regardless of
-            // depth or LFO. Move onto the enabled/manual branch after the
-            // peek so this case still proves that its pinned payload, rather
-            // than later automation, is what the boundary commit consumes.
-            if (ordinal == 9u && mode == PwmMode::PulseOff)
-            {
-                after.pulseEnabled = true;
-                after.pwmSource = youknow106::PwmSource::Manual;
-                after.pwmDepth = 0.02f;
-                Access::setActiveAutomation(engine, after, afterLfo);
-            }
+            if (ordinal == 9u)
+                Access::mutateStagedPwmPayloadAfterPeek(engine);
             const float changed = Access::eventTarget(
                 engine, ordinal, after, afterLfo);
             if (changed == eventTarget)
@@ -1485,6 +1490,8 @@ void runSchedulerAudit(Metrics& metrics)
 
         float afterLfo = lfoAtEvent;
         Access::setAutomationAfterPeek(engine, parameters, afterLfo);
+        if (writes[ordinal].destination == Destination::Pwm)
+            Access::mutateStagedPwmPayloadAfterPeek(engine);
         const float changed = Access::eventTarget(
             engine, ordinal, parameters, afterLfo);
         Access::commitOverride(

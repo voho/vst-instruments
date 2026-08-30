@@ -759,10 +759,18 @@ public:
     [[nodiscard]] static float panelPositionForLfoDelay(float seconds) noexcept;
     [[nodiscard]] static float panelPositionForPortamento(float secondsPerOctave) noexcept;
     [[nodiscard]] static float panelPositionForCutoff(float hertz) noexcept;
-    // Comparator threshold in volts against the modelled 12 Vpp ramp, and the
-    // duty cycle it produces. Enabled PWM cannot reach 0% or 100%; the pulse-
-    // off state drives the control to -0.8 V and pins the comparator high.
-    [[nodiscard]] static float pwmControlVolts(float depth) noexcept;
+    // B-2 doubles the stored seven-bit PWM byte, multiplies it by either
+    // 0x3fff (manual) or the raw bipolar 0x2000 +/- LFO accumulator, subtracts
+    // that product from 0x3fff and presents the upper twelve bits to the DAC.
+    // The two analogue calibration anchors are that DAC code 0x0fff gives the
+    // printed +6 V / 50% state, while code zero is the printed -0.8 V pulse-off
+    // state. The panel's loaded pot normally stops near byte 101 and 95%; raw
+    // SysEx bytes above that physical travel deliberately retain the firmware's
+    // overrange and can pin the comparator high.
+    [[nodiscard]] static std::uint16_t pwmDacCode(
+        float panelPosition, PwmSource source, std::uint16_t lfoAccumulator,
+        bool positivePolarity) noexcept;
+    [[nodiscard]] static float pwmDacVolts(std::uint16_t code) noexcept;
     [[nodiscard]] static float pwmDutyCycle(float controlVolts) noexcept;
     // The optional second argument exposes pitch-slew and card-current changes
     // of the physical ramp used by that same comparator. A scale of one is the
@@ -2135,8 +2143,11 @@ private:
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
     // Delayed float path for VCF and extension-voice scans. DCO pitch uses its
-    // exact integer word, while PWM reads the pass-held raw lfoValue_.
+    // exact integer word. PWM has its own exact FF4F-derived DAC code, computed
+    // beside the late-loop LFO update and held until the next PWM converter
+    // write so a host edit cannot splice two firmware passes together.
     float converterPassLfoGated_ { 0.0f };
+    std::uint16_t converterPassPwmDacCode_ { 0x0fffu };
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
     std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};

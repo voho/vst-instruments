@@ -82,7 +82,7 @@ constexpr Placement placements[controlCount] = {
       "Sets delayed-LFO pitch modulation depth: the patch's vibrato amount, up to just under plus or minus 4 semitones.",
       ControlKind::Slider, 3, 1, 0, 1, -1, 0 },
     { parameters::pwm, "PWM",
-      "In MAN mode this sets a fixed pulse width of roughly 50-95%; in LFO mode it sets the maximum LFO sweep width.",
+      "In MAN mode the loaded hardware slider covers roughly 50-95%. The preserved seven-bit range extends above that physical travel and can pin the pulse high; LFO mode sets sweep depth.",
       ControlKind::Slider, 3, 2, 0, 1, -1, 0 },
     { parameters::pwmMode, "LFO",
       "Makes the raw shared LFO sweep pulse width; LFO DELAY does not apply. PWM sets the depth.",

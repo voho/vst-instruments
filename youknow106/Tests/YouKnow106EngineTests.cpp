@@ -281,6 +281,20 @@ struct YouKnow106TestAccess
             parameters, 0.0f);
     }
 
+    static void performPwmWrite(YouKnow106Engine& engine,
+                                const EngineParameters& parameters) noexcept
+    {
+        engine.performConverterWrite(
+            { YouKnow106Engine::ConverterDestination::Pwm, -1 },
+            parameters, 0.0f);
+    }
+
+    static std::uint16_t converterPassPwmDacCode(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.converterPassPwmDacCode_;
+    }
+
     static float dcoCv(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].dcoCv;
@@ -695,6 +709,13 @@ struct YouKnow106TestAccess
     static float pulseDuty(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].pulseDuty;
+    }
+
+    static float pulseThresholdVolts(const YouKnow106Engine& engine,
+                                     int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .pulseThresholdVolts;
     }
 
     static float pulseLogicState(const YouKnow106Engine& engine,
@@ -1646,6 +1667,11 @@ namespace
 using namespace youknow106;
 
 int failures = 0;
+
+// R5 1 kOhm feeds the PWM pot while R6 4.7 kOhm shunts its 50 kOhm track.
+// Through A-5's panel conversion that loaded travel nominally tops out at raw
+// byte 101; the remaining seven-bit values are preserved SysEx overrange.
+constexpr float nominalPwmPanelMaximum = 101.0f / 127.0f;
 
 // The build system defines this whenever it adds -fsanitize, because no macro
 // covers every case: GCC with only -fsanitize=undefined defines neither
@@ -3788,6 +3814,87 @@ void testDcoLfoUsesRecoveredIntegerWord()
            "mid-pass automation split the shared DCO-LFO pitch word");
 }
 
+void testPwmUsesRecoveredIntegerDacWord()
+{
+    const auto panel = [](int raw) {
+        return static_cast<float>(raw) / 127.0f;
+    };
+    const auto code = [&](int raw, PwmSource source = PwmSource::Manual,
+                          std::uint16_t accumulator = 0u,
+                          bool positive = true) {
+        return YouKnow106Engine::pwmDacCode(
+            panel(raw), source, accumulator, positive);
+    };
+
+    // B-2 doubles D, forms Q=0x3fff (MAN) or 0x2000 +/- accumulator
+    // (LFO), and exposes 0x0fff - ((2*D*Q)>>10) after loadDac discards
+    // the low two bits. These include both ordinary panel values and the
+    // complete seven-bit overrange accepted through SysEx.
+    expect(code(0) == 0x0fffu && code(1) == 0x0fe0u
+               && code(64) == 0x0800u && code(101) == 0x0360u
+               && code(127) == 0x0020u,
+           "manual PWM left B-2's exact twelve-bit DAC vectors");
+    expect(code(127, PwmSource::Lfo, 0u, true) == 0x080fu
+               && code(127, PwmSource::Lfo, 0x1fffu, true) == 0x0020u
+               && code(127, PwmSource::Lfo, 0x1fffu, false) == 0x0fffu,
+           "LFO PWM lost its raw accumulator endpoints or polarity");
+    expect(code(1, PwmSource::Lfo, 0x1e00u, false) == 0x0ffeu
+               && code(1, PwmSource::Lfo, 0x1e01u, false) == 0x0fffu,
+           "LFO PWM lost a partial-product truncation boundary");
+    expect(code(127, PwmSource::Lfo, 0xffffu, true) == 0x0020u,
+           "hostile PWM accumulator input escaped B-2's 13-bit range");
+
+    // Page 9 anchors the complete affine analogue path, not merely the
+    // resistor-limited panel segment: code 0x0fff is +6 V / 50%, while the
+    // square-off code zero is -0.8 V and pins the comparator high. The loaded
+    // physical knob lands at byte 101 inside the printed 93-97% service band.
+    expectNear(YouKnow106Engine::pwmDacVolts(0x0fffu), 6.0, 1.0e-7,
+               "PWM full DAC code missed the 50% calibration anchor");
+    expectNear(YouKnow106Engine::pwmDacVolts(0u), -0.8, 1.0e-7,
+               "PWM zero DAC code missed the pulse-off anchor");
+    const float panelMaximumVolts = YouKnow106Engine::pwmDacVolts(code(101));
+    expectNear(panelMaximumVolts, 0.634725275, 1.0e-6,
+               "the loaded PWM panel maximum missed its B-2 DAC code");
+    expectNear(YouKnow106Engine::pwmDutyCycle(panelMaximumVolts),
+               0.947106227, 1.0e-6,
+               "the loaded PWM panel maximum left Roland's 93-97% window");
+    expect(YouKnow106Engine::pwmDutyCycle(
+               YouKnow106Engine::pwmDacVolts(code(127))) == 1.0f,
+           "raw PWM byte 127 no longer preserves its comparator-pinning overrange");
+
+    // FF4F is calculated beside the late-loop LFO update and only converted
+    // on the following envelope loop. A host edit between those points must
+    // not recompute the pending PWM payload from a different panel byte.
+    YouKnow106Engine held;
+    held.prepare(192000.0, blockSize, false);
+    auto physicalMaximum = plainPatch();
+    physicalMaximum.pulseEnabled = true;
+    physicalMaximum.pwmSource = PwmSource::Manual;
+    physicalMaximum.pwmDepth = nominalPwmPanelMaximum;
+    held.setParameters(physicalMaximum);
+    held.noteOn(60, 1.0f);
+    renderExact(held, 1);
+    expect(YouKnow106TestAccess::converterPassPwmDacCode(held) == 0x0360u,
+           "the converter pass did not latch B-2's PWM word");
+
+    auto zeroDepth = physicalMaximum;
+    zeroDepth.pwmDepth = 0.0f;
+    held.setParameters(zeroDepth);
+    YouKnow106TestAccess::performPwmWrite(held, zeroDepth);
+    expect(YouKnow106TestAccess::pwmTarget(held) == panelMaximumVolts,
+           "mid-pass automation recomputed the pending PWM word");
+
+    YouKnow106TestAccess::setConverterScheduler(
+        held, 1.0, YouKnow106TestAccess::converterWriteCount());
+    renderExact(held, 1);
+    expect(YouKnow106TestAccess::converterPassPwmDacCode(held) == 0x0fffu,
+           "the following pass did not adopt the new PWM byte");
+    YouKnow106TestAccess::performPwmWrite(held, zeroDepth);
+    expect(YouKnow106TestAccess::pwmTarget(held)
+               == YouKnow106Engine::pwmDacVolts(0x0fffu),
+           "the following PWM write did not consume its new pass latch");
+}
+
 void testLfoDelayStartsFadeOnHoldoffCrossingPass()
 {
     YouKnow106Engine fastest;
@@ -5423,8 +5530,11 @@ void testIdleSnapshotPrimesEverySharedHold()
         const double level = converterFraction(snapshot.vcaLevel);
         const double sub = converterFraction(snapshot.subLevel);
         const double noise = converterFraction(snapshot.noiseLevel);
-        const double pwm = YouKnow106Engine::pwmControlVolts(
-            static_cast<float>(converterFraction(snapshot.pwmDepth)));
+        const std::uint16_t pwmCode = snapshot.pulseEnabled
+            ? YouKnow106Engine::pwmDacCode(
+                  snapshot.pwmDepth, snapshot.pwmSource, 0u, true)
+            : 0u;
+        const double pwm = YouKnow106Engine::pwmDacVolts(pwmCode);
         expect(YouKnow106TestAccess::resonanceTarget(engine) == resonance
                    && YouKnow106TestAccess::resonanceHeld(engine) == resonance,
                context + " did not prime resonance");
@@ -6538,7 +6648,7 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     parameters.pulseEnabled = false;
     parameters.subLevel = 0.0f;
     parameters.noiseLevel = 0.0f;
-    parameters.pwmDepth = 1.0f;
+    parameters.pwmDepth = nominalPwmPanelMaximum;
     parameters.calibration = 1.0f;
     parameters.chorus = ChorusMode::Off;
     // This fixture pins the pulse leg's gate. With every source off, the only
@@ -6613,7 +6723,7 @@ void testMovingPwmComparatorDoesNotMissThresholdCrossings()
         parameters.sawEnabled = false;
         parameters.pulseEnabled = true;
         parameters.pwmSource = PwmSource::Lfo;
-        parameters.pwmDepth = 1.0f;
+        parameters.pwmDepth = nominalPwmPanelMaximum;
         parameters.lfoRate = 1.0f;
         parameters.vcaMode = VcaMode::Gate;
         engine.setParameters(parameters);
@@ -6630,15 +6740,18 @@ void testMovingPwmComparatorDoesNotMissThresholdCrossings()
             float right = 0.0f;
             engine.process(&left, &right, 1);
 
-            const float duty = YouKnow106TestAccess::pulseDuty(engine, 0);
-            const double ramp = YouKnow106TestAccess::dcoRampValue(engine, 0);
             const float state = YouKnow106TestAccess::pulseLogicState(engine, 0);
-            const float expected = duty >= 1.0f
+            const float threshold =
+                YouKnow106TestAccess::pulseThresholdVolts(engine, 0);
+            const double rampVolts =
+                YouKnow106TestAccess::dcoRampVolts(engine, 0);
+            // Compare the same physical quantities as the engine. Rebuilding
+            // a threshold coordinate through the rounded float `pulseDuty`
+            // can reverse an exact crossing by one ULP.
+            const float expected = threshold < 0.0f
                 ? 1.0f
-                : (duty <= 0.0f
-                       ? -1.0f
-                       : (ramp >= 1.0 - 2.0 * static_cast<double>(duty)
-                              ? 1.0f : -1.0f));
+                : (rampVolts >= static_cast<double>(threshold)
+                       ? 1.0f : -1.0f);
             if (state != expected)
                 ++mismatches;
 
@@ -7605,8 +7718,13 @@ void testFixedOutputBoundaryCorpus()
         // still has a subject -- the coupling high-pass overshoots the
         // steady-state ceiling on that stacked low note, which is why the
         // ceiling is documented as a bound and not as a guarantee.
-        Baseline { 0.0970109, 0.197019, 0.199779, 0, 0 },
-        Baseline { 0.248126, 0.703106, 0.706815, 0, 0 },
+        // Re-pinned after recovering B-2's doubled-depth partial product,
+        // twelve-bit truncation and full -0.8..+6 V PWM converter law. The
+        // fixed depth 0.37 now means stored byte 47 / code 0x0a20 rather than
+        // a continuous 0..1 interpolation. The waveform-free resonance row
+        // below remains bit-identical as the negative control.
+        Baseline { 0.0945856, 0.201924, 0.203618, 0, 0 },
+        Baseline { 0.254439, 0.731238, 0.741002, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
         // physical C54/comparator event walk. Only this six-card Unison
@@ -7616,13 +7734,13 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.50492, 1.01656, 1.01782, 60, 246 },
+        Baseline { 0.484028, 1.02109, 1.02229, 100, 398 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
         Baseline { 0.0454893, 0.0645766, 0.0645766, 0, 0 },
-        Baseline { 0.173119, 0.367097, 0.369059, 0, 0 },
-        Baseline { 0.11314, 0.352057, 0.352057, 0, 0 },
+        Baseline { 0.165877, 0.377675, 0.382499, 0, 0 },
+        Baseline { 0.11491, 0.254241, 0.254243, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -8615,11 +8733,22 @@ void testPwmUsesRawLfoOutsideDelayEnvelope()
         immediate.noteOn(60, 1.0f);
         delayed.noteOn(60, 1.0f);
 
-        // Startup raw LFO is zero, so both LFO-mode snapshots sit at the
-        // comparator midpoint independently of either onset setting.
+        // Startup raw LFO is zero, so both LFO-mode snapshots use B-2's exact
+        // centre word independently of either onset setting. Raw byte 127 is
+        // retained here deliberately: it exercises the complete seven-bit
+        // SysEx overrange as well as both accumulator endpoints.
+        const float centreTarget = YouKnow106Engine::pwmDacVolts(
+            YouKnow106Engine::pwmDacCode(
+                1.0f, PwmSource::Lfo, 0u, true));
+        const float positiveTarget = YouKnow106Engine::pwmDacVolts(
+            YouKnow106Engine::pwmDacCode(
+                1.0f, PwmSource::Lfo, 0x1fffu, true));
+        const float negativeTarget = YouKnow106Engine::pwmDacVolts(
+            YouKnow106Engine::pwmDacCode(
+                1.0f, PwmSource::Lfo, 0x1fffu, false));
         expectNear(YouKnow106TestAccess::pwmHeld(immediate),
-                   YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
-                   "raw-LFO PWM startup did not begin at its midpoint");
+                   centreTarget, 1.0e-6,
+                   "raw-LFO PWM startup did not begin at its centre code");
         expect(YouKnow106TestAccess::pwmHeld(immediate)
                    == YouKnow106TestAccess::pwmHeld(delayed),
                "LFO DELAY changed the startup PWM snapshot");
@@ -8663,11 +8792,11 @@ void testPwmUsesRawLfoOutsideDelayEnvelope()
             positivePeakMapped = positivePeakMapped
                 || (YouKnow106TestAccess::lfoValue(immediate) == 1.0f
                     && YouKnow106TestAccess::pwmTarget(immediate)
-                           == YouKnow106Engine::pwmControlVolts(1.0f));
+                           == positiveTarget);
             negativePeakMapped = negativePeakMapped
                 || (YouKnow106TestAccess::lfoValue(immediate) == -1.0f
                     && YouKnow106TestAccess::pwmTarget(immediate)
-                           == YouKnow106Engine::pwmControlVolts(0.0f));
+                           == negativeTarget);
         }
 
         const std::string profileName =
@@ -8677,9 +8806,9 @@ void testPwmUsesRawLfoOutsideDelayEnvelope()
                profileName + " fixture did not exercise delayed VCF onset");
         expect(pwmStatesMatch,
                profileName + " PWM still followed the onset envelope");
-        expectNear(minimumTarget, YouKnow106Engine::pwmControlVolts(1.0f),
+        expectNear(minimumTarget, positiveTarget,
                    1.0e-6, profileName + " PWM missed its positive peak");
-        expectNear(maximumTarget, YouKnow106Engine::pwmControlVolts(0.0f),
+        expectNear(maximumTarget, negativeTarget,
                    1.0e-6, profileName + " PWM missed its negative peak");
         expect(positivePeakMapped && negativePeakMapped,
                profileName + " PWM inverted the raw LFO polarity");
@@ -9107,7 +9236,7 @@ void testQualityChangePreservesOutputCouplingTail()
     parameters.sawEnabled = false;
     parameters.pulseEnabled = true;
     parameters.pwmSource = PwmSource::Manual;
-    parameters.pwmDepth = 1.0f;
+    parameters.pwmDepth = nominalPwmPanelMaximum;
     parameters.vcaMode = VcaMode::Gate;
     parameters.chorus = ChorusMode::Off;
     parameters.chorusNoise = 0.0f;
@@ -9234,7 +9363,8 @@ void testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca()
     // The thump must fall as PWM deepens, not rise. Measured as the peak of a
     // 50 ms window after note-on, against the settled sustain level.
     double previousRatio = 1.0e9;
-    for (const float depth : { 0.0f, 0.3f, 0.6f, 1.0f })
+    for (const float depth : { 0.0f, 0.3f, 0.6f,
+                               nominalPwmPanelMaximum })
     {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
@@ -9440,14 +9570,15 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     // is the assertion that isolates the capacitor: every downstream coupling
     // is on the far side of the multiply, so it cannot flatter this reading.
     // Without C59 the same window reads +0.0428 V at panel 0.00, +0.0244 V at
-    // panel 0.50 and +0.0298 V at panel 1.00 -- 24 to 43 times the bound.
+    // panel 0.50 and +0.0298 V at the loaded physical maximum -- 24 to 43
+    // times the bound.
     const CouplingRun open = measure(0.00f);
     const CouplingRun middle = measure(0.50f);
-    const CouplingRun narrow = measure(1.00f);
+    const CouplingRun narrow = measure(nominalPwmPanelMaximum);
     expectNear(open.duty, 0.501946, 1.0e-3,
                "the coupling fixture's PWM panel 0.00 left its B-2-pair duty");
-    expectNear(narrow.duty, 0.9436, 1.0e-3,
-               "the coupling fixture's PWM panel 1.00 left its 0.9436 duty");
+    expectNear(narrow.duty, 0.940772, 1.0e-3,
+               "the coupling fixture's loaded PWM maximum left its card-specific duty");
     for (const auto& run : { open, middle, narrow })
     {
         expect(std::abs(run.vcaInputDcVolts) < 1.0e-3,
@@ -9465,7 +9596,7 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     // note that starts, so the fence sits at 25 dB rather than at the 35 dB
     // the plan first asked for, which no correct implementation reaches.
     expect(narrow.subAudioDb <= -25.0,
-           "the sub-20 Hz thump at duty 0.9436 is back above 25 dB under RMS "
+           "the sub-20 Hz thump at the loaded PWM maximum is back above 25 dB under RMS "
            "(got " + std::to_string(narrow.subAudioDb) + " dB)");
     // One-sided, and it does not bite today: blocking DC also removes the
     // sub-5 Hz part of the note gate, so this figure must fall. It guards
@@ -9490,7 +9621,7 @@ void testFinalOutputCouplingRemovesManualPwmDc()
         parameters.sawEnabled = false;
         parameters.pulseEnabled = true;
         parameters.pwmSource = PwmSource::Manual;
-        parameters.pwmDepth = 1.0f;
+        parameters.pwmDepth = nominalPwmPanelMaximum;
         parameters.subLevel = 0.0f;
         parameters.noiseLevel = 0.0f;
         parameters.vcaMode = VcaMode::Gate;
@@ -9527,7 +9658,7 @@ void testFinalOutputCouplingRemovesManualPwmDc()
     parameters.sawEnabled = false;
     parameters.pulseEnabled = true;
     parameters.pwmSource = PwmSource::Manual;
-    parameters.pwmDepth = 1.0f;
+    parameters.pwmDepth = nominalPwmPanelMaximum;
     parameters.vcaMode = VcaMode::Gate;
     parameters.volume = 0.0f;
     silent.setParameters(parameters);
@@ -11939,6 +12070,7 @@ void testPanelLayout()
 void testPanelHelpMatchesTheModulationRouting()
 {
     const panel::Control* delay = nullptr;
+    const panel::Control* pwmDepth = nullptr;
     const panel::Control* pwmLfo = nullptr;
     for (const auto& control : panel::controls())
     {
@@ -11946,17 +12078,22 @@ void testPanelHelpMatchesTheModulationRouting()
             && std::strcmp(control.parameterId, parameters::lfoDelay) == 0)
             delay = &control;
         if (control.parameterId != nullptr && control.label != nullptr
+            && std::strcmp(control.parameterId, parameters::pwm) == 0)
+            pwmDepth = &control;
+        if (control.parameterId != nullptr && control.label != nullptr
             && std::strcmp(control.parameterId, parameters::pwmMode) == 0
             && std::strcmp(control.label, "LFO") == 0)
             pwmLfo = &control;
     }
 
     expect(delay != nullptr, "the panel has no LFO DELAY help to verify");
+    expect(pwmDepth != nullptr, "the panel has no PWM depth help to verify");
     expect(pwmLfo != nullptr, "the panel has no PWM LFO help to verify");
-    if (delay == nullptr || pwmLfo == nullptr)
+    if (delay == nullptr || pwmDepth == nullptr || pwmLfo == nullptr)
         return;
 
     const std::string delayHelp(delay->tooltip);
+    const std::string pwmDepthHelp(pwmDepth->tooltip);
     const std::string pwmHelp(pwmLfo->tooltip);
     expect(delayHelp.find("DCO and VCF") != std::string::npos
                && delayHelp.find("does not delay PWM") != std::string::npos,
@@ -11965,6 +12102,10 @@ void testPanelHelpMatchesTheModulationRouting()
                && pwmHelp.find("LFO DELAY does not apply")
                       != std::string::npos,
            "PWM LFO help does not describe the raw accumulator path");
+    expect(pwmDepthHelp.find("50-95%") != std::string::npos
+               && pwmDepthHelp.find("seven-bit range") != std::string::npos
+               && pwmDepthHelp.find("pin the pulse high") != std::string::npos,
+           "PWM depth help hides the loaded panel range or digital overrange");
     expect(delayHelp.find("DCO, PWM and VCF") == std::string::npos
                && pwmHelp.find("delay-gated LFO") == std::string::npos,
            "the panel still claims that LFO DELAY reaches PWM");
@@ -12193,6 +12334,7 @@ int main()
         testMasterTuneUsesRecoveredSignedPitchWord();
         testPitchBendUsesRecoveredIntegerWord();
         testDcoLfoUsesRecoveredIntegerWord();
+        testPwmUsesRecoveredIntegerDacWord();
         testLfoDelayStartsFadeOnHoldoffCrossingPass();
         testPwmUsesRawLfoOutsideDelayEnvelope();
         testRangeDividerCompletesItsCurrentSynchronousCount();
@@ -12282,6 +12424,7 @@ int main()
     testMasterTuneUsesRecoveredSignedPitchWord();
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();
+    testPwmUsesRecoveredIntegerDacWord();
     testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();

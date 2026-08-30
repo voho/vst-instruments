@@ -1880,16 +1880,36 @@ void testEnvelopeAndAmplifierLaws()
 
 void testPulseWidthAndHighPassLaws()
 {
-    // Enabled PWM cannot reach either rail. Pulse Off is a separate documented
-    // -0.8 V state that pins the comparator high.
-    expectNear(YouKnow106Engine::pwmControlVolts(0.0f), 6.0, 1.0e-5,
+    // The whole calibrated converter path is affine: B-2's full twelve-bit
+    // code is Roland's +6 V / 50% state and its square-off code zero is the
+    // -0.8 V comparator-pinning state. The loaded physical PWM pot normally
+    // stops around byte 101; bytes above that are valid SysEx overrange.
+    const auto manualCode = [](int raw) {
+        return YouKnow106Engine::pwmDacCode(
+            static_cast<float>(raw) / 127.0f,
+            PwmSource::Manual, 0u, true);
+    };
+    expect(YouKnow106Engine::pwmDacCode(
+               0.0f, PwmSource::Manual, 0u, true) == 0x0fffu
+               && manualCode(101) == 0x0360u
+               && manualCode(127) == 0x0020u,
+           "PWM DAC vectors left B-2's manual partial-product law");
+    expectNear(YouKnow106Engine::pwmDacVolts(0x0fffu), 6.0, 1.0e-6,
                "pulse threshold with the control at rest");
-    expectNear(YouKnow106Engine::pwmControlVolts(1.0f), 0.6, 1.0e-5,
-               "pulse threshold at full depth");
+    expectNear(YouKnow106Engine::pwmDacVolts(0u), -0.8, 1.0e-6,
+               "pulse-off DAC code missed its documented control voltage");
     expectNear(YouKnow106Engine::pwmDutyCycle(6.0f), 0.5, 1.0e-5,
                "threshold at half the ramp does not bisect it");
     expectNear(YouKnow106Engine::pwmDutyCycle(0.6f), 0.95, 1.0e-5,
-               "narrowest pulse");
+               "the printed +0.6 V point is not a 95% pulse");
+    const float physicalMaximum = YouKnow106Engine::pwmDacVolts(
+        manualCode(101));
+    expectNear(YouKnow106Engine::pwmDutyCycle(physicalMaximum),
+               0.947106227, 1.0e-6,
+               "the loaded knob maximum left Roland's 93-97% service window");
+    expect(YouKnow106Engine::pwmDutyCycle(
+               YouKnow106Engine::pwmDacVolts(manualCode(127))) == 1.0f,
+           "the raw seven-bit PWM overrange no longer pins the comparator");
     expectNear(YouKnow106Engine::pwmDutyCycle(-0.8f), 1.0, 1.0e-6,
                "pulse-off control does not pin the comparator high");
     expectNear(YouKnow106Engine::pwmDutyCycle(3.0f, 1.03f),
@@ -1902,11 +1922,12 @@ void testPulseWidthAndHighPassLaws()
                "an under-compensated ramp cannot pin the comparator low");
     expectNear(YouKnow106Engine::pwmDutyCycle(-0.8f, 1.03f), 1.0, 1.0e-6,
                "ramp variation defeated the pulse-off pinned state");
-    for (float depth = 0.0f; depth <= 1.0f; depth += 0.05f)
+    for (int raw = 0; raw <= 101; ++raw)
     {
         const float duty = YouKnow106Engine::pwmDutyCycle(
-            YouKnow106Engine::pwmControlVolts(depth));
-        expect(duty > 0.0f && duty < 1.0f, "pulse reaches a rail");
+            YouKnow106Engine::pwmDacVolts(manualCode(raw)));
+        expect(duty >= 0.5f && duty < 1.0f,
+               "the loaded physical PWM travel reached a comparator rail");
     }
 
     // The held PWM CV reaches the comparators through its p. 13 smoothing

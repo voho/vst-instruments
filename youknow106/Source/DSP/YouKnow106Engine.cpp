@@ -204,9 +204,9 @@ float storedControlFraction(float value) noexcept
 
 // The 0-1 fraction a converter destination's stored panel value maps to at
 // the physical DAC, shared by updateSharedScan, performConverterWrite and
-// passiveHoldWriteTarget alike (RESONANCE, common VCA, SUB, NOISE and PWM
-// depth all read this same conversion) rather than each of the three
-// carrying its own identical copy of the lambda.
+// passiveHoldWriteTarget alike (RESONANCE, common VCA, SUB and NOISE all read
+// this same conversion) rather than each of the three carrying its own
+// identical copy of the lambda. PWM has B-2's separate doubled-byte product.
 float converterDacFraction(float value) noexcept
 {
     return static_cast<float>(YouKnow106Engine::storedControlDacCode(value))
@@ -1375,12 +1375,39 @@ float YouKnow106Engine::panelPositionForCutoff(float hertz) noexcept
     return std::clamp(counts / (127.0f * 128.0f), 0.0f, 1.0f);
 }
 
-float YouKnow106Engine::pwmControlVolts(float depth) noexcept
+std::uint16_t YouKnow106Engine::pwmDacCode(
+    float panelPosition, PwmSource source, std::uint16_t lfoAccumulator,
+    bool positivePolarity) noexcept
 {
-    // The comparator threshold runs from +6 V, where the ramp is bisected and
-    // the pulse is square, down to +0.6 V, where it is 95% wide. It cannot be
-    // driven to either rail, so 0% and 100% are unreachable.
-    return 6.0f - 5.4f * clamp01(depth);
+    // FF47 is the stored byte doubled to 0..254. The two partial MULs at
+    // 0773..077B are exactly floor(P * Q / 256); subtracting that from 0x3fff
+    // and dropping loadDac's two unused low bits is equivalently
+    // 0x0fff - floor(P * Q / 1024).
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L298-L313
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302
+    const std::uint32_t depth = 2u * storedControlByte(panelPosition);
+    const std::uint32_t accumulator = std::min<std::uint32_t>(
+        lfoAccumulator, 0x1fffu);
+    const std::uint32_t modulation = source == PwmSource::Manual
+        ? 0x3fffu
+        : (positivePolarity ? 0x2000u + accumulator
+                            : 0x2000u - accumulator);
+    return static_cast<std::uint16_t>(
+        0x0fffu - ((depth * modulation) >> 10u));
+}
+
+float YouKnow106Engine::pwmDacVolts(std::uint16_t code) noexcept
+{
+    // Roland calibrates code 0x0fff to +6 V / 50% duty. Square Off makes B-2
+    // save zero, which the same linear converter path presents as the printed
+    // -0.8 V comparator-pinning state. The +0.6 V / 95% row is the loaded
+    // physical slider's nominal top, not the seven-bit data format's endpoint.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
+    const double fraction = static_cast<double>(std::min<std::uint16_t>(
+        code, 0x0fffu)) / 4095.0;
+    return static_cast<float>(-0.8 + 6.8 * fraction);
 }
 
 // Where the comparator's two edges sit within one cycle, as fractions of the
@@ -1448,7 +1475,12 @@ float YouKnow106Engine::pwmDutyCycle(float controlVolts,
     // The nominal ramp spans 12 V peak to peak. Its compensation hold lags a
     // pitch step, and the optional card-current error changes the same ramp's
     // slope; both therefore move the comparator crossing as well as the saw.
-    const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.6f, 6.0f);
+    // The resistor-limited physical slider normally stops near +0.6 V, but
+    // B-2 accepts all seven-bit SysEx values. That digital overrange can ask
+    // for 0..+0.6 V before finally crossing below zero and pinning the output,
+    // so retain the established +6 V / 50% floor but move the lower clamp from
+    // the physical slider stop to the comparator ramp's zero-volt rail.
+    const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.0f, 6.0f);
     const float scale = std::clamp(
         sanitised(rampAmplitudeScale, 1.0f), 0.25f, 4.0f);
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
@@ -5410,19 +5442,14 @@ void YouKnow106Engine::updateSharedScan(
     subCvTarget_ = converterDacFraction(parameters.subLevel);
     noiseCvTarget_ = converterDacFraction(parameters.noiseLevel);
 
-    if (!parameters.pulseEnabled)
-    {
-        // The service notes specify this control state directly. What the
-        // pinned leg contributes through the downstream mixer remains open,
-        // so renderVoice retains the existing audio-path gate for now.
-        pwmVoltsTarget_ = -0.8f;
-        return;
-    }
-
-    float pwmAmount = converterDacFraction(parameters.pwmDepth);
-    if (parameters.pwmSource == PwmSource::Lfo)
-        pwmAmount *= 0.5f * (1.0f + lfoValue_);
-    pwmVoltsTarget_ = pwmControlVolts(clamp01(pwmAmount));
+    // A pre-audio snapshot is the one exceptional direct prime. Once the scan
+    // runs, this same code is formed beside advanceLfo and held for the PWM
+    // destination just as B-2 holds FF4F.
+    converterPassPwmDacCode_ = parameters.pulseEnabled
+        ? pwmDacCode(parameters.pwmDepth, parameters.pwmSource,
+                     lfoAccumulator_, lfoPolarity_ >= 0.0f)
+        : 0u;
+    pwmVoltsTarget_ = pwmDacVolts(converterPassPwmDacCode_);
 }
 
 void YouKnow106Engine::performConverterWrite(
@@ -5498,17 +5525,7 @@ void YouKnow106Engine::performConverterWrite(
                 pwmVoltsTarget_ = *passiveHoldTargetOverride;
                 break;
             }
-            if (!parameters.pulseEnabled)
-            {
-                pwmVoltsTarget_ = -0.8f;
-                break;
-            }
-            {
-                float amount = converterDacFraction(parameters.pwmDepth);
-                if (parameters.pwmSource == PwmSource::Lfo)
-                    amount *= 0.5f * (1.0f + lfoValue_);
-                pwmVoltsTarget_ = pwmControlVolts(clamp01(amount));
-            }
+            pwmVoltsTarget_ = pwmDacVolts(converterPassPwmDacCode_);
             break;
         case ConverterDestination::Vcf:
             if (validPhysicalVoice())
@@ -5570,14 +5587,7 @@ float YouKnow106Engine::passiveHoldWriteTarget(
         case ConverterDestination::Sub:
             return converterDacFraction(parameters.subLevel);
         case ConverterDestination::Pwm:
-            if (!parameters.pulseEnabled)
-                return -0.8f;
-            {
-                float amount = converterDacFraction(parameters.pwmDepth);
-                if (parameters.pwmSource == PwmSource::Lfo)
-                    amount *= 0.5f * (1.0f + lfoValue_);
-                return pwmControlVolts(clamp01(amount));
-            }
+            return pwmDacVolts(converterPassPwmDacCode_);
         case ConverterDestination::Vcf:
             if (write.voice >= 0 && write.voice < hardwareVoices)
                 return voiceVcfTarget(
@@ -6952,6 +6962,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     storedControlByte(modWheelTarget_),
                     controlAdcByte(parameters.benderLfoDepth));
                 converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+                converterPassPwmDacCode_ = parameters.pulseEnabled
+                    ? pwmDacCode(parameters.pwmDepth, parameters.pwmSource,
+                                 lfoAccumulator_, lfoPolarity_ >= 0.0f)
+                    : 0u;
 
                 // Slots above the six physical cards are an explicit product
                 // extension. They reuse one complete logical update at the
