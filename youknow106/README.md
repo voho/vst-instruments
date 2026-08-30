@@ -43,7 +43,7 @@ the high-pass ladder and the deterministic Unit Character profile.
 | `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −28.0 dBFS | +25.0 dB |
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, then in mode II | 15.8 s | −16.3 dBFS | +13.3 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −10.9 dBFS | +7.9 dB |
-| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −22.1 dBFS | +19.1 dB |
+| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −22.2 dBFS | +19.2 dB |
 | `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −15.1 dBFS | +12.1 dB |
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −23.0 dBFS | +20.0 dB |
 <!-- peaks-table-end -->
