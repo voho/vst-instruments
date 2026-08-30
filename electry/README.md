@@ -1650,6 +1650,105 @@ than shipping, no worse maximum error, improved polarisation-beating error, stab
 96 kHz host. Only then may all frets be refitted for a default-off listening
 candidate.
 
+#### Capture-gated winding-friction decay curvature
+
+[Christian's isolated-string experiment](https://www.savartjournal.org/articles/14/article.pdf)
+is an overlooked reason not to assume that every wound-string partial has an
+exponential envelope. Its mass-normalized oscillator is
+`x_ddot + 2 zeta omega x_dot + epsilon |x_dot| x_dot + mu sign(x_dot) + omega^2 x = 0`,
+and its fitted envelope separates exponential, reciprocal-time and linear
+terms as `F(t) = m exp(-a t) + 2 pi a0 / (3 pi + c t) + d t + f`.
+In vacuum, the two tested 0.056-inch bronze-wound strings had a linear
+fundamental envelope, a mixed linear/exponential H2 envelope and exponential
+higher partials; their unwrapped core wire was exponential at every measured
+partial. That direction is consistent with dry friction between adjacent
+turns. It is not a coefficient source: the simultaneous three-loss fits were
+ill-conditioned, varied by up to 471% and sometimes returned physically
+impossible negative Coulomb loss. The construction was also acoustic bronze,
+not Electry's nickel/steel exact-eight set.
+
+[Paté, Le Carrou and Fabre](https://doi.org/10.1121/1.4871360) independently
+represent dry friction between successive winding turns by a complex tension
+`T (1 + j delta_W)` and add `Q_W^-1 = delta_W` to wound-string loss, but their
+exponential-sinusoid observation model does not test the amplitude law.
+[Vodka et al.'s 2026 electric-bass measurements](https://doi.org/10.3390/vibration9030046)
+likewise identify larger losses in thick wound strings and wire-contact
+friction as a plausible contributor, while retaining exponential modal
+damping and only one accepted recording per condition. Together these sources
+justify measuring a missing mechanism; none transfers a number or proves it
+audible on E1/E2.
+
+Electry's intrinsic string path is linear between events: each polarisation
+uses one fixed loop gain and one fixed one-pole loss filter for a note, so even
+their mixture is only a sum of exponentials. String Age moves those fixed decay
+targets but cannot make an isolated partial lose a nearly constant amount of
+raw amplitude per cycle. The preregistered observable is therefore not another
+T60. For calibrated displacement amplitude `A[n,k]` of partial `n` at
+successive cycles `k`, measure `D[n,k] = A[n,k] - A[n,k+1]`. The null is
+`D = alpha A + gamma A^2`; the nested winding-friction candidate is
+`D = alpha A + beta + gamma A^2`, with all loss terms nonnegative. `alpha`
+captures exponential loss, `gamma` the quadratic air-drag direction and a
+repeatable pressure-independent `beta > 0` the Coulomb/linear-envelope
+direction. Per-take peak normalization is forbidden because it destroys that
+absolute-amplitude signature.
+
+The acquisition uses five disconnected string-pack/remount clusters: exactly
+three TRAIN and two unopened HOLDOUT. Each contains new production E1 and E2
+specimens from the named exact-eight set; TRAIN also contains manufacturer-
+supplied matching bare core and the production plain string as negative
+controls. A heavy, measured-low-admittance frame holds the production speaking
+length and tension. A nonmagnetic wire-break release drives both axes while two
+synchronized optical channels measure them without an added target. This
+follows the two-axis isolated-string method above and the sensor boundary in
+[Jasiński et al. (2025)](https://doi.org/10.3390/s25216514): magnetic DI is a
+useful product observable, not an uncoloured string-motion reference. Each
+specimen receives twelve accepted randomized releases at five absolute
+displacement levels fixed from the 10th, 30th, 50th, 70th and 90th percentiles
+of a separate production-performance preflight, at ambient pressure and two
+lower pressure plateaus frozen in the manifest. Endpoint admittance, tension,
+temperature, pressure, release position and sensor calibration are captured
+before and after every block.
+
+Before any response is decoded, hashes, eligibility rules, the 80 ms onset
+exclusion, H1-H8 complex demodulator, 20 dB tail-headroom stop, models, bootstrap
+and split are sealed. H1 and H2 are primary; separated axis/polarisation fits
+prevent beating from masquerading as curvature, while H3-H8 are regression
+guards. All three TRAIN clusters must resolve positive `beta` on both wound
+strings with cluster-bootstrap 95% intervals excluding zero; core/plain
+intervals must include zero. The fitted `beta` must remain inside one shared
+TRAIN prediction interval across pressure while `gamma` decreases toward the
+lowest-pressure plateau, otherwise air drag and winding friction are not
+identified and the result is inconclusive. Only then may TRAIN fit one shared
+nonnegative whole-voice decrement per low physical string. It may not add a
+modal bank or mode-specific coefficients.
+
+That frozen scalar is rendered against synchronized two-axis motion and clean
+DI from the two exact-once installed-guitar HOLDOUT clusters. On each E1 and E2
+in each HOLDOUT, it must reduce the equal-level median H1/H2 raw-envelope error
+against shipping by at least 50%, with no worse maximum H1/H2 error and no
+worse H3-H8 median, pitch, polarisation-beating or late-noise-floor result. The
+registered DI is also passed through one fixed, level-matched high-gain reamp
+for blinded listening, but listening cannot rescue a failed physical gate. A
+single broadband scalar that fails any upper-partial guard is rejected rather
+than followed by a filter bank.
+
+The cheapest stable realtime form reuses the `sqrt(outputEnergy)` already
+computed on Electry's 16-sample control tick. For a TRAIN-fitted nonnegative
+per-round-trip decrement `Delta` and amplitude proxy `A`, cache
+`g_C = 1` when `Delta = 0`, otherwise
+`g_C = max(0, 1 - Delta / A)` for `A > 0` and zero at silence, then fold `g_C`
+into both polarisations' existing loop gains. Thus `0 <= g_C <= 1`, the
+candidate cannot inject energy, and OFF remains byte-identical without a new
+per-sample branch, multiply, filter, allocation, parameter or UI control.
+The combined, smoothed energy follower is only a cheap whole-voice surrogate,
+not a modal-amplitude measurement; every displacement level and every one of
+the sixteen possible first-control-tick phases is therefore a separate rail.
+Round-trip/fret scaling is fitted from TRAIN rather than guessed. Promotion
+also requires finite monotone-energy stress renders through every interaction
+at 44.1-384 kHz and 24 warmed order-balanced OFF/ON benchmark pairs: median
+overhead at most 0.25 percentage points of one core at 96 kHz, upper bootstrap
+bound at most 0.5 points, and no 384 kHz ON run more than 1.0 point slower.
+
 #### Ranked measurement-backed follow-ons
 
 1. Capture-fit the existing wound-string dispersion cascade. [Murray and

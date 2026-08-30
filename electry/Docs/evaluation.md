@@ -1696,6 +1696,12 @@ official manuals describe materially different end-of-note sounds:
 | [Shreddage 3.5 Hydra](https://www.impactsoundworks.com/manuals/Shreddage%203.5%20Hydra%20Manual.pdf) | separate Pitched Release, Power Chord Pitched Release and Unpitched Release articulations, plus a dedicated fret-noise key |
 | [Ample Metal Hellrazer](https://www.amplesound.net/en/Main_Panel_Manual-AMH.pdf) | independent Release Sound gain, Fingering Sound toggle/gain and Stroke Noise toggle |
 | [Evolution Dracus engine](https://www.orangetreesamples.com/download/manual/EvolutionEngine-UserGuide.pdf) | release-sample volume, automatic fret noise after notes released outside the fretting-position area, and a release-slide articulation |
+| [Unreal Instruments METAL-GTX](https://unreal-instruments.wixsite.com/unreal-instruments/metal-gtx) | five CC24 release shapes, an independent CC25 release level, and automatic slide-out or alternate-stroke action releases |
+
+METAL-GTX is market-vocabulary evidence only. Its public terms permit
+commercial works made with the library but do not expressly permit competitive
+calibration, while its release clips lack physical string/fret, named
+guitar/pickup/chain, raw-edit history and a synchronized stop marker.
 
 Those are verified vocabulary differences, not evidence that any product is
 more realistic. Sample counts, controls and vendor prose provide no held-out
