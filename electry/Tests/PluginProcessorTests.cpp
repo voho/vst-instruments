@@ -4072,6 +4072,24 @@ juce::Image renderEditorSnapshot (juce::AudioProcessorEditor& editor)
 
 void testTextButtonKeyboardActivation()
 {
+    ElectryLookAndFeel visualLookAndFeel;
+    ElectryTextButton visualButton { "STATE" };
+    visualButton.setLookAndFeel (&visualLookAndFeel);
+    visualButton.setSize (120, 32);
+    const auto renderedAlpha = [&visualButton] (bool enabled)
+    {
+        visualButton.setEnabled (enabled);
+        juce::Image image (juce::Image::ARGB, visualButton.getWidth(),
+                           visualButton.getHeight(), true);
+        juce::Graphics graphics (image);
+        visualButton.paintEntireComponent (graphics, true);
+        return image.getPixelAt (6, 6).getAlpha();
+    };
+    const auto enabledAlpha = renderedAlpha (true);
+    const auto disabledAlpha = renderedAlpha (false);
+    expect (disabledAlpha < enabledAlpha,
+            "a disabled Electry button is not visually distinct");
+
     ElectryTextButton enabled { "ENABLED" };
     expect (enabled.keyPressed (
                 juce::KeyPress { juce::KeyPress::spaceKey }),

@@ -639,6 +639,20 @@ void ElectryKeyboardComponent::drawBlackNote (
 // Choice strip
 // ---------------------------------------------------------------------------
 
+void ElectryTextButton::paintButton (juce::Graphics& graphics,
+                                     bool isHighlighted, bool isDown)
+{
+    if (isEnabled())
+    {
+        juce::TextButton::paintButton (graphics, isHighlighted, isDown);
+        return;
+    }
+
+    graphics.beginTransparencyLayer (0.5f);
+    juce::TextButton::paintButton (graphics, isHighlighted, isDown);
+    graphics.endTransparencyLayer();
+}
+
 bool ElectryTextButton::keyPressed (const juce::KeyPress& key)
 {
     if (isEnabled() && onNavigation != nullptr

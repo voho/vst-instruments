@@ -41,6 +41,7 @@ public:
     using juce::TextButton::TextButton;
 
     std::function<bool (const juce::KeyPress&)> onNavigation;
+    void paintButton (juce::Graphics&, bool isHighlighted, bool isDown) override;
     bool keyPressed (const juce::KeyPress&) override;
 };
 
