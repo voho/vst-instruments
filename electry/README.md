@@ -2947,6 +2947,35 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 complete large-jump string choke
+
+- A retriggered string whose delay jumped by more than 25% choked both 16,384-
+  sample waveguide lines to 28% amplitude, but left the one-pole damping, eight
+  dispersion allpasses and active hand-loss dip at full state. Those memories
+  then re-entered the newly retuned loop as an old-pitch discontinuity. The
+  whole linear ringing state now receives the same amplitude scale; the
+  default-off fitted-loss dip follows it when that experiment is compiled.
+- The same `PolarisationLoop::scaleState()` replaces the existing hand-written
+  22% sympathetic-to-played choke. It preserves phase, indices, coefficients,
+  pickup/Faraday history and downstream body state instead of resetting a
+  filter into a new transient. The large-jump path applies it to both
+  polarisations before snapping their delays and before the next excitation.
+- The regression rings lowest-string fret 2 under continuous bridge-hand
+  pressure, retargets it one octave to fret 14 with contact delayed one sample,
+  and pins both line energies to `0.28^2` plus every populated damping,
+  dispersion and dip memory to exactly `0.28`. The unmodified line-only choke
+  fails 22 assertions; the shipping and order-two builds pass, including both
+  fitted-loss biquad memories. The attack-pitch experiment adds no failure
+  beyond its two existing mid-Slide candidate fixtures.
+- All nine JUCE-free tests pass. Two independent reviews found no omitted
+  causal loop state or ordering issue. The correction adds no allocation,
+  memory or sample-loop work: a large steal adds 22 scalar multiplies (26 with
+  fitted loss) beside the 32,768 line samples it already scales.
+- Two same-compiler full-render pairs are byte-deterministic. Exactly demos 02,
+  04, 05, 07, 09, 11, 12, 13, 17, 18, 19, 20 and 23 change because they reach
+  the corrected ownership/pitch-jump path; the other ten WAVs are
+  byte-identical. No parameter, preset, score or coefficient changed.
+
 ### 2026-08-30 matched factory-rig popup
 
 - Opening the RIG selector inherited JUCE's unrelated blue-grey menu and cyan

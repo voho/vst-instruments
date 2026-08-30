@@ -420,6 +420,27 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     dispersion8.reset();
 }
 
+void ElectryEngine::PolarisationLoop::scaleState(float amplitude) noexcept
+{
+    for (auto& sample : line)
+        sample *= amplitude;
+    damping.state *= amplitude;
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    fittedLossDip.z1 *= amplitude;
+    fittedLossDip.z2 *= amplitude;
+#endif
+    handDip.z1 *= amplitude;
+    handDip.z2 *= amplitude;
+    dispersion1.state *= amplitude;
+    dispersion2.state *= amplitude;
+    dispersion3.state *= amplitude;
+    dispersion4.state *= amplitude;
+    dispersion5.state *= amplitude;
+    dispersion6.state *= amplitude;
+    dispersion7.state *= amplitude;
+    dispersion8.state *= amplitude;
+}
+
 void ElectryEngine::DelayTap::setDelay(float delaySamples) noexcept
 {
     constexpr float maximumDelay = static_cast<float>(delayLineSize - 8);
@@ -5255,21 +5276,11 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     if (! wasRinging && voice.sympatheticReady
         && voice.sympatheticEnergy > 1.0e-11f)
     {
-        for (auto& sample : voice.vertical.line)
-            sample *= 0.22f;
         // The delay line and its filters are one linear ringing state. Choke
         // all of it by the same amount before the played/fretted fit takes
         // ownership, rather than letting a full-level filter memory survive
         // the fretting contact or resetting it into a filter-start transient.
-        voice.vertical.damping.state *= 0.22f;
-        voice.vertical.dispersion1.state *= 0.22f;
-        voice.vertical.dispersion2.state *= 0.22f;
-        voice.vertical.dispersion3.state *= 0.22f;
-        voice.vertical.dispersion4.state *= 0.22f;
-        voice.vertical.dispersion5.state *= 0.22f;
-        voice.vertical.dispersion6.state *= 0.22f;
-        voice.vertical.dispersion7.state *= 0.22f;
-        voice.vertical.dispersion8.state *= 0.22f;
+        voice.vertical.scaleState(0.22f);
         voice.sympatheticEnergy = 0.0f;
     }
     voice.sympatheticReady = false;
@@ -5385,10 +5396,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         {
             constexpr float retainedAmplitude = 0.28f;
             for (auto* loop : { &voice.vertical, &voice.horizontal })
-            {
-                for (auto& sample : loop->line)
-                    sample *= retainedAmplitude;
-            }
+                loop->scaleState(retainedAmplitude);
             constexpr float retainedEnergy =
                 retainedAmplitude * retainedAmplitude;
             voice.outputEnergy *= retainedEnergy;

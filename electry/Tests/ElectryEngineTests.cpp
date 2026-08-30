@@ -541,12 +541,14 @@ struct ElectryEngineTestAccess
             .outputEnergy;
     }
 
-    static void retriggerVoice(ElectryEngine& engine, int stringIndex,
-                               int midiNote, float velocity) noexcept
+    static void retriggerVoice(
+        ElectryEngine& engine, int stringIndex, int midiNote, float velocity,
+        PlayStyle playStyle = PlayStyle::Sustain,
+        int startDelaySamples = 0) noexcept
     {
         engine.startVoice(
             engine.voices_[static_cast<std::size_t>(stringIndex)], midiNote,
-            velocity, PlayStyle::Sustain, false, 0,
+            velocity, playStyle, false, startDelaySamples,
             engine.strokeVariationStateFor(engine.noteSequence_ + 1,
                                            stringIndex));
     }
@@ -882,12 +884,14 @@ struct ElectryEngineTestAccess
     }
 
     static std::array<float, 9> loopFilterState(
-        const ElectryEngine& engine, int stringIndex) noexcept
+        const ElectryEngine& engine, int stringIndex,
+        bool horizontal = false) noexcept
     {
         if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
             return {};
-        const auto& loop = engine
-            .voices_[static_cast<std::size_t>(stringIndex)].vertical;
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& loop = horizontal ? voice.horizontal : voice.vertical;
         return {
             loop.damping.state,
             loop.dispersion1.state, loop.dispersion2.state,
@@ -898,17 +902,46 @@ struct ElectryEngineTestAccess
     }
 
     static double loopLineEnergy(const ElectryEngine& engine,
-                                 int stringIndex) noexcept
+                                 int stringIndex,
+                                 bool horizontal = false) noexcept
     {
         if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
             return 0.0;
-        const auto& line = engine
-            .voices_[static_cast<std::size_t>(stringIndex)].vertical.line;
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& line = (horizontal ? voice.horizontal : voice.vertical).line;
         double energy = 0.0;
         for (const float sample : line)
             energy += static_cast<double>(sample) * sample;
         return energy;
     }
+
+    static std::array<double, 2> loopHandDipState(
+        const ElectryEngine& engine, int stringIndex,
+        bool horizontal = false) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return {};
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& dip = (horizontal ? voice.horizontal : voice.vertical).handDip;
+        return { dip.z1, dip.z2 };
+    }
+
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+    static std::array<double, 2> loopFittedLossDipState(
+        const ElectryEngine& engine, int stringIndex,
+        bool horizontal = false) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return {};
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& dip =
+            (horizontal ? voice.horizontal : voice.vertical).fittedLossDip;
+        return { dip.z1, dip.z2 };
+    }
+#endif
 
     static double modalMagnitudeAt(float frequencyHz, float q, float modeGain,
                                    float sampleRate,
@@ -7274,35 +7307,113 @@ void testAttackStateTransitions()
         return parameters;
     };
 
-    // A stolen string that jumps two octaves is choked in amplitude. Its
-    // retirement follower carries squared amplitude and must lose the same
-    // 0.28^2 energy, or the new soft note inherits the old note's lifetime.
+    // A stolen string that jumps an octave is choked in amplitude. The delay
+    // line and every recursive loop filter are one ringing state, so all must
+    // retain the same 0.28 amplitude; the retirement follower carries squared
+    // amplitude and must retain 0.28^2 energy. Delay the new contact by one
+    // sample so its excitation cannot hide an incomplete choke.
     {
         ElectryEngine engine;
         engine.prepare(sampleRate, 512);
-        engine.setParameters(quietParameters());
+        auto parameters = quietParameters();
+        parameters.palmMute = 0.55f;
+        engine.setParameters(parameters);
         engine.reset();
-        engine.noteOn(28, 1.0f);
-        StereoBuffer ringing(static_cast<int>(0.030 * sampleRate));
+        engine.noteOn(30, 1.0f);
+        StereoBuffer ringing(static_cast<int>(0.080 * sampleRate));
         renderInto(engine, ringing);
         const float outputBefore = TestAccess::voiceOutputEnergy(engine, 0);
+        std::array<double, 2> lineBefore {};
+        std::array<std::array<float, 9>, 2> filtersBefore {};
+        std::array<std::array<double, 2>, 2> handDipBefore {};
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+        std::array<std::array<double, 2>, 2> fittedDipBefore {};
+#endif
+        for (std::size_t axis = 0; axis < 2; ++axis)
+        {
+            const bool horizontal = axis == 1;
+            lineBefore[axis] =
+                TestAccess::loopLineEnergy(engine, 0, horizontal);
+            filtersBefore[axis] =
+                TestAccess::loopFilterState(engine, 0, horizontal);
+            handDipBefore[axis] =
+                TestAccess::loopHandDipState(engine, 0, horizontal);
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+            fittedDipBefore[axis] =
+                TestAccess::loopFittedLossDipState(engine, 0, horizontal);
+#endif
+        }
 #if ELECTRY_ENERGY_ATTACK_PITCH
         const float pitchRatioBefore =
             TestAccess::attackPitchState(engine, 0).tensionRatio;
 #endif
 
-        TestAccess::retriggerVoice(engine, 0, 52, 0.01f);
+        TestAccess::retriggerVoice(
+            engine, 0, 42, 0.01f, PlayStyle::Sustain, 1);
 
+        constexpr float retainedAmplitude = 0.28f;
         constexpr float retainedEnergy = 0.28f * 0.28f;
         const auto stolen = TestAccess::snapshot(engine, 0);
         const float outputAfter = TestAccess::voiceOutputEnergy(engine, 0);
-        expect(stolen.midiNote == 52,
+        expect(stolen.midiNote == 42 && stolen.startDelaySamples == 1,
                "the hard-to-soft jump did not exercise the oldest string");
         expect(outputBefore > 0.0f,
                "the hard note had no follower energy to choke");
         expect(std::abs(outputAfter / outputBefore - retainedEnergy) < 1.0e-4f,
                "a large pitch jump did not scale the retirement follower by "
                    "0.28 squared");
+        for (std::size_t axis = 0; axis < 2; ++axis)
+        {
+            const bool horizontal = axis == 1;
+            const std::string axisName = horizontal ? "horizontal" : "vertical";
+            const double lineAfter =
+                TestAccess::loopLineEnergy(engine, 0, horizontal);
+            expect(lineBefore[axis] > 0.0
+                       && std::abs(lineAfter / lineBefore[axis]
+                                       - retainedEnergy) < 1.0e-6,
+                   "the " + axisName
+                       + " delay line escaped the large-jump choke");
+
+            const auto filtersAfter =
+                TestAccess::loopFilterState(engine, 0, horizontal);
+            for (std::size_t state = 0; state < filtersAfter.size(); ++state)
+            {
+                expect(filtersBefore[axis][state] != 0.0f,
+                       "the " + axisName
+                           + " loop-filter fixture was not populated");
+                expect(filtersAfter[state]
+                           == retainedAmplitude * filtersBefore[axis][state],
+                       "the " + axisName
+                           + " loop-filter state escaped the large-jump choke");
+            }
+
+            const auto handDipAfter =
+                TestAccess::loopHandDipState(engine, 0, horizontal);
+            for (std::size_t state = 0; state < handDipAfter.size(); ++state)
+            {
+                expect(handDipBefore[axis][state] != 0.0,
+                       "the " + axisName
+                           + " hand-dip fixture was not populated");
+                expect(handDipAfter[state]
+                           == retainedAmplitude * handDipBefore[axis][state],
+                       "the " + axisName
+                           + " hand-dip state escaped the large-jump choke");
+            }
+#if ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
+            const auto fittedDipAfter =
+                TestAccess::loopFittedLossDipState(engine, 0, horizontal);
+            for (std::size_t state = 0; state < fittedDipAfter.size(); ++state)
+            {
+                expect(fittedDipBefore[axis][state] != 0.0,
+                       "the " + axisName
+                           + " fitted-loss fixture was not populated");
+                expect(fittedDipAfter[state]
+                           == retainedAmplitude * fittedDipBefore[axis][state],
+                       "the " + axisName
+                           + " fitted-loss state escaped the large-jump choke");
+            }
+#endif
+        }
 #if ELECTRY_ENERGY_ATTACK_PITCH
         const float pitchRatioAfter =
             TestAccess::attackPitchState(engine, 0).tensionRatio;

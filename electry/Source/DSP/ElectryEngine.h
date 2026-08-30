@@ -882,6 +882,7 @@ private:
         DispersionAllpass dispersion8 {};
 
         void clear() noexcept;
+        void scaleState(float amplitude) noexcept;
 
         // The fully general read: the delay it is given moves every sample, so
         // its interpolation weights have to be rebuilt each time. Only the two
