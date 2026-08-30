@@ -1685,6 +1685,60 @@ a moving single-note line, a vibrato lead and a held Drop-E chord whose low
 string slides on an 8-strokes/s boundary through the same physical path. It is
 audible workflow proof, not a human-performance fit.
 
+### End-stop articulation market gap and capture gate
+
+A review of current extended-range guitar competitors found one repeated articulation
+gap that Electry's continuous Mute and repick controls do not subsume. The
+official manuals describe materially different end-of-note sounds:
+
+| instrument | officially documented note-ending surface |
+| --- | --- |
+| [Shreddage 3.5 Hydra](https://www.impactsoundworks.com/manuals/Shreddage%203.5%20Hydra%20Manual.pdf) | separate Pitched Release, Power Chord Pitched Release and Unpitched Release articulations, plus a dedicated fret-noise key |
+| [Ample Metal Hellrazer](https://www.amplesound.net/en/Main_Panel_Manual-AMH.pdf) | independent Release Sound gain, Fingering Sound toggle/gain and Stroke Noise toggle |
+| [Evolution Dracus engine](https://www.orangetreesamples.com/download/manual/EvolutionEngine-UserGuide.pdf) | release-sample volume, automatic fret noise after notes released outside the fretting-position area, and a release-slide articulation |
+
+Those are verified vocabulary differences, not evidence that any product is
+more realistic. Sample counts, controls and vendor prose provide no held-out
+physical-stop comparison. Conversely, Electry's `beginVoiceRelease()` applies
+one 60 ms loop-decay target through a 22 ms smoother and one procedural burst:
+6-15 ms from String Age/Gauge, wound/plain bandwidth and an attack-velocity
+level scale. It distinguishes string construction, but not whether a fretting
+finger relaxed or the bridge hand stopped the note. This end-stop boundary is
+separate from the [attack-time plectrum-scrape
+gate](../README.md#angle-conditioned-plectrum-scrape-research).
+
+The smallest useful experiment changes no MIDI, parameter or DSP. On the
+production eight-string, record fret-5 notes on physical strings 8, 6 and 1.
+Cross Down/Up attacks with two registered stops: fretting-finger relaxation and
+bridge-hand contact. Keep pick, position, attack-force stratum, sustain time,
+pickup, gain, setup and player fixed. Capture raw bridge DI, a high-bandwidth
+contact channel and an optical or force stop marker. Freeze exclusions and
+maximum attempts first; retain at least 20 accepted repeats per cell in three
+TRAIN clusters and exactly two untouched HOLDOUT clusters.
+
+Align to the physical stop marker and score 0-15 ms and 15-60 ms energy,
+500 Hz-8 kHz share, harmonicity, and fitted T20/T60. Preserve the pre-stop RMS
+and partial balance as covariates rather than normalizing away the string state.
+The two stop classes must first separate beyond within-cell repeatability on
+both low wound strings and the plain string. If they do not, adding another
+articulation or selector is rejected.
+
+Only then may one event-time candidate be fitted on TRAIN. It must declare in
+advance how already available physical state selects its stop class; the
+capture alone does not authorize a new performance control. Promotion requires
+at least 50% lower repeatability-normalized median HOLDOUT error in both stop
+classes and every cluster, no worse p95 or maximum error, no class-direction
+reversal, and an RMS-matched blind win for closeness to the recorded stop under
+clean and high-gain monitoring. MIDI Note-Off velocity remains unassigned: the
+current sources provide no guitar mapping for it.
+
+A runtime candidate may reuse cached event state but may add no allocation,
+filter, parameter or per-sample branch. Pre-stop audio and Release Noise at zero
+must remain byte-identical; block partitioning, sustain/MPE ownership, Panic and
+CC reset semantics remain exact. Nine or more warmed alternating ABBA/BAAB
+rounds must stay below 0.25% paired-median overhead at 96 kHz and 1% worst-case
+overhead at 384 kHz.
+
 ### Complete-batch strum latency check
 
 The exact-sample allocation solve below already gives the scheduler a complete
