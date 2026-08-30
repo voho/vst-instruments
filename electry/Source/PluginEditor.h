@@ -257,7 +257,7 @@ private:
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob sympatheticKnob { "SYMPATHY" };
-    ElectryKnob palmMuteKnob { "MUTE" };
+    ElectryKnob palmMuteKnob { "MUTE PRESS" };
     ElectryKnob strumSpreadKnob { "STRUM" };
     ElectryKnob tremoloRateKnob { "TRM RATE" };
     ElectryKnob resonanceKnob { "RESONANCE" };

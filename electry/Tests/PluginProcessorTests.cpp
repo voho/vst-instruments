@@ -4352,6 +4352,16 @@ void testEditorRendering()
                 return child;
         return nullptr;
     };
+    auto* palmMuteControl = dynamic_cast<ElectryKnob*> (
+        findControl (electry::parameters::palmMute));
+    juce::Label* palmMuteCaption = nullptr;
+    if (palmMuteControl != nullptr)
+        for (auto* child : palmMuteControl->getChildren())
+            if (auto* label = dynamic_cast<juce::Label*> (child))
+                palmMuteCaption = label;
+    expect (palmMuteCaption != nullptr
+                && palmMuteCaption->getText() == "MUTE PRESS",
+            "continuous mute pressure is not distinguished from MUTE articulation");
     auto editorFocusTraverser = editor->createKeyboardFocusTraverser();
     const auto editorTabOrder = editorFocusTraverser->getAllComponents (editor.get());
     const auto editableKnobValueStops = static_cast<std::size_t> (
