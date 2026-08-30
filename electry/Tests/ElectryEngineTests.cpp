@@ -1083,6 +1083,21 @@ struct ElectryEngineTestAccess
         return -1;
     }
 
+    static int chosenString(const ElectryEngine& engine, int midiNote,
+                            PlayStyle style,
+                            ElectryEngine::ExpressionId expressionId =
+                                ElectryEngine::legacyExpressionId) noexcept
+    {
+        return engine.chooseString(midiNote, style, expressionId);
+    }
+
+    static void markPendingRepick(ElectryEngine& engine,
+                                  int stringIndex) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .pendingRepick.active = true;
+    }
+
     // Select one deterministic picking-hand draw without having to render and
     // discard preceding notes. reset() starts the counter at zero and noteOn()
     // increments it before drawing, so `precedingNotes` names that exact state.
@@ -5810,6 +5825,149 @@ void testPitchWheelBendsSympatheticStrings()
            "the coupled high E did not follow the wheel ("
                + std::to_string(atOpen) + " at open pitch, "
                + std::to_string(atBent) + " at the bent pitch)");
+}
+
+void testHeldLegatoSourceOutranksReleasedTargetTail()
+{
+    constexpr double sampleRate = 44100.0;
+    constexpr int targetNote = 45;
+    constexpr int sourceNote = 40;
+    constexpr int tailString = 3;
+    constexpr int sourceString = 2;
+
+    const auto wait = [] (ElectryEngine& engine, double seconds)
+    {
+        StereoBuffer audio(static_cast<int>(seconds * sampleRate));
+        renderInto(engine, audio);
+    };
+    const auto prepareCollision = [&] (
+        bool releaseTarget = true, bool sustainTarget = false,
+        ElectryEngine::ExpressionId sourceExpression =
+            ElectryEngine::legacyExpressionId,
+        ElectryEngine::ExpressionId targetExpression =
+            ElectryEngine::legacyExpressionId)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        engine->reset();
+        engine->noteOn(targetNote, 0.95f, targetExpression);
+        wait(*engine, 0.08);
+        if (releaseTarget)
+        {
+            if (sustainTarget)
+                engine->setSustainPedal(true);
+            engine->noteOff(targetNote, targetExpression);
+        }
+        wait(*engine, 0.01);
+        engine->noteOn(sourceNote, 0.95f, sourceExpression);
+        wait(*engine, 0.02);
+        expect(TestAccess::stringForNote(*engine, targetNote) == tailString
+                   && TestAccess::stringForNote(*engine, sourceNote)
+                          == sourceString,
+               "the collision fixture missed released s3/held s2");
+        return engine;
+    };
+    const auto target = [&] (ElectryEngine& engine, PlayStyle style,
+                             ElectryEngine::ExpressionId expressionId =
+                                 ElectryEngine::legacyExpressionId)
+    {
+        engine.noteOn(styleKeyswitch(style), 1.0f);
+        engine.noteOn(targetNote, 0.85f, expressionId);
+    };
+    const auto chosen = [] (
+        const ElectryEngine& engine, PlayStyle style,
+        ElectryEngine::ExpressionId expressionId =
+            ElectryEngine::legacyExpressionId)
+    {
+        return TestAccess::chosenString(engine, targetNote, style,
+                                        expressionId);
+    };
+
+    for (const auto style : { PlayStyle::Slide, PlayStyle::Hammer })
+    {
+        auto engine = prepareCollision();
+        const auto tailBefore = TestAccess::snapshot(*engine, tailString);
+        const auto sourceBefore = TestAccess::snapshot(*engine, sourceString);
+        expect(tailBefore.active && tailBefore.releasing
+                   && tailBefore.midiNote == targetNote
+                   && sourceBefore.active && sourceBefore.keyDown
+                   && sourceBefore.midiNote == sourceNote,
+               "the collision fixture lost its released tail or held source");
+
+        target(*engine, style);
+        const auto moved = TestAccess::snapshot(*engine, sourceString);
+        const auto tail = TestAccess::snapshot(*engine, tailString);
+        expect(moved.active && moved.keyDown && moved.midiNote == targetNote
+                   && moved.playStyle == style
+                   && TestAccess::legatoBlend(*engine, sourceString) == 0.0f
+                   && std::abs(TestAccess::legatoFromFrequency(*engine,
+                                                               sourceString)
+                               - midiHz(sourceNote)) < 1.0e-3,
+               std::string(style == PlayStyle::Slide ? "Slide" : "Hammer")
+                   + " did not continue the held reachable source");
+        expect(tail.active && tail.releasing && ! tail.keyDown
+                   && tail.midiNote == targetNote
+                   && tail.startOrder == tailBefore.startOrder,
+               "held legato consumed the released same-target tail");
+        const float slide = TestAccess::slideNoiseAmplitude(*engine,
+                                                            sourceString);
+        expect(style == PlayStyle::Slide
+                   ? slide > 0.0f && moved.excitationAmplitude == 0.0f
+                   : slide == 0.0f && moved.excitationAmplitude > 0.0f,
+               "the held source began the wrong legato contact");
+
+        StereoBuffer audible(static_cast<int>(0.20 * sampleRate));
+        renderInto(*engine, audible, 256);
+        expect(allFinite(audible) && peakAbs(audible.left) > 1.0e-5f,
+               "the held-legato collision correction produced invalid audio");
+    }
+
+    // Every neighbouring ownership path keeps its established priority.
+    auto noHeld = prepareCollision();
+    noHeld->noteOff(sourceNote);
+    expect(chosen(*noHeld, PlayStyle::Slide) == tailString,
+           "the no-held-source same-target repick fallback changed");
+
+    auto pedalSource = prepareCollision();
+    pedalSource->setSustainPedal(true);
+    pedalSource->noteOff(sourceNote);
+    expect(chosen(*pedalSource, PlayStyle::Slide) == tailString,
+           "a sustain-only source was mistaken for a held finger");
+
+    auto sustain = prepareCollision();
+    expect(chosen(*sustain, PlayStyle::Sustain) == tailString,
+           "a non-legato style abandoned the same-target repick fallback");
+
+    auto repeated = prepareCollision(false);
+    expect(chosen(*repeated, PlayStyle::Slide) == tailString,
+           "a repeated held target was mistaken for a legato continuation");
+
+    constexpr ElectryEngine::ExpressionId expressionId = 2;
+    auto mpe = prepareCollision(true, false,
+                                ElectryEngine::legacyExpressionId,
+                                expressionId);
+    expect(chosen(*mpe, PlayStyle::Slide, expressionId) == tailString,
+           "the held-priority rule disturbed explicit MPE string ownership");
+
+    auto sustained = prepareCollision(true, true);
+    expect(chosen(*sustained, PlayStyle::Slide) == tailString,
+           "a sustained same-target voice yielded to held legato");
+
+    auto pending = prepareCollision();
+    TestAccess::markPendingRepick(*pending, tailString);
+    expect(chosen(*pending, PlayStyle::Slide) == tailString,
+           "a pending same-target repick yielded to held legato");
+
+    auto pendingSource = prepareCollision();
+    TestAccess::markPendingRepick(*pendingSource, sourceString);
+    expect(chosen(*pendingSource, PlayStyle::Slide) == sourceString,
+           "a pending contact hid its held legato source");
+
+    auto nearest = prepareCollision();
+    nearest->noteOn(43, 0.8f);
+    expect(TestAccess::stringForNote(*nearest, 43) == 1
+               && chosen(*nearest, PlayStyle::Slide) == 1,
+           "held-tail priority replaced closest-string legato selection");
 }
 
 void testHammerOnLegatoContinuity()
@@ -19489,6 +19647,7 @@ int main()
     testStiffnessFollowsLiveTension();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
+    testHeldLegatoSourceOutranksReleasedTargetTail();
     testHammerOnLegatoContinuity();
     testPullOffLegatoDirection();
 #if ELECTRY_DECOUPLED_PICK_RELEASE
