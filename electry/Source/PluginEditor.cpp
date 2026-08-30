@@ -85,6 +85,15 @@ struct KnobSlot
     KnobTier tier;
 };
 
+// JUCE's stock slider label is accessibility-ignored. Electry deliberately
+// keeps its editable value as a Tab stop, so retain JUCE's no-wheel behaviour
+// while using Label's native editable-text handler.
+class ElectrySliderValueLabel final : public juce::Label
+{
+    void mouseWheelMove (const juce::MouseEvent&,
+                         const juce::MouseWheelDetails&) override {}
+};
+
 void layoutKnobRow (juce::Rectangle<int> rowArea,
                     std::initializer_list<KnobSlot> slots, int gap)
 {
@@ -444,9 +453,26 @@ juce::Font ElectryLookAndFeel::getComboBoxFont (juce::ComboBox&)
 
 juce::Label* ElectryLookAndFeel::createSliderTextBox (juce::Slider& slider)
 {
-    auto* label = LookAndFeel_V4::createSliderTextBox (slider);
+    auto* label = new ElectrySliderValueLabel;
+    const bool linearBar = slider.getSliderStyle() == juce::Slider::LinearBar
+                        || slider.getSliderStyle() == juce::Slider::LinearBarVertical;
+    const auto background = slider.findColour (
+        juce::Slider::textBoxBackgroundColourId);
+    label->setKeyboardType (juce::TextInputTarget::decimalKeyboard);
     label->setFont (juce::FontOptions (11.5f));
     label->setColour (juce::Label::textColourId, colours::binding.withAlpha (0.88f));
+    label->setColour (juce::Label::backgroundColourId,
+                      linearBar ? juce::Colours::transparentBlack : background);
+    label->setColour (juce::Label::outlineColourId,
+                      slider.findColour (juce::Slider::textBoxOutlineColourId));
+    label->setColour (juce::TextEditor::textColourId,
+                      slider.findColour (juce::Slider::textBoxTextColourId));
+    label->setColour (juce::TextEditor::backgroundColourId,
+                      background.withAlpha (linearBar ? 0.7f : 1.0f));
+    label->setColour (juce::TextEditor::outlineColourId,
+                      slider.findColour (juce::Slider::textBoxOutlineColourId));
+    label->setColour (juce::TextEditor::highlightColourId,
+                      slider.findColour (juce::Slider::textBoxHighlightColourId));
     label->setJustificationType (juce::Justification::centred);
     return label;
 }
@@ -1658,7 +1684,14 @@ void ElectryAudioProcessorEditor::attachSlider (juce::Slider& slider,
         // Keep the compact panel label while exposing the complete canonical
         // parameter name to accessibility clients (for example, "Mute
         // pressure" rather than the visible "MUTE").
-        slider.setTitle (parameter->getName (100));
+        const auto parameterName = parameter->getName (100);
+        slider.setTitle (parameterName);
+        slider.setTooltip (parameterName + ". " + slider.getTooltip());
+        slider.setHelpText (slider.getTooltip());
+        for (auto* child : slider.getChildren())
+            if (auto* label = dynamic_cast<juce::Label*> (child);
+                label != nullptr && label->isEditable())
+                label->setTooltip (slider.getTooltip());
         slider.setDoubleClickReturnValue (
             true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
     }

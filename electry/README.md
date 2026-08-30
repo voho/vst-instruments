@@ -94,7 +94,7 @@ real-recording boundaries and blind-study plan live in the
 | `03-play-styles.wav` | −3.8 dBFS | +0.8 dB |
 | `04-drop-e-rhythm-dry.wav` | −13.2 dBFS | +10.2 dB |
 | `05-drop-e-rhythm-amp.wav` | −12.6 dBFS | +9.6 dB |
-| `06-lead-amp-delay-room.wav` | −11.8 dBFS | +8.8 dB |
+| `06-lead-amp-delay-room.wav` | −12.0 dBFS | +9.0 dB |
 | `07-pickups-and-tone.wav` | −12.5 dBFS | +9.5 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.5 dBFS | +13.5 dB |
 | `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
@@ -2490,6 +2490,58 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 accessible numeric knob entry
+
+- Electry deliberately keeps each rotary control's editable numeric value as a
+  second Tab stop, but JUCE's stock slider value label is accessibility-ignored.
+  Those 25 stops therefore exposed neither an editable-text role, their visible
+  value nor an edit action. Electry now retains JUCE's decimal editor, colours
+  and mouse-wheel blocking in a normal `Label`, whose native accessibility
+  handler exposes the direct-entry field.
+- Each slider's existing tooltip and reset guidance now begins with its
+  canonical host parameter name. The current value label receives that exact
+  help, while JUCE's native text-box recreation path inherits it from the
+  parent slider. Regression coverage requires exactly one editable value label
+  per knob, its unchanged displayed-value title, editable-text role, press
+  action and canonical help, while preserving 60 native and 35 logical Tab
+  stops. The test-only assertion fails all 25 fields on the prior code.
+- This changes accessibility semantics only: DSP, parameters and layout are
+  untouched, while copied JUCE colours keep the drawn state unchanged. The
+  regenerated 1080x860 editor PNG is byte-identical at
+  SHA-256 `e7187094719025a49206bc6fb2e401ffb225fedbe2a1b2d5c09372ac094fc374`.
+
+### 2026-08-30 demo 06 reachable Slide score
+
+- Demo 06 described a Slide from MIDI 67 to 74, but the actual prefix put 67
+  at fret 17 on the open-D3 string; 74 would require fret 24, beyond the
+  instrument's fret 22 limit. The score now holds MIDI 70 instead. It occupies
+  fret 15 on the open-G3 string and reaches MIDI 74 at fret 19, so the four-fret
+  gesture is a playable same-string Slide. Its paired Note Off moves from 67 to
+  70 as well. No DSP or effect setting changed.
+- Debugger traces of the same-compiler old/new renderer binaries, without
+  source instrumentation, showed the old score leaving 67 held on the D3
+  string while the target restruck the released MIDI-74 tail on the B3 string:
+  fresh-pick amplitude `0.39315024`, zero Slide friction. With the corrected
+  score, the G3 string retargets 70-to-74 with zero pick amplitude and
+  Slide-friction amplitude `0.0387289524`; the old B3 tail remains active,
+  releasing and key-up with start order 5. The Alternate next-stroke flag and
+  chord-stroke state are unchanged across the target.
+- The 169,784-frame stereo raw prefix before the edited Note On is byte-exact
+  between same-compiler old/new renders. Its left/right SHA-256 values are
+  `6ca8ec6d5be414691e6df2e759706dc8688869f7b697435485c97075ab475501` and
+  `85f006029e7ffc11818b41dd2a6e974c5c403e2e098a9fef27840914e97b955a`.
+  Exactly demo 06 changes in the canonical render; the other 22 WAV pairs are
+  byte-identical. The corrected normalized WAV SHA-256 is
+  `1f801c33d55d3500b807fd6e887f508992852c17038c9d2f4457de0fa01b2df1`.
+- The normalized candidate is 568,889 frames of 44.1-kHz stereo PCM16
+  (12.899977 seconds), with −3.000097 dBFS peak and −12.689882 dBFS RMS. Its
+  whole-file old/new null is −9.293992 dBFS; unlike the raw prefix comparison,
+  that normalized null also includes the take-wide gain change caused by the
+  corrected performance. The real Slide also moves the floating hand without
+  consuming an Alternate stroke, so later Harmonic and final-note string
+  choices and pick directions legitimately diverge. This is a repaired
+  demonstration, not measurement or real-recording evidence.
+
 ### 2026-08-30 held single-note legato string ownership
 
 - A scalar legacy Hammer or Slide note could reuse a released voice already
@@ -2514,15 +2566,13 @@ the realistic result is to ship nothing.
   is deliberately outside this checkpoint. The implementation reuses the
   existing eight-string event-time continuation scan, allocates no memory and
   does not touch a sample loop.
-- The exact canonical scope is empty: none of the 23 current demos contains a
-  plain same-target release colliding with a reachable held source. In demo 06,
-  the held MIDI 67 is at fret 17 on the open-D3 string, so MIDI 74 would require
-  fret 24, beyond Electry's fret 22 limit; this ownership correction therefore
-  does not pretend to repair that demo's advertised 67-to-74 Slide. The broader
-  cases in demos 03, 17 and 21 involve released different-note sources and
-  remain deliberate negative controls. A same-compiler render against
-  `e297e849` confirmed all 23 WAVs byte-identical; the normalized SHA-256
-  manifest is
+- At this engine checkpoint the canonical scope was empty: none of the 23 demos
+  then contained a plain same-target release colliding with a reachable held
+  source. Demo 06 still used its unreachable MIDI 67-to-74 pair; the separate
+  score-only checkpoint above repairs that demonstration. The broader cases in
+  demos 03, 17 and 21 involve released different-note sources and remain
+  deliberate negative controls. A same-compiler render against `e297e849`
+  confirmed all 23 WAVs byte-identical; the normalized SHA-256 manifest is
   `55bec492d0cf13cce3cc5b279365a6d52abeb8f0f1d50ffda1fd08dd33a06f61`.
 - The default DSP-only CTest matrix passes all nine targets. The complete
   engine suite also passes with force-decoupled pick release disabled, the
