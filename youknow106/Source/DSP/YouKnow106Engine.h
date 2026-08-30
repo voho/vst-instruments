@@ -953,10 +953,12 @@ private:
     // states. NEC does not publish exact clock-to-/WR edges, the PA4 write
     // point inside ANI, or loaded HD14051BP/0.01-uF settling. The ADC interrupt
     // is re-masked before this window. A serial handler can abandon only the
-    // running path's 13 states before DI; once DI begins, both PIT bytes finish
-    // before that handler restarts the main loop. Unpublished serial wire and
-    // NMOS automatic-entry timing stay unmodelled.
+    // running path's 13 states before DI; the reset path enters DI four states
+    // before its control store. Once either DI begins, the complete protected
+    // PIT transaction finishes before a voice handler restarts the main loop.
+    // Unpublished serial wire and NMOS entry timing stay unmodelled.
     static constexpr double dcoPitchPrestageStates = 389.0;
+    static constexpr double pitResetDiToControlStates = 4.0;
     static constexpr double pitControlToLsbStates = 55.0;
     static constexpr double pitDiToLsbStates = 42.0;
     static constexpr double pitLsbToMsbStates = 11.0;
@@ -1850,6 +1852,10 @@ private:
     void writeDcoMode3Control(Voice& voice, double clocksToNextInputEdge,
                               float samplesAgo,
                               bool addCorrections) noexcept;
+    void prestageDcoPitchTransaction(Voice& voice,
+                                     double clocksToNextInputEdge,
+                                     float samplesAgo,
+                                     bool addCorrections) noexcept;
     void programDcoCount(Voice& voice, std::uint32_t count,
                          bool writesControlWord) noexcept;
     void beginRangeClockTransition(DcoRange previous,
@@ -1897,6 +1903,7 @@ private:
     // replacing SP and jumping to the start of the voice-board loop. Model
     // that loop restart at the logical command boundary while leaving the
     // still-unpublished serial wire phase and NMOS interrupt-entry delay out.
+    void finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept;
     void restartVoiceBoardScanAfterSerialVoiceCommand() noexcept;
     void noteOffInternal(int midiNote) noexcept;
     void initialiseVoice(Voice& voice, int slot, int midiNote,

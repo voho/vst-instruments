@@ -50,10 +50,11 @@ struct YouKnow106TestAccess
         engine.voices_[static_cast<std::size_t>(slot)].dcoResetPending = pending;
     }
 
-    static void updateVoiceScan(YouKnow106Engine& engine, int slot,
-                                const EngineParameters& parameters) noexcept
+    static std::uint32_t updateVoiceScan(
+        YouKnow106Engine& engine, int slot,
+        const EngineParameters& parameters) noexcept
     {
-        (void) engine.updateVoiceScan(
+        return engine.updateVoiceScan(
             engine.voices_[static_cast<std::size_t>(slot)], parameters, 0.0f);
     }
 
@@ -280,6 +281,15 @@ struct YouKnow106TestAccess
         auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
         dco.pitWriteState = YouKnow106Engine::Dco::PitWriteState::awaitingLsb;
         dco.pitWriteDivider = count;
+        dco.cpuStatesToWrite = cpuStates;
+    }
+
+    static void setAwaitingPitchPrestage(
+        YouKnow106Engine& engine, int slot, double cpuStates) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        dco.pitWriteState =
+            YouKnow106Engine::Dco::PitWriteState::awaitingPitchPrestage;
         dco.cpuStatesToWrite = cpuStates;
     }
 
@@ -3100,6 +3110,76 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                       == requested,
            "a post-LSB Voice On discarded the protected PIT MSB");
 
+    // The reset branch's DI starts four states before its T-389 control store.
+    // A command accepted on or after that boundary must finish the transaction
+    // from the old voice state before its handler installs the new note.
+    auto resetParameters = plainPatch();
+    resetParameters.keyMode = KeyMode::Unison;
+    resetParameters.polyphony = 1;
+    const auto resetPrestageFixture = [&](int oldNote, double cpuStates,
+                                          bool resetPending = true) {
+        auto engine = std::make_unique<YouKnow106Engine>();
+        engine->setParameters(resetParameters);
+        engine->prepare(192000.0, blockSize, false);
+        engine->noteOn(oldNote, 1.0f);
+        YouKnow106TestAccess::setMode3Running(
+            *engine, 0, active, true, 10000.25);
+        YouKnow106TestAccess::setConverterScheduler(*engine, 0.75, 17u);
+        YouKnow106TestAccess::setDcoResetPending(
+            *engine, 0, resetPending);
+        YouKnow106TestAccess::setAwaitingPitchPrestage(
+            *engine, 0, cpuStates);
+        return engine;
+    };
+    auto oldPitchReference = resetPrestageFixture(36, 4.0);
+    const std::uint32_t oldPitchCount = YouKnow106TestAccess::updateVoiceScan(
+        *oldPitchReference, 0, resetParameters);
+    auto newPitchReference = resetPrestageFixture(96, 4.0);
+    const std::uint32_t newPitchCount = YouKnow106TestAccess::updateVoiceScan(
+        *newPitchReference, 0, resetParameters);
+    expect(oldPitchCount != newPitchCount,
+           "the reset-prestage fixture did not distinguish old and new pitch");
+
+    for (const double protectedStates : { 4.0, 3.5 })
+    {
+        auto protectedReset = resetPrestageFixture(36, protectedStates);
+        protectedReset->noteOn(96, 1.0f);
+        expectRestarted(
+            *protectedReset,
+            protectedStates == 4.0
+                ? "a reset-path DI-boundary Voice On"
+                : "a post-DI/pre-control Voice On");
+        expect(YouKnow106TestAccess::pitState(*protectedReset, 0)
+                       == YouKnow106TestAccess::awaitingInitialLoadState()
+                   && YouKnow106TestAccess::pendingDcoDividerValid(
+                          *protectedReset, 0)
+                   && YouKnow106TestAccess::pendingDcoDivider(
+                          *protectedReset, 0) == oldPitchCount
+                   && YouKnow106TestAccess::pendingDcoDivider(
+                          *protectedReset, 0) != newPitchCount
+                   && YouKnow106TestAccess::lastVoiceMidi(
+                          *protectedReset, 0) == 96,
+               "a protected reset prestage used the Voice On's new pitch");
+    }
+
+    auto beforeResetDi = resetPrestageFixture(36, 4.5);
+    beforeResetDi->noteOn(96, 1.0f);
+    expectRestarted(*beforeResetDi, "a pre-DI reset-path Voice On");
+    expect(YouKnow106TestAccess::pitState(*beforeResetDi, 0)
+                   == YouKnow106TestAccess::runningPitState()
+               && !YouKnow106TestAccess::pendingDcoDividerValid(
+                      *beforeResetDi, 0),
+           "a pre-DI reset-path Voice On fabricated a PIT transaction");
+
+    auto runningPrestage = resetPrestageFixture(36, 0.0, false);
+    runningPrestage->noteOn(96, 1.0f);
+    expectRestarted(*runningPrestage, "a running pre-prestage Voice On");
+    expect(YouKnow106TestAccess::pitState(*runningPrestage, 0)
+                   == YouKnow106TestAccess::runningPitState()
+               && !YouKnow106TestAccess::pendingDcoDividerValid(
+                      *runningPrestage, 0),
+           "a running-path prestage was mistaken for protected reset work");
+
     // The reset branch enters DI before the mode-control store. Its complete
     // control/LSB/MSB transaction therefore survives at every represented
     // point, including the full 55 states still remaining to the LSB here.
@@ -3130,6 +3210,53 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                && YouKnow106TestAccess::pendingDcoDivider(*releaseAll, 0)
                       == requested,
            "All Notes Off split a protected PIT count pair");
+
+    // The fractional latch represents a DAC/mux write that has already
+    // happened inside the preceding sample. A serial restart may discard the
+    // later CPU poll, but it cannot make that external write disappear or
+    // rewind the capacitor toward its old target.
+    constexpr double latchSampleRate = 8000.0;
+    YouKnow106Engine completedHold;
+    completedHold.prepare(latchSampleRate, blockSize, false);
+    auto holdParameters = plainPatch();
+    holdParameters.cutoff = 0.08f;
+    holdParameters.envDepth = 0.0f;
+    holdParameters.vcfLfoDepth = 0.0f;
+    holdParameters.keyFollow = 0.0f;
+    holdParameters.benderVcfDepth = 0.0f;
+    completedHold.setParameters(holdParameters);
+    completedHold.noteOn(60, 1.0f);
+    holdParameters.cutoff = 0.34f;
+    completedHold.setParameters(holdParameters);
+    const std::size_t vcfOrdinal = YouKnow106TestAccess::vcfOrdinal(0);
+    const double scanDelta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(completedHold);
+    YouKnow106TestAccess::setConverterScheduler(
+        completedHold,
+        YouKnow106TestAccess::converterEventPhase(
+            completedHold, vcfOrdinal) - 0.43 * scanDelta,
+        vcfOrdinal);
+    float left = 0.0f;
+    float right = 0.0f;
+    completedHold.process(&left, &right, 1);
+    const auto completedLatch =
+        YouKnow106TestAccess::passiveHoldLatch(completedHold);
+    const float heldAfterWrite =
+        YouKnow106TestAccess::cutoffHeld(completedHold, 0);
+    expect(completedLatch.valid && completedLatch.ordinal == vcfOrdinal
+               && YouKnow106TestAccess::cutoffTarget(completedHold, 0)
+                      != completedLatch.target,
+           "the serial-restart fixture did not complete a fractional VCF write");
+    completedHold.noteOn(67, 1.0f);
+    expect(!YouKnow106TestAccess::passiveHoldLatch(completedHold).valid
+               && YouKnow106TestAccess::cutoffTarget(completedHold, 0)
+                      == completedLatch.target
+               && YouKnow106TestAccess::cutoffHeld(completedHold, 0)
+                      == heldAfterWrite
+               && YouKnow106TestAccess::controlScanPhase(completedHold) == 0.0
+               && YouKnow106TestAccess::nextConverterWrite(completedHold)
+                      == 0u,
+           "a Voice On discarded or double-advanced a completed VCF write");
 }
 
 void testConverterAnchoredPitchPrestageTimelineAndAtomicCommit()

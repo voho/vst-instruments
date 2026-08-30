@@ -2266,6 +2266,32 @@ void YouKnow106Engine::writeDcoMode3Control(
         beginDcoDischarge(voice, samplesAgo, addCorrections);
 }
 
+void YouKnow106Engine::prestageDcoPitchTransaction(
+    Voice& voice, double clocksToNextInputEdge, float samplesAgo,
+    bool addCorrections) noexcept
+{
+    auto& dco = voice.dco;
+    const float previousCvTarget = voice.dcoCvTarget;
+    const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+        voice, activeParameters_);
+    const float cvTarget = voice.dcoCvTarget;
+    voice.dcoCvTarget = previousCvTarget;
+
+    const bool writesControlWord = voice.dcoResetPending;
+    voice.dcoResetPending = false;
+    voice.dcoPitchTransactionValid = true;
+    voice.dcoPitchTransactionColdStart = writesControlWord
+        && dco.pitState == Dco::PitState::stopped;
+    voice.dcoPitchTransactionCvTarget = cvTarget;
+    dco.pitWriteDivider = count;
+
+    if (writesControlWord)
+        writeDcoMode3Control(
+            voice, clocksToNextInputEdge, samplesAgo, addCorrections);
+    dco.pitWriteState = Dco::PitWriteState::awaitingLsb;
+    dco.cpuStatesToWrite = pitControlToLsbStates;
+}
+
 void YouKnow106Engine::programDcoCount(
     Voice& voice, std::uint32_t count, bool writesControlWord) noexcept
 {
@@ -4705,15 +4731,17 @@ void YouKnow106Engine::beginVoiceAssignmentRescan() noexcept
     // A handler may arrive after some voice writes in the current pass. Only a
     // wholly subsequent pass can guarantee that all six CPUs observed gate-off.
     assignmentRescanPassArmed_ = false;
-    bool sentVoiceOff = false;
+    const bool sentVoiceOff = std::any_of(
+        voices_.begin(), voices_.end(), [](const Voice& voice) {
+            return voice.active && voice.keyDown;
+        });
+    if (sentVoiceOff)
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
     for (auto& voice : voices_)
     {
         voice.unisonMember = false;
         if (voice.active && voice.keyDown)
-        {
             releaseVoiceKey(voice);
-            sentVoiceOff = true;
-        }
         // Only the assigner loses this. The voice CPU's last pitch byte, DCO
         // phase and portamento accumulator all survive the table clear.
         voice.hasAllocatorHistory = false;
@@ -4986,34 +5014,43 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
     assignHeldNote(midiNote, velocity);
 }
 
-void YouKnow106Engine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
+void YouKnow106Engine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept
 {
-    // The recovered B-2 serial ISR does not RETI from Voice On/Off. It loads
-    // SP with $ffff and jumps through $02eb to the beginning of the main loop,
-    // so an interrupted converter pass resumes at RESONANCE rather than at its
-    // former ordinal. Treat the engine's logical note command as that completed
-    // handler boundary. The 31.25-kbaud arrival phase and the installed NMOS
-    // uPD7810's automatic entry latency remain unmeasured and are deliberately
-    // not turned into random timing here.
-    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244
-    const bool passBoundaryWasAlreadyDue = controlScanPhase_ >= 1.0;
-    controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
-    nextConverterWrite_ = 0;
-    passiveHoldEventLatch_ = {};
+    // A fractional passive-hold event has already written its DAC/mux and
+    // advanced the physical capacitor inside the preceding sample. Its public
+    // target is deferred only until the next boundary poll. Preserve that
+    // completed port store before the non-returning handler discards the poll.
+    if (passiveHoldEventLatch_.valid)
+    {
+        const float target = passiveHoldEventLatch_.target;
+        performConverterWrite(
+            passiveHoldEventLatch_.write, activeParameters_,
+            converterPassLfoGated_, &target);
+        passiveHoldEventLatch_ = {};
+    }
 
-    // The stack replacement abandons CPU work that had not reached an
-    // external device. On the running path DI begins 13 states after T-389,
-    // leaving 42 states to the LSB. At or beyond that boundary the pending
-    // serial request cannot split the protected LSB/MSB pair; the reset path
-    // enters DI before its control write, and every awaiting-MSB state is
-    // protected too. Complete those physical pairs before discarding the
-    // captured CV payload. The exact DI-boundary tie uses PIT/DI-first policy.
+    // Finish everything protected by DI before the Voice On/Off handler is
+    // allowed to mutate note state. The reset path enters DI four states before
+    // its T-389 control store, so that narrow interval must capture the old
+    // voice payload here; doing it after assignment would program the new note.
+    // The running path reaches DI 13 states after T-389, leaving 42 states to
+    // its LSB. Every awaiting-MSB state is protected. Exact boundary ties use
+    // the declared PIT/DI-first policy.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
     for (int slot = 0; slot < hardwareVoices; ++slot)
     {
         auto& voice = voices_[static_cast<std::size_t>(slot)];
         auto& dco = voice.dco;
+        const bool resetPrestageIsProtected =
+            dco.pitWriteState
+                    == Dco::PitWriteState::awaitingPitchPrestage
+            && voice.dcoResetPending
+            && dco.cpuStatesToWrite <= pitResetDiToControlStates;
+        if (resetPrestageIsProtected)
+            prestageDcoPitchTransaction(
+                voice, rangeClockClocksToEdge_, 1.0f, true);
+
         const bool lsbIsProtected =
             dco.pitWriteState == Dco::PitWriteState::awaitingLsb
             && (dco.pitState == Dco::PitState::awaitingCount
@@ -5030,10 +5067,27 @@ void YouKnow106Engine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     }
 }
 
+void YouKnow106Engine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
+{
+    // The recovered B-2 serial ISR does not RETI from Voice On/Off. It loads
+    // SP with $ffff and jumps through $02eb to the beginning of the main loop,
+    // so an interrupted converter pass resumes at RESONANCE rather than at its
+    // former ordinal. Treat the engine's logical note command as that completed
+    // handler boundary. The 31.25-kbaud arrival phase and the installed NMOS
+    // uPD7810's automatic entry latency remain unmeasured and are deliberately
+    // not turned into random timing here.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244
+    const bool passBoundaryWasAlreadyDue = controlScanPhase_ >= 1.0;
+    controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
+    nextConverterWrite_ = 0;
+    passiveHoldEventLatch_ = {};
+}
+
 void YouKnow106Engine::assignHeldNote(int midiNote, float velocity) noexcept
 {
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
         // Every voice takes the same note, and every note timer divides the
         // same reference by the same integer, so there is no pitch spread at
         // all: what separates the six is the analogue block after them. Adding
@@ -5093,6 +5147,7 @@ void YouKnow106Engine::assignHeldNote(int midiNote, float velocity) noexcept
     if (slot < 0)
         return; // Every key is held: the note is dropped, as on the hardware.
 
+    finishProtectedPitWritesBeforeSerialVoiceCommand();
     auto& voice = voices_[static_cast<std::size_t>(slot)];
     initialiseVoice(voice, slot, midiNote, velocity);
     voice.unisonMember = false;
@@ -5140,6 +5195,7 @@ void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
             return;
         }
 
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
         for (auto& voice : voices_)
             if (voice.active && voice.unisonMember && voice.keyDown)
                 releaseVoiceKey(voice);
@@ -5147,13 +5203,18 @@ void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
         return;
     }
 
-    bool sentVoiceOff = false;
+    const bool sentVoiceOff = std::any_of(
+        voices_.begin(), voices_.end(), [midiNote](const Voice& voice) {
+            return voice.active && voice.rootMidi == midiNote
+                && voice.keyDown;
+        });
+    if (sentVoiceOff)
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
     for (auto& voice : voices_)
     {
         if (!voice.active || voice.rootMidi != midiNote || !voice.keyDown)
             continue;
         releaseVoiceKey(voice);
-        sentVoiceOff = true;
     }
     if (sentVoiceOff)
         restartVoiceBoardScanAfterSerialVoiceCommand();
@@ -5167,13 +5228,17 @@ void YouKnow106Engine::releaseAllNotes()
     assignmentRescanPassArmed_ = false;
     rescanPreviousUnisonMembers_.fill(false);
     rescanUnisonMidiValid_ = false;
-    bool sentVoiceOff = false;
+    const bool sentVoiceOff = std::any_of(
+        voices_.begin(), voices_.end(), [](const Voice& voice) {
+            return voice.active && voice.keyDown;
+        });
+    if (sentVoiceOff)
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
     for (auto& voice : voices_)
     {
         if (!voice.active || !voice.keyDown)
             continue;
         releaseVoiceKey(voice);
-        sentVoiceOff = true;
     }
     if (sentVoiceOff)
         restartVoiceBoardScanAfterSerialVoiceCommand();
@@ -6407,30 +6472,11 @@ void YouKnow106Engine::advanceDcoPitAndRamp(
                 // this is also where release-time transpose can request reset.
                 // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741
                 // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794
-                const float previousCvTarget = voice.dcoCvTarget;
-                const std::uint32_t count = updateVoiceEnvelopeAndPitch(
-                    voice, activeParameters_);
-                const float cvTarget = voice.dcoCvTarget;
-                voice.dcoCvTarget = previousCvTarget;
-
-                const bool writesControlWord = voice.dcoResetPending;
-                voice.dcoResetPending = false;
-                voice.dcoPitchTransactionValid = true;
-                voice.dcoPitchTransactionColdStart = writesControlWord
-                    && dco.pitState == Dco::PitState::stopped;
-                voice.dcoPitchTransactionCvTarget = cvTarget;
-                dco.pitWriteDivider = count;
-
-                if (writesControlWord)
-                {
-                    writeDcoMode3Control(
-                        voice,
-                        sharedClocksToNextEdge(
-                            elapsed, rangeClockTransitionClocks),
-                        eventSamplesAgo(elapsed), addCorrections);
-                }
-                dco.pitWriteState = Dco::PitWriteState::awaitingLsb;
-                dco.cpuStatesToWrite = pitControlToLsbStates;
+                prestageDcoPitchTransaction(
+                    voice,
+                    sharedClocksToNextEdge(
+                        elapsed, rangeClockTransitionClocks),
+                    eventSamplesAgo(elapsed), addCorrections);
             }
             else if (dco.pitWriteState == Dco::PitWriteState::awaitingLsb)
             {

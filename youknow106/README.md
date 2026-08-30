@@ -482,8 +482,11 @@ boundary is now closed at the semantic handler timestamp. On the running path
 it begins 13 states after `T-389`, with 42 of the 55 LSB-delay states left; a
 Voice On/Off accepted earlier can abandon the transaction, while one at or
 after that boundary must let LSB and MSB complete. Reset control and every
-awaiting-MSB state are already protected. The exact boundary tie uses declared
-PIT-first policy. Those voice handlers then [replace SP and jump to the fresh
+awaiting-MSB state are already protected. The engine completes the reset
+path's four-state DI-to-control gap from the old voice state before applying
+the serial command, and commits any DAC/mux write already performed at a
+fractional sample position. The exact boundary tie uses declared PIT-first
+policy. Those voice handlers then [replace SP and jump to the fresh
 main loop](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244),
 so the engine restarts the one shared converter scan at the logical note
 command, preserves completed PIT/port state and discards only unfinished CPU
