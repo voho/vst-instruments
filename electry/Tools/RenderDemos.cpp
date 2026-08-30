@@ -560,7 +560,7 @@ Take renderLeadThroughAmp()
     // pinch harmonic: the picking hand's thumb catching the string at the
     // pick's own position.
     take.style(PlayStyle::Sustain);
-    take.noteOn(67, 0.95f);
+    take.noteOn(70, 0.95f);
     take.wait(0.20);
     take.style(PlayStyle::Slide);
     take.noteOn(74, 0.85f);
@@ -569,7 +569,7 @@ Take renderLeadThroughAmp()
     take.wait(0.95);
     take.vibrato(0.0f);
     take.noteOff(74);
-    take.noteOff(67);
+    take.noteOff(70);
     take.wait(0.10);
 
     take.style(PlayStyle::Pinch);
