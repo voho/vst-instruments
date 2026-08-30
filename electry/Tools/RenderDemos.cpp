@@ -1368,7 +1368,7 @@ Take renderSyncopatedDjentStudy()
 }
 
 // Original modern-metalcore study: an open, anthemic chord hook gives way to
-// a simple octave melody and then a half-time Drop-E breakdown.
+// a single-note high melody and then a half-time Drop-E breakdown.
 Take renderModernMetalcoreStudy()
 {
     auto parameters = metalRhythmVoicing();
@@ -1785,7 +1785,7 @@ const std::array<Demo, 23>& demos()
           renderSyncopatedDjentStudy },
         { "19-modern-metalcore-study.wav",
           "an original modern-metalcore study with anthemic power chords, an "
-          "octave hook and a half-time breakdown",
+          "high-register hook and a half-time breakdown",
           renderModernMetalcoreStudy },
         { "20-odd-meter-prog-study.wav",
           "an original clean-to-high-gain progressive study in seven- and "

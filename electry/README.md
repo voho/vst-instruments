@@ -2636,6 +2636,15 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 demo 19 single-note hook description
+
+- Demo 19's renderer description called its upper line an octave melody/hook,
+  but `playPickedRun` performs the written notes sequentially and never starts
+  octave pairs. The renderer now calls it the single-note high-register hook
+  that it is, matching the existing overview above.
+- This changes two descriptions only. The score, all 23 WAVs, product DSP and
+  realtime CPU are unchanged.
+
 ### 2026-08-30 demo 22 bridge-hand release before lead
 
 - Demo 22 called its upper line unmuted, but moved Mute Pressure from 12% to
