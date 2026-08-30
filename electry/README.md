@@ -1749,6 +1749,94 @@ at 44.1-384 kHz and 24 warmed order-balanced OFF/ON benchmark pairs: median
 overhead at most 0.25 percentage points of one core at 96 kHz, upper bootstrap
 bound at most 0.5 points, and no 384 kHz ON run more than 1.0 point slower.
 
+#### Capture-gated worn-string spatial mass nonuniformity
+
+[Grzybowski, Wrzeciono and Bayat (2025)](https://doi.org/10.3390/s25133989)
+played two unnamed conventional six-string sets for 30 hours on one guitar.
+Afterward, three micrometer repeats at five positions found diameter variation
+up to 7%, particularly on wound strings; E2 was first to develop 12th-fret
+intonation trouble, after 16/21 hours for the two sets. Its fundamental stayed
+stable while higher-partial and pitch-time measures changed, including a 0.82
+session correlation for set A E2's late-pitch `sigma_3`. This establishes a
+measurement question, not a coefficient or cause: diameter does not measure a
+wound string's linear mass density, there was no exact-eight E1, unplayed
+control, remount split or measured `mu(x)`, and the recordings are available
+only by request.
+
+The missing candidate is a conservative spatial perturbation
+`delta_mu(x)`, not another age scalar. String Age moves fixed decay targets,
+the winding-friction gate above changes amplitude loss, and the current
+stiff-string `B` produces smooth uniform dispersion. For
+`phi_n(x) = sin(n pi x/L)`, first-order modal perturbation instead gives
+`delta_f_n/f_n = -0.5 integral(delta_mu(x) phi_n(x)^2 dx) /
+integral(mu_0 phi_n(x)^2 dx)`. At fixed tension `T` and speaking length `L`, a
+narrow signed mass defect `delta_m` inside the current speaking segment, at
+bridge-referenced coordinate `x_w`, gives the raw shift
+`delta_f_n/f_n ~= -delta_m/(mu_0 L) sin^2(n pi x_w/L)`. Fundamental-preserving
+scoring instead uses `r_n = delta_f_n/f_n - delta_f_1/f_1 =
+-delta_m/(mu_0 L) [sin^2(n pi x_w/L) - sin^2(pi x_w/L)]`; a defect outside the
+speaking segment contributes zero. Its falsifiable cue is therefore a
+mode-oscillating residual that follows one physical location across frets,
+unlike `B n^2`; the static law does not justify within-note wandering, random
+phase or an age LFO.
+
+[Jasiński et al. (2025)](https://doi.org/10.3390/s25216514) provide only a
+positive-control boundary: on E2, a local optical target near 0.1% of active
+mass changed partial balance and whole-record RMS energy without a resolved
+fundamental shift. Its explicit faster-decay example instead used a target near
+1.9% of a thin string's active mass, and mass, area, stiffness and asymmetry
+remained confounded. Primary motion capture must therefore add no target. The
+targetless defocus method of
+[Niimi et al. (2024)](https://web.tuat.ac.jp/~yatabe/papers/niimi_2024_9.pdf)
+tracked both transverse coordinates at 6,400 frames/s; the exact-eight capture
+adapts that geometry and records synchronized raw DI. The 28-day,
+two-performer/two-guitar fixed daily routine in [Wright, McKenzie and Hamilton's
+2026 longitudinal
+study](https://www.research.ed.ac.uk/en/publications/a-longitudinal-dataset-for-guitar-string-ageing/)
+is a replication-design lead only, not a physical model or calibration source.
+
+Acquisition uses five independent named-production pack/remount clusters:
+exactly three TRAIN and two unopened HOLDOUT. Each target exact-eight E1/E2
+specimen is captured new, after controlled wear but before cleaning, after a
+frozen cleaning protocol and after remounting. Time-matched unplayed E1/E2 and
+the production plain string follow the same capture schedule as negative
+controls. A compact known added mass at a registered coordinate and a
+matched-area lower-mass fixture with both masses measured separate modal-mass
+sensitivity from aerodynamic area. A robotic metal-riff routine freezes use
+cycles, pick force and position. Speaking length, tension, supports, setup,
+temperature and humidity are logged, while noncontact diameter mapping or
+micro-CT before and after wear is followed by destructive segment-mass checks
+only after acoustic capture.
+
+Before either HOLDOUT opens, TRAIN freezes the existing uniform-`B`, termination,
+damping, polarisation and pickup null; every nuisance and eligibility choice;
+the setup-intonation estimate; and the complete mass-map-to-prediction rule.
+Within each worn specimen, both the before-to-after mass-map change and the
+`f1`-normalized acoustic change must exceed time-matched unplayed drift under
+that frozen rule. Complete specimens, remounts and wear days stay held out.
+On E1 and E2 independently in each of the two HOLDOUT clusters, the frozen
+candidate must reduce H2-H12 median frequency residual by at least 50%, with no
+worse p95 or maximum and no regression in fundamental tuning, decay or
+polarisation; failure in any of those four string-by-cluster cells rejects it.
+Reject it also if baseline-new, unplayed or plain-string controls show the same
+fixed-metre `sin^2` signature, cleaning/remounting removes the claimed
+structural effect, measured mass fails to predict it, only within-note drift
+remains, or the frozen null performs equally well.
+
+There is no implementation or tuning before that gate. The only permitted
+low-CPU prototype first tries an event-time refit of the existing dispersion
+allpass, with no new per-sample state or allocation; if that cascade cannot
+represent the held-out spatial signature, the cheap candidate is rejected
+rather than expanded into a modal bank. Disabled builds must remain
+byte-identical. The 24 warmed order-balanced benchmark pairs retain the same
+rails as the winding-friction experiment: median overhead at most 0.25
+percentage points of one core at 96 kHz, upper bootstrap bound at most 0.5
+points, and no 384 kHz ON run more than 1.0 point slower. No public audio is
+ingested or committed, and this gate makes no market claim. Bend/pole dropout
+is not counted as a separate new mechanism because the existing bivariate
+`flux(vertical, horizontal)` pickup gate already subsumes its lateral operating
+point.
+
 #### Ranked measurement-backed follow-ons
 
 1. Capture-fit the existing wound-string dispersion cascade. [Murray and
