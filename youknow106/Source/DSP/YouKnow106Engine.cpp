@@ -1075,14 +1075,15 @@ float YouKnow106Engine::lfoRateHz(float panelPosition) noexcept
 
 float YouKnow106Engine::lfoDelaySeconds(float panelPosition) noexcept
 {
-    // Total time from the note to full modulation depth: a silent hold that
-    // grows across the whole travel at the attack table's own rate, plus the
-    // stepped fade.
+    // Firmware completion time: the pass that crosses the silent-hold
+    // threshold also performs the fade's first add, so those two stages share
+    // one pass rather than being concatenated end to end.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607
     const int holdIncrement = envelopeAttackIncrement(panelPosition);
     const int fadeIncrement = lfoDelayFadeIncrement(panelPosition);
     const int holdPasses = (16384 + holdIncrement - 1) / holdIncrement;
     const int fadePasses = (65536 + fadeIncrement - 1) / fadeIncrement;
-    return static_cast<float>((holdPasses + fadePasses) / controlScanHz);
+    return static_cast<float>((holdPasses + fadePasses - 1) / controlScanHz);
 }
 
 namespace
@@ -5181,7 +5182,12 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
             lfoDelayHoldoff_ + envelopeAttackIncrement(parameters.lfoDelay));
         lfoDelayByte_ = 0u;
     }
-    else if (lfoDelayFade_ < 0x10000u)
+
+    // OFFI branches straight into DADDNC when the just-stored holdoff crosses
+    // 0x3fff. Keep the two tests independent so that crossing pass also makes
+    // the fade's first step instead of inserting one extra 4.2 ms hold.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607
+    if (lfoDelayHoldoff_ >= 0x4000u && lfoDelayFade_ < 0x10000u)
     {
         lfoDelayFade_ = std::min<std::uint32_t>(
             0x10000u,
@@ -5189,7 +5195,7 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
         lfoDelayByte_ = lfoDelayFade_ >= 0x10000u
             ? 255u : static_cast<std::uint8_t>(lfoDelayFade_ >> 8u);
     }
-    else
+    else if (lfoDelayFade_ >= 0x10000u)
         lfoDelayByte_ = 255u;
 
     lfoDelayLevel_ = static_cast<float>(lfoDelayByte_) / 255.0f;

@@ -100,6 +100,30 @@ struct YouKnow106TestAccess
         return engine.lfoDelayLevel_;
     }
 
+    static std::uint32_t lfoDelayHoldoff(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoDelayHoldoff_;
+    }
+
+    static std::uint32_t lfoDelayFade(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoDelayFade_;
+    }
+
+    static std::uint8_t lfoDelayByte(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoDelayByte_;
+    }
+
+    static void advanceLfo(YouKnow106Engine& engine,
+                           const EngineParameters& parameters) noexcept
+    {
+        engine.advanceLfo(parameters);
+    }
+
     static double pwmHeld(const YouKnow106Engine& engine) noexcept
     {
         return engine.pwmVolts_;
@@ -3762,6 +3786,44 @@ void testDcoLfoUsesRecoveredIntegerWord()
                       YouKnow106TestAccess::dcoCvTarget(held, 0))
                       == controller.cvCode,
            "mid-pass automation split the shared DCO-LFO pitch word");
+}
+
+void testLfoDelayStartsFadeOnHoldoffCrossingPass()
+{
+    YouKnow106Engine fastest;
+    fastest.prepare(192000.0, blockSize, false);
+    auto fast = plainPatch();
+    fast.lfoDelay = 0.0f;
+    fastest.setParameters(fast);
+    fastest.noteOn(60, 1.0f);
+    YouKnow106TestAccess::advanceLfo(fastest, fast);
+    expect(YouKnow106TestAccess::lfoDelayHoldoff(fastest) == 0x4000u
+               && YouKnow106TestAccess::lfoDelayFade(fastest) == 0xffffu
+               && YouKnow106TestAccess::lfoDelayByte(fastest) == 0xffu
+               && YouKnow106TestAccess::lfoDelayLevel(fastest) == 1.0f,
+           "fast LFO delay did not fade on its holdoff-crossing pass");
+    YouKnow106TestAccess::advanceLfo(fastest, fast);
+    expect(YouKnow106TestAccess::lfoDelayFade(fastest) == 0x10000u
+               && YouKnow106TestAccess::lfoDelayByte(fastest) == 0xffu,
+           "fast LFO delay did not complete on its second pass");
+
+    YouKnow106Engine slowest;
+    slowest.prepare(192000.0, blockSize, false);
+    auto slow = plainPatch();
+    slow.lfoDelay = 1.0f;
+    slowest.setParameters(slow);
+    slowest.noteOn(60, 1.0f);
+    for (int pass = 0; pass < 780; ++pass)
+        YouKnow106TestAccess::advanceLfo(slowest, slow);
+    expect(YouKnow106TestAccess::lfoDelayHoldoff(slowest) == 16380u
+               && YouKnow106TestAccess::lfoDelayFade(slowest) == 0u
+               && YouKnow106TestAccess::lfoDelayByte(slowest) == 0u,
+           "slow LFO delay began fading before its hold threshold");
+    YouKnow106TestAccess::advanceLfo(slowest, slow);
+    expect(YouKnow106TestAccess::lfoDelayHoldoff(slowest) == 0x4000u
+               && YouKnow106TestAccess::lfoDelayFade(slowest) == 256u
+               && YouKnow106TestAccess::lfoDelayByte(slowest) == 1u,
+           "slow LFO delay inserted a pass between holdoff and fade");
 }
 
 void testRangeDividerCompletesItsCurrentSynchronousCount()
@@ -8563,7 +8625,7 @@ void testModulationDelayGatesPulseWidthToo()
     engine.setParameters(parameters);
     engine.noteOn(60, 1.0f);
 
-    // DELAY 1.0 is a 4.36 s hold, so nothing at all has been released here.
+    // DELAY 1.0 has a 3.2802 s silent hold, so nothing has released here.
     advance(engine, 0.05);
     expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 0.0f,
            "the delay envelope had already released at t = 0.05 s");
@@ -12111,6 +12173,7 @@ int main()
         testMasterTuneUsesRecoveredSignedPitchWord();
         testPitchBendUsesRecoveredIntegerWord();
         testDcoLfoUsesRecoveredIntegerWord();
+        testLfoDelayStartsFadeOnHoldoffCrossingPass();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -12198,6 +12261,7 @@ int main()
     testMasterTuneUsesRecoveredSignedPitchWord();
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();
+    testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();

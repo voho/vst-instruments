@@ -446,7 +446,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
 | OQ-04 | Loaded post-BBD support-chain transfer. Topology is anchored at designator level on both sides of the BBD and the charge-transfer coefficient to the datasheet's 40 kHz/12 kHz row; the loaded tap-summing pole is open | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
-| OQ-13 | LFO and delay physical timing. ROM-resolved for B-2, and the printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
+| OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s, and the printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
 | OQ-16 | Main noise spectrum and self-oscillation startup. Level is settled; the shape class is settled from designators (33.9 Hz high-pass, 4822.877 Hz pole), independently corroborated by a restorer's description | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy | P2 |
@@ -554,6 +554,9 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   delay, the two paths saturate before a single scan-held pitch-word multiply,
   and combined vibrato tops out at +/-3.98046875 semitones instead of the old
   additive eight-semitone span.
+- The LFO delay fade now begins on the same 4.2 ms converter pass that crosses
+  the holdoff threshold, matching B-2 instead of inserting a silent extra pass;
+  its exact state-completion range is 8.4 ms to 4.3512 s.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.

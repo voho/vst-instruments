@@ -2541,7 +2541,7 @@ void testServiceSpecificationEndpointReconciliation()
 
     // Delay ceiling. The printed "0 to 3s" quotes the silent hold phase
     // alone: the slowest hold is ceil(16384/21) = 781 passes = 3.2802 s,
-    // while hold plus fade (4.3554 s, asserted elsewhere) cannot round to 3.
+    // while hold plus fade (4.3512 s, asserted elsewhere) cannot round to 3.
     {
         const int holdPasses = (16384 + slowestAttack - 1) / slowestAttack;
         expect(holdPasses == 781,
@@ -2589,8 +2589,10 @@ void testModulationAndGlideLaws()
     }
 
     // Delay is never an immediate jump: it is an attack-table silent hold plus
-    // one of eight exact fade bins. Verify every stored byte against that
-    // integer construction so the hold cannot drift away from attack's source.
+    // one of eight exact fade bins. The threshold-crossing pass also performs
+    // the first fade add, so the two pass counts overlap by one. Verify every
+    // stored byte against that integer construction so the hold cannot drift
+    // away from attack's source.
     for (int byte = 0; byte <= 127; ++byte)
     {
         const float position = static_cast<float>(byte) / 127.0f;
@@ -2599,13 +2601,13 @@ void testModulationAndGlideLaws()
         const int holdPasses = (16384 + attack - 1) / attack;
         const int fadePasses = (65536 + fade - 1) / fade;
         expectNear(YouKnow106Engine::lfoDelaySeconds(position),
-                   (holdPasses + fadePasses) * 0.0042, 1.0e-5,
+                   (holdPasses + fadePasses - 1) * 0.0042, 1.0e-5,
                    "LFO delay does not use exact attack-hold plus fade at byte "
                        + std::to_string(byte));
     }
-    expectNear(YouKnow106Engine::lfoDelaySeconds(0.0f), 0.0126, 1.0e-6,
-               "LFO delay byte zero is not one hold plus two fade passes");
-    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 4.3554, 1.0e-4,
+    expectNear(YouKnow106Engine::lfoDelaySeconds(0.0f), 0.0084, 1.0e-6,
+               "LFO delay byte zero misses its two-pass completion");
+    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 4.3512, 1.0e-4,
                "longest LFO delay misses the exact hold-plus-fade duration");
 
     struct FadeBin { int first; int last; std::uint16_t coefficient; int passes; };
