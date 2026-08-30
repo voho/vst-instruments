@@ -2012,6 +2012,61 @@ Commercial calibration/private-evaluation rights, stable player and guitar IDs,
 and train/holdout separation are mandatory; the final engineering gate needs
 at least three train clusters and exactly two untouched active holdout clusters.
 
+#### Reactive loudspeaker-load research
+
+Published bidirectional guitar-amplifier models support a causal electrical
+speaker load inside the tube/load solve, not an impedance-shaped EQ after it.
+[Pakarinen, Tikander and Karjalainen](https://dafx.de/paper-archive/2009/papers/paper_16.pdf)
+and [Macak and Schimmel](https://dafx.de/paper-archive/2011/Papers/05_e.pdf)
+used measured transformer/speaker data; their result does not authorize deriving
+a cabinet load from nominal impedance or an acoustic recording.
+
+A defensible small-signal free-air driver starts with the passive network
+`Zs(s) = Re + s Le + (Rp || s Lp || 1/(s Cp))`, where
+`Rp = Re Qms/Qes`, `Lp = Re/(2 π fs Qes)` and
+`Cp = Qes/(2 π fs Re)`. The official
+[Jensen C12K 8 Ω](https://www.jensentone.com/vintage-ceramic/c12k) fields
+`Re=6.75 Ω`, `Le=0.84 mH`, `fs=115 Hz`, `Qms=16.4` and `Qes=0.90`
+give `Rp=123.0 Ω`, `Lp=10.38 mH` and `Cp=184.5 µF`. They identify only one
+rounded, low-level driver model. They do not identify its open cabinet, and
+Jensen's rounded mechanical fields give slightly different derived values.
+The current official Celestion
+[G12M](https://celestion.com/product/g12m-greenback/) and
+[Vintage 30](https://celestion.com/product/vintage-30/) pages do not publish
+enough Q/complex-impedance data to derive matching British or Modern networks.
+[Celestion's own guidance](https://celestion.com/blog/thinking-of-using-thiele-small-parameters-to-design-a-guitar-speaker-cab-think/)
+also warns that small-signal T/S data do not characterize an open-back guitar
+cabinet.
+
+For an ideal centre-tapped transformer with turns ratio `n`, half-primary
+voltage `v` and differential plate current `dI`, `vs=2v/n`, `is=n dI/2`, so
+`v=(n^2/4) Zs dI`. Choosing `n^2=Raa/Znom` recovers Electry's current
+`v=(Raa/4)dI` resistive load. A real candidate must therefore close the
+reactive companion against the American/British power-pair current in the same
+oversampled frame, feed the converged current to sag and the loaded secondary
+to negative feedback. Filtering the existing fixed-load table output would
+leave all three interactions wrong. Modern has no push-pull pair, `Raa` or
+defined secondary port, so a post-waveshaper version cannot make the same
+claim.
+
+The passive network itself is cheap: roughly three to five states and about 20
+scalar operations per internal sample and channel. The nonlinear coupling is
+the blocker. A direct runtime evaluation reaches nested plate and screen roots;
+adding reactive history as another dense table axis is too large. A local
+Norton/tangent solve is admissible only if an offline exact implicit oracle
+holds plate swing below 1% error and supply demand below 2% throughout both
+models' rail, grid and load-history domains. It must also retain positive-real
+impedance, stable poles, closed-loop feedback margin and less than 3% paired
+96-kHz CPU overhead.
+
+Existing EG-IPT DI/microphone pairs and acoustic cabinet IRs cannot validate
+this circuit because they contain no simultaneous speaker-terminal voltage and
+current. Promotion requires a calibrated series-sense capture of complex
+`Z=V/I`, cold/remount/specimen repeats and multiple levels, followed by fixed
+dummy-load/real-cab E1, E2, two-tone and transient reamps. Until that exists,
+the result is a deliberate no-go: Electry retains its bounded resistive
+American/British load and makes no reactive loudspeaker-reflected-load claim.
+
 #### Energy-derived attack-pitch research
 
 The first-ranked low-CPU pitch experiment is now a common string-tension glide,
