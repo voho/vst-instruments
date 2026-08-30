@@ -59,6 +59,7 @@ enum class ScenarioKind
 {
     IdleDry,
     SingleVoicePlainDry,
+    SixVoiceLowCutoffDry,
     SixVoicePlainDry,
     SingleVoiceResonantDry,
     SixVoiceResonantDry,
@@ -85,6 +86,8 @@ constexpr std::array tanhScenarios {
     Scenario { ScenarioKind::IdleDry, "idle-dry", 0 },
     Scenario { ScenarioKind::SingleVoicePlainDry,
                "single-voice-plain-dry", 1 },
+    Scenario { ScenarioKind::SixVoiceLowCutoffDry,
+               "six-voice-low-cutoff-dry", 6 },
     Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", 6 },
     Scenario { ScenarioKind::SingleVoiceResonantDry,
                "single-voice-resonant-dry", 1 },
@@ -135,6 +138,11 @@ EngineParameters parametersFor(ScenarioKind kind,
         case ScenarioKind::SingleVoicePlainDry:
         case ScenarioKind::SixVoicePlainDry:
             parameters.cutoff = 0.62f;
+            parameters.resonance = 0.10f;
+            parameters.chorus = ChorusMode::Off;
+            break;
+        case ScenarioKind::SixVoiceLowCutoffDry:
+            parameters.cutoff = 0.20f;
             parameters.resonance = 0.10f;
             parameters.chorus = ChorusMode::Off;
             break;
@@ -593,7 +601,10 @@ int printFingerprints()
                      "zoned-hermite-reciprocal-cubic-early" },
         KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Cubic,
                      VcfSolverMode::Rk4Single,
-                     "zoned-hermite-cubic-early-rk4-single" }
+                     "zoned-hermite-cubic-early-rk4-single" },
+        KernelMode { VcfTanhMode::PolyZoned, VcfFastEarlyMode::Cubic,
+                     VcfSolverMode::Rk4Single,
+                     "poly-zoned-cubic-early-rk4-single" }
     };
     constexpr std::size_t modeCount = modes.size();
 

@@ -628,6 +628,12 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   restore the exact forms.
 - Reduced per-sample work in the chorus and the voice loop with no change to
   the audio: the demonstration renders are bit-identical.
+- Batched adjacent settled voice filters taking one full RK4 step in the FP64
+  SIMD lanes. At 48 kHz/4x, the faster of the two bracketing baselines versus
+  the candidate cut median thread CPU by 21.61% to 23.91% across the six-voice
+  low-cutoff, plain and resonant dry audits; every arm64 raw-float audio
+  fingerprint stayed bit-identical, as did the complete scalar/SIMD cascade
+  state on arm64 and x86_64.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Kept the modelled instrument warm across a transport stop, so the chassis

@@ -3277,7 +3277,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
 }
 
 #if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
-bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
+bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4Pair(
     OtaCascade& first, float firstInput, float firstOmegaStep,
     float firstFeedback, float firstHeadroom,
     OtaCascade& second, float secondInput, float secondOmegaStep,
@@ -3304,6 +3304,7 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
         double feedback {};
         double headroom {};
         double inverseHeadroom {};
+        Tableau tableau { Tableau::MersonHalf };
         std::array<double, 5> drive {};
         std::array<double, 4> stageOmega {};
         std::array<double, 4> stageOffset {};
@@ -3335,9 +3336,10 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
         for (const float scale : cascade.gScale)
             largestScale = std::max(
                 largestScale, static_cast<double>(std::abs(scale)));
-        if (planTableau(VcfSolverMode::Rk4Single,
-                        currentOmega * largestScale * earlyCeiling,
-                        currentFeedback) != Tableau::Rk4Half)
+        const Tableau tableau = planTableau(
+            VcfSolverMode::Rk4Single,
+            currentOmega * largestScale * earlyCeiling, currentFeedback);
+        if (tableau == Tableau::MersonHalf)
             return false;
 
         lane.cascade = &cascade;
@@ -3346,6 +3348,7 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
         lane.inverseHeadroom = 1.0 / currentHeadroom;
+        lane.tableau = tableau;
 
         const auto reconstruct = [&](double currentWeight,
                                      double firstWeight,
@@ -3356,15 +3359,19 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
                 + secondWeight * cascade.inputHistory[1]
                 + thirdWeight * cascade.inputHistory[2];
         };
-        // Rk4Half reads positions 0, 1/4, 1/2, 3/4 and 1. These are the
-        // identical cubic weights produced by `makeNodes` in `process`.
-        lane.drive = {
-            reconstruct(0.0,       1.0,       0.0,        0.0),
-            reconstruct(0.1171875, 1.0546875, -0.2109375, 0.0390625),
-            reconstruct(0.3125,    0.9375,    -0.3125,    0.0625),
-            reconstruct(0.6015625, 0.6015625, -0.2578125, 0.0546875),
-            reconstruct(1.0,       0.0,        0.0,        0.0)
-        };
+        // Both RK4 tableaux read 0, 1/2 and 1. The half-step pair alone also
+        // reads 1/4 and 3/4. These are the identical cubic weights produced
+        // by `makeNodes` in `process`.
+        lane.drive[0] = reconstruct(0.0,    1.0,    0.0,     0.0);
+        lane.drive[2] = reconstruct(0.3125, 0.9375, -0.3125, 0.0625);
+        lane.drive[4] = reconstruct(1.0,    0.0,    0.0,     0.0);
+        if (tableau == Tableau::Rk4Half)
+        {
+            lane.drive[1] = reconstruct(
+                0.1171875, 1.0546875, -0.2109375, 0.0390625);
+            lane.drive[3] = reconstruct(
+                0.6015625, 0.6015625, -0.2578125, 0.0546875);
+        }
         for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
         {
             lane.stageOmega[stage] = currentOmega
@@ -3380,6 +3387,8 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
                      firstHeadroom, lanes[0])
         || !prepareLane(second, secondInput, secondOmegaStep, secondFeedback,
                         secondHeadroom, lanes[1]))
+        return false;
+    if (lanes[0].tableau != lanes[1].tableau)
         return false;
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
@@ -3530,11 +3539,11 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
                 origin[stage], slope[stage], distance);
         return result;
     };
-    const auto finishRk4Half = [](const PairState& origin,
-                                  const PairState& k1,
-                                  const PairState& k2,
-                                  const PairState& k3,
-                                  const PairState& k4) {
+    const auto finishRk4 = [](const PairState& origin,
+                              const PairState& k1,
+                              const PairState& k2,
+                              const PairState& k3,
+                              const PairState& k4, double stepSize) {
         PairState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
         {
@@ -3546,29 +3555,35 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
             weighted = pairMultiplyAddScalar(
                 weighted, k4[stage], 1.0 / 6.0);
             result[stage] = pairMultiplyAddScalar(
-                origin[stage], weighted, 0.5);
+                origin[stage], weighted, stepSize);
         }
         return result;
     };
 
-    for (int step = 0; step < 2; ++step)
-    {
-        const std::size_t start = static_cast<std::size_t>(2 * step);
+    const auto advanceRk4 = [&](std::size_t start, std::size_t middle,
+                                std::size_t end, double stepSize) {
         const PairState origin = state;
         const Pair k1Drive = pack(lanes[0].drive[start],
                                   lanes[1].drive[start]);
-        const Pair middleDrive = pack(lanes[0].drive[start + 1u],
-                                      lanes[1].drive[start + 1u]);
-        const Pair endDrive = pack(lanes[0].drive[start + 2u],
-                                   lanes[1].drive[start + 2u]);
+        const Pair middleDrive = pack(lanes[0].drive[middle],
+                                      lanes[1].drive[middle]);
+        const Pair endDrive = pack(lanes[0].drive[end],
+                                   lanes[1].drive[end]);
         const PairState k1 = derivative(origin, k1Drive);
         const PairState k2 = derivative(
-            advanceOne(origin, k1, 0.25), middleDrive);
+            advanceOne(origin, k1, 0.5 * stepSize), middleDrive);
         const PairState k3 = derivative(
-            advanceOne(origin, k2, 0.25), middleDrive);
+            advanceOne(origin, k2, 0.5 * stepSize), middleDrive);
         const PairState k4 = derivative(
-            advanceOne(origin, k3, 0.5), endDrive);
-        state = finishRk4Half(origin, k1, k2, k3, k4);
+            advanceOne(origin, k3, stepSize), endDrive);
+        state = finishRk4(origin, k1, k2, k3, k4, stepSize);
+    };
+    if (lanes[0].tableau == Tableau::Rk4Full)
+        advanceRk4(0u, 2u, 4u, 1.0);
+    else
+    {
+        advanceRk4(0u, 1u, 2u, 0.5);
+        advanceRk4(2u, 3u, 4u, 0.5);
     }
 
     for (std::size_t stage = 0; stage < state.size(); ++stage)
@@ -6772,7 +6787,7 @@ std::array<float, 2> YouKnow106Engine::renderVoicePair(
 #if !defined(YOUKNOW106_WORK_AUDIT)
     if (firstFrame.needsFilter && secondFrame.needsFilter
         && !firstFrame.hasTrajectory && !secondFrame.hasTrajectory)
-        processed = OtaCascade::tryProcessSettledRk4HalfPair(
+        processed = OtaCascade::tryProcessSettledRk4Pair(
             first.filter, firstFrame.input, firstFrame.omegaStep,
             first.feedback, firstFrame.headroom,
             second.filter, secondFrame.input, secondFrame.omegaStep,

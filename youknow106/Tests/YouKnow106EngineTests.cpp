@@ -1508,7 +1508,7 @@ struct YouKnow106TestAccess
             && first.parameterHistoryPrimed == second.parameterHistoryPrimed;
     }
 
-    static OtaPairComparison compareSettledRk4HalfPair(
+    static OtaPairComparison compareSettledRk4Pair(
         std::size_t fixtureIndex) noexcept
     {
         struct LaneFixture
@@ -1528,13 +1528,29 @@ struct YouKnow106TestAccess
             LaneFixture second;
         };
 
-        // The first pair keeps every nonlinear argument in the polynomial's
-        // inner zone with an open loop. The second does the same with two
-        // different resonant loops. The last puts both cards well outside the
-        // stage and Early inner zones, including opposite-polarity feedback
-        // return states. Every card has distinct capacitor charge, pole scale,
-        // offset and causal input history.
-        const std::array<PairFixture, 3> fixtures {
+        // The first pair takes one full RK4 step. The next keeps every
+        // nonlinear argument in the polynomial's inner zone with an open
+        // loop, the third does the same with two different resonant loops,
+        // and the last puts both cards well outside the stage and Early inner
+        // zones. Those three take two half steps. Every card has distinct
+        // charge, pole scale, offset and causal input history.
+        const std::array<PairFixture, 4> fixtures {
+            PairFixture {
+                LaneFixture {
+                    { 0.012, -0.008, 0.005, -0.003 },
+                    { 0.0003f, -0.0005f, 0.0002f, -0.0001f },
+                    { 0.017, -0.009, 0.004 },
+                    { 0.98f, 1.03f, 1.00f, 0.97f },
+                    0.015f, 0.20f, 0.5f, 0.42f
+                },
+                LaneFixture {
+                    { -0.007, 0.011, -0.004, 0.002 },
+                    { -0.0002f, 0.0004f, -0.0006f, 0.0007f },
+                    { -0.013, 0.007, -0.003 },
+                    { 1.04f, 0.96f, 1.01f, 0.99f },
+                    -0.011f, 0.22f, 2.0f, 0.38f
+                }
+            },
             PairFixture {
                 LaneFixture {
                     { 0.015, -0.011, 0.007, -0.004 },
@@ -1620,7 +1636,7 @@ struct YouKnow106TestAccess
         float pairFirstOutput = -123.5f;
         float pairSecondOutput = 97.25f;
         const bool accepted =
-            YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
+            YouKnow106Engine::OtaCascade::tryProcessSettledRk4Pair(
                 pairFirst, fixture.first.input, fixture.first.omega,
                 fixture.first.feedback, fixture.first.headroom,
                 pairSecond, fixture.second.input, fixture.second.omega,
@@ -1635,7 +1651,8 @@ struct YouKnow106TestAccess
         };
     }
 
-    static OtaPairGuardComparison compareRejectedOtaPair() noexcept
+    static OtaPairGuardComparison compareRejectedOtaPair(
+        bool mixedTableaux) noexcept
     {
         YouKnow106Engine::OtaCascade first;
         YouKnow106Engine::OtaCascade second;
@@ -1646,11 +1663,11 @@ struct YouKnow106TestAccess
         first.inputHistoryCount = 2;
         second.inputHistoryCount = 2;
         first.previousOmegaStep = 1.4;
-        second.previousOmegaStep = 1.4;
+        second.previousOmegaStep = mixedTableaux ? 0.2 : 1.4;
         first.previousHeadroom = 0.4;
         second.previousHeadroom = 0.4;
         first.parameterHistoryPrimed = true;
-        second.parameterHistoryPrimed = false;
+        second.parameterHistoryPrimed = mixedTableaux;
 
         const auto beforeFirst = first;
         const auto beforeSecond = second;
@@ -1659,9 +1676,10 @@ struct YouKnow106TestAccess
         const float beforeFirstOutput = firstOutput;
         const float beforeSecondOutput = secondOutput;
         const bool accepted =
-            YouKnow106Engine::OtaCascade::tryProcessSettledRk4HalfPair(
+            YouKnow106Engine::OtaCascade::tryProcessSettledRk4Pair(
                 first, 0.01f, 1.4f, 0.0f, 0.4f,
-                second, -0.01f, 1.4f, 0.0f, 0.4f,
+                second, -0.01f, mixedTableaux ? 0.2f : 1.4f,
+                0.0f, 0.4f,
                 true, 0.70f, firstOutput, secondOutput);
         return {
             !accepted,
@@ -12241,20 +12259,21 @@ void testPanelHelpMatchesTheModulationRouting()
            "the panel still claims that LFO DELAY reaches PWM");
 }
 
-void testSettledRk4HalfPairMatchesScalar()
+void testSettledRk4PairMatchesScalar()
 {
 #if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
-    constexpr std::array<const char*, 3> fixtureNames {
-        "open-loop inner-zone", "resonant inner-zone",
+    constexpr std::array<const char*, 4> fixtureNames {
+        "full-step inner-zone", "half-step open-loop inner-zone",
+        "half-step resonant inner-zone",
         "resonant out-of-zone"
     };
     for (std::size_t fixture = 0; fixture < fixtureNames.size(); ++fixture)
     {
         const auto compared =
-            YouKnow106TestAccess::compareSettledRk4HalfPair(fixture);
+            YouKnow106TestAccess::compareSettledRk4Pair(fixture);
         const std::string name = fixtureNames[fixture];
         expect(compared.accepted,
-               name + " pair was not eligible for the SIMD RK4Half path");
+               name + " pair was not eligible for the SIMD RK4 path");
         expect(compared.firstOutputMatches,
                name + " first output differs from scalar process<true>");
         expect(compared.secondOutputMatches,
@@ -12265,17 +12284,22 @@ void testSettledRk4HalfPairMatchesScalar()
                name + " second cascade differs from scalar process<true>");
     }
 
-    const auto rejected = YouKnow106TestAccess::compareRejectedOtaPair();
-    expect(rejected.rejected,
-            "a pair with an unprimed second cascade was accepted");
-    expect(rejected.firstCascadeUnchanged,
-            "a rejected pair mutated the eligible first cascade");
-    expect(rejected.secondCascadeUnchanged,
-            "a rejected pair mutated the unprimed second cascade");
-    expect(rejected.firstOutputUnchanged,
-           "a rejected pair changed the first output sentinel");
-    expect(rejected.secondOutputUnchanged,
-           "a rejected pair changed the second output sentinel");
+    for (const bool mixedTableaux : { false, true })
+    {
+        const auto rejected =
+            YouKnow106TestAccess::compareRejectedOtaPair(mixedTableaux);
+        const std::string context = mixedTableaux
+            ? "a mixed-tableau pair" : "an unprimed pair";
+        expect(rejected.rejected, context + " was accepted");
+        expect(rejected.firstCascadeUnchanged,
+               context + " mutated the eligible first cascade");
+        expect(rejected.secondCascadeUnchanged,
+               context + " mutated the second cascade");
+        expect(rejected.firstOutputUnchanged,
+               context + " changed the first output sentinel");
+        expect(rejected.secondOutputUnchanged,
+               context + " changed the second output sentinel");
+    }
 #endif
 }
 
@@ -12435,7 +12459,7 @@ int main()
     if (std::getenv("YOUKNOW106_SIMD_TEST_ONLY") != nullptr)
     {
 #if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
-        testSettledRk4HalfPairMatchesScalar();
+        testSettledRk4PairMatchesScalar();
         if (failures != 0)
         {
             std::cerr << failures << " SIMD check(s) failed.\n";
@@ -12670,7 +12694,7 @@ int main()
     testPanelTextWidthEdgeCases();
     testPanelLayout();
     testPanelHelpMatchesTheModulationRouting();
-    testSettledRk4HalfPairMatchesScalar();
+    testSettledRk4PairMatchesScalar();
     testQualityChangeRefreshesTheFilterCoefficient();
     testResonanceDoesNotMultiplyTheSolveCost();
     testCpuBudget();

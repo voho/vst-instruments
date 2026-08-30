@@ -1494,12 +1494,11 @@ private:
                       VcfSolverMode solverMode =
                           VcfSolverMode::MersonHalfSteps) noexcept;
 #if defined(YOUKNOW106_HAS_VCF_PAIR_SIMD)
-        // The shipping six-card workload resolves almost every settled
-        // interval to the same two-half-step RK4 tableau. Advance two
-        // independent cards in two FP64 SIMD lanes when that exact hot
-        // case is present; false means the caller must use `process` without
-        // this function having changed either cascade.
-        static bool tryProcessSettledRk4HalfPair(
+        // Settled shipping intervals resolve to either one full RK4 step or
+        // two half steps. Advance two independent cards taking the same
+        // tableau in two FP64 SIMD lanes; false means the caller must use
+        // `process` without this function having changed either cascade.
+        static bool tryProcessSettledRk4Pair(
             OtaCascade& first, float firstInput, float firstOmegaStep,
             float firstFeedback, float firstHeadroom,
             OtaCascade& second, float secondInput, float secondOmegaStep,
