@@ -817,7 +817,7 @@ private:
         int writeIndex { 0 };
         float currentDelay { 100.0f };
         float targetDelay { 100.0f };
-        float delaySmoothing { 0.02f };
+        float delayRetention { 0.98f };
         float loopGain { 0.995f };
         float loopDampingCoefficient { 0.3f };
         // Two independently fitted four-section allpass groups match the
@@ -1849,11 +1849,11 @@ private:
     float horizontalDetuneSamples_ { 0.11f };
     // The 6 ms delay-smoothing time constant shared by configureVoicePitch()
     // and configureSympatheticString(): fast enough to track a bend or a
-    // wheel-driven coupled-string retune transparently. Depends only on
-    // controlPeriod and the internal clock, both fixed by prepare(), so it is
-    // resolved once here instead of with std::exp at every control tick of
-    // every voice and every coupled-string wake.
-    float voiceDelaySmoothing_ { 0.5f };
+    // wheel-driven coupled-string retune transparently. It advances every
+    // internal sample and depends only on that clock, fixed by prepare(), so
+    // it is resolved once here instead of with std::exp at every control tick
+    // of every voice and every coupled-string wake.
+    float voiceDelayRetention_ { 0.5f };
 
     // Artifact shaping constants, evaluated once per control tick.
     float artifactContactShape_ { 0.0f };

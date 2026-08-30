@@ -216,6 +216,7 @@ struct ElectryEngineTestAccess
         float verticalDelayTarget { 0.0f };
         float verticalDelayCurrent { 0.0f };
         float horizontalDelayTarget { 0.0f };
+        float horizontalDelayCurrent { 0.0f };
         float polarisationCoupling { 0.0f };
         float dispersionLowCoefficient { 0.0f };
         float dispersionHighCoefficient { 0.0f };
@@ -304,6 +305,7 @@ struct ElectryEngineTestAccess
         result.verticalDelayTarget = voice.vertical.targetDelay;
         result.verticalDelayCurrent = voice.vertical.currentDelay;
         result.horizontalDelayTarget = voice.horizontal.targetDelay;
+        result.horizontalDelayCurrent = voice.horizontal.currentDelay;
         result.polarisationCoupling = voice.polarisationCoupling;
         result.dispersionLowCoefficient = voice.vertical.dispersionLowCoefficient;
         result.dispersionHighCoefficient = voice.vertical.dispersionHighCoefficient;
@@ -409,6 +411,11 @@ struct ElectryEngineTestAccess
     static float pitchBendTarget(const ElectryEngine& engine) noexcept
     {
         return engine.pitchBendTarget_;
+    }
+
+    static void snapPitchBendToTarget(ElectryEngine& engine) noexcept
+    {
+        engine.pitchBendSemitones_ = engine.pitchBendTarget_;
     }
 
     static float expressionPitchBendTarget(
@@ -532,6 +539,13 @@ struct ElectryEngineTestAccess
     static float sympatheticHandGain(const ElectryEngine& engine) noexcept
     {
         return engine.sympatheticHandGain_;
+    }
+
+    static void setSympatheticEnergy(ElectryEngine& engine, int stringIndex,
+                                     float energy) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .sympatheticEnergy = energy;
     }
 
     static float voiceOutputEnergy(const ElectryEngine& engine,
@@ -802,6 +816,11 @@ struct ElectryEngineTestAccess
     static double internalSampleRate(const ElectryEngine& engine) noexcept
     {
         return engine.sampleRate_;
+    }
+
+    static float voiceDelayRetention(const ElectryEngine& engine) noexcept
+    {
+        return engine.voiceDelayRetention_;
     }
 
     static float onePoleMagnitude(float coefficient, float omega) noexcept
@@ -3349,6 +3368,169 @@ void testInternalOversamplingPolicy()
         expect(std::abs(centsBetween(measured, expected)) < 10.0,
                "oversampling introduced gross pitch drift at "
                    + std::to_string(sampleRate) + " Hz");
+    }
+}
+
+void testStringDelaySmoothingTimeConstant()
+{
+    for (const double hostRate : {
+             44100.0, 48000.0, 88200.0, 96000.0,
+             96001.0, 192000.0, 384000.0 })
+    {
+        ElectryEngine engine;
+        engine.prepare(hostRate, 512);
+
+        const double retention = TestAccess::voiceDelayRetention(engine);
+        expect(retention > 0.0 && retention < 1.0,
+               "string-delay retention is outside (0, 1) at "
+                   + std::to_string(hostRate) + " Hz");
+
+        const double timeConstant = -1.0
+            / (TestAccess::internalSampleRate(engine)
+               * std::log(retention));
+        expect(std::abs(timeConstant - 0.006) < 0.000006,
+               "string-delay smoothing is not 6 ms at "
+                   + std::to_string(hostRate) + " Hz ("
+                   + std::to_string(timeConstant) + " s)");
+    }
+
+    // Exercise the actual per-internal-sample recurrences, including both
+    // sides of the 96 kHz oversampling seam. One time constant must leave
+    // e^-1 of a known played and sympathetic delay step; coefficient
+    // introspection alone would not catch a moved cadence or missed path.
+    for (const double hostRate : { 44100.0, 96000.0, 96001.0, 384000.0 })
+    {
+        ElectryEngine engine;
+        engine.prepare(hostRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.sympatheticAmount = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.9f);
+        StereoBuffer wake(static_cast<int>(0.15 * hostRate));
+        renderInto(engine, wake);
+
+        const int playedString = TestAccess::stringForNote(engine, 45);
+        constexpr int sympatheticString = 0;
+        const auto beforePlayed = TestAccess::snapshot(engine, playedString);
+        const auto beforeSympathetic = TestAccess::snapshot(
+            engine, sympatheticString);
+        expect(playedString >= 0 && beforeSympathetic.sympatheticReady
+                   && beforeSympathetic.sympatheticEnergy > 1.0e-11f,
+               "invalid string-delay cadence fixture at "
+                   + std::to_string(hostRate) + " Hz");
+
+        engine.setPitchBend(1.0f);
+        TestAccess::snapPitchBendToTarget(engine);
+        int alignmentSamples = 0;
+        auto steppedPlayed = beforePlayed;
+        auto steppedSympathetic = beforeSympathetic;
+        while (alignmentSamples <= 16
+               && (steppedPlayed.verticalDelayTarget
+                       == beforePlayed.verticalDelayTarget
+                   || steppedSympathetic.verticalDelayTarget
+                       == beforeSympathetic.verticalDelayTarget))
+        {
+            TestAccess::renderOneInternalSample(engine);
+            steppedPlayed = TestAccess::snapshot(engine, playedString);
+            steppedSympathetic = TestAccess::snapshot(
+                engine, sympatheticString);
+            ++alignmentSamples;
+        }
+
+        const auto verticalResidual = [] (const TestAccess::VoiceSnapshot& voice)
+        {
+            return std::abs(static_cast<double>(voice.verticalDelayCurrent)
+                            - voice.verticalDelayTarget);
+        };
+        const auto horizontalResidual = [] (
+            const TestAccess::VoiceSnapshot& voice)
+        {
+            return std::abs(static_cast<double>(voice.horizontalDelayCurrent)
+                            - voice.horizontalDelayTarget);
+        };
+        const double playedVerticalStart = verticalResidual(steppedPlayed);
+        const double playedHorizontalStart = horizontalResidual(steppedPlayed);
+        const double sympatheticStart = verticalResidual(steppedSympathetic);
+        expect(steppedPlayed.verticalDelayTarget
+                       != beforePlayed.verticalDelayTarget
+                   && steppedPlayed.horizontalDelayTarget
+                       != beforePlayed.horizontalDelayTarget
+                   && steppedSympathetic.verticalDelayTarget
+                       != beforeSympathetic.verticalDelayTarget
+                   && playedVerticalStart > 1.0
+                   && playedHorizontalStart > 1.0
+                   && sympatheticStart > 1.0,
+               "the played/sympathetic delay step was not established at "
+                   + std::to_string(hostRate) + " Hz");
+
+        const int timeConstantSamples = static_cast<int>(std::lround(
+            0.006 * TestAccess::internalSampleRate(engine)));
+        for (int sample = 0; sample < timeConstantSamples; ++sample)
+            TestAccess::renderOneInternalSample(engine);
+        const auto oneTauPlayed = TestAccess::snapshot(engine, playedString);
+        const auto oneTauSympathetic = TestAccess::snapshot(
+            engine, sympatheticString);
+        constexpr double inverseE = 0.36787944117144233;
+        const double playedVerticalRatio = verticalResidual(oneTauPlayed)
+                                         / playedVerticalStart;
+        const double playedHorizontalRatio = horizontalResidual(oneTauPlayed)
+                                           / playedHorizontalStart;
+        const double sympatheticRatio = verticalResidual(oneTauSympathetic)
+                                      / sympatheticStart;
+        expect(std::abs(playedVerticalRatio - inverseE) < 0.01
+                   && std::abs(playedHorizontalRatio - inverseE) < 0.01
+                   && std::abs(sympatheticRatio - inverseE) < 0.01,
+               "the realised played-polarisation/sympathetic delay glide is not 6 ms at "
+                   + std::to_string(hostRate) + " Hz ("
+                   + std::to_string(playedVerticalRatio) + ", "
+                   + std::to_string(playedHorizontalRatio) + ", "
+                   + std::to_string(sympatheticRatio) + " of the step)");
+
+        for (int sample = 0; sample < 18 * timeConstantSamples; ++sample)
+            TestAccess::renderOneInternalSample(engine);
+        const auto settledPlayed = TestAccess::snapshot(engine, playedString);
+        const auto settledSympathetic = TestAccess::snapshot(
+            engine, sympatheticString);
+        expect(settledPlayed.verticalDelayCurrent
+                       == settledPlayed.verticalDelayTarget
+                   && settledPlayed.horizontalDelayCurrent
+                       == settledPlayed.horizontalDelayTarget
+                   && settledSympathetic.verticalDelayCurrent
+                       == settledSympathetic.verticalDelayTarget,
+               "the target-anchored delay glide did not reach its exact target at "
+                   + std::to_string(hostRate) + " Hz ("
+                   + std::to_string(verticalResidual(settledPlayed)) + ", "
+                   + std::to_string(horizontalResidual(settledPlayed)) + ", "
+                   + std::to_string(verticalResidual(settledSympathetic))
+                   + " samples)");
+
+        // A ready loop below the render floor has no audible pitch to glide.
+        // Retuning it must snap now, rather than waking later at a stale bend.
+        TestAccess::setSympatheticEnergy(engine, sympatheticString, 0.0f);
+        engine.setPitchBend(-1.0f);
+        TestAccess::snapPitchBendToTarget(engine);
+        auto silentRetune = settledSympathetic;
+        for (int sample = 0; sample <= 16
+             && silentRetune.verticalDelayTarget
+                    == settledSympathetic.verticalDelayTarget; ++sample)
+        {
+            TestAccess::setSympatheticEnergy(
+                engine, sympatheticString, 0.0f);
+            TestAccess::renderOneInternalSample(engine);
+            silentRetune = TestAccess::snapshot(engine, sympatheticString);
+        }
+        expect(silentRetune.verticalDelayTarget
+                       != settledSympathetic.verticalDelayTarget
+                   && silentRetune.verticalDelayCurrent
+                       == silentRetune.verticalDelayTarget,
+               "an inaudible sympathetic string retained stale pitch at "
+                   + std::to_string(hostRate) + " Hz");
     }
 }
 
@@ -11860,17 +12042,35 @@ void testSlideArticulation()
                    && rendered < static_cast<int>(0.05 * demoSampleRate),
                "the demo-17 chained slide did not reproduce its 38.7 ms "
                "remainder");
-        expect(worstWrongWayCents < 0.05,
-               "a descending chained slide reversed by "
-                   + std::to_string(worstWrongWayCents)
-                   + " cents at a loop-filter refit");
         double finalPitch = midiHz(69);
 #if ELECTRY_ENERGY_ATTACK_PITCH
         finalPitch *= TestAccess::attackPitchState(engine, stringIndex)
                           .frequencyFactor;
 #endif
+        const double arrivalErrorCents = std::abs(
+            centsBetween(previous, finalPitch));
+        expect(arrivalErrorCents < 35.0,
+               "the demo-17 delay lagged the arriving finger by "
+                   + std::to_string(arrivalErrorCents) + " cents");
+        int settling = 0;
+        while (std::abs(centsBetween(previous, finalPitch)) >= 2.0
+               && settling < static_cast<int>(0.05 * demoSampleRate))
+        {
+            renderInto(engine, frame, traceFrames);
+            const float current = TestAccess::effectiveLoopFrequency(
+                engine, stringIndex);
+            worstWrongWayCents = std::max(
+                worstWrongWayCents, centsBetween(current, lowWater));
+            lowWater = std::min(lowWater, current);
+            previous = current;
+            settling += traceFrames;
+        }
+        expect(worstWrongWayCents < 0.05,
+               "a descending chained slide reversed by "
+                   + std::to_string(worstWrongWayCents)
+                   + " cents at a loop-filter refit or delay glide");
         expect(std::abs(centsBetween(previous, finalPitch)) < 2.0,
-               "the monotone demo-17 slide missed its final pitch");
+               "the monotone demo-17 slide did not settle within 50 ms");
     }
 
     // The travel time is a distance over a hand speed, so a two-fret slide is
@@ -13423,10 +13623,10 @@ void testLiveDampingRefitsPreservePitch()
             engine, sampleRate, 28, PlayStyle::Sustain, parameters);
         const auto reference = loopFrequencies(engine, fixture.stringIndex);
 
-        // Read the hard 0->127 throw after its first host sample, not after a
-        // whole control period in which the 6 ms delay smoother could hide
-        // most of a bad coordinate jump. Finish that period before returning
-        // to zero so the adjacent sweep below remains boundary-aligned.
+        // Read the hard 0->127 throw after its first host sample, before a
+        // whole control period can advance the 6 ms delay smoother even 3%.
+        // Finish that period before returning to zero so the adjacent sweep
+        // below remains boundary-aligned.
         engine.setPalmMutePressure(1.0f);
         StereoBuffer firstEventFrame(1);
         renderInto(engine, firstEventFrame, 1);
@@ -20437,6 +20637,7 @@ int main()
     testMeasuredBodyResponsePhysics();
 #endif
     testInternalOversamplingPolicy();
+    testStringDelaySmoothingTimeConstant();
     testPrepareClampsHostileSampleRate();
     testRenderMatrixFiniteAndBounded();
     testPitchAccuracy();

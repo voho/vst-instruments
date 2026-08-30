@@ -294,10 +294,11 @@ preference test was used.
 The bridge-hand controls changed the one-pole and hand-loss filters of an
 already-ringing loop, then recomputed its compensated delay target. They did
 not move the loop's current raw-delay coordinate by the corresponding filter-
-phase difference. The ordinary six-millisecond delay smoother therefore
-treated a damping change as a short pitch gesture. A shared E1 Sustain-to-Palm
-contact moved the vertical and horizontal effective periods by about -22.2 and
--11.9 cents; lifting that contact moved them by about +21.7 and +11.6 cents.
+phase difference. The delay smoother, intended to be six milliseconds but at
+that checkpoint miscomputed as 0.375 ms, therefore treated a damping change as
+a short pitch gesture. A shared E1 Sustain-to-Palm contact moved the vertical
+and horizontal effective periods by about -22.2 and -11.9 cents; lifting that
+contact moved them by about +21.7 and +11.6 cents.
 Direct hard CC2 state probes could exceed a semitone. The magnitude varied with
 the note and damping state, but the defect existed at every tested host rate
 from 44.1 through 384 kHz.

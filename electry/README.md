@@ -3111,6 +3111,41 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 true 6 ms string-delay glide
+
+- Played and sympathetic string delays advance their glide once per internal
+  audio sample, but `prepare()` had included the 16-sample control period in
+  that per-sample coefficient. The declared 6 ms time constant was therefore
+  0.375 ms at every rate, making bend, legato, refret and coupled-string retune
+  transitions nearly snap to their new pitch. The coefficient now uses one
+  internal sample while the existing event/control target cadence is unchanged.
+- A coefficient oracle covers 44.1, 48, 88.2, 96, 96.001, 192 and 384 kHz.
+  Actual played and sympathetic step responses at 44.1, 96, 96.001 and 384 kHz
+  must retain `e^-1` after one 6 ms time constant. The target-anchored
+  recurrence plus a control-rate equality guard reaches the exact float target
+  instead of stalling as far as 0.24 cent away at the highest rate. An
+  inaudible ready sympathetic loop also snaps before a later drive can wake it
+  at stale pitch.
+- Fresh/static-note audio and the final target/filter laws are unchanged;
+  transition phase and energy deliberately change. The audio loop retains the
+  same two multiply-add recurrences per played voice and one per rendered
+  sympathetic string. Only a cheap control-tick residue guard is added, with
+  no allocation or new audio-rate branch.
+- The redirected descending Slide in demo 17 now distinguishes the finger
+  reaching its target from the physical delay finishing its glide. Its test
+  follows both phases, requires monotone effective pitch across dispersion
+  refits, bounds arrival lag below 35 cents (28.73 cents realised) and permits
+  up to 50 ms for the final two-cent settling rail. The score itself leaves
+  649 ms before vibrato begins.
+- All nine default JUCE-free tests pass, as do complete engine runs with the
+  default-off fitted-loss and positioned-fret experiments enabled. The rejected
+  energy-derived attack-pitch experiment retains its two known Slide failures
+  and now trips eight spectral validation rails because its excursion
+  persists through the real glide; it remains compiled out of shipping builds.
+  Two full same-compiler renders are byte-identical. All 23 normalised demo WAVs
+  change against the old coefficient without a score or parameter change, so
+  the nightly renderer will refresh the committed generated artifacts.
+
 ### 2026-08-30 complete large-jump string choke
 
 - A retriggered string whose delay jumped by more than 25% choked both 16,384-
@@ -3581,9 +3616,9 @@ the realistic result is to ship nothing.
   compensation and steady tails skip the power calculation unless the cached
   period actually moved; nine paired eight-string bent-release runs measured a
   1.0066x median candidate/baseline time ratio, with no audio-sample branch.
-  Auditing the separate six-millisecond delay smoother found at most 60.141 ms
-  through the fastest Bend Time and 60.052 ms in the octave-slide fixture, so
-  no extra sub-percent current-delay tracking mechanism was added.
+  The historical 60.141/60.052 ms transition audit used what was intended to
+  be a six-millisecond delay smoother but was actually 0.375 ms; those two
+  bounds are retired by the corrected and directly tested smoother above.
 
 ### 2026-08-30 contact-period finger release makeup
 

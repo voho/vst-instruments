@@ -1242,10 +1242,9 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
 
     horizontalDetuneSamples_ = 0.11f * internalRate / 96000.0f;
     // Shared by configureVoicePitch() and configureSympatheticString(), which
-    // used to each recompute this identical expression from the same two
-    // fixed inputs - the former on every control tick of every active voice.
-    voiceDelaySmoothing_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
-                                           / (0.006f * internalRate));
+    // used to each recompute this identical internal-rate expression - the
+    // former on every control tick of every active voice.
+    voiceDelayRetention_ = std::exp(-1.0f / (0.006f * internalRate));
     emfScale_ = internalRate / (twoPi * 220.0f);
     emfLowpassCoefficient_ = std::exp(
         -twoPi * std::min(16000.0f, 0.40f * internalRate) * inverseSampleRate_);
@@ -3782,10 +3781,10 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         0.0f, 0.25f);
 
     // Delay smoothing time constant: fast enough to track bends transparently.
-    // Resolved once in prepare() as voiceDelaySmoothing_ rather than
+    // Resolved once in prepare() as voiceDelayRetention_ rather than
     // recomputed with std::exp on every control tick of every active voice.
-    voice.vertical.delaySmoothing = voiceDelaySmoothing_;
-    voice.horizontal.delaySmoothing = voiceDelaySmoothing_;
+    voice.vertical.delayRetention = voiceDelayRetention_;
+    voice.horizontal.delayRetention = voiceDelayRetention_;
 }
 
 void ElectryEngine::refreshVoicingIfNeeded() noexcept
@@ -4043,8 +4042,8 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     voice.lastCompensatedPeriod = period;
     voice.compensationDirty = false;
     // Same fixed time constant configureVoicePitch() uses, shared via
-    // voiceDelaySmoothing_ so the two call sites cannot drift apart.
-    loop.delaySmoothing = voiceDelaySmoothing_;
+    // voiceDelayRetention_ so the two call sites cannot drift apart.
+    loop.delayRetention = voiceDelayRetention_;
     // A string that is already ringing glides to its new tuning; a freshly
     // woken one starts there, so a build change never clicks the ring.
     if (! voice.sympatheticReady)
@@ -6070,8 +6069,30 @@ void ElectryEngine::configurePickupFilters() noexcept
 
 void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
 {
+    const auto snapStalledDelay = [] (PolarisationLoop& loop)
+    {
+        if (loop.currentDelay == loop.targetDelay)
+            return;
+        const float next = loop.targetDelay
+            + loop.delayRetention * (loop.currentDelay - loop.targetDelay);
+        if (next == loop.currentDelay)
+            loop.currentDelay = loop.targetDelay;
+    };
+
     if (! voice.active)
+    {
+        // The render gate will no longer advance this ready loop. Snap its
+        // inaudible delay residue at control rate so a future bridge drive
+        // cannot wake it at stale pitch.
+        if (voice.sympatheticReady)
+        {
+            if (voice.sympatheticEnergy <= 1.0e-11f)
+                voice.vertical.currentDelay = voice.vertical.targetDelay;
+            else
+                snapStalledDelay(voice.vertical);
+        }
         return;
+    }
 
 #if ELECTRY_ENERGY_ATTACK_PITCH
     // Lee's measured common pitch component relaxes exponentially. The
@@ -6161,6 +6182,8 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     }
 
     configureVoicePitch(voice, false);
+    snapStalledDelay(voice.vertical);
+    snapStalledDelay(voice.horizontal);
 
     // Ballistic display level for the fretboard readout. It is derived from
     // the same energy follower the retirement logic uses, so it costs one
@@ -6783,10 +6806,14 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     vertical.writeIndex = (vertical.writeIndex + 1) & (delayLineSize - 1);
     horizontal.writeIndex = (horizontal.writeIndex + 1) & (delayLineSize - 1);
 
-    vertical.currentDelay += vertical.delaySmoothing
-                           * (vertical.targetDelay - vertical.currentDelay);
-    horizontal.currentDelay += horizontal.delaySmoothing
-                             * (horizontal.targetDelay - horizontal.currentDelay);
+    // Target-anchored form makes the stored coefficient the one-sample pole;
+    // updateVoiceControl() snaps only the final float-rounding residue.
+    vertical.currentDelay = vertical.targetDelay
+        + vertical.delayRetention
+            * (vertical.currentDelay - vertical.targetDelay);
+    horizontal.currentDelay = horizontal.targetDelay
+        + horizontal.delayRetention
+            * (horizontal.currentDelay - horizontal.targetDelay);
 
     // A phase-coherent divided-pickup field. Mono leaves both weights at one;
     // Stereo spreads strings by their real lateral order, without delay,
@@ -6931,8 +6958,8 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
             voice.coilPairBridge, voice.previousFluxBridge,
             voice.emfLowpassBridge);
     loop.writeIndex = (loop.writeIndex + 1) & (delayLineSize - 1);
-    loop.currentDelay += loop.delaySmoothing
-                       * (loop.targetDelay - loop.currentDelay);
+    loop.currentDelay = loop.targetDelay
+        + loop.delayRetention * (loop.currentDelay - loop.targetDelay);
 
     accumulateStereoContribution(sums, voice.stereoLateral,
                                  0.28f, neckSignal, 0.5f, bridgeSignal);
