@@ -2859,6 +2859,20 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-08-30 matched factory-rig popup
+
+- Opening the RIG selector inherited JUCE's unrelated blue-grey menu and cyan
+  highlight even though the closed selector uses Electry's dark control face,
+  ivory text and warm selection language. The shared look and feel now gives
+  that popup the same dark face and ivory text, plus Electry's established
+  bright-accent/dark-text selection pair; menu behaviour and dimensions are
+  unchanged.
+- A renderer-level regression checks the real popup background and highlighted
+  item pixels, their relationship to the closed ComboBox palette and at least
+  3:1 contrast between idle and selected backgrounds. The normal 1080x860
+  editor render is unchanged because the popup is transient; audio, parameters,
+  layout and steady CPU are untouched.
+
 ### 2026-08-30 performed-pitch held damping
 
 - Played-string loss is applied once per round trip, but held voices kept

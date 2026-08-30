@@ -231,6 +231,11 @@ ElectryLookAndFeel::ElectryLookAndFeel()
     setColour (juce::ComboBox::outlineColourId,
                colours::panelOutline.withAlpha (0.75f));
     setColour (juce::ComboBox::arrowColourId, colours::accentBright);
+    setColour (juce::PopupMenu::backgroundColourId, colours::knobFace);
+    setColour (juce::PopupMenu::textColourId, colours::text);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId,
+               colours::accentBright);
+    setColour (juce::PopupMenu::highlightedTextColourId, colours::rosewoodDark);
     setColour (juce::TextButton::buttonColourId, colours::knobFace);
     setColour (juce::TextButton::textColourOffId, colours::text);
     setColour (juce::TooltipWindow::backgroundColourId, colours::panel);

@@ -4206,6 +4206,51 @@ void testEditorRendering()
     if (editor == nullptr)
         return;
 
+    auto& editorLookAndFeel = editor->getLookAndFeel();
+    const auto popupBackground = editorLookAndFeel.findColour (
+        juce::PopupMenu::backgroundColourId);
+    const auto popupHighlight = editorLookAndFeel.findColour (
+        juce::PopupMenu::highlightedBackgroundColourId);
+    expect (popupBackground == editorLookAndFeel.findColour (
+                                  juce::ComboBox::backgroundColourId)
+                && editorLookAndFeel.findColour (
+                       juce::PopupMenu::textColourId)
+                       == editorLookAndFeel.findColour (
+                              juce::ComboBox::textColourId)
+                && popupHighlight == juce::Colour (0xffddb16b)
+                && editorLookAndFeel.findColour (
+                       juce::PopupMenu::highlightedTextColourId)
+                       == juce::Colour (0xff1d120e),
+            "factory-rig popup fell back to the stock JUCE palette");
+    const auto relativeLuminance = [] (juce::Colour colour)
+    {
+        const auto linear = [] (float channel)
+        {
+            return channel <= 0.04045f ? channel / 12.92f
+                : std::pow ((channel + 0.055f) / 1.055f, 2.4f);
+        };
+        return 0.2126f * linear (colour.getFloatRed())
+             + 0.7152f * linear (colour.getFloatGreen())
+             + 0.0722f * linear (colour.getFloatBlue());
+    };
+    const auto popupLuminance = relativeLuminance (popupBackground);
+    const auto highlightLuminance = relativeLuminance (popupHighlight);
+    expect ((juce::jmax (popupLuminance, highlightLuminance) + 0.05f)
+                / (juce::jmin (popupLuminance, highlightLuminance) + 0.05f)
+                >= 3.0f,
+            "factory-rig popup selection fell below 3:1 state contrast");
+    juce::Image popupImage (juce::Image::ARGB, 160, 28, true);
+    juce::Graphics popupGraphics (popupImage);
+    editorLookAndFeel.drawPopupMenuBackground (
+        popupGraphics, popupImage.getWidth(), popupImage.getHeight());
+    expect (popupImage.getPixelAt (80, 4) == popupBackground,
+            "factory-rig popup did not paint its matched panel background");
+    editorLookAndFeel.drawPopupMenuItem (
+        popupGraphics, popupImage.getBounds(), false, true, true, false,
+        false, {}, {}, nullptr, nullptr);
+    expect (popupImage.getPixelAt (4, 4) == popupHighlight,
+            "factory-rig popup did not paint its matched selection colour");
+
     expect (editor->getWidth() >= 900 && editor->getHeight() >= 500,
             "editor opened at an unexpectedly small size");
 
