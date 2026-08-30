@@ -1298,14 +1298,13 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
         }
 
         // Fingered position.
-        if (row.state.sounding && row.state.midiNote >= 0)
+        if (row.state.sounding && row.state.midiNote >= 0
+            && row.state.fret > 0)
         {
-            const auto markerX = row.state.fret > 0
-                ? neck.getX() + neckWidth
-                      * electry::visuals::fretCentreFraction (row.state.fret,
-                                                              lastDrawnFret,
-                                                              neckSpan)
-                : neck.getX() + 1.5f;
+            const auto markerX = neck.getX() + neckWidth
+                * electry::visuals::fretCentreFraction (row.state.fret,
+                                                        lastDrawnFret,
+                                                        neckSpan);
             const auto radius = juce::jmin (6.5f, neck.getHeight() * 0.085f);
             graphics.setColour (juce::Colours::black.withAlpha (0.55f));
             graphics.fillEllipse (markerX - radius, y - radius,
