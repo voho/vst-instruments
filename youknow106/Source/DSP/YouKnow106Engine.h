@@ -2053,6 +2053,7 @@ private:
     // output is discarded behind the shut VCA. See Voice::freewheeling.
     void freewheelVoiceCard(Voice& voice) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
+    void advanceLfoDelay(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
     // The factor the engine would actually run for a requested rung at the
     // current host rate: the request, sanitised, capped by the deepest rung

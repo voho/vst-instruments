@@ -490,7 +490,10 @@ policy. Those voice handlers then [replace SP and jump to the fresh
 main loop](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244),
 so the engine restarts the one shared converter scan at the logical note
 command, preserves completed PIT/port state and discards only unfinished CPU
-and captured-CV work.
+and captured-CV work. A mid-pass restart repeats the fresh loop's early
+LFO-delay/onset recurrence while preserving the abandoned pass's later
+oscillator and PWM state; an already-due boundary leaves that recurrence to
+the normal pass start instead of executing it twice.
 
 ADC is no longer an OQ-08 jitter source. Its 172-state handler [masks ADC again
 before returning](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L116-L135),
@@ -561,10 +564,13 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   resistor without entering the compensation CV, so a range-only scan no
   longer fabricates a hold step. Semantic Voice On/Off now restart B-2's one
   shared converter loop, cancelling pre-DI CPU work but completing protected
-  PIT bytes and preserving every external write already made. ADC is proven
-  unable to enter this region; physical mux timestamps, installed-NMOS entry
-  timing and serial wire phase remain open under OQ-08, while the separate
-  CPU/PIT oscillators rule out one fixed inter-clock phase.
+  PIT bytes and preserving every external write already made. Mid-pass
+  restarts repeat only the fresh loop's LFO-delay/onset calculation, not its
+  later oscillator/PWM update; already-due boundaries retain their single
+  normal pass step. ADC is proven unable to enter this region; physical mux
+  timestamps, installed-NMOS entry timing and serial wire phase remain open
+  under OQ-08, while the separate CPU/PIT oscillators rule out one fixed
+  inter-clock phase.
 - Replaced the ideal nearest-count pitch conversion and frequency-normalized
   ramp hold with the recovered B-2 unsigned 8.8 paired PIT/DCO-CV mechanism.
   Policy-safe derived anchors stay within 1.272 cents and one DAC code of the

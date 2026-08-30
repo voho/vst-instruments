@@ -95,6 +95,18 @@ struct YouKnow106TestAccess
         return engine.lfoValue_;
     }
 
+    static std::int32_t dcoLfoPitchWord(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.dcoLfoPitchWord_;
+    }
+
+    static float converterPassLfoGated(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.converterPassLfoGated_;
+    }
+
     // The single delay attenuator, read before it is multiplied into anything.
     static float lfoDelayLevel(const YouKnow106Engine& engine) noexcept
     {
@@ -123,6 +135,22 @@ struct YouKnow106TestAccess
                            const EngineParameters& parameters) noexcept
     {
         engine.advanceLfo(parameters);
+    }
+
+    static void setLfoRestartState(YouKnow106Engine& engine) noexcept
+    {
+        engine.lfoAccumulator_ = 0x1000u;
+        engine.lfoRising_ = true;
+        engine.lfoPolarity_ = 1.0f;
+        engine.lfoValue_ = 4096.0f / 8191.0f;
+        engine.lfoDelayHoldoff_ = 0x4000u;
+        engine.lfoDelayFade_ = 0x4000u;
+        engine.lfoDelayByte_ = 0x40u;
+        engine.lfoDelayLevel_ = 64.0f / 255.0f;
+        engine.displayLfo_ = engine.lfoValue_ * engine.lfoDelayLevel_;
+        engine.dcoLfoPitchWord_ = 0;
+        engine.converterPassLfoGated_ = engine.displayLfo_;
+        engine.converterPassPwmDacCode_ = 0x0123u;
     }
 
     static double pwmHeld(const YouKnow106Engine& engine) noexcept
@@ -3110,6 +3138,30 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                       == requested,
            "a post-LSB Voice On discarded the protected PIT MSB");
 
+    // IC29 owns all six channels. A Voice On for card one therefore abandons
+    // the shared scan but cannot split card six's protected byte pair or erase
+    // a different card's already-completed pending count.
+    constexpr std::uint32_t completed = 0x4567u;
+    auto sharedBoard = fixture();
+    YouKnow106TestAccess::setMode3Running(
+        *sharedBoard, 4, active, true, 9000.25);
+    YouKnow106TestAccess::stageMode3Count(*sharedBoard, 4, completed);
+    YouKnow106TestAccess::setMode3Running(
+        *sharedBoard, 5, active, true, 8000.25);
+    YouKnow106TestAccess::setAwaitingPitMsb(
+        *sharedBoard, 5, requested, 7.0);
+    sharedBoard->noteOn(60, 1.0f);
+    expectRestarted(*sharedBoard, "a board-shared Voice On");
+    expect(YouKnow106TestAccess::pendingDcoDividerValid(*sharedBoard, 5)
+               && YouKnow106TestAccess::pendingDcoDivider(*sharedBoard, 5)
+                      == requested
+               && YouKnow106TestAccess::pitWriteState(*sharedBoard, 5)
+                      == YouKnow106TestAccess::idlePitWriteState()
+               && YouKnow106TestAccess::pendingDcoDividerValid(*sharedBoard, 4)
+               && YouKnow106TestAccess::pendingDcoDivider(*sharedBoard, 4)
+                      == completed,
+           "the shared restart lost another card's protected or completed PIT state");
+
     // The reset branch's DI starts four states before its T-389 control store.
     // A command accepted on or after that boundary must finish the transaction
     // from the old voice state before its handler installs the new note.
@@ -3257,6 +3309,78 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                && YouKnow106TestAccess::nextConverterWrite(completedHold)
                       == 0u,
            "a Voice On discarded or double-advanced a completed VCF write");
+
+    // A mid-pass Voice On jumps to the fresh-loop onset calculation but does
+    // not rerun the oscillator/PWM work near the abandoned pass's end.
+    auto lfoParameters = plainPatch();
+    lfoParameters.lfoDelay = 1.0f;
+    lfoParameters.dcoLfoDepth = 0.0f;
+    lfoParameters.pulseEnabled = true;
+    lfoParameters.pwmSource = PwmSource::Lfo;
+    lfoParameters.pwmDepth = 0.1f;
+    auto restartedLfoParameters = lfoParameters;
+    restartedLfoParameters.dcoLfoDepth = 1.0f;
+    restartedLfoParameters.pwmDepth = 0.9f;
+    const auto lfoFixture = [&](double phase) {
+        auto engine = std::make_unique<YouKnow106Engine>();
+        engine->prepare(192000.0, blockSize, false);
+        engine->setParameters(lfoParameters);
+        engine->noteOn(60, 1.0f);
+        YouKnow106TestAccess::setLfoRestartState(*engine);
+        YouKnow106TestAccess::setConverterScheduler(
+            *engine, phase, phase >= 1.0
+                ? YouKnow106TestAccess::converterWriteCount() : 17u);
+        engine->setParameters(restartedLfoParameters);
+        return engine;
+    };
+
+    auto midPassLfo = lfoFixture(0.75);
+    const float midPassLfoValue = YouKnow106TestAccess::lfoValue(*midPassLfo);
+    const std::uint16_t midPassPwm =
+        YouKnow106TestAccess::converterPassPwmDacCode(*midPassLfo);
+    const std::int32_t midPassPitchWord =
+        YouKnow106TestAccess::dcoLfoPitchWord(*midPassLfo);
+    midPassLfo->noteOn(64, 1.0f);
+    expect(YouKnow106TestAccess::controlScanPhase(*midPassLfo) == 0.0
+               && YouKnow106TestAccess::lfoDelayHoldoff(*midPassLfo) == 0x4000u
+               && YouKnow106TestAccess::lfoDelayFade(*midPassLfo) == 0x4100u
+               && YouKnow106TestAccess::lfoDelayByte(*midPassLfo) == 0x41u
+               && YouKnow106TestAccess::lfoValue(*midPassLfo)
+                      == midPassLfoValue
+               && YouKnow106TestAccess::converterPassPwmDacCode(*midPassLfo)
+                      == midPassPwm
+               && YouKnow106TestAccess::dcoLfoPitchWord(*midPassLfo)
+                      != midPassPitchWord
+               && std::abs(
+                      YouKnow106TestAccess::converterPassLfoGated(*midPassLfo)
+                      - midPassLfoValue
+                          * YouKnow106TestAccess::lfoDelayLevel(*midPassLfo))
+                      < 1.0e-7f,
+           "a mid-pass Voice On did not rerun onset exactly once while preserving late LFO/PWM state");
+
+    // At an already-due boundary the normal pass start owns that same onset
+    // step. The serial restart must leave it pending, not execute it twice.
+    auto dueLfo = lfoFixture(1.0);
+    const float dueValue = YouKnow106TestAccess::lfoValue(*dueLfo);
+    const std::uint16_t duePwm =
+        YouKnow106TestAccess::converterPassPwmDacCode(*dueLfo);
+    dueLfo->noteOn(64, 1.0f);
+    expect(YouKnow106TestAccess::controlScanPhase(*dueLfo) == 1.0
+               && YouKnow106TestAccess::lfoDelayHoldoff(*dueLfo) == 0x4000u
+               && YouKnow106TestAccess::lfoDelayFade(*dueLfo) == 0x4000u
+               && YouKnow106TestAccess::lfoDelayByte(*dueLfo) == 0x40u
+               && YouKnow106TestAccess::lfoValue(*dueLfo) == dueValue
+               && YouKnow106TestAccess::converterPassPwmDacCode(*dueLfo)
+                      == duePwm,
+           "a due-boundary Voice On consumed onset or late state early");
+    float dueLeft = 0.0f;
+    float dueRight = 0.0f;
+    dueLfo->process(&dueLeft, &dueRight, 1);
+    expect(YouKnow106TestAccess::lfoDelayHoldoff(*dueLfo) == 0x4000u
+               && YouKnow106TestAccess::lfoDelayFade(*dueLfo) == 0x4100u
+               && YouKnow106TestAccess::lfoDelayByte(*dueLfo) == 0x41u
+               && YouKnow106TestAccess::lfoValue(*dueLfo) != dueValue,
+           "a due-boundary Voice On double-stepped the fresh-loop onset");
 }
 
 void testConverterAnchoredPitchPrestageTimelineAndAtomicCommit()

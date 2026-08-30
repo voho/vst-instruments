@@ -5078,6 +5078,21 @@ void YouKnow106Engine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     // not turned into random timing here.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244
     const bool passBoundaryWasAlreadyDue = controlScanPhase_ >= 1.0;
+    if (!passBoundaryWasAlreadyDue)
+    {
+        // The jump begins a fresh loop, so its early onset calculation runs
+        // again. The restart itself does not rerun the late LFO/PWM update;
+        // preserve that state and refresh only what 030D-03A1 derives from the
+        // already-stored oscillator value.
+        // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L526-L607
+        advanceLfoDelay(activeParameters_);
+        dcoLfoPitchWord_ = dcoLfoPitchWordOffset(
+            lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
+            storedControlByte(activeParameters_.dcoLfoDepth),
+            storedControlByte(modWheelTarget_),
+            controlAdcByte(activeParameters_.benderLfoDepth));
+        converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+    }
     controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
     nextConverterWrite_ = 0;
     passiveHoldEventLatch_ = {};
@@ -5350,6 +5365,12 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
     lfoValue_ = lfoPolarity_
               * static_cast<float>(lfoAccumulator_) / 8191.0f;
 
+    advanceLfoDelay(parameters);
+}
+
+void YouKnow106Engine::advanceLfoDelay(
+    const EngineParameters& parameters) noexcept
+{
     // Delay: a silent hold that advances at the attack table's own rate, then
     // the stepped fade. The pair is re-armed the moment a note starts with no
     // key down -- release tails still ringing keep their vibrato, because the
