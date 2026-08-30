@@ -103,6 +103,16 @@ constexpr std::array tanhScenarios {
                "sixteen-voice-full-mixer-chorus-ii", 16 },
 };
 
+// Opt-in Merson measurements stay outside the established default and
+// fingerprint scenario sets, so adding the deeper pair kernel cannot silently
+// change either output contract.
+constexpr std::array mersonScenarios {
+    Scenario { ScenarioKind::SixVoiceFullMixerChorusTwo,
+               "six-voice-full-mixer-chorus-ii", 6 },
+    Scenario { ScenarioKind::SixteenVoiceFullMixerChorusTwo,
+               "sixteen-voice-full-mixer-chorus-ii", 16 },
+};
+
 EngineParameters parametersFor(ScenarioKind kind,
                                VcfTanhMode tanhMode = VcfTanhMode::Exact,
                                VcfFastEarlyMode fastEarlyMode =
@@ -686,6 +696,91 @@ int printFingerprints()
     return 0;
 }
 
+[[maybe_unused]] int printMersonTimingReport()
+{
+    const CpuClock clock;
+    const double renderedSeconds = static_cast<double>(timingBlocks * blockSize)
+                                 / 48000.0;
+    std::cout << "protocol host_rate=48000 qualities=2x,1x"
+              << " block_size=" << blockSize
+              << " preroll_seconds=" << preRollSeconds
+              << " timed_blocks=" << timingBlocks
+              << " repetitions=" << timingRepetitions
+              << " order=factor-alternating snapshot_copy=outside-timer"
+              << " clock=" << clock.name()
+              << " comparison=external-a-b-a"
+              << " hash=fnv1a64-raw-interleaved-f32\n";
+    std::cout << "schema merson_timing scenario quality fingerprint"
+                 " median_cpu_ms min_cpu_ms mad_cpu_ms"
+                 " median_cpu_x_realtime\n";
+    std::cout << "schema merson_runs_cpu_ms scenario quality repetitions...\n";
+
+    constexpr std::array<int, 2> requestedFactors { 2, 1 };
+    constexpr std::array<std::string_view, 2> qualityNames { "2x", "1x" };
+    for (const auto& scenario : mersonScenarios)
+    {
+        std::array<PreparedSnapshot, requestedFactors.size()> snapshots {
+            prepareSnapshot(
+                scenario, 48000, 2, VcfTanhMode::PolyZoned,
+                VcfFastEarlyMode::Cubic, VcfSolverMode::Rk4Single),
+            prepareSnapshot(
+                scenario, 48000, 1, VcfTanhMode::PolyZoned,
+                VcfFastEarlyMode::Cubic, VcfSolverMode::Rk4Single)
+        };
+        for (std::size_t factor = 0; factor < snapshots.size(); ++factor)
+            if (snapshots[factor].factor != requestedFactors[factor])
+                throw std::runtime_error(
+                    "48 kHz Merson audit did not resolve to "
+                    + std::string(qualityNames[factor]));
+
+        std::array<std::vector<double>, requestedFactors.size()> times;
+        std::array<std::vector<std::uint64_t>, requestedFactors.size()> hashes;
+        for (std::size_t factor = 0; factor < snapshots.size(); ++factor)
+        {
+            times[factor].reserve(timingRepetitions);
+            hashes[factor].reserve(timingRepetitions);
+        }
+
+        for (int repetition = 0; repetition < timingRepetitions; ++repetition)
+        {
+            std::array<TimedRun, requestedFactors.size()> runs;
+            for (std::size_t step = 0; step < snapshots.size(); ++step)
+            {
+                const std::size_t factor = repetition % 2 == 0
+                    ? step : snapshots.size() - 1u - step;
+                runs[factor] = renderTimed(snapshots[factor], clock);
+            }
+            for (std::size_t factor = 0; factor < snapshots.size(); ++factor)
+            {
+                times[factor].push_back(runs[factor].cpuSeconds);
+                hashes[factor].push_back(runs[factor].fingerprint);
+            }
+        }
+
+        for (std::size_t factor = 0; factor < snapshots.size(); ++factor)
+        {
+            requireStableHash(
+                hashes[factor], scenario.name, qualityNames[factor]);
+            const auto summary = summarize(times[factor]);
+            std::cout << "merson_timing " << scenario.name << " "
+                      << qualityNames[factor] << " "
+                      << hexHash(hashes[factor].front()) << " " << std::fixed
+                      << std::setprecision(3)
+                      << summary.median * 1000.0 << " "
+                      << summary.minimum * 1000.0 << " "
+                      << summary.mad * 1000.0 << " "
+                      << summary.median / renderedSeconds << "\n";
+            std::cout << "merson_runs_cpu_ms " << scenario.name << " "
+                      << qualityNames[factor];
+            for (const double seconds : times[factor])
+                std::cout << " " << std::fixed << std::setprecision(3)
+                          << seconds * 1000.0;
+            std::cout << "\n";
+        }
+    }
+    return 0;
+}
+
 #if defined(YOUKNOW106_WORK_AUDIT)
 
 struct CounterCase
@@ -1015,7 +1110,8 @@ int runCounterAudit(bool selfTestOnly)
 void printUsage(const char* executable)
 {
     std::cout << "usage: " << executable
-              << " [--fingerprint|--tanh-benchmark|--self-test|--help]\n";
+              << " [--fingerprint|--tanh-benchmark|--merson-benchmark"
+                 "|--self-test|--help]\n";
 }
 
 } // namespace
@@ -1038,6 +1134,16 @@ int main(int argc, char** argv)
             return 2;
 #else
             return printTanhTimingReport();
+#endif
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--merson-benchmark")
+        {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            std::cerr << "--merson-benchmark requires "
+                         "YouKnow106OversamplingAudit\n";
+            return 2;
+#else
+            return printMersonTimingReport();
 #endif
         }
         if (argc == 2 && std::string_view(argv[1]) == "--self-test")

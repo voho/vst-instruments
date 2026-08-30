@@ -1689,6 +1689,114 @@ struct YouKnow106TestAccess
         };
     }
 
+    static OtaPairComparison compareSettledMersonPair(
+        std::size_t fixtureIndex) noexcept
+    {
+        struct LaneFixture
+        {
+            std::array<double, 4> state;
+            std::array<float, 4> offset;
+            std::array<double, 3> history;
+            std::array<float, 4> scale;
+            float input;
+            float omega;
+            float feedback;
+            float headroom;
+        };
+        struct PairFixture
+        {
+            LaneFixture first;
+            LaneFixture second;
+        };
+
+        // Both fixtures exceed RK4's half-step stability bound and therefore
+        // resolve to Merson. The second also drives both nonlinear fallbacks;
+        // every card retains distinct charge, trim and causal input history.
+        const std::array<PairFixture, 2> fixtures {
+            PairFixture {
+                LaneFixture {
+                    { 0.024, 0.008, -0.012, 0.006 },
+                    { 0.0011f, -0.0005f, 0.0009f, -0.0013f },
+                    { 0.031, 0.017, -0.009 },
+                    { 1.03f, 0.98f, 1.01f, 0.96f },
+                    0.027f, 2.10f, 8.0f, 0.36f
+                },
+                LaneFixture {
+                    { -0.018, 0.011, 0.004, -0.007 },
+                    { -0.0008f, 0.0014f, -0.0010f, 0.0006f },
+                    { -0.025, 0.014, 0.003 },
+                    { 0.95f, 1.05f, 0.99f, 1.02f },
+                    -0.022f, 2.04f, 7.0f, 0.40f
+                }
+            },
+            PairFixture {
+                LaneFixture {
+                    { 0.82, -0.61, 0.47, -0.34 },
+                    { 0.021f, -0.013f, 0.008f, -0.017f },
+                    { 0.73, -0.52, 0.36 },
+                    { 1.06f, 0.94f, 1.03f, 0.97f },
+                    0.69f, 2.00f, 8.0f, 0.32f
+                },
+                LaneFixture {
+                    { -0.78, 0.55, -0.42, 0.31 },
+                    { -0.018f, 0.015f, -0.011f, 0.019f },
+                    { -0.67, 0.49, -0.33 },
+                    { 0.93f, 1.07f, 0.96f, 1.04f },
+                    -0.64f, 2.20f, 6.5f, 0.28f
+                }
+            }
+        };
+
+        const auto makeCascade = [](const LaneFixture& fixture) {
+            YouKnow106Engine::OtaCascade cascade;
+            cascade.state = fixture.state;
+            cascade.offsetVoltage = fixture.offset;
+            cascade.inputHistory = fixture.history;
+            cascade.inputHistoryCount = 2;
+            cascade.gScale = fixture.scale;
+            cascade.previousOmegaStep =
+                YouKnow106Engine::OtaCascade::clampOmegaStep(fixture.omega);
+            cascade.previousFeedback = fixture.feedback;
+            cascade.previousHeadroom = fixture.headroom;
+            cascade.parameterHistoryPrimed = true;
+            return cascade;
+        };
+        const auto sameBits = [](const auto& first, const auto& second) {
+            return std::memcmp(&first, &second, sizeof(first)) == 0;
+        };
+
+        const auto& fixture = fixtures[fixtureIndex];
+        auto pairFirst = makeCascade(fixture.first);
+        auto pairSecond = makeCascade(fixture.second);
+        auto scalarFirst = pairFirst;
+        auto scalarSecond = pairSecond;
+        const float scalarFirstOutput = scalarFirst.process<true>(
+            fixture.first.input, fixture.first.omega,
+            fixture.first.feedback, fixture.first.headroom, true, 0.70f,
+            nullptr, VcfTanhMode::PolyZoned, VcfSolverMode::Rk4Single);
+        const float scalarSecondOutput = scalarSecond.process<true>(
+            fixture.second.input, fixture.second.omega,
+            fixture.second.feedback, fixture.second.headroom, true, 0.70f,
+            nullptr, VcfTanhMode::PolyZoned, VcfSolverMode::Rk4Single);
+
+        float pairFirstOutput = -123.5f;
+        float pairSecondOutput = 97.25f;
+        const bool accepted =
+            YouKnow106Engine::OtaCascade::tryProcessSettledMersonPair(
+                pairFirst, fixture.first.input, fixture.first.omega,
+                fixture.first.feedback, fixture.first.headroom,
+                pairSecond, fixture.second.input, fixture.second.omega,
+                fixture.second.feedback, fixture.second.headroom,
+                true, 0.70f, pairFirstOutput, pairSecondOutput);
+        return {
+            accepted,
+            sameBits(pairFirstOutput, scalarFirstOutput),
+            sameBits(pairSecondOutput, scalarSecondOutput),
+            sameOtaCascadeBits(pairFirst, scalarFirst),
+            sameOtaCascadeBits(pairSecond, scalarSecond)
+        };
+    }
+
     static OtaPairGuardComparison compareRejectedOtaPair(
         bool mixedTableaux) noexcept
     {
@@ -1718,6 +1826,56 @@ struct YouKnow106TestAccess
                 first, 0.01f, 1.4f, 0.0f, 0.4f,
                 second, -0.01f, mixedTableaux ? 0.2f : 1.4f,
                 0.0f, 0.4f,
+                true, 0.70f, firstOutput, secondOutput);
+        return {
+            !accepted,
+            sameOtaCascadeBits(first, beforeFirst),
+            sameOtaCascadeBits(second, beforeSecond),
+            std::memcmp(&firstOutput, &beforeFirstOutput,
+                        sizeof(firstOutput)) == 0,
+            std::memcmp(&secondOutput, &beforeSecondOutput,
+                        sizeof(secondOutput)) == 0
+        };
+    }
+
+    static OtaPairGuardComparison compareRejectedMersonPair(
+        bool mixedTableaux) noexcept
+    {
+        constexpr float mersonOmega = 2.1f;
+        constexpr float rk4Omega = 0.2f;
+        constexpr float headroom = 0.4f;
+        YouKnow106Engine::OtaCascade first;
+        YouKnow106Engine::OtaCascade second;
+        first.state = { 0.02, -0.01, 0.005, -0.002 };
+        second.state = { -0.03, 0.015, -0.007, 0.004 };
+        first.inputHistory = { 0.01, -0.005, 0.002 };
+        second.inputHistory = { -0.012, 0.006, -0.003 };
+        first.inputHistoryCount = 2;
+        second.inputHistoryCount = 2;
+        first.previousOmegaStep =
+            YouKnow106Engine::OtaCascade::clampOmegaStep(mersonOmega);
+        second.previousOmegaStep =
+            YouKnow106Engine::OtaCascade::clampOmegaStep(
+                mixedTableaux ? rk4Omega : mersonOmega);
+        first.previousFeedback = 8.0;
+        second.previousFeedback = mixedTableaux ? 0.0 : 8.0;
+        first.previousHeadroom = static_cast<double>(headroom);
+        second.previousHeadroom = static_cast<double>(headroom);
+        first.parameterHistoryPrimed = true;
+        second.parameterHistoryPrimed = mixedTableaux;
+
+        const auto beforeFirst = first;
+        const auto beforeSecond = second;
+        float firstOutput = -123.5f;
+        float secondOutput = 97.25f;
+        const float beforeFirstOutput = firstOutput;
+        const float beforeSecondOutput = secondOutput;
+        const bool accepted =
+            YouKnow106Engine::OtaCascade::tryProcessSettledMersonPair(
+                first, 0.01f, mersonOmega, 8.0f, headroom,
+                second, -0.01f,
+                mixedTableaux ? rk4Omega : mersonOmega,
+                mixedTableaux ? 0.0f : 8.0f, headroom,
                 true, 0.70f, firstOutput, secondOutput);
         return {
             !accepted,
@@ -12535,12 +12693,50 @@ void testSettledRk4PairMatchesScalar()
                name + " second cascade differs from scalar process<true>");
     }
 
+    constexpr std::array<const char*, 2> mersonFixtureNames {
+        "Merson inner-zone", "Merson nonlinear fallbacks"
+    };
+    for (std::size_t fixture = 0;
+         fixture < mersonFixtureNames.size(); ++fixture)
+    {
+        const auto compared =
+            YouKnow106TestAccess::compareSettledMersonPair(fixture);
+        const std::string name = mersonFixtureNames[fixture];
+        expect(compared.accepted,
+               name + " pair was not eligible for the SIMD Merson path");
+        expect(compared.firstOutputMatches,
+               name + " first output differs from scalar process<true>");
+        expect(compared.secondOutputMatches,
+               name + " second output differs from scalar process<true>");
+        expect(compared.firstCascadeMatches,
+               name + " first cascade differs from scalar process<true>");
+        expect(compared.secondCascadeMatches,
+               name + " second cascade differs from scalar process<true>");
+    }
+
     for (const bool mixedTableaux : { false, true })
     {
         const auto rejected =
             YouKnow106TestAccess::compareRejectedOtaPair(mixedTableaux);
         const std::string context = mixedTableaux
             ? "a mixed-tableau pair" : "an unprimed pair";
+        expect(rejected.rejected, context + " was accepted");
+        expect(rejected.firstCascadeUnchanged,
+               context + " mutated the eligible first cascade");
+        expect(rejected.secondCascadeUnchanged,
+               context + " mutated the second cascade");
+        expect(rejected.firstOutputUnchanged,
+               context + " changed the first output sentinel");
+        expect(rejected.secondOutputUnchanged,
+               context + " changed the second output sentinel");
+    }
+
+    for (const bool mixedTableaux : { false, true })
+    {
+        const auto rejected =
+            YouKnow106TestAccess::compareRejectedMersonPair(mixedTableaux);
+        const std::string context = mixedTableaux
+            ? "a non-Merson partner" : "an unprimed Merson pair";
         expect(rejected.rejected, context + " was accepted");
         expect(rejected.firstCascadeUnchanged,
                context + " mutated the eligible first cascade");

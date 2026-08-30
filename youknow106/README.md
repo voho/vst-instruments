@@ -646,6 +646,13 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   product-extension slots cut the 16-voice full-mixer/Chorus-II audit from the
   faster 433.047 ms bracketing baseline to 339.764 ms at 48 kHz/4x, a 21.54%
   median thread-CPU reduction with the raw-float fingerprint still identical.
+- Batched the settled filters that Normal must escalate to the two-half-step
+  Merson solve in those same FP64 lanes. At 48 kHz, conservative A-B-A medians
+  fell from 486.740 to 353.439 ms for six voices/2x (27.39%), from 251.685 to
+  187.959 ms for six voices/1x (25.32%), and from 1223.575 to 879.607 ms for
+  sixteen voices/2x (28.11%). Raw-float fingerprints and complete cascade state
+  remain bit-identical on arm64 and x86_64; the existing 4x RK4 path's control
+  run was 0.60% slower with the same fingerprint.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Kept the modelled instrument warm across a transport stop, so the chassis

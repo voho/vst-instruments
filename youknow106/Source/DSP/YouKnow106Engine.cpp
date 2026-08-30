@@ -3657,6 +3657,388 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4Pair(
     finishLane(lanes[1], secondOutput);
     return true;
 }
+
+#if defined(_MSC_VER)
+#define YOUKNOW106_MERSON_NOINLINE __declspec(noinline)
+#elif defined(__clang__) || defined(__GNUC__)
+#define YOUKNOW106_MERSON_NOINLINE __attribute__((noinline))
+#else
+#define YOUKNOW106_MERSON_NOINLINE
+#endif
+YOUKNOW106_MERSON_NOINLINE
+bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonPair(
+    OtaCascade& first, float firstInput, float firstOmegaStep,
+    float firstFeedback, float firstHeadroom,
+    OtaCascade& second, float secondInput, float secondOmegaStep,
+    float secondFeedback, float secondHeadroom,
+    bool enableEarlyEffect, float calibration,
+    float& firstOutput, float& secondOutput) noexcept
+{
+    constexpr double feedbackHeadroom =
+        VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
+    const double currentCalibration = std::clamp(
+        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        0.0, static_cast<double>(EngineParameters::calibrationCeiling));
+    const bool applyEarlyEffect = enableEarlyEffect
+                               && currentCalibration > 0.0;
+    const double earlyAmount =
+        static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
+    const double earlyCeiling = applyEarlyEffect ? 1.0 + earlyAmount : 1.0;
+
+    struct Lane
+    {
+        OtaCascade* cascade {};
+        double input {};
+        double omega {};
+        double feedback {};
+        double headroom {};
+        double inverseHeadroom {};
+        std::array<double, 7> drive {};
+        std::array<double, 4> stageOmega {};
+        std::array<double, 4> stageOffset {};
+    };
+
+    const auto prepareLane = [&](OtaCascade& cascade, float input,
+                                 float omegaStep, float feedback,
+                                 float headroom, Lane& lane) {
+        const double currentOmega = clampOmegaStep(
+            static_cast<double>(omegaStep));
+        const double currentFeedback = std::clamp(
+            std::isfinite(feedback) ? static_cast<double>(feedback) : 0.0,
+            0.0, 8.0);
+        const double currentHeadroom = std::max(
+            std::isfinite(headroom) ? static_cast<double>(headroom) : 0.0,
+            1.0e-5);
+        if (!cascade.parameterHistoryPrimed
+            || cascade.inputHistoryCount != 2
+            || cascade.previousOmegaStep != currentOmega
+            || cascade.previousFeedback != currentFeedback
+            || cascade.previousHeadroom != currentHeadroom
+            || !std::all_of(
+                cascade.state.begin(), cascade.state.end(), [](double value) {
+                    return std::abs(value) <= 64.0;
+                }))
+            return false;
+
+        double largestScale = 0.0;
+        for (const float scale : cascade.gScale)
+            largestScale = std::max(
+                largestScale, static_cast<double>(std::abs(scale)));
+        if (planTableau(
+                VcfSolverMode::Rk4Single,
+                currentOmega * largestScale * earlyCeiling,
+                currentFeedback) != Tableau::MersonHalf)
+            return false;
+
+        lane.cascade = &cascade;
+        lane.input = std::isfinite(input) ? static_cast<double>(input) : 0.0;
+        lane.omega = currentOmega;
+        lane.feedback = currentFeedback;
+        lane.headroom = currentHeadroom;
+        lane.inverseHeadroom = 1.0 / currentHeadroom;
+
+        const auto reconstruct = [&](double currentWeight,
+                                     double firstWeight,
+                                     double secondWeight,
+                                     double thirdWeight) {
+            return currentWeight * lane.input
+                + firstWeight * cascade.inputHistory[0]
+                + secondWeight * cascade.inputHistory[1]
+                + thirdWeight * cascade.inputHistory[2];
+        };
+        // These are the seven causal-cubic values produced by `makeNodes` in
+        // `process`, in Merson's 0, 1/6, 1/4, 1/2, 2/3, 3/4 and 1 order.
+        lane.drive[0] = reconstruct(0.0,    1.0,    0.0,     0.0);
+        lane.drive[1] = reconstruct(
+            0x1.1f9add3c0ca45p-4, 0x1.0da12f684bda1p+0,
+            -0x1.3425ed097b426p-3, 0x1.ba781948b0fcfp-6);
+        lane.drive[2] = reconstruct(
+            0.1171875, 1.0546875, -0.2109375, 0.0390625);
+        lane.drive[3] = reconstruct(
+            0.3125, 0.9375, -0.3125, 0.0625);
+        lane.drive[4] = reconstruct(
+            0x1.f9add3c0ca457p-2, 0x1.7b425ed097b42p-1,
+            -0x1.2f684bda12f68p-2, 0x1.f9add3c0ca458p-5);
+        lane.drive[5] = reconstruct(
+            0.6015625, 0.6015625, -0.2578125, 0.0546875);
+        lane.drive[6] = reconstruct(1.0,    0.0,    0.0,     0.0);
+        for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
+        {
+            lane.stageOmega[stage] = currentOmega
+                * static_cast<double>(cascade.gScale[stage]);
+            lane.stageOffset[stage] =
+                static_cast<double>(cascade.offsetVoltage[stage]);
+        }
+        return true;
+    };
+
+    Lane lanes[2];
+    if (!prepareLane(first, firstInput, firstOmegaStep, firstFeedback,
+                     firstHeadroom, lanes[0])
+        || !prepareLane(second, secondInput, secondOmegaStep, secondFeedback,
+                        secondHeadroom, lanes[1]))
+        return false;
+
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    using Pair = float64x2_t;
+    const auto pack = [](double low, double high) {
+        return vsetq_lane_f64(high, vdupq_n_f64(low), 1);
+    };
+#define pairLow(value) vgetq_lane_f64((value), 0)
+#define pairHigh(value) vgetq_lane_f64((value), 1)
+#define pairSplat(value) vdupq_n_f64(value)
+#define pairAdd(first, second) vaddq_f64((first), (second))
+#define pairSubtract(first, second) vsubq_f64((first), (second))
+#define pairMultiply(first, second) vmulq_f64((first), (second))
+#define pairMultiplyScalar(value, scalar) vmulq_n_f64((value), (scalar))
+#define pairMultiplyAdd(addend, first, second) \
+    vfmaq_f64((addend), (first), (second))
+#define pairMultiplyAddScalar(addend, value, scalar) \
+    vfmaq_n_f64((addend), (value), (scalar))
+#elif defined(__x86_64__) && defined(__SSE2__)
+    using Pair = __m128d;
+    const auto pack = [](double low, double high) {
+        return _mm_set_pd(high, low);
+    };
+#define pairLow(value) _mm_cvtsd_f64(value)
+#define pairHigh(value) _mm_cvtsd_f64(_mm_unpackhi_pd((value), (value)))
+#define pairSplat(value) _mm_set1_pd(value)
+#define pairAdd(first, second) _mm_add_pd((first), (second))
+#define pairSubtract(first, second) _mm_sub_pd((first), (second))
+#define pairMultiply(first, second) _mm_mul_pd((first), (second))
+#define pairMultiplyScalar(value, scalar) \
+    _mm_mul_pd((value), _mm_set1_pd(scalar))
+    // Baseline x86_64 has SSE2 but not FMA. Keep the scalar path's separate
+    // multiply and add rounding rather than changing the solve along with its
+    // scheduling.
+#define pairMultiplyAdd(addend, first, second) \
+    _mm_add_pd((addend), _mm_mul_pd((first), (second)))
+#define pairMultiplyAddScalar(addend, value, scalar) \
+    _mm_add_pd((addend), _mm_mul_pd((value), _mm_set1_pd(scalar)))
+#endif
+    using PairState = std::array<Pair, 4>;
+    const auto polyTanhPair = [&](Pair value) {
+        const Pair u = pairMultiply(value, value);
+        if (pairLow(u) >= 1.0 || pairHigh(u) >= 1.0)
+            return pack(polyZonedTanhImpl(pairLow(value)),
+                        polyZonedTanhImpl(pairHigh(value)));
+
+        const Pair uSquared = pairMultiply(u, u);
+        const Pair top = pairMultiplyAddScalar(
+            pairSplat(0.016720855179576926), u,
+            -0.00305822903759879);
+        const Pair high = pairMultiplyAddScalar(
+            pairSplat(0.1328072064598552), u,
+            -0.051585988404218436);
+        const Pair low = pairMultiplyAddScalar(
+            pairSplat(0.9999993948006496), u,
+            -0.3332895137021704);
+        const Pair upper = pairMultiplyAdd(high, top, uSquared);
+        const Pair factor = pairMultiplyAdd(low, upper, uSquared);
+        return pairMultiply(value, factor);
+    };
+    const auto cubicEarlyPair = [&](Pair value) {
+        if (std::abs(pairLow(value)) >= 1.5
+            || std::abs(pairHigh(value)) >= 1.5)
+            return pack(cubicEarlyTanh(pairLow(value)),
+                        cubicEarlyTanh(pairHigh(value)));
+
+        const Pair scaled = pairMultiplyScalar(value, -(4.0 / 27.0));
+        const Pair factor = pairMultiplyAdd(pairSplat(1.0), scaled, value);
+        return pairMultiply(value, factor);
+    };
+
+    PairState state;
+    PairState stageOmega;
+    PairState stageOffset;
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+    {
+        state[stage] = pack(first.state[stage], second.state[stage]);
+        stageOmega[stage] = pack(lanes[0].stageOmega[stage],
+                                 lanes[1].stageOmega[stage]);
+        stageOffset[stage] = pack(lanes[0].stageOffset[stage],
+                                  lanes[1].stageOffset[stage]);
+    }
+    const Pair inverseHeadroom = pack(lanes[0].inverseHeadroom,
+                                      lanes[1].inverseHeadroom);
+    const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
+
+    const auto derivative = [&](const PairState& value, Pair drive) {
+        const Pair feedbackArgument = pairMultiplyScalar(
+            value[3], 1.0 / feedbackHeadroom);
+        const Pair feedbackTanh = polyTanhPair(feedbackArgument);
+        const double firstLoopReturn = lanes[0].feedback == 0.0
+            ? pairLow(drive)
+            : pairLow(drive)
+                - lanes[0].feedback * feedbackHeadroom
+                    * pairLow(feedbackTanh);
+        const double secondLoopReturn = lanes[1].feedback == 0.0
+            ? pairHigh(drive)
+            : pairHigh(drive)
+                - lanes[1].feedback * feedbackHeadroom
+                    * pairHigh(feedbackTanh);
+        const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
+
+        PairState stageArgument {
+            pairMultiply(pairAdd(pairSubtract(loopReturn, value[0]),
+                                 stageOffset[0]), inverseHeadroom),
+            pairMultiply(pairAdd(pairSubtract(value[0], value[1]),
+                                 stageOffset[1]), inverseHeadroom),
+            pairMultiply(pairAdd(pairSubtract(value[1], value[2]),
+                                 stageOffset[2]), inverseHeadroom),
+            pairMultiply(pairAdd(pairSubtract(value[2], value[3]),
+                                 stageOffset[3]), inverseHeadroom)
+        };
+        PairState stageTanh;
+        for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
+            stageTanh[stage] = polyTanhPair(stageArgument[stage]);
+
+        PairState early;
+        if (!applyEarlyEffect)
+        {
+            for (auto& valueAtStage : early)
+                valueAtStage = pairSplat(1.0);
+        }
+        else
+        {
+            for (std::size_t stage = 0; stage < early.size(); ++stage)
+            {
+                const Pair earlyTanh = cubicEarlyPair(
+                    pairMultiply(value[stage], inverseHeadroom));
+                early[stage] = pairMultiplyAddScalar(
+                    pairSplat(1.0), earlyTanh, earlyAmount);
+            }
+        }
+
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            result[stage] = pairMultiply(stageOmega[stage], early[stage]);
+            result[stage] = pairMultiply(result[stage], runningHeadroom);
+            result[stage] = pairMultiply(result[stage], stageTanh[stage]);
+        }
+        return result;
+    };
+    const auto advanceOne = [](const PairState& origin,
+                               const PairState& slope, double distance) {
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = pairMultiplyAddScalar(
+                origin[stage], slope[stage], distance);
+        return result;
+    };
+    const auto advanceTwo = [](const PairState& origin, double stepSize,
+                               const PairState& firstSlope,
+                               double firstWeight,
+                               const PairState& secondSlope,
+                               double secondWeight) {
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            Pair weighted = pairMultiplyScalar(
+                secondSlope[stage], secondWeight);
+            weighted = pairMultiplyAddScalar(
+                weighted, firstSlope[stage], firstWeight);
+            result[stage] = pairMultiplyAddScalar(
+                origin[stage], weighted, stepSize);
+        }
+        return result;
+    };
+    const auto advanceThree = [](const PairState& origin, double stepSize,
+                                 const PairState& firstSlope,
+                                 double firstWeight,
+                                 const PairState& secondSlope,
+                                 double secondWeight,
+                                 const PairState& thirdSlope,
+                                 double thirdWeight) {
+        PairState result;
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            Pair weighted = pairMultiplyScalar(
+                secondSlope[stage], secondWeight);
+            weighted = pairMultiplyAddScalar(
+                weighted, firstSlope[stage], firstWeight);
+            weighted = pairMultiplyAddScalar(
+                weighted, thirdSlope[stage], thirdWeight);
+            result[stage] = pairMultiplyAddScalar(
+                origin[stage], weighted, stepSize);
+        }
+        return result;
+    };
+
+    for (const std::size_t start : { 0u, 3u })
+    {
+        const PairState origin = state;
+        const Pair k1Drive = pack(lanes[0].drive[start],
+                                  lanes[1].drive[start]);
+        const Pair sharedDrive = pack(lanes[0].drive[start + 1u],
+                                      lanes[1].drive[start + 1u]);
+        const Pair k4Drive = pack(lanes[0].drive[start + 2u],
+                                  lanes[1].drive[start + 2u]);
+        const Pair k5Drive = pack(lanes[0].drive[start + 3u],
+                                  lanes[1].drive[start + 3u]);
+        const PairState k1 = derivative(origin, k1Drive);
+        const PairState k2 = derivative(
+            advanceOne(origin, k1, 1.0 / 6.0), sharedDrive);
+        const PairState k3 = derivative(
+            advanceTwo(origin, 0.5, k1, 1.0 / 6.0,
+                       k2, 1.0 / 6.0), sharedDrive);
+        const PairState k4 = derivative(
+            advanceTwo(origin, 0.5, k1, 1.0 / 8.0,
+                       k3, 3.0 / 8.0), k4Drive);
+        const PairState k5 = derivative(
+            advanceThree(origin, 0.5, k1, 1.0 / 2.0,
+                         k3, -3.0 / 2.0, k4, 2.0), k5Drive);
+        state = advanceThree(origin, 0.5, k1, 1.0 / 6.0,
+                             k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+    }
+
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+    {
+        first.state[stage] = pairLow(state[stage]);
+        second.state[stage] = pairHigh(state[stage]);
+    }
+
+#undef pairLow
+#undef pairHigh
+#undef pairSplat
+#undef pairAdd
+#undef pairSubtract
+#undef pairMultiply
+#undef pairMultiplyScalar
+#undef pairMultiplyAdd
+#undef pairMultiplyAddScalar
+
+    const auto finishLane = [](Lane& lane, float& output) {
+        auto& cascade = *lane.cascade;
+        for (std::size_t point = cascade.inputHistory.size() - 1u;
+             point > 0u; --point)
+            cascade.inputHistory[point] = cascade.inputHistory[point - 1u];
+        cascade.inputHistory[0] = lane.input;
+        cascade.inputHistoryCount = std::min(cascade.inputHistoryCount + 1, 2);
+        cascade.previousOmegaStep = lane.omega;
+        cascade.previousFeedback = lane.feedback;
+        cascade.previousHeadroom = lane.headroom;
+
+        const bool valid = std::all_of(
+            cascade.state.begin(), cascade.state.end(), [](double value) {
+                return std::abs(value) <= 64.0;
+            });
+        if (!valid)
+        {
+            cascade.state.fill(0.0);
+            cascade.inputHistory.fill(lane.input);
+            cascade.inputHistoryCount = 2;
+            output = 0.0f;
+            return;
+        }
+        output = static_cast<float>(cascade.state[3]);
+    };
+    finishLane(lanes[0], firstOutput);
+    finishLane(lanes[1], secondOutput);
+    return true;
+}
+#undef YOUKNOW106_MERSON_NOINLINE
 #endif
 
 void YouKnow106Engine::HighPass::reset() noexcept
@@ -6854,13 +7236,21 @@ std::array<float, 2> YouKnow106Engine::renderVoicePair(
 #if !defined(YOUKNOW106_WORK_AUDIT)
     if (firstFrame.needsFilter && secondFrame.needsFilter
         && !firstFrame.hasTrajectory && !secondFrame.hasTrajectory)
-        processed = OtaCascade::tryProcessSettledRk4Pair(
-            first.filter, firstFrame.input, firstFrame.omegaStep,
-            first.feedback, firstFrame.headroom,
-            second.filter, secondFrame.input, secondFrame.omegaStep,
-            second.feedback, secondFrame.headroom,
-            parameters.enableVcfEarlyEffect, parameters.calibration,
-            filtered[0], filtered[1]);
+        processed =
+            OtaCascade::tryProcessSettledRk4Pair(
+                first.filter, firstFrame.input, firstFrame.omegaStep,
+                first.feedback, firstFrame.headroom,
+                second.filter, secondFrame.input, secondFrame.omegaStep,
+                second.feedback, secondFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration,
+                filtered[0], filtered[1])
+            || OtaCascade::tryProcessSettledMersonPair(
+                first.filter, firstFrame.input, firstFrame.omegaStep,
+                first.feedback, firstFrame.headroom,
+                second.filter, secondFrame.input, secondFrame.omegaStep,
+                second.feedback, secondFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration,
+                filtered[0], filtered[1]);
 #endif
     if (!processed)
     {

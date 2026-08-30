@@ -1507,6 +1507,16 @@ private:
             float secondFeedback, float secondHeadroom,
             bool enableEarlyEffect, float calibration,
             float& firstOutput, float& secondOutput) noexcept;
+        // Keep the deeper Merson solve separate from the hot RK4 function.
+        // It is tried only after that function rejects, and false likewise
+        // leaves both cascades and output sentinels untouched.
+        static bool tryProcessSettledMersonPair(
+            OtaCascade& first, float firstInput, float firstOmegaStep,
+            float firstFeedback, float firstHeadroom,
+            OtaCascade& second, float secondInput, float secondOmegaStep,
+            float secondFeedback, float secondHeadroom,
+            bool enableEarlyEffect, float calibration,
+            float& firstOutput, float& secondOutput) noexcept;
 #endif
 
         [[nodiscard]] static double reconstructInput(
