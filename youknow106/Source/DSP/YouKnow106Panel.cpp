@@ -38,7 +38,7 @@ constexpr Placement placements[controlCount] = {
       ControlKind::Knob, 0, 0, 0, 1, -1, 0, 1 },
 
     { parameters::benderDco, "DCO",
-      "Sets how far the pitch-bend lever bends oscillator pitch, from zero to plus or minus 12 semitones.",
+      "Sets how far the pitch-bend lever bends oscillator pitch, from zero to just under plus or minus 12 semitones.",
       ControlKind::Slider, 0, 0, 0, 1, -1, 0 },
     { parameters::benderVcf, "VCF",
       "Sets how strongly the pitch-bend lever moves filter cutoff, up to about plus or minus 3.6 octaves.",

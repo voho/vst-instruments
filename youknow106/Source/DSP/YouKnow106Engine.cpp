@@ -213,10 +213,41 @@ float converterDacFraction(float value) noexcept
         / 4064.0f;
 }
 
-std::uint8_t portamentoAdcByte(float value) noexcept
+std::uint8_t controlAdcByte(float value) noexcept
 {
     return static_cast<std::uint8_t>(
         std::floor(clamp01(sanitised(value, 0.0f)) * 255.0f + 0.5f));
+}
+
+std::int16_t dcoBendCommand(float normalised) noexcept
+{
+    // The assigner left-aligns the fourteen-bit MIDI word and sends its high
+    // byte to B-2 as two one-sided magnitudes. Recombining those bytes gives
+    // signed -127..127 with high-byte values 127 and 128 both at rest.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1068-L1087
+    const double bounded = std::clamp(
+        static_cast<double>(sanitised(normalised, 0.0f)), -1.0, 1.0);
+    const long wheel = std::clamp(
+        std::lround(8192.0 + bounded * 8192.0), 0L, 16383L);
+    const int high = static_cast<int>(wheel) >> 6;
+    return static_cast<std::int16_t>(
+        high >= 128 ? high - 128 : -(127 - high));
+}
+
+std::int32_t dcoBendWordForCommand(std::int16_t command,
+                                   std::uint8_t sensitivity) noexcept
+{
+    // B-2 multiplies the one-sided bend byte by the DCO sensitivity ADC, then
+    // forms 0.75*product plus its high byte before extracting the 8.8 pitch
+    // word. Spell the individual truncating shifts exactly; replacing them by
+    // a floating 1.75 scale changes low-level and endpoint codes.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1006-L1059
+    const std::uint32_t magnitude = command == 0
+        ? 0u : static_cast<std::uint32_t>(2 * std::abs(static_cast<int>(command)) + 1);
+    const std::uint32_t product = magnitude * sensitivity;
+    const auto word = static_cast<std::int32_t>(
+        ((product >> 1u) + (product >> 2u) + (product >> 8u)) >> 4u);
+    return command < 0 ? -word : word;
 }
 
 // The single-pole RC corner frequency a capacitor in series with a resistance
@@ -363,6 +394,13 @@ std::int16_t YouKnow106Engine::masterTunePitchWordOffset(
         ? std::clamp(cents, -50.0, 50.0) : 0.0;
     const long units = std::lround(bounded * 2.56);
     return static_cast<std::int16_t>(std::clamp(units, -128L, 127L));
+}
+
+std::int32_t YouKnow106Engine::dcoPitchBendWordOffset(
+    float normalisedBipolar, float depth) noexcept
+{
+    return dcoBendWordForCommand(
+        dcoBendCommand(normalisedBipolar), controlAdcByte(depth));
 }
 
 std::uint32_t YouKnow106Engine::dcoDivider(double frequencyHz) noexcept
@@ -908,7 +946,7 @@ std::uint16_t YouKnow106Engine::lfoDelayFadeIncrement(
 
 std::uint8_t YouKnow106Engine::portamentoIncrement(float panelPosition) noexcept
 {
-    const auto raw = portamentoAdcByte(panelPosition);
+    const auto raw = controlAdcByte(panelPosition);
     return raw == 0u ? 0u : portamentoIncrementForIndex(raw >> 1u);
 }
 
@@ -4216,6 +4254,7 @@ void YouKnow106Engine::reset()
     pitchBendTarget_ = 0.0f;
     modWheelTarget_ = 0.0f;
     pitchBend_ = 0.0f;
+    dcoPitchBendWord_ = 0;
     modWheel_ = 0.0f;
     sustainPedalDown_ = false;
     generation_ = 0;
@@ -5233,13 +5272,16 @@ std::uint32_t YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     const float lfoPitchDepth = std::min(
         2.0f, byte7(parameters.dcoLfoDepth)
                   + byte7(parameters.benderLfoDepth) * modWheel_);
-    const float cents = parameters.benderDcoDepth * benderPitchCents * pitchBend_
-        + lfoPitchDepth * lfoPitchCents * lfoGated;
+    const float cents = lfoPitchDepth * lfoPitchCents * lfoGated;
     const double midi = static_cast<double>(voice.currentMidi)
                       + static_cast<double>(cents) / 100.0;
+    const std::int32_t controlOffset =
+        static_cast<std::int32_t>(
+            masterTunePitchWordOffset(parameters.masterTuneCents))
+        + dcoPitchBendWord_;
 
     const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(
-        midi, masterTunePitchWordOffset(parameters.masterTuneCents)));
+        midi, controlOffset));
     // Roland explicitly says DCO CV contains no RANGE data: RANGE changes the
     // timer clock and selects the ramp resistor, not this compensation hold.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
@@ -6867,6 +6909,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     std::abs(pitchBendTarget_) * 255.0f + 0.5f) / 255.0f;
                 pitchBend_ = pitchBendTarget_ < 0.0f ? -bendMagnitude
                                                      : bendMagnitude;
+                dcoPitchBendWord_ = dcoBendWordForCommand(
+                    dcoBendCommand(pitchBendTarget_),
+                    controlAdcByte(parameters.benderDcoDepth));
                 modWheel_ =
                     std::floor(modWheelTarget_ * 127.0f + 0.5f) / 127.0f;
 

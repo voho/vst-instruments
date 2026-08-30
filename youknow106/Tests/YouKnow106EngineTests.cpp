@@ -3574,6 +3574,90 @@ void testMasterTuneUsesRecoveredSignedPitchWord()
            "MASTER TUNE +50 still fabricated a symmetric +128 endpoint");
 }
 
+void testPitchBendUsesRecoveredIntegerWord()
+{
+    const auto normalisedWheel = [](int wheel) {
+        return static_cast<float>(wheel - 8192) / 8192.0f;
+    };
+    const auto bendWord = [&](int wheel, float depth = 1.0f) {
+        return YouKnow106Engine::dcoPitchBendWordOffset(
+            normalisedWheel(wheel), depth);
+    };
+
+    expect(bendWord(0) == -3063 && bendWord(16383) == 3063,
+           "DCO bend left B-2's asymmetric 11.96484375-semitone word law");
+    expect(bendWord(8127) == -35 && bendWord(8128) == 0
+               && bendWord(8255) == 0 && bendWord(8256) == 35,
+           "DCO bend lost the assigner's two-bin centre or its first step");
+    expect(bendWord(16383, 0.5f) == 1537
+               && bendWord(16383, 0.0f) == 0,
+           "DCO bend sensitivity stopped using the eight-bit ADC product");
+    expect(YouKnow106Engine::dcoPitchBendWordOffset(
+               std::numeric_limits<float>::quiet_NaN(), 1.0f) == 0
+               && YouKnow106Engine::dcoPitchBendWordOffset(
+                      1.0f, std::numeric_limits<float>::quiet_NaN()) == 0,
+           "DCO bend's host adapter lost its defensive neutral bounds");
+
+    const auto renderedPair = [&](int wheel) {
+        YouKnow106Engine engine;
+        engine.prepare(192000.0, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.benderDcoDepth = 1.0f;
+        engine.setParameters(parameters);
+        engine.setPitchBend(normalisedWheel(wheel));
+        engine.noteOn(60, 1.0f);
+        // The lever is sampled at the converter-pass boundary, not when the
+        // host event happens. Construction begins on exactly that boundary.
+        renderExact(engine, 1);
+        YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
+        return YouKnow106Engine::DcoPitchPair {
+            YouKnow106TestAccess::pitWriteDivider(engine, 0),
+            static_cast<std::uint16_t>(
+                YouKnow106TestAccess::dcoCvTarget(engine, 0))
+        };
+    };
+
+    const auto low = renderedPair(0);
+    const auto centreLow = renderedPair(8128);
+    const auto centreHigh = renderedPair(8255);
+    const auto high = renderedPair(16383);
+    const auto expectedLow = YouKnow106Engine::dcoPitchPair(0x4821u);
+    const auto expectedCentre = YouKnow106Engine::dcoPitchPair(0x5418u);
+    const auto expectedHigh = YouKnow106Engine::dcoPitchPair(0x600fu);
+    expect(low.divider == expectedLow.divider
+               && low.cvCode == expectedLow.cvCode
+               && centreLow.divider == expectedCentre.divider
+               && centreLow.cvCode == expectedCentre.cvCode
+               && centreHigh.divider == expectedCentre.divider
+               && centreHigh.cvCode == expectedCentre.cvCode
+               && high.divider == expectedHigh.divider
+               && high.cvCode == expectedHigh.cvCode,
+           "production DCO bend did not add its scan-held word to the B-2 pair");
+    const auto oldIdealEndpoint = YouKnow106Engine::dcoPitchPair(0x6018u);
+    expect(high.divider != oldIdealEndpoint.divider
+               || high.cvCode != oldIdealEndpoint.cvCode,
+           "DCO bend still used the old ideal twelve-semitone endpoint");
+
+    YouKnow106Engine held;
+    held.prepare(192000.0, blockSize, false);
+    auto fullDepth = plainPatch();
+    fullDepth.benderDcoDepth = 1.0f;
+    held.setParameters(fullDepth);
+    held.setPitchBend(normalisedWheel(16383));
+    held.noteOn(60, 1.0f);
+    renderExact(held, 1);
+    auto zeroDepth = fullDepth;
+    zeroDepth.benderDcoDepth = 0.0f;
+    held.setParameters(zeroDepth);
+    YouKnow106TestAccess::performPitchWrite(held, 0, zeroDepth);
+    expect(YouKnow106TestAccess::pitWriteDivider(held, 0)
+               == expectedHigh.divider
+               && static_cast<std::uint16_t>(
+                      YouKnow106TestAccess::dcoCvTarget(held, 0))
+                      == expectedHigh.cvCode,
+           "mid-pass DCO depth automation split the shared bend word");
+}
+
 void testRangeDividerCompletesItsCurrentSynchronousCount()
 {
     // Module-board IC35 is not a mux between three clock taps. PF7/PF6 set
@@ -11919,6 +12003,7 @@ int main()
         testRangeDoesNotRetargetDcoCompensationCv();
         testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
         testMasterTuneUsesRecoveredSignedPitchWord();
+        testPitchBendUsesRecoveredIntegerWord();
         testRangeDividerCompletesItsCurrentSynchronousCount();
         testControlWordConverterWritePreservesCardState();
         testWideDownwardRetargetStaysOnRampRails();
@@ -12004,6 +12089,7 @@ int main()
     testRangeDoesNotRetargetDcoCompensationCv();
     testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
     testMasterTuneUsesRecoveredSignedPitchWord();
+    testPitchBendUsesRecoveredIntegerWord();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
     testWideDownwardRetargetStaysOnRampRails();

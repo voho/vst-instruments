@@ -386,6 +386,12 @@ public:
     // +127 units (+49.609375 cents) while the negative endpoint reaches -128.
     [[nodiscard]] static std::int16_t masterTunePitchWordOffset(
         double cents) noexcept;
+    // Pitch Wheel remains a normalised host control, but B-2 receives the
+    // assigner's reduced signed byte and combines it with the eight-bit DCO
+    // sensitivity using truncating integer shifts. The maximum is therefore
+    // 3063 pitch units (11.96484375 semitones), not an ideal twelve.
+    [[nodiscard]] static std::int32_t dcoPitchBendWordOffset(
+        float normalisedBipolar, float depth) noexcept;
 
     // Convenience adapter for a requested middle-range frequency. Production
     // constructs the 8.8 coordinate directly; this keeps the circuit-law seam
@@ -1119,7 +1125,6 @@ private:
     static constexpr float vcfKeyFollowCentreMidi = 60.0f; // C4
     // Pitch modulation budgets in cents.
     static constexpr float lfoPitchCents = 400.0f;
-    static constexpr float benderPitchCents = 1200.0f;
     enum class EnvelopeStage { Idle, Attack, Decay, Sustain, Release };
 
     // Hash-matched B-2 firmware mechanics: a 14-bit integer advanced once per
@@ -2202,6 +2207,7 @@ private:
     // flick therefore steps at the scan rate, as the hardware's does.
     float pitchBendTarget_ { 0.0f };
     float pitchBend_ { 0.0f };
+    std::int32_t dcoPitchBendWord_ { 0 };
     float modWheelTarget_ { 0.0f };
     float modWheel_ { 0.0f };
     bool sustainPedalDown_ { false };

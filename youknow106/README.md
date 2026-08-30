@@ -489,10 +489,14 @@ volts as DAC code times the active divider, referenced to the centre pair
 `0x0100 * 0x1dfb`. This exposes the hardware's approximately 6.02 dB/octave
 high-note level loss once the CV reaches 4095. MASTER TUNE now maps the host's
 continuous +/-50-cent control onto B-2's signed 1/256-semitone byte, including
-its asymmetric +49.609375-cent hardware endpoint. The current continuous
-LFO/bend controls are explicitly rounded into the word at the final adapter;
-replacing those two upstream adapters with their recovered integer laws is the
-remaining implementation work, not a pitch-pair research unknown.
+its asymmetric +49.609375-cent hardware endpoint. DCO pitch bend now follows
+the assigner's 14-bit-to-byte reduction and B-2's truncating multiply/shift
+path ([assigner reduction](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1068-L1087),
+[B-2 arithmetic](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1006-L1059)).
+That gives the real two-high-byte centre dead zone and +/-3063 pitch units
+(+/-11.96484375 semitones) at full sensitivity instead of an ideal continuous
+12-semitone multiplier. The DCO-LFO adapter is the remaining upstream integer
+law to implement, not a pitch-pair research unknown.
 For plug-in notes and modulation outside the physical keybed, the final word
 saturates at 0/65535 rather than reproducing the firmware's unsigned wrap; that
 is a deliberate host-safety policy for the instrument's expanded MIDI range.
@@ -534,6 +538,11 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 - MASTER TUNE now uses the recovered signed B-2 byte in 1/256-semitone units:
   the continuous host control still spans +/-50 cents, while its hardware top
   code correctly stops at +49.609375 cents instead of fabricating +50 exactly.
+- DCO pitch bend now uses the recovered assigner/B-2 integer path: the
+  scan-held 14-bit wheel reduces to the hardware's signed command with its
+  two-bin centre, and the sensitivity product tops out at +/-11.96484375
+  semitones rather than an ideal continuous twelve. VCF bend remains on its
+  existing independent path.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.
