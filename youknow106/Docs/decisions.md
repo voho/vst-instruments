@@ -5,6 +5,46 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-08-31 — Pulse-Off WAVE node and evidence boundaries
+
+The service drawings settle one previously provisional behavior: Pulse Off's
+−0.8 V control pins the MC5534A comparator high, but does not disconnect its
+output from the fixed WAVE node. The model now leaves that constant level on
+the node and lets the existing C56/C50 coupling state reject its DC. Startup
+primes the capacitor to the settled pulse mean so a restored patch does not
+manufacture a power-on thump. The former hard gate remains only as an internal
+A/B switch; the matched comparison measures −16.2 dBc diff RMS and +6.2 dBc
+diff peak around the off/on transitions. Exact installed node level, loading
+and residual switching waveform remain OQ-15/OQ-11.
+
+The same evidence pass corrected the MN3009 noise claim below. Panasonic's
+0.15/0.20 mVrms figures are conflicting *maximum* rows at the part output under
+fixed test conditions. The former 59.716 uVrms inference combines an input
+swing with a maximum-output S/N figure and is invalid. HISS 100% and the
+29.858% default retain their numerical values as explicit product/session
+policy, while regressions now test the fixed-condition raw-node upper bound
+separately from the recovered wet-line normalization.
+
+A repeatable local Roland Cloud JUNO-106 v2.0.2 comparison found median chorus
+rates of 0.542613 Hz (estimator range 0.542609–0.542617) and 0.880013 Hz
+(0.880011–0.880016) across 48/96 kHz captures and analysis windows. Their median
+1.62181 ratio is within 0.103% of the schematic-derived 1.6234799 ratio,
+corroborating the topology, but the absolute rates are about 2% slower and the
+model is not an original-unit measurement; production constants therefore stay
+unchanged. The reference exposes no I+II state and the authorization-limited
+run could not identify delay endpoints.
+
+BA662 signal nonlinearity/noise/thump and converter charge injection remain
+unimplemented: available sources settle topology and nominal time constants,
+not the original hybrid transfer or installed transient magnitude. A bypassed
+A/B of guessed coloration would show only that the guess is audible.
+
+After adding comparator/C56 tracking to idle fast-mode cards, the native
+48 kHz/4× paired benchmark still measures the shipped Poly/Cubic/RK4 path at
+3.115× Exact/Merson on the six-voice full-mixer Chorus-II case and 11.458×
+while idle (about 67.9% and 91.3% less CPU). The fidelity correction therefore
+retains the standing greater-than-10% CPU-saving acceptance floor.
+
 ## 2026-08-29 — C14 voltage coefficient withdrawn from the default
 
 The optional C14 capacitance modulation remains available to the isolated
@@ -47,7 +87,7 @@ listening verdict and not a closure of OQ-09: the 0.6 V junction onset and
 0.2296 compensation coefficient still await a measured response family. The
 legacy voiced curve remains available behind the internal comparison switch.
 
-## 2026-08-28 — MN3009 transfer and default floor
+## 2026-08-28 — MN3009 transfer and default floor (noise rationale superseded)
 
 The chorus write transfer now distinguishes the MN3009's guaranteed input-swing
 limit from its typical distortion curve. It retains the existing 2.924 V rail,
@@ -55,12 +95,12 @@ fits 0.3% THD at 0.78 Vrms and approximately 2% at 2.0 Vrms, and remains below
 the 2.5% guarantee at 1.5 Vrms. The prepared curve and slope changed, but the
 realtime path is still the same 512-interval Hermite lookup with the same cost.
 
-The datasheet specifies 0.2 mVrms A-weighted noise as a maximum and 88 dB S/N
-as typical, not a typical noise voltage. HISS 100% therefore remains the maximum
-endpoint, while new instances and factory controls default to 29.858%, the
-59.716 uVrms inference from 1.5 Vrms / 88 dB. This makes the uncertainty visible
-without changing saved values or tying noise to Unit Character. OQ-03 remains
-open for an identified, calibrated instrument's absolute PSD.
+This revision initially treated 29.858% as a 59.716 uVrms inference from the
+1.5 Vrms input-swing and 88 dB maximum-output S/N rows. The 2026-08-31 audit
+above found those measurands incompatible and supersedes that rationale. HISS
+100% and the default keep their numerical values only as explicit product and
+session-compatibility policy; OQ-03 remains open for an identified, calibrated
+instrument's absolute PSD.
 
 A native Release benchmark against the pre-change tree measured the worst 1x
 scenario at +0.4% CPU (the others ranged from -0.04% to +0.2%), comfortably

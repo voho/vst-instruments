@@ -5177,6 +5177,7 @@ void YouKnow106Engine::reset()
     pwmVolts_ = pwmVoltsTarget_;
     subCv_ = subCvTarget_;
     noiseCv_ = noiseCvTarget_;
+    primeStartupVoiceWaveNodes(activeParameters_);
     // The hold has to go with the level: a note arriving at the very first
     // sample of a new run gives the scan no idle pass in which to clear it, so
     // a hold left over from the previous run would be skipped.
@@ -5434,6 +5435,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         pwmVolts_ = pwmVoltsTarget_;
         subCv_ = subCvTarget_;
         noiseCv_ = noiseCvTarget_;
+        primeStartupVoiceWaveNodes(next);
     }
 
     // The original assigner handles either POLY-button transition by gating
@@ -5727,15 +5729,19 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     // card trims already installed by reset()/setParameters() remain current.
     // In particular, a note-on must not recompute all 16 cards' four stages.
     voice.cardIndex = slot;
-    // Wake from the freewheel by resuming, not by flushing: every frozen
-    // support state -- correction rings, input history, coupling charge,
-    // filter capacitors -- was measured closer to the always-rendered
-    // reference than a from-silence rebuild (retrigger nulls improved about
-    // 6 dB across the wake when nothing is reset; zeroing the coupling
-    // capacitors alone cost 6 dB the other way). Everything here is bounded
-    // and finite, the comparator re-reconciles against its memoryless truth
-    // on the first rendered sample, and the VCA is still closed while the
-    // few stale-support samples flush through.
+    // An idle extension slot represents no powered analogue card: silenceVoice
+    // deliberately clears it. Construct its new virtual WAVE node at the
+    // current settled mean before opening the VCA, rather than treating that
+    // construction as a zero-to-DC capacitor step.
+    if (!wasSounding && slot >= hardwareVoices)
+        primeVoiceWaveNode(voice, parameters);
+    // Wake from the freewheel by resuming, not flushing: frozen reconstruction
+    // and filter state measured closer to the always-rendered reference than a
+    // from-silence rebuild (retrigger nulls improved about 6 dB when nothing
+    // was reset). C56/C50 is advanced separately by the cheap path below.
+    // Everything is bounded and finite, the comparator reconciles against its
+    // memoryless truth, and the VCA is still closed while the few stale
+    // reconstruction samples flush through.
     voice.freewheeling = false;
     voice.active = true;
     voice.keyDown = true;
@@ -6916,6 +6922,19 @@ void YouKnow106Engine::updatePulseComparator(
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
 }
 
+void YouKnow106Engine::primeStartupVoiceWaveNodes(
+    const EngineParameters& parameters) noexcept
+{
+    // A restored pre-audio snapshot describes a powered, already-settled
+    // instrument. Prime the WAVE-node coupling capacitor at the periodic
+    // source's DC mean so Pulse Off's documented constant-high comparator does
+    // not become a fabricated power-on thump on the first note. Saw and SUB
+    // are bipolar; the pulse mean is level * (2*duty - 1), including +level
+    // for the pinned-high off state.
+    for (auto& voice : voices_)
+        primeVoiceWaveNode(voice, parameters);
+}
+
 float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
 {
     const bool capturedCountReady = voice.dcoPitchTransactionValid
@@ -6956,9 +6975,39 @@ float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
     return std::clamp(scale, 0.25f, 4.0f);
 }
 
-bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
+bool YouKnow106Engine::pulseMixEnabled(
+    bool requested, float duty, bool couplePinnedLevel) noexcept
 {
-    return requested && duty < 1.0f;
+    return couplePinnedLevel || (requested && duty < 1.0f);
+}
+
+float YouKnow106Engine::pulseWaveNodeMean(
+    const Voice& voice, const EngineParameters& parameters) noexcept
+{
+    return pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty,
+                           parameters.enablePulseOffWaveNodeCoupling)
+        ? pulseMixVolts * (2.0f * voice.pulseDuty - 1.0f)
+        : 0.0f;
+}
+
+void YouKnow106Engine::primeVoiceWaveNode(
+    Voice& voice, const EngineParameters& parameters) noexcept
+{
+    updatePulseComparator(voice, parameters);
+    auto& dco = voice.dco;
+    const double totalScale = static_cast<double>(dco.renderScale)
+                            * static_cast<double>(voice.rampCurrentScale);
+    const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
+                           * totalScale * (dco.rampValue + 1.0);
+    dco.pulseState = voice.pulsePinnedHigh
+                  || rampVolts >= voice.pulseThresholdVolts
+                   ? 1.0f : -1.0f;
+    dco.pulse.reset();
+    voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
+    voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
+    voice.pulseThresholdPrimed = true;
+    voice.moduleCoupling.state = static_cast<double>(
+        pulseWaveNodeMean(voice, parameters));
 }
 
 // ---------------------------------------------------------------------------
@@ -7339,6 +7388,37 @@ void YouKnow106Engine::freewheelVoiceCard(Voice& voice) noexcept
 
     // The card-local microscopic noise source keeps running.
     voice.noiseState = xorshift32(voice.noiseState);
+
+    // C56/C50 is a 0.482 Hz physical state, not reconstruction work. Follow the
+    // free-running ramp/comparator endpoint at low pitch without paying for its
+    // inaudible BLEP or filter solve. Above 100 Hz use the exact duty mean: at
+    // the low 8 kHz processing boundary this also avoids sampling a >Nyquist
+    // comparator into false DC, while the omitted capacitor ripple is bounded
+    // to about 45 mV at the crossover and falls with frequency. Regressions
+    // compare both the lowest pitch and the >1-cycle/sample extreme to Exact.
+    // The legacy A/B path deliberately retains its former frozen state.
+    if (activeParameters_.enablePulseOffWaveNodeCoupling)
+    {
+        auto& dco = voice.dco;
+        const double totalScale = static_cast<double>(dco.renderScale)
+                                * static_cast<double>(voice.rampCurrentScale);
+        const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
+                               * totalScale * (dco.rampValue + 1.0);
+        dco.pulseState = voice.pulsePinnedHigh
+                      || rampVolts >= voice.pulseThresholdVolts
+                       ? 1.0f : -1.0f;
+        constexpr double endpointTrackingMaximumHz = 100.0;
+        const double carrierHz = oversampledRate_
+            / std::max(dco.periodSamples, 1.0);
+        const float pulseNode = carrierHz <= endpointTrackingMaximumHz
+            ? dco.pulseState * pulseMixVolts
+            : pulseWaveNodeMean(voice, activeParameters_);
+        static_cast<void>(voice.moduleCoupling.process(
+            pulseNode, moduleCouplingG_, 0.0f, 1.0f));
+        voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
+        voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
+        voice.pulseThresholdPrimed = true;
+    }
 }
 
 YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
@@ -7415,9 +7495,10 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
     // input.
     // No panel switch reaches this node: SAW is gated by a control rail at
     // the generator ("0: saw ON" at Tr24/R148), PULSE by the -0.8 V hold that
-    // pins the comparator (what the pinned state leaves on the node is
-    // OQ-11), SUB by its collector supply and NOISE by the level OTA.
-    // Sources mute; legs never switch. The node's loading is therefore one
+    // pins the comparator high on the fixed WAVE output, SUB by its collector
+    // supply and NOISE by the level OTA. Exact pinned-node voltage and loading
+    // remain OQ-15/OQ-11.
+    // Generators mute or clamp; legs never switch. The node's loading is one
     // configuration-independent constant, which the established
     // filterInputAttenuation coordinate already absorbs -- an earlier
     // revision modelled four switchable 100k legs against the module's 68k
@@ -7426,7 +7507,8 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
     float mixed = 0.0f;
     if (parameters.sawEnabled)
         mixed += sawOut;
-    if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
+    if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty,
+                        parameters.enablePulseOffWaveNodeCoupling))
         mixed += pulseOut;
     mixed += subOut;
     mixed += noiseSample * noiseMixVolts * noiseCv_
@@ -8279,22 +8361,22 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     : advanceOrdinaryOnePoleHold(
                         voice.vcaControl, voice.vcaControlTarget,
                         coefficients.voiceVcaDecay);
-                // Both of these feed `renderVoice`, which returns before it
-                // reads any of their results for an inactive extension slot
+                // Neither value is needed for an inactive extension slot
                 // (`!voice.active && cardIndex >= hardwareVoices`, and
-                // `cardIndex` is always the slot). One guard, so the two
-                // cannot drift apart from that early return or each other.
-                // A freewheeling card reads neither result either -- its
-                // gate below is the same `!active` plus the fast tanh
-                // mode, and the wake path recomputes both before the
-                // first audible sample -- so the pair is skipped there
-                // too, under the identical condition renderVoice tests.
+                // `cardIndex` is always the slot). A freewheeling physical card
+                // still needs the comparator duty when the Pulse-Off WAVE-node
+                // model is live: its slow C56/C50 state follows the endpoint at
+                // low carrier rates and that duty mean at high rates. The
+                // expensive filter/audio coefficients remain skipped.
                 const bool freewheels = !voice.active
                     && parameters.vcfTanhMode != VcfTanhMode::Exact;
-                if (!freewheels
-                    && (voice.active || slot < hardwareVoices))
-                {
+                const bool hasAudioCell = voice.active || slot < hardwareVoices;
+                if (hasAudioCell
+                    && (!freewheels
+                        || parameters.enablePulseOffWaveNodeCoupling))
                     updatePulseComparator(voice, parameters);
+                if (hasAudioCell && !freewheels)
+                {
                     updateVoiceAudio(voice, parameters);
                 }
             };

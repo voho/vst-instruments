@@ -830,7 +830,15 @@ struct YouKnow106TestAccess
     {
         return engine.pulseMixEnabled(
             requested,
-            engine.voices_[static_cast<std::size_t>(slot)].pulseDuty);
+            engine.voices_[static_cast<std::size_t>(slot)].pulseDuty,
+            engine.activeParameters_.enablePulseOffWaveNodeCoupling);
+    }
+
+    static double moduleCouplingState(const YouKnow106Engine& engine,
+                                      int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .moduleCoupling.state;
     }
 
     static float currentMidi(const YouKnow106Engine& engine, int slot) noexcept
@@ -7075,6 +7083,19 @@ void testPhysicalCardStateSurvivesVoiceAssignments()
            "an idle extension slot retained a frozen noise timeline");
     expect(YouKnow106TestAccess::currentMidi(engine, extensionSlot) == 72.0f,
            "clearing virtual analogue state discarded extension portamento memory");
+    expectNear(YouKnow106TestAccess::moduleCouplingState(
+                   engine, extensionSlot),
+               0.0, 1.0e-12,
+               "retiring an extension slot did not clear its virtual C56");
+
+    // There is no powered extension card while the slot is idle. Reconstruct
+    // its new virtual cell at the current settled WAVE-node mean, rather than
+    // replaying construction as a zero-to-6 V capacitor transient.
+    YouKnow106TestAccess::initialiseVoice(engine, extensionSlot, 74);
+    expectNear(YouKnow106TestAccess::moduleCouplingState(
+                   engine, extensionSlot),
+               6.0, 1.0e-6,
+               "recycling an extension slot left C56 at a false zero state");
 }
 
 void testConverterSchedulerPreservesFractionalScanPeriod()
@@ -7822,7 +7843,8 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     parameters.pwmDepth = nominalPwmPanelMaximum;
     parameters.calibration = 1.0f;
     parameters.chorus = ChorusMode::Off;
-    // This fixture pins the pulse leg's gate. With every source off, the only
+    // This fixture pins the pulse comparator high. With every other source
+    // off, the only
     // other signal at full Character is the stage offsets' now-correctly-sized
     // DC operating point stepping through the output coupling as the VCA
     // opens -- a real, separate mechanism that would trip the blunt silence
@@ -7831,13 +7853,27 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     engine.setParameters(parameters);
     expectNear(YouKnow106TestAccess::pwmTarget(engine), -0.8, 1.0e-6,
                "Pulse Off did not write the documented -0.8 V shared control");
+    expectNear(YouKnow106TestAccess::moduleCouplingState(engine, 0),
+               6.0, 1.0e-6,
+               "startup did not pre-charge C56 to the pinned-high WAVE level");
+
+    auto legacyParameters = parameters;
+    legacyParameters.enablePulseOffWaveNodeCoupling = false;
+    YouKnow106Engine legacy;
+    legacy.prepare(48000.0, blockSize, false);
+    legacy.setParameters(legacyParameters);
+    expect(!YouKnow106TestAccess::pulseMixEnabled(legacy, 0, false),
+           "the comparison bypass no longer restores the former hard gate");
+    expectNear(YouKnow106TestAccess::moduleCouplingState(legacy, 0),
+               0.0, 1.0e-12,
+               "the comparison bypass pre-charged C56 from a disconnected leg");
 
     engine.noteOn(60, 1.0f);
     const auto offAudio = renderExact(engine, 4800);
     expectNear(YouKnow106TestAccess::pulseDuty(engine, 0), 1.0, 1.0e-6,
                "Pulse Off did not hold the running comparator high");
     expect(peakOf(offAudio.left, offAudio.left.size() / 2) < 0.001,
-           "the provisional pulse-off audio gate leaked the pinned leg");
+           "C56 failed to reject the pulse-off comparator's settled DC");
     const bool outBefore = YouKnow106TestAccess::pitOutHigh(engine, 0);
     const double clocksBefore =
         YouKnow106TestAccess::pitClocksToEvent(engine, 0);
@@ -7868,13 +7904,147 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
             && YouKnow106TestAccess::pulseDuty(engine, 5) >= 1.0f)
         {
             sawPerCardOffsetWindow = true;
-            expect(!YouKnow106TestAccess::pulseMixEnabled(engine, 5, true),
-                   "pulse re-enable admitted a card whose comparator was still pinned");
+            expect(YouKnow106TestAccess::pulseMixEnabled(engine, 5, true),
+                   "pulse re-enable disconnected the still-pinned WAVE node");
             break;
         }
     }
     expect(sawPerCardOffsetWindow,
            "pulse re-enable fixture missed the per-card comparator-offset window");
+}
+
+void testPulseOffCouplingSettlesWhileFastCardsFreewheel()
+{
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine fast;
+    YouKnow106Engine exact;
+    fast.prepare(sampleRate, blockSize, false);
+    exact.prepare(sampleRate, blockSize, false);
+    auto fastParameters = plainPatch();
+    fastParameters.sawEnabled = false;
+    fastParameters.pulseEnabled = true;
+    fastParameters.pwmSource = PwmSource::Manual;
+    fastParameters.pwmDepth = 0.0f; // +6 V threshold, 50% duty, zero mean.
+    fastParameters.range = DcoRange::Sixteen;
+    fastParameters.keyTranspose = -12;
+    fastParameters.subLevel = 0.0f;
+    fastParameters.noiseLevel = 0.0f;
+    fastParameters.vcfTanhMode = VcfTanhMode::PolyZoned;
+    fastParameters.vcfSolverMode = VcfSolverMode::Rk4Single;
+    fastParameters.enablePulseOffWaveNodeCoupling = true;
+    auto exactParameters = fastParameters;
+    exactParameters.vcfTanhMode = VcfTanhMode::Exact;
+    fast.setParameters(fastParameters);
+    exact.setParameters(exactParameters);
+
+    // Leave card 0's DCO at the lowest supported MIDI/range/transpose before
+    // retiring it. This is the worst separation between the 0.482 Hz coupling
+    // pole and pulse carrier, so a DC-only shortcut would have its largest
+    // phase/ripple error here.
+    fast.noteOn(0, 1.0f);
+    exact.noteOn(0, 1.0f);
+    renderExact(fast, static_cast<int>(sampleRate * 0.75));
+    renderExact(exact, static_cast<int>(sampleRate * 0.75));
+    fast.noteOff(0);
+    exact.noteOff(0);
+    renderExact(fast, static_cast<int>(sampleRate * 0.75));
+    renderExact(exact, static_cast<int>(sampleRate * 0.75));
+    expect(fast.getActiveVoiceCount() == 0
+               && exact.getActiveVoiceCount() == 0,
+           "the low-note freewheel fixture did not retire its cards");
+
+    const auto setPulse = [&](bool enabled) {
+        fastParameters.pulseEnabled = enabled;
+        exactParameters.pulseEnabled = enabled;
+        fast.setParameters(fastParameters);
+        exact.setParameters(exactParameters);
+    };
+    setPulse(false);
+    renderExact(fast, static_cast<int>(sampleRate * 0.40));
+    renderExact(exact, static_cast<int>(sampleRate * 0.40));
+    setPulse(true);
+    renderExact(fast, static_cast<int>(sampleRate * 0.20));
+    renderExact(exact, static_cast<int>(sampleRate * 0.20));
+    setPulse(false);
+    renderExact(fast, static_cast<int>(sampleRate * 0.12));
+    renderExact(exact, static_cast<int>(sampleRate * 0.12));
+
+    // The fast path skips BLEP and filter work, but not the physical capacitor.
+    // Bound its endpoint-comparator approximation against the always-rendered
+    // circuit instead of merely checking that the state moved in one direction.
+    const double fastState = YouKnow106TestAccess::moduleCouplingState(fast, 0);
+    const double exactState = YouKnow106TestAccess::moduleCouplingState(exact, 0);
+    expect(std::abs(fastState - exactState) < 0.05,
+           "low-note fast C56 state left Exact by "
+               + std::to_string(std::abs(fastState - exactState)) + " V");
+    expect(fastState > 1.0,
+           "an idle fast card froze C56 across Pulse Off/On transitions");
+    expectNear(YouKnow106TestAccess::pulseDuty(fast, 0),
+               1.0, 1.0e-6,
+               "an idle fast card did not follow Pulse Off's comparator CV");
+
+    // Assigning the card must retain the charge accumulated while its VCA was
+    // shut; otherwise the first note would replay the edit as a new transient.
+    fast.noteOn(0, 1.0f);
+    expectNear(YouKnow106TestAccess::moduleCouplingState(fast, 0),
+               fastState, 1.0e-12,
+               "waking a fast card reset its tracked Pulse-Off C56 state");
+
+    // The opposite corner is hostile in a different way: at the minimum 8 kHz
+    // grid the highest 4' DCO can cross more than once per sample. The fast
+    // path must use the duty mean there, not alias endpoint samples into a
+    // false capacitor voltage.
+    constexpr double lowGridRate = 8000.0;
+    YouKnow106Engine fastHigh;
+    YouKnow106Engine exactHigh;
+    fastHigh.prepare(lowGridRate, blockSize, false);
+    exactHigh.prepare(lowGridRate, blockSize, false);
+    auto fastHighParameters = plainPatch();
+    fastHighParameters.sawEnabled = false;
+    fastHighParameters.pulseEnabled = true;
+    fastHighParameters.pwmSource = PwmSource::Manual;
+    fastHighParameters.pwmDepth = 0.0f;
+    fastHighParameters.range = DcoRange::Four;
+    fastHighParameters.vcfTanhMode = VcfTanhMode::PolyZoned;
+    fastHighParameters.vcfSolverMode = VcfSolverMode::Rk4Single;
+    fastHighParameters.enablePulseOffWaveNodeCoupling = true;
+    auto exactHighParameters = fastHighParameters;
+    exactHighParameters.vcfTanhMode = VcfTanhMode::Exact;
+    fastHigh.setParameters(fastHighParameters);
+    exactHigh.setParameters(exactHighParameters);
+    fastHigh.noteOn(127, 1.0f);
+    exactHigh.noteOn(127, 1.0f);
+    renderExact(fastHigh, static_cast<int>(lowGridRate * 0.30));
+    renderExact(exactHigh, static_cast<int>(lowGridRate * 0.30));
+    fastHigh.noteOff(127);
+    exactHigh.noteOff(127);
+    renderExact(fastHigh, static_cast<int>(lowGridRate * 0.50));
+    renderExact(exactHigh, static_cast<int>(lowGridRate * 0.50));
+    expect(fastHigh.getActiveVoiceCount() == 0
+               && exactHigh.getActiveVoiceCount() == 0,
+           "the high-note/low-grid fixture did not retire its cards");
+
+    const auto setHighPulse = [&](bool enabled) {
+        fastHighParameters.pulseEnabled = enabled;
+        exactHighParameters.pulseEnabled = enabled;
+        fastHigh.setParameters(fastHighParameters);
+        exactHigh.setParameters(exactHighParameters);
+    };
+    setHighPulse(false);
+    renderExact(fastHigh, static_cast<int>(lowGridRate * 0.40));
+    renderExact(exactHigh, static_cast<int>(lowGridRate * 0.40));
+    setHighPulse(true);
+    renderExact(fastHigh, static_cast<int>(lowGridRate * 0.20));
+    renderExact(exactHigh, static_cast<int>(lowGridRate * 0.20));
+    setHighPulse(false);
+    renderExact(fastHigh, static_cast<int>(lowGridRate * 0.12));
+    renderExact(exactHigh, static_cast<int>(lowGridRate * 0.12));
+    const double highDifference = std::abs(
+        YouKnow106TestAccess::moduleCouplingState(fastHigh, 0)
+        - YouKnow106TestAccess::moduleCouplingState(exactHigh, 0));
+    expect(highDifference < 0.05,
+           "high-note/low-grid fast C56 state left Exact by "
+               + std::to_string(highDifference) + " V");
 }
 
 void testMovingPwmComparatorDoesNotMissThresholdCrossings()
@@ -10403,12 +10573,11 @@ void testQualityChangePreservesOutputCouplingTail()
     // C17/C20 intact, which C56/C50 stopped; it then leaned on each card's own
     // 0.48 Hz module coupling passing the note-on duty step as a slow
     // transient, six of them summing to 0.026, which C59 stops as well -- no
-    // per-voice offset of any kind now survives to the voice VCA. What is left
-    // charging the final capacitor is the gate closure itself: the Gate VCA
-    // shuts on a waveform that is not at zero, and the six cards' steps sum to
-    // 0.0037 at 100-120 ms, seven times the bound below. That is the smallest
-    // this fixture can legitimately get, because it is no longer reading any
-    // DC the model manufactures -- only the step a real gate leaves.
+    // per-voice offset of any kind now survives to the voice VCA. Prime the
+    // final state from a deliberate Pulse-Off WAVE-node transition immediately
+    // before gate closure; unlike relying on an arbitrary oscillator sample at
+    // note-off, this is deterministic circuit energy whose preservation the
+    // quality rebuild can be held to.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine switched;
     YouKnow106Engine reference;
@@ -10433,6 +10602,11 @@ void testQualityChangePreservesOutputCouplingTail()
     }
     renderExact(switched, static_cast<int>(sampleRate));
     renderExact(reference, static_cast<int>(sampleRate));
+    parameters.pulseEnabled = false;
+    switched.setParameters(parameters);
+    reference.setParameters(parameters);
+    renderExact(switched, static_cast<int>(sampleRate * 0.01));
+    renderExact(reference, static_cast<int>(sampleRate * 0.01));
     for (const int note : chordNotes)
     {
         switched.noteOff(note);
@@ -10842,26 +11016,32 @@ void testFinalOutputCouplingRemovesManualPwmDc()
     parameters.pwmSource = PwmSource::Manual;
     parameters.pwmDepth = nominalPwmPanelMaximum;
     parameters.vcaMode = VcaMode::Gate;
-    parameters.volume = 0.0f;
-    silent.setParameters(parameters);
-    parameters.volume = 1.0f;
-    audible.setParameters(parameters);
+    auto silentParameters = parameters;
+    silentParameters.volume = 0.0f;
+    silent.setParameters(silentParameters);
+    auto audibleParameters = parameters;
+    audibleParameters.volume = 1.0f;
+    audible.setParameters(audibleParameters);
     silent.noteOn(36, 1.0f);
     audible.noteOn(36, 1.0f);
-    // Observe the initial charge before C14 and C12 have themselves removed
-    // the deliberately asymmetric pulse train's DC. Waiting the full two
-    // seconds first would correctly leave every coupling state close to zero.
+    // Let the powered, startup-primed coupling network settle, then charge C17
+    // from one deliberate physical event. This tests the VOLUME boundary
+    // without depending on a fabricated cold-capacitor transient.
+    renderExact(silent, static_cast<int>(sampleRate * 2.0));
+    renderExact(audible, static_cast<int>(sampleRate * 2.0));
+    silentParameters.pulseEnabled = false;
+    audibleParameters.pulseEnabled = false;
+    silent.setParameters(silentParameters);
+    audible.setParameters(audibleParameters);
     renderExact(silent, static_cast<int>(sampleRate * 0.05));
     renderExact(audible, static_cast<int>(sampleRate * 0.05));
     expect(std::abs(YouKnow106TestAccess::outputCouplingState(silent)) > 1.0e-3,
            "VOLUME zero prevented the upstream C17 state from charging");
-    renderExact(silent, static_cast<int>(sampleRate * 1.95));
-    renderExact(audible, static_cast<int>(sampleRate * 1.95));
 
     const double chargedAtZero =
         YouKnow106TestAccess::outputCouplingState(silent);
-    parameters.volume = 1.0f;
-    silent.setParameters(parameters);
+    silentParameters.volume = 1.0f;
+    silent.setParameters(silentParameters);
     expect(YouKnow106TestAccess::outputCouplingState(silent) == chargedAtZero,
            "moving VOLUME reset the upstream C17 capacitor state");
     const auto raised = renderExact(
@@ -11474,19 +11654,19 @@ void testChorusNoiseIsPresentAndDefeatable()
 
     const double modelled = idleNoise(1.0f, false);
     expect(modelled > -85.0 && modelled < -55.0,
-           "the part-anchored delay-line floor escaped its regression guard band");
+           "the product-normalized delay-line floor escaped its guard band");
     expect(idleNoise(0.0f, false) < -120.0,
            "the empirical profile still hisses with Chorus Noise at zero");
     expect(idleNoise(0.0f, true) < -120.0,
            "the rate-law profile still hisses with Chorus Noise at zero");
 }
 
-void testIdleOutputFloorCarriesTheMn3009NoiseRow()
+void testIdleOutputFloorCarriesTheHissProductPolicy()
 {
     // What the line-noise constant is worth at the jacks. The circuit suite
-    // fences the recovered wet line against the MN3009's 0.2 mVrms row; this
-    // one fences the number a listener meets, and ties the two together so
-    // neither can be satisfied on its own.
+    // fences Panasonic's raw-node maximum separately from the recovered-line
+    // product normalization; this one fences the number a listener meets and
+    // ties it to the latter so neither can be satisfied on its own.
     //
     // The fixture is pinned rather than derived from plainPatch(), because the
     // floor scales with two panel controls and with nothing else: VOLUME 0.80,
@@ -11543,19 +11723,19 @@ void testIdleOutputFloorCarriesTheMn3009NoiseRow()
 
     const double floorOne = idleFloorDbfs(ChorusMode::One);
     const double floorTwo = idleFloorDbfs(ChorusMode::Two);
-    // What the MN3009 row anchors is a VOLTAGE -- 0.2 mVrms A-weighted -- so
-    // the dBFS this lands on is a consequence of where the output calibration
-    // puts 0 dBFS, not part of the anchor. The figure below was recorded when
-    // the boundary was unity; referring it to the boundary keeps it testing the
-    // line noise rather than the calibration.
+    // HISS 100% declares a 0.2 mVrms A-weighted recovered-wet-line policy, so
+    // the dBFS this lands on is a consequence of where output calibration puts
+    // 0 dBFS, not part of Panasonic's separate part-output maximum. The figure
+    // below was recorded when the boundary was unity; referring it to that
+    // boundary keeps it testing the product normalization, not calibration.
     const double boundaryDb =
         20.0 * std::log10(YouKnow106Engine::outputBoundaryGain());
     expectNear(floorOne, -77.85 + boundaryDb, 0.5,
-               "the idle output floor left the MN3009 noise row");
+               "the idle output floor left the HISS-100 product policy");
 
     // The unchanged-chain observation gives one usable relative target even
     // though neither absolute dBFS value is portable. Mode I remains on the
-    // part-derived anchor above; mode II must carry the observed lift.
+    // product-policy anchor above; mode II must carry the observed lift.
     expectNear(floorTwo - floorOne,
                Chorus::measuredModeTwoNoiseDeltaDb, 0.1,
                "the idle output floor does not carry the measured II-I lift");
@@ -13696,6 +13876,7 @@ int main()
     testPitchAndNoiseRemainSampleGridWrites();
     testDoublePassiveHoldStatesDoNotStallAtHighRate();
     testPulseOffPinsComparatorWithoutResettingTheDco();
+    testPulseOffCouplingSettlesWhileFastCardsFreewheel();
     testMovingPwmComparatorDoesNotMissThresholdCrossings();
     testModeChangesRebuildHeldKeys();
     testSustainHeldVoicesRemainAssignable();
@@ -13757,7 +13938,7 @@ int main()
     testChorusSweepTrajectoryDefault();
     testElectrolyticC14VoltageCoefficientIsComparisonOnly();
     testChorusNoiseIsPresentAndDefeatable();
-    testIdleOutputFloorCarriesTheMn3009NoiseRow();
+    testIdleOutputFloorCarriesTheHissProductPolicy();
     testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();

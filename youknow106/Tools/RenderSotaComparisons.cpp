@@ -17,6 +17,7 @@ using youknow106::ChorusMode;
 using youknow106::DcoRange;
 using youknow106::EngineParameters;
 using youknow106::HighPassMode;
+using youknow106::VcaMode;
 using youknow106::tools::decibels;
 using youknow106::tools::Take;
 using youknow106::tools::writeWav;
@@ -151,20 +152,54 @@ Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
     return take;
 }
 
+// 12. MC5534A Pulse-Off pinned level through the real WAVE-node coupling.
+// The held note makes the off/on events audible without confusing them with
+// envelope attacks. The legacy side hard-disconnects the pulse leg; the
+// circuit side leaves the comparator's documented high state on C56/C50.
+Take renderPulseOffWaveNodeTake(bool enablePulseOffWaveNodeCoupling)
+{
+    auto p = defaultPanel();
+    p.enablePulseOffWaveNodeCoupling = enablePulseOffWaveNodeCoupling;
+    p.sawEnabled = false;
+    p.pulseEnabled = true;
+    p.subLevel = 0.0f;
+    p.noiseLevel = 0.0f;
+    p.cutoff = 1.0f;
+    p.resonance = 0.0f;
+    p.envDepth = 0.0f;
+    p.vcaMode = VcaMode::Gate;
+    p.vcaLevel = 1.0f;
+    p.volume = 0.65f;
+    Take take(p);
+    take.rest(0.20);
+    take.on(48, 1.0f);
+    take.rest(0.60);
+    p.pulseEnabled = false;
+    take.setParameters(p);
+    take.rest(0.70);
+    p.pulseEnabled = true;
+    take.setParameters(p);
+    take.rest(0.70);
+    take.off(48);
+    take.rest(0.30);
+    return take;
+}
+
 struct Comparison
 {
     const char* slug;
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 7> comparisons {{
+const std::array<Comparison, 8> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
     { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
     { "07-spatial-thermal-gradient",      renderSpatialThermalGradientTake },
     { "08-chorus-thiran-clock-bleed",     renderChorusClockBleedTake },
     { "09-chorus-hyperbolic-sweep",       renderChorusHyperbolicSweepTake },
-    { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take }
+    { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take },
+    { "12-pulse-off-wave-node-coupling",  renderPulseOffWaveNodeTake }
 }};
 
 struct Report

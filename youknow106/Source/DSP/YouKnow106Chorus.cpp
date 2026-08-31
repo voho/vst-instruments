@@ -137,9 +137,9 @@ double interpolatedBbdTransfer(double normalised) noexcept
 // balance the summing resistors set.
 
 // The independent random noise each wet line writes at its own clock edges is
-// now the MN3009's own noise row rather than a voiced level. Its derivation is
-// on `Chorus::independentLineRandomAmplitude` in the header, beside the
-// datasheet figure and the transfer that refers it to the recovered wet line.
+// normalised by the explicit HISS-100 wet-line product policy. Its derivation
+// is on `Chorus::independentLineRandomAmplitude` in the header, beside the
+// separate Panasonic part-output maximum and the modelled board transfer.
 
 // Support filters, from the schematic rather than from an estimate of it. Each
 // side of the line carries two emitter-follower Sallen-Key sections built on
@@ -606,12 +606,12 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
         // Product compatibility policy, not a claim about a third resistance
-        // in the original circuit: Roland's current JUNO-106 chorus models
-        // expose I+II, but neither their transfer nor a calibrated original-unit
-        // trace is published. Retain this plug-in's established summed-rate
-        // sound so the fourth state is stable and audibly distinct. The shared
-        // centre, depth and gain are the least speculative continuation of the
-        // two measured modes; a qualifying I+II capture can replace this policy.
+        // in the original circuit. The audited Roland Cloud JUNO-106 exposes
+        // only Off/I/II, and no calibrated original-unit both-button trace is
+        // published. Retain this plug-in's established summed-rate sound so
+        // the fourth state is stable and audibly distinct. The shared centre,
+        // depth and gain are the least speculative continuation of the two
+        // measured modes; a qualifying I+II capture can replace this policy.
         case ChorusMode::OneTwo:
             return { rateOne + rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:

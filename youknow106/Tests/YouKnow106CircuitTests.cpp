@@ -3247,11 +3247,11 @@ void testJuno60FallbackBucketBrigadeTiming()
                    "chorus bypass moved the dry signal off centre");
     }
 
-    // Roland's current JUNO-106 chorus models expose I+II, while the original
-    // control path still provides no evidence for a third analogue rate. The
-    // established summed rate is therefore an explicit product compatibility
-    // policy, not a conductance derivation. Keep it stable and distinct until
-    // a qualifying original-unit capture can replace it.
+    // The product supports the user-requested both-button combination, while
+    // neither the original control path nor the audited Roland Cloud model
+    // provides a third analogue rate. The established summed rate is therefore
+    // explicit compatibility policy, not a conductance derivation. Keep it
+    // stable and distinct until a qualifying original-unit capture replaces it.
     const auto both = Chorus::settingsFor(ChorusMode::OneTwo);
     expectNear(both.rateHz, static_cast<double>(one.rateHz) + two.rateHz, 1.0e-7,
                "I+II lost its established summed-rate policy");
@@ -3267,7 +3267,7 @@ void testJuno60FallbackBucketBrigadeTiming()
                Chorus::measuredModeNoiseGain(ChorusMode::Two), 1.0e-9,
                "I+II changed its provisional II noise profile without a capture");
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::One), 1.0, 1.0e-9,
-               "the empirical mode calibration moved mode I's part anchor");
+               "the empirical mode calibration moved mode I's product anchor");
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::Off), 1.0, 1.0e-9,
                "chorus bypass invented a separate noise calibration");
 
@@ -3472,12 +3472,47 @@ void testChorusRateProportionalNoiseGainMatchesTheDerivedRatio()
            "a NaN rate did not fall back to unity gain");
 }
 
-void testChorusLineNoiseMatchesTheMn3009NoiseRow()
+void testChorusNoiseMeasurementPointsAndProductPolicy()
 {
-    // The MN3009's noise row is 0.2 mVrms max, A-weighted, from the same
-    // datasheet whose 12 kHz bandwidth and 0.3%/2.5% distortion rows this
-    // model already treats as anchored. `independentLineRandomAmplitude` is
-    // derived from it, and this is the assertion the derivation answers to.
+    // Panasonic's 0.2 mVrms row is a MAXIMUM at the part output with a
+    // 100 kHz clock, 100 kOhm load and A weighting. It is not a target after
+    // Roland's external tap sum and reconstruction filters. Guard the model's
+    // raw composite BBD node at those fixed clock conditions first, with no
+    // lower fence: a quieter part is conforming.
+    constexpr double datasheetMaximum = 0.200e-3;
+    constexpr double estimatorMargin = 1.0057900;  // +0.05 dB
+    constexpr double rawSampleRate = 192000.0;
+    constexpr float datasheetClockHz = 100000.0f;
+    {
+        Chorus raw;
+        raw.prepare(rawSampleRate);
+        AWeightingFilter weight(rawSampleRate);
+        const auto settle = static_cast<long long>(rawSampleRate * 0.5);
+        const auto window = static_cast<long long>(rawSampleRate * 16.0);
+        double sum = 0.0;
+        for (long long sample = 0; sample < settle + window; ++sample)
+        {
+            const double volts = static_cast<double>(
+                YouKnow106TestAccess::processBbdCore(
+                    raw, 0.0f, datasheetClockHz,
+                    static_cast<float>(rawSampleRate), 1.0f))
+                * static_cast<double>(Chorus::nodeVoltsPerUnit);
+            const double weighted = weight.step(volts);
+            if (sample >= settle)
+                sum += weighted * weighted;
+        }
+        const double rawAWeighted = std::sqrt(
+            sum / static_cast<double>(window));
+        expect(rawAWeighted
+                   <= datasheetMaximum * estimatorMargin,
+               "fixed-100-kHz raw BBD noise is "
+                   + std::to_string(rawAWeighted * 1000.0)
+                   + " mVrms A-weighted, above Panasonic's 0.200 mVrms max");
+    }
+
+    // HISS 100% separately retains the established product convention: the
+    // recovered wet line is normalised to the same numerical 0.200 mVrms.
+    // That is a declared post-board target, not Panasonic's measurement point.
     //
     // The measurand, stated in full because every part of it moves the number:
     //
@@ -3488,29 +3523,21 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
     //    0.004 dB; HQ-off remains a separately documented numerical error.
     //  * Silence in. Both output channels. The wet line is recovered by
     //    undoing IC6's dry and wet summing gains only, and referred to volts
-    //    through the 2.6 V node coordinate: the reconstruction sections stay
-    //    in, because what the datasheet row bounds is what the part delivers
-    //    to the board, and they are the board.
+    //    through the 2.6 V node coordinate; Roland's reconstruction sections
+    //    remain in because this second measurement is the product policy.
     //  * A 0.5 s settle for the wet-mute glide and the support filters, then a
     //    16 s window. Both clock programmes are measured after dividing out
     //    the empirical instrument-output II-I factor; that reported ~3.95 dB
     //    observation belongs to the engine contract, not the standalone row.
     //
-    // The upper bound carries 0.05 dB because this is a finite-window estimate
-    // of a random process, not a deterministic tone projection. Fixed-seed
-    // 128 s verification of the current path spans 0.200006-0.200078 mVrms
-    // across both HQ grids/modes; the shorter regression window needs explicit
-    // estimator margin. That tolerance is still negligible against the
-    // datasheet's own 10.5 dB bracket between its max and typical rows. The
-    // lower fence is the wide one: 0.2 mVrms is a *maximum*, so being under it
-    // is not an error, and 1 dB only has to catch a gross over-correction.
-    constexpr double target = 0.200e-3;
-    constexpr double upperBound = 0.200e-3 * 1.0057900;  // +0.05 dB
-    constexpr double lowerBound = 0.200e-3 * 0.8912509;  // -1.00 dB
-    const double inferredDefault = 1.5 / std::pow(10.0, 88.0 / 20.0);
-    expectNear(static_cast<double>(Chorus::defaultNoiseScale) * target,
-               inferredDefault, 1.0e-9,
-               "the default HISS scale left its declared 1.5 Vrms / 88 dB policy");
+    // The default position is preserved for session compatibility. It is not
+    // derived from the incompatible 1.5 V input-swing and 88 dB maximum-output
+    // S/N rows.
+    constexpr double target =
+        Chorus::productWetLineNoiseTargetAWeightedVrms;
+    expectNear(static_cast<double>(Chorus::defaultNoiseScale),
+               0.29858038, 1.0e-8,
+               "the session-compatible default HISS policy changed");
     std::array<double, 4> recoveredByRateAndMode {};
     std::size_t resultIndex = 0;
 
@@ -3559,18 +3586,9 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
             const std::string label = mode == ChorusMode::One ? "I" : "II";
             const std::string fixture = label + " at "
                 + std::to_string(static_cast<int>(sampleRate)) + " Hz";
-            expect(recovered <= upperBound,
-                   "chorus " + fixture + " wet-line noise is "
-                       + std::to_string(recovered * 1000.0)
-                       + " mVrms A-weighted, above the MN3009's 0.200 mVrms max");
-            expect(recovered >= lowerBound,
-                   "chorus " + fixture + " wet-line noise is "
-                       + std::to_string(recovered * 1000.0)
-                       + " mVrms A-weighted, more than 1 dB under the "
-                         "MN3009's 0.200 mVrms max");
-            expect(std::abs(20.0 * std::log10(recovered / target)) < 1.0,
+            expect(std::abs(20.0 * std::log10(recovered / target)) < 0.15,
                    "chorus " + fixture
-                       + " wet-line noise left the datasheet row by "
+                       + " wet-line noise left the product target by "
                        + std::to_string(20.0 * std::log10(recovered / target))
                        + " dB");
         }
@@ -3591,10 +3609,12 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
     // to match a hand-picked amplitude, and this one would not.
     expectNear(static_cast<double>(Chorus::independentLineRandomAmplitude)
                    * static_cast<double>(Chorus::nodeVoltsPerUnit)
-                   * static_cast<double>(Chorus::lineNoiseAWeightedTransfer),
-               static_cast<double>(Chorus::mn3009OutputNoiseAWeightedVrms),
+                   * static_cast<double>(
+                       Chorus::productWetLineAWeightedTransfer),
+               static_cast<double>(
+                   Chorus::productWetLineNoiseTargetAWeightedVrms),
                1.0e-9,
-               "the line-noise amplitude no longer solves its own derivation");
+               "the line-noise amplitude no longer solves its product policy");
 }
 
 void testChorusNoiseComponents()
@@ -6076,7 +6096,7 @@ int main()
     testChorusIsAtItsSettingFromTheFirstSample();
     testJuno60FallbackBucketBrigadeTiming();
     testChorusRateProportionalNoiseGainMatchesTheDerivedRatio();
-    testChorusLineNoiseMatchesTheMn3009NoiseRow();
+    testChorusNoiseMeasurementPointsAndProductPolicy();
     testChorusNoiseComponents();
     testCorrelatedRandomStepCorrelationGuard();
     testChorusToneStepFallbackGuard();

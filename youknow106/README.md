@@ -134,7 +134,12 @@ forty-year-old unit will null against the plug-in.
   [PWM panel pot](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11)
   normally stops near stored byte 101 and the printed 95% point; raw values
   above that physical travel remain accessible through the seven-bit patch
-  format and can pin the comparator high. The internal custom-IC reset curve
+  format and can pin the comparator high. Pulse Off's documented −0.8 V hold
+  likewise pins the comparator high without disconnecting the WAVE node; that
+  constant level now remains on the modelled node and C56/C50 remove its DC,
+  so off/on automation follows the comparator and coupling state instead of a
+  digital mixer gate (anchored topology; absolute node level remains OQ-15).
+  The internal custom-IC reset curve
   remains unmeasured. The scan-and-slew amplitude transient on
   pitch changes is rendered in the slope of each rise. Ramp charge follows the
   paired DAC-code × active-divider product about the B-2 `0x5400` centre
@@ -146,8 +151,9 @@ forty-year-old unit will null against the plug-in.
 
 **Mixer and noise**
 
-- Sources mute, legs never switch: saw and pulse arrive summed on one WAVE
-  node, the sub joins as a diode-gated half-cycle current, one shared Tr21
+- Fixed legs, not switchable mixer resistors: saw and pulse arrive summed on
+  one WAVE node, Pulse Off leaves its comparator's constant-high state there,
+  the sub joins as a diode-gated half-cycle current, one shared Tr21
   noise source with its own 33.9 Hz–4.8 kHz band shaping feeds every voice
   (anchored topology and shaping; the level coordinates remain voiced).
 - C56/C50 couple the mixer into the filter, keeping duty-dependent DC out
@@ -205,9 +211,12 @@ forty-year-old unit will null against the plug-in.
   point and approximately 2%/2 Vrms curve while retaining its 2.5% input-swing
   guarantee and saturation rail; explicit zero-order hold plus residual
   charge-transfer loss at the datasheet anchor; and full support-filter chains.
-  HISS 100% retains the part's 0.2 mVrms maximum, while the shipped 29.86%
-  default is the quieter 59.7 uVrms end inferred from its typical 88 dB S/N;
-  mode II keeps the reported +3.95 dB relative lift (anchored/derived;
+  HISS 100% uses an explicit 0.2 mVrms recovered-wet-line product
+  normalization beside Panasonic's conservative 0.2 mVrms part-output
+  maximum; those measurement points are tested separately. The shipped 29.86%
+  default is retained for session compatibility, not inferred from the
+  incompatible 1.5 V input-swing and 88 dB maximum-output S/N rows. Mode II
+  keeps the reported +3.95 dB relative lift (product/empirical policy;
   installed-unit absolute noise PSD is OQ-03).
 
 **Instrument-level extensions** (product policy): Unit Character scales
@@ -385,14 +394,15 @@ Not to be reopened without contradictory primary evidence:
 - The original Juno-106 control path has one chorus-enable line and one binary
   I/II line, and its
   [owner manual](https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf)
-  says I and II cannot be used together. Roland's current JUNO-106 chorus
-  models nevertheless expose I+II. This
-  product therefore keeps I+II as a distinct live/session mode at the
-  established summed-rate policy; it is not claimed as a third original
-  analogue setting, and hardware-format tone memory degrades it to II. Off
-  mutes the wet return only. The Exact reference keeps the oscillator and BBDs
-  running; faster tanh modes may rebuild the inaudible wet history on
-  engagement. Normal output is dry plus wet.
+  says I and II cannot be used together. This product nevertheless supports
+  the user-requested physical both-button combination as a distinct
+  live/session mode at the established summed-rate policy; it is not claimed
+  as a third original analogue setting, and hardware-format tone memory
+  degrades it to II. The audited Roland Cloud JUNO-106 exposes only Off/I/II,
+  so it supplies no transfer precedent for this extension. Off mutes the wet
+  return only. The Exact reference keeps the oscillator and BBDs running;
+  faster tanh modes may rebuild the inaudible wet history on engagement.
+  Normal output is dry plus wet.
 - Chorus balance is dry 100/47, wet 100/39: the wet leg is the hotter one, by
   1.62 dB.
 - The chorus modulator is a straight symmetric triangle and line 2 is its
@@ -436,10 +446,11 @@ Deliberate, each with its reason recorded:
 - **No invented behaviour where evidence is missing.** Mechanisms whose
   magnitude the sources cannot fix either ship voiced and labelled (mixer
   level coordinates, resonance onset/compensation, upper cutoff knee, noise
-  distribution) or are left out entirely until measured: the pulse-off
-  switching transient, chorus wet-mute click and leakage, HPF mode-change
-  transients, converter charge injection, envelope/LFO physical timing
-  against a real unit.
+  distribution) or are left out entirely until measured: chorus wet-mute
+  click and leakage, HPF mode-change transients, converter charge injection,
+  and envelope/LFO physical timing against a real unit. Pulse-off switching
+  now follows the settled comparator/C56 topology; its installed residual,
+  exact node level and loading remain measurement gaps.
 - **Removed on review**, with reasons recorded: a voice-VCA thump
   heuristic, a switchable-leg mixer model, a BBD clock-scaled smear
   multiplier, wet-mute distortion ~44 dB too strong, a sub-driver
@@ -458,15 +469,15 @@ unit; the priority column is this project's own ranking of audible impact.
 
 | # | Open | Priority |
 | --- | --- | --- |
-| OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. The shipped 1.4–6.4 ms sweep endpoints come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar. The live I+II product mode uses the established 1.4515542 Hz summed-rate compatibility policy because Roland's current model names the state but publishes no transfer; an identified original-unit or reference-model capture remains open | P0 |
-| OQ-03 | Chorus noise and SNR under calibrated conditions. Mode I keeps the MN3009's 0.2 mVrms max A-weighted row at HISS 100%; the 29.86% default is an explicit new-part policy inferred from its 88 dB typical S/N and 1.5 Vrms guaranteed swing, not a specified typical-noise row. Mode II ships the reported ~3.95 dB delta as a relative factor. Installed-unit absolute noise PSD is open | P0 |
+| OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. A repeatable local audit of Roland Cloud JUNO-106 v2.0.2's deterministic chorus self-noise found median rates of 0.542613 Hz (estimator range 0.542609–0.542617) and 0.880013 Hz (0.880011–0.880016) across 48/96 kHz captures and analysis windows. The median ratio 1.62181 is within 0.103% of the schematic-derived ratio: useful manufacturer-model corroboration, but about 2% slower in absolute rate and therefore not grounds to replace the hardware-derived nominal values. That model exposes only Off/I/II and the authorization-limited run supplied no dry excitation from which to recover delay. The shipped 1.4–6.4 ms sweep endpoints still come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar. The live I+II product mode uses the established 1.4515542 Hz summed-rate compatibility policy; an identified original-unit capture remains open | P0 |
+| OQ-03 | Chorus noise and SNR under calibrated conditions. Panasonic publications give conflicting 0.15 and 0.20 mVrms A-weighted maxima at the MN3009 part output under fixed 100 kHz/100 kΩ conditions; HISS 100% conservatively keeps 0.20 mVrms as a separate recovered-wet-line product normalization, not as the same measurand. The 29.86% default is session-compatible policy: the former 1.5 V input-swing / 88 dB maximum-output-S/N inference cannot establish a typical noise voltage. Mode II ships the reported ~3.95 dB delta as a relative empirical factor. Installed-unit absolute level, PSD, correlation, clock law and parasitic layers remain open | P0 |
 | OQ-05 | Loaded TA75558S IC6 and High-output clipping swing. Device identity, resistor gains and ±15 V supply rails are settled. The traced maximum-volume, no-external-load midband impedance is about 8.22 kΩ; an approximate symmetric reading of the datasheet's 25 °C typical Vop-p graph is roughly ±13.9 V around 8–9 kΩ. The modelled ±13.5 V asymptote is therefore plausible and about 0.4 V below that typical curve, but is not a guaranteed limit. Toshiba's [era-correct table](https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3) specifies 1.0 V/µs slew as a typical value only at unity gain, 2 kΩ and 25 °C; the model now uses that nominal value while the installed-load slew, exact swing and knee remain open | P0 |
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced | P0 |
 | OQ-06 | Absolute output-reference calibration. The product convention is settled and not reopenable; only the physical reference value is open. Roland's L −30 / M −15 / H 0 dBm selector spec fixes the intended steps but not the reference impedance | dependent |
 | OQ-07 | Converter hold topology and time constants. Ownership and inventory are closed — 23 used 0.01 µF holds over a 4.2 ms pass, per-destination smoothing designator-complete. Roland identifies the DCO mux as Hitachi HD14051BP, explicitly excluding Toshiba; its loaded acquisition and injection remain open | P1 |
 | OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741), [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) and [converter-output](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the nominal no-interrupt relationship to the existing pitch-converter timestamp `T`. Treating `T` as the start of `ANI PA,$EF`, running LSB instruction start is `T-334` states (83.50 us), both paths' MSB instruction start is `T-323` (80.75 us), and reset-control instruction start is `T-389` (97.25 us); reset control-to-LSB remains 55 states and LSB-to-MSB 11. The engine captures the paired count, reset decision and DCO-CV target at `T-389`, applies the modelled control/LSB/MSB events at those instruction anchors, and commits only that captured CV when the converter cursor reaches `T`, so later host edits cannot splice two scans together. The matching [OKI MSM82C53-2 mode timing](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=186) anchors PIT OUT polarity, odd-count split and delayed CE transfer; its same-part Mode 2/3 timing diagram places CE changes and PIT OUT transitions on the TP5 falling/count edge. Roland maps only positive-going PIT OUT to C54 discharge and the sub clock. IC29's 12 MHz resonator and IC35's separate 8 MHz resonator prove there is no fixed CPU-to-PIT phase to recover. Exact coincidences therefore use two separate deterministic compatibility policies, not hardware claims: **Policy A** compares the PIT `/WR` trailing/latch edge with TP5 falling/count; **Policy B** compares the PF6/PF7 update with IC35 parallel reload, whose corresponding TP5 rise appears later after propagation. Neither coincidence outcome is manufacturer-specified; no metastability behaviour is asserted or modelled. IC35's [installed-part truth table](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17) and the firmware's [`$C0/$40/$00` range writes](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L246-L273) establish DCBA presets 14/12/8 and ÷2/÷4/÷8. The model separates TP5 falling/count from IC35 reload by one nominal raw-8 MHz tick, 125 ns, and leaves propagation refinements unmodelled. At exact equality, Policy A is TP5-count-first, so the tied count edge sees the pre-write state; Policy B is IC35-reload-first, so the stable old preset is captured. Both orderings are deterministic compatibility policy, not hardware claims. Preset 10/÷6 remains a structural bit-skew hypothesis and is neither implemented nor synthesised in tests. ADC service cannot reach the DCO transaction; semantic Voice On/Off instead discard their interrupt return and restart the voice-board loop. The engine reproduces that restart at its logical command boundary, preserving protected PIT writes and completed port stores while cancelling abandoned CPU/CV work. What remains open is each physical converter/mux timestamp; serial wire phase and installed-NMOS automatic-entry timing; installed resonator frequencies and drift; `/WR`-to-TP5-falling and PF-to-reload phase statistics; measured, rather than nominal, PIT-count-to-reload separation and TP5 pulse-width distortion; C54 reset waveform; and installed MC5534A output swing, saturation onset and shape, recovery, and the magnitude—not the existence—of ramp-to-comparator coupling. Roland's [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9) give an approximately 12 Vpp Miller ramp and identify C54 as 0.001 µF with 390/200/100 kΩ range resistors, but the custom IC's internal amplifier/discharge-transistor values are unpublished; the renderer therefore retains its finite-linear discharge and scale-aware +15 V ideal-supply bound as compatibility policy rather than a measurement claim | P1 |
 | OQ-09 | Resonance byte-to-loop-gain law. Topology and mechanism are settled, including the Roland-printed input-side compensation from the p. 9 module drawing; the drawing prints no component values, so the 0.2296 coefficient stays voiced | P1 |
-| OQ-11 | Pulse-off pinned-leg mixer behaviour. About −0.8 V holds the comparator output high, represented by a provisional hard-zero audio gate; what the coupling network does — DC shift, residual bleed, loading, the switching transient — is untraced | P1 |
+| OQ-11 | Pulse-off pinned-leg mixer behaviour. Roland establishes that about −0.8 V holds the comparator high and the module drawing keeps that output on the fixed WAVE node ahead of C56/C50. The model now retains the high state and lets its existing coupling node reject the settled DC, replacing the contradicted hard-zero mixer gate; the transient therefore follows actual comparator crossings. Absolute WAVE level is still an OQ-15 coordinate, while installed residual bleed, loading and switching-waveform detail remain unmeasured | P1 |
 | OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled, supporting the shipped quasi-linear compatibility law; the transfer law itself awaits measurement | P1 |
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
 | OQ-04 | Loaded post-BBD support-chain transfer. Topology is anchored at designator level on both sides of the BBD and the charge-transfer coefficient to the datasheet's 40 kHz/12 kHz row; the loaded tap-summing pole is open | P2 |
@@ -622,14 +633,22 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   continues to gate DCO and VCF modulation only. Four affected plug-in-only
   factory VR1 positions were minimally lowered to retain the fixed loudness
   contract.
+- Pulse Off now follows the MC5534A and module drawings: its −0.8 V control
+  pins the running comparator high but leaves that constant level on the fixed
+  WAVE node, where C56/C50 reject its DC. This removes the former digital
+  mixer gate and makes off/on automation follow comparator phase and coupling
+  history; the comparison renderer retains the old path for matched A/Bs.
 - Promoted the resonance law derived from the traced grounded-base CV stage
   and BA662 linear-gm path, retaining the same service-calibrated
   self-oscillation endpoint and adding no DSP work.
 - Corrected the MN3009 transfer fit to follow its typical distortion curve
-  instead of treating a guaranteed input-swing limit as a typical point; new
-  instances use the inferred typical-S/N chorus floor while HISS 100% retains
-  the datasheet maximum. Eight plug-in-only factory VR1 trims were minimally
-  lowered to keep all 128 tones inside the established loudness contract.
+  instead of treating a guaranteed input-swing limit as a typical point.
+  HISS 100% retains the established conservative normalization and the 29.86%
+  default remains session-compatible; later audit separated that post-board
+  policy from Panasonic's part-output maximum and withdrew the invalid
+  input-swing/S/N derivation. Eight plug-in-only factory VR1 trims were
+  minimally lowered to keep all 128 tones inside the established loudness
+  contract.
 - A three-level 1×/2×/4× QUALITY control with fixed reported latency; new
   instances now default to the fidelity-qualified 4× mode, while saved
   sessions retain their stored choice and 1×/2× remain available.

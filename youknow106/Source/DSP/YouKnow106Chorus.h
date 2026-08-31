@@ -27,10 +27,10 @@ namespace youknow106
 //
 // The original instrument's owner manual and recovered control path describe
 // one enable bit plus one binary I/II bit, not a third analogue clock setting.
-// Roland's current JUNO-106 chorus models nevertheless expose I+II explicitly
-// as the sound of pressing both buttons. Keep that fourth product state here;
-// `settingsFor()` documents the compatibility policy used while its exact
-// original-unit transfer remains unmeasured.
+// Keep the user-requested physical both-button combination as a fourth product
+// state; `settingsFor()` documents its compatibility policy while the exact
+// original-unit transfer remains unmeasured. The audited Roland Cloud
+// JUNO-106 exposes only Off/I/II and therefore supplies no I+II precedent.
 enum class ChorusMode { Off, One, Two, OneTwo };
 
 // The four parameter states map one-to-one to the four button combinations.
@@ -121,45 +121,32 @@ public:
     static constexpr float nodeVoltsPerUnit = 2.6f;
 
     // ------------------------------------------------------------------
-    // The line's own noise floor, from the MN3009's own noise row.
-    //
-    // This is the same datasheet the model already treats as anchored for
-    // bandwidth (-3 dB at 12 kHz, see `transferSmear`) and for distortion
-    // (0.3% typical at 0.78 Vrms, see `bbdTransfer`). Its noise row reads
-    // **0.2 mVrms max, A-weighted**, and that is the full-scale figure below.
-    //
-    // The datasheet's own two noise figures disagree by 10.5 dB: the 0.2 mVrms
-    // A-weighted *maximum* against the ~59.7 uVrms implied by its S/N 88 dB
-    // *typical* at the 1.5 Vrms guaranteed input swing. The target is therefore
-    // a bracket rather than one specified typical noise voltage. Keep the
-    // maximum as Chorus Noise 1.0, but ship the inferred quieter end as the
-    // control default: 1.5 Vrms / 88 dB = 59.716 uVrms, or 0.29858 of the
-    // maximum. This combines a minimum swing with typical S/N, so it is a
-    // representative new-part policy rather than a claim that Panasonic
-    // specified a typical noise row.
-    //
-    // What this replaces is not a hardware measurement. The previous 1.0e-3
-    // was a declared compatibility level carried forward from before OQ-03,
-    // and the one head-to-head on record put the model's floor about 9 dB
-    // above one lossy archive recording and about 5 dB below another --
-    // agreement with an undocumented chain is not a fidelity claim in either
-    // direction, so neither recording is used here.
-    static constexpr float mn3009OutputNoiseAWeightedVrms = 0.200e-3f;
+    // Panasonic specifies noise at the MN3009 output under fixed conditions:
+    // Ta=25 C, VDD/VCP=-15 V, VGG=-14 V, RL=100 kOhm, fCP=100 kHz and an
+    // A-weighted meter. A later sheet gives 0.200 mVrms maximum, while the
+    // earlier BBD book gives 0.150 mVrms maximum; no installed-lot mapping is
+    // available, so HISS 100% keeps the conservative 0.200 mVrms endpoint.
+    // This is an upper limit, not a typical target and not a measurement after
+    // Roland's external tap-sum/reconstruction network.
+    // https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf
+    static constexpr float mn3009OutputNoiseAWeightedMaximumVrms = 0.200e-3f;
+
+    // Session-compatible product policy. The old rationale combined a 1.5 V
+    // guaranteed *input* swing with an 88 dB typical *maximum-output* S/N row;
+    // those are different measurands and cannot derive a 59.7 uVrms typical
+    // noise voltage. Retain the established control position, but do not call
+    // it a Panasonic typical endpoint. OQ-03 still needs an installed-unit
+    // capture to replace it.
     static constexpr float defaultNoiseScale = 0.29858038f;
 
-    // The datasheet figure is a noise *voltage at the part's output*, so the
-    // amplitude the line writes at each clock edge is not that number: what
-    // arrives at IC6's wet input is the injected sequence after the hold, the
-    // tap-summing pole, both reconstruction sections and the wet output
-    // coupling, and the datasheet's own weighting is A. The constant below is
-    // that whole chain's A-weighted transfer from the injected sequence's
-    // full-scale amplitude to the recovered wet line, in model units per unit
-    // -- a measured property of this model's own linear filters, not a fit to
-    // any recording. It is 1/sqrt(3) (a uniform sequence's own RMS) times
-    // 0.6973, the chain's own A-weighted transfer, and the second factor is
-    // dominated by the hold: at the sweep's 20.0-91.4 kHz clock the held
-    // sequence's sinc-shaped density puts roughly half its power inside the
-    // 10 kHz reconstruction band.
+    // The established HISS-100 product normalization chooses a recovered wet
+    // line of the same numerical 0.200 mVrms. That equality is explicit policy,
+    // not a claim that the external board belongs inside Panasonic's
+    // measurand. The constant below is the complete modelled board chain's
+    // A-weighted transfer from uniform edge-noise amplitude to the wet line:
+    // 1/sqrt(3) times 0.6973 for hold/tap sum/reconstruction/output coupling.
+    static constexpr float productWetLineNoiseTargetAWeightedVrms =
+        mn3009OutputNoiseAWeightedMaximumVrms;
     //
     // Stated at 192 kHz, which is what HQ targets from the 48 kHz host-rate
     // family and is also the engine's `noiseReferenceRateHz`. The combined
@@ -175,17 +162,17 @@ public:
     // random sequence. Fixed-seed 128 s measurements put the effective
     // transfer at 0.40272-0.40276 on the 176.4 kHz family and
     // 0.40261-0.40264 on the 192 kHz family. Four figures is all the
-    // measurand supports, which is why the suites allow 0.05 dB on the
-    // datasheet side of the resulting assertion rather than fencing it
-    // exactly at the row.
-    static constexpr float lineNoiseAWeightedTransfer = 0.4026f;
+    // measurand supports, which is why the suites allow estimator margin on
+    // the resulting product-policy assertion rather than fencing it exactly.
+    static constexpr float productWetLineAWeightedTransfer = 0.4026f;
 
     // Amplitude of the uniform random sample each line writes at its own clock
     // edges, in model units. One equation, solved once: the recovered
-    // A-weighted wet line equals the datasheet's noise row.
+    // A-weighted wet line equals the declared product target. A separate
+    // fixed-100-kHz raw-node regression guards Panasonic's part-output maximum.
     static constexpr float independentLineRandomAmplitude =
-        mn3009OutputNoiseAWeightedVrms
-            / (nodeVoltsPerUnit * lineNoiseAWeightedTransfer);
+        productWetLineNoiseTargetAWeightedVrms
+            / (nodeVoltsPerUnit * productWetLineAWeightedTransfer);
 
     // A live engine-quality change alters only the numerical sample grid.
     // `preserveState` retains the BBD buckets and all free-running phases/RNGs.
@@ -238,8 +225,8 @@ public:
     // 3.96 and 3.95 dB). The unchanged capture chain makes the relative delta
     // usable even though its absolute dBFS figures and true-peak statistic
     // cannot calibrate this model. Apply 3.95 dB empirically by default while
-    // leaving mode I -- whose per-line amplitude answers to the MN3009's own
-    // 0.2 mVrms A-weighted row -- untouched. There is no corresponding
+    // leaving mode I's explicit recovered-wet-line product normalization
+    // untouched. There is no corresponding
     // calibrated I+II capture, so that product mode provisionally retains the
     // measured mode-II profile until one exists.
     static constexpr float measuredModeTwoNoiseDeltaDb = 3.95f;

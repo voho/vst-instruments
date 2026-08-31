@@ -152,10 +152,11 @@ struct EngineParameters
 
     // --- Controls the modelled hardware does not have ----------------------
     // Velocity zero and six voices are structurally hardware-aligned. Chorus
-    // Chorus Noise defaults to the MN3009's inferred typical-S/N end; 1 keeps
-    // the datasheet maximum available. The reported approximate II-I lift is
-    // preserved; installed-unit PSD, stereo correlation and parasitic layers
-    // remain OQ-03 rather than a fully calibrated level.
+    // Chorus Noise retains its session-compatible default; 1 uses the
+    // conservative 0.200 mVrms product normalization named beside the MN3009
+    // part-output maximum. The reported approximate II-I lift is preserved;
+    // installed-unit PSD, stereo correlation and parasitic layers remain
+    // OQ-03 rather than a fully calibrated level.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
     // Exposed to the host as Unit Character: one master over every modelled
     // component tolerance, trimmer residual, thermal wander and optional
@@ -204,6 +205,11 @@ struct EngineParameters
     bool enableOpAmpSlewLimiting { true };
     bool enableVcfEarlyEffect { true };
     bool enableSpatialThermalGradient { true };
+    // On by default: Pulse Off drives the MC5534A comparator high; it does not
+    // disconnect a mixer leg. Keep that pinned DC on the WAVE node and let the
+    // existing C56/C50 coupling capacitor remove it. False retains the former
+    // hard-zero gate solely for controlled A/B renders.
+    bool enablePulseOffWaveNodeCoupling { true };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
@@ -687,8 +693,9 @@ public:
     // to drive the chorus. Choosing this provisional reference makes the new
     // -18 dBFS RMS boundary exactly unity and therefore preserves sessions.
     static constexpr float internalVoltsPerUnit = 2.6f;
-    // The chorus refers its BBD noise row to the same coordinate and has to
-    // name it locally, so the two cannot be allowed to drift apart.
+    // The chorus refers its explicit recovered-wet-line product normalization
+    // to the same coordinate and has to name it locally, so the two cannot be
+    // allowed to drift apart.
     static_assert(std::bit_cast<std::uint32_t> (Chorus::nodeVoltsPerUnit)
                       == std::bit_cast<std::uint32_t> (internalVoltsPerUnit),
                   "the chorus and the engine disagree about the node volt scale");
@@ -1722,8 +1729,10 @@ private:
         // cheap freewheel path rather than the full render whose output the
         // engine discards anyway. Set only under the fast VCF tanh modes;
         // Exact keeps the established always-on card render. Waking resumes
-        // from the frozen support state rather than flushing it -- measured
-        // closer to the always-rendered reference; see initialiseVoice.
+        // from the retained support state rather than flushing it -- measured
+        // closer to the always-rendered reference. The slow C56/C50 state is
+        // the exception: freewheel follows the comparator's endpoint waveform
+        // so a switch edit cannot leave a false long transient.
         bool freewheeling { false };
         // The assigner's note-memory table and the voice CPU's pitch byte are
         // separate RAM. A POLY-button handler clears the former, but the
@@ -2053,8 +2062,14 @@ private:
     // so it follows the shared held threshold for inactive cards as well.
     void updatePulseComparator(Voice& voice,
                                const EngineParameters& parameters) noexcept;
-    [[nodiscard]] static bool pulseMixEnabled(bool requested,
-                                              float duty) noexcept;
+    [[nodiscard]] static bool pulseMixEnabled(
+        bool requested, float duty, bool couplePinnedLevel) noexcept;
+    [[nodiscard]] static float pulseWaveNodeMean(
+        const Voice& voice, const EngineParameters& parameters) noexcept;
+    void primeVoiceWaveNode(Voice& voice,
+                            const EngineParameters& parameters) noexcept;
+    void primeStartupVoiceWaveNodes(
+        const EngineParameters& parameters) noexcept;
     void updateSharedHighPass(const EngineParameters& parameters) noexcept;
     struct VoiceFilterFrame
     {
@@ -2083,9 +2098,10 @@ private:
 #endif
     // The cheap advance a retired physical card takes under the fast VCF
     // tanh modes: exactly the free-running state a reassignment can hear --
-    // DCO PIT/ramp state, sub-divider level, per-cycle render scale, card noise --
-    // with none of the reconstruction, comparator or filter work whose
-    // output is discarded behind the shut VCA. See Voice::freewheeling.
+    // DCO PIT/ramp state, sub-divider level, per-cycle render scale, card noise,
+    // plus the comparator's control-rate threshold/endpoint and C56/C50's slow
+    // state -- with none of the reconstruction or filter work whose output is
+    // discarded behind the shut VCA. See Voice::freewheeling.
     void freewheelVoiceCard(Voice& voice) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
     void advanceLfoDelay(const EngineParameters& parameters) noexcept;
