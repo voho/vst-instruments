@@ -2195,3 +2195,38 @@ what is being asked of it here.
 The body direction is settled for this corpus. What is not settled is nylon,
 which was carried along by a decision made on steel evidence through a shared
 body, and the upper-band damping question, whose set is still unrendered.
+
+## 2026-08-31 — the last outstanding listening question closed by a measurement
+
+One set was still owed: upper-band damping, where the gated loss put the shared
+upper-loss cutoff at 2.0 while the damping audit preferred 1.2 for steel and 1.6
+for nylon, and the two materials were recorded as wanting opposite corrections
+above 4.5 kHz that one shared shelf cannot express. It was not rendered, and it
+should not be. The disagreement it was built on no longer exists.
+
+Re-running the audit at three cutoffs on the current build, model minus
+recording in dB/s:
+
+| Band | cutoff 1.2 | cutoff 1.6 | cutoff 2.170 |
+| --- | ---: | ---: | ---: |
+| nylon 2000--3000 | +18.5 | +5.9 | −0.0 |
+| steel 2000--3000 | +0.1 | −1.1 | −1.4 |
+| steel 3000--4500 | +4.6 | +3.4 | +2.8 |
+
+Every band the audit will report now prefers the fitted 2.170, except steel's
+2000--3000, which prefers 1.2 by 1.3 dB/s out of a 27 dB/s recording — under
+five per cent, and against nylon's 18.5 dB/s the other way. The loss agrees, and
+so do all three splits: 6.836184, 6.823805 and 5.655082 at 2.170 against
+7.506200, 7.708000 and 5.886300 at 1.2. The bands above 4.5 kHz that were the
+grounds for "opposite corrections" are withheld by the audit's own stability
+guard at every cutoff for steel, so there is no measurement there to disagree
+about.
+
+Three things moved under that question since it was written: the anchor
+topology, the plate conductance floor and steel's frequency loss, the last two
+by the listening verdict. The audit's old preference was measured on a build
+that no longer exists.
+
+So the number settles it, and this file's own rule applies — do not run a
+listening test to decide something a measurement already decides. The set is
+cancelled rather than rendered, and no listening question is outstanding.

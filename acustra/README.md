@@ -572,12 +572,13 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   the bands where the g21 measurement's own body resonances set the decay, so
   they cannot be corrected without either a matched measurement or an invented
   conductance.
-- The gated loss and the damping audit still disagree about the upper band. A
-  training sweep of the shared upper-loss cutoff puts the loss minimum at 2.0
-  while the audit prefers 1.2 for steel and 1.6 for nylon, and the two
-  materials want opposite corrections above 4.5 kHz, which one shared shelf
-  cannot express. Deciding that by ear is the next step, not by choosing
-  whichever number a metric prefers.
+- The gated loss and the damping audit used to disagree about the upper band,
+  and no longer do. Re-run at three cutoffs, every band the audit will report
+  prefers the fitted 2.170 except steel's 2000--3000 Hz, which prefers 1.2 by
+  1.3 dB/s out of 27 — against nylon's 18.5 dB/s the other way. The loss and
+  all three splits agree with it. The bands above 4.5 kHz that were the grounds
+  for "opposite corrections" are withheld by the audit's own stability guard at
+  every cutoff for steel, so there is nothing there to disagree about.
 - A dry six-string audit still finds the nylon fundamental too weak and the
   early spectrum about 4.34 dB/octave too bright. A passive finite-release
   initializer improved both but failed the predeclared decay-balance and
@@ -618,13 +619,12 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   +3.4 to −6.2 dB. No verdict and no measurement has validated that for nylon.
   If the two materials want different bodies, the body has to stop being
   shared, and that is a bigger change than any here.
-- One listening set is outstanding and nothing waits on it: upper-band damping,
-  where the gated loss and the damping audit disagree and the two materials
-  want opposite corrections above 4.5 kHz. It is not rendered. The body
-  direction is settled for this corpus — a symmetric bracket around the
-  adopted point found the letter half way back toward the fitted calibration
-  clearly worst and the letter half way further indistinguishable from what
-  ships, so the corpus broke the tie in favour of not moving.
+- No listening question is outstanding. The body direction is settled for this
+  corpus — a symmetric bracket around the adopted point found the letter half
+  way back toward the fitted calibration clearly worst and the letter half way
+  further indistinguishable from what ships, so the corpus broke the tie in
+  favour of not moving. The upper-band damping set was cancelled rather than
+  rendered: the disagreement it was built on is gone, and a number settles it.
 - A mechanism-level scan of what else exists puts one gap ahead of the others.
   Applied Acoustics Systems' Strum GS-2, the established physically modelled
   acoustic guitar, states that it models the vertical *and* horizontal

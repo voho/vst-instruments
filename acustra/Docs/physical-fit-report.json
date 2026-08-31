@@ -929,7 +929,7 @@
    ]
   },
   "status": "five of the twenty-seven values are a direction chosen by ear, not the fit's answer; recorded as chosen by ear in Docs/decisions.md",
-  "open": "upper-band damping, not rendered; the body direction is settled for this corpus",
+  "open": "none; the upper-band damping set was cancelled rather than rendered",
   "2026-08-31 how-far": "B, half way back toward the fitted calibration, is the worst of three; A, the shipping engine, and C, half way further toward the flat-top rows, are a tie. The corpus broke the tie in favour of A - 6.836184 and 6.823805 against C's 7.047400 and 7.062700 - so the adopted point stands and the direction is not pushed further"
  },
  "sympathetic_tail_ceiling": {
@@ -938,5 +938,36 @@
   "measured": 0.948664,
   "reason": "the ceiling bounds the balance of a fretted note's tail, not the coupling: holding the sympathetic path fixed and tilting the body's radiation down alone moves it 0.806 to 0.927, while doubling the low-mode gain at a fixed tilt moves it 0.806 to 0.819. It was re-pinned when a listening verdict chose that body",
   "tightened_in_exchange": "the resonant share must now exceed five times the off-resonant share rather than three; measured 7.04"
+ },
+ "upper_band_cutoff_resolved": {
+  "question": "the gated loss put the shared upper-loss cutoff at 2.0 while the damping audit preferred 1.2 for steel and 1.6 for nylon",
+  "audit_rerun_dB_per_s_model_minus_recording": {
+   "nylon 2000-3000": {
+    "1.2": 18.5,
+    "1.6": 5.9,
+    "2.16964938": -0.0
+   },
+   "steel 2000-3000": {
+    "1.2": 0.1,
+    "1.6": -1.1,
+    "2.16964938": -1.4
+   },
+   "steel 3000-4500": {
+    "1.2": 4.6,
+    "1.6": 3.4,
+    "2.16964938": 2.8
+   }
+  },
+  "splits_at_1.2": {
+   "training": 7.5062,
+   "held_out": 7.708,
+   "flat_top": 5.8863
+  },
+  "splits_at_2.16964938": {
+   "training": 6.836184,
+   "held_out": 6.823805,
+   "flat_top": 5.655082
+  },
+  "conclusion": "the disagreement is gone; the audit's old preference was measured on a build that no longer exists, three things having moved under it - the anchor topology, the plate conductance floor and steel's frequency loss. A number settles it, so no listening test is run"
  }
 }
