@@ -3392,6 +3392,110 @@ void testPitByteTransactionsFollowRecoveredCpuTiming()
                "selected PIT clock");
     }
 
+    // Close the rev4 first-load matrix explicitly. Start every cold control
+    // transaction on the same TP5 falling phase and walk it on the raw 8 MHz
+    // grid: 66 CPU states put the MSB exactly on a 4'/8' falling edge and
+    // halfway through a 16' period. Policy A therefore makes the first two
+    // wait one complete selected clock, while 16' waits half a clock. The
+    // former reload-edge model would load one raw tick (125 ns) later --
+    // 0.5/0.25/0.125 selected periods respectively.
+    constexpr double rawClockRate = 8000000.0;
+    struct FirstLoadCase
+    {
+        DcoRange range;
+        double clocksAfterMsb;
+        int framesToInitialLoad;
+        double legacyReloadDelayClocks;
+    };
+    constexpr std::array firstLoadCases {
+        FirstLoadCase { DcoRange::Four, 1.0, 2, 0.5 },
+        FirstLoadCase { DcoRange::Eight, 1.0, 4, 0.25 },
+        FirstLoadCase { DcoRange::Sixteen, 0.5, 4, 0.125 },
+    };
+    constexpr std::array<std::uint32_t, 4> firstLoadDividers {
+        8u, 9u, 128u, 65535u
+    };
+    for (const auto& loadCase : firstLoadCases)
+    {
+        const double selectedClockHz =
+            YouKnow106TestAccess::rangeClockHz(loadCase.range);
+        for (const auto count : firstLoadDividers)
+        {
+            const std::string context = "RANGE "
+                + std::to_string(static_cast<int>(loadCase.range))
+                + ", count " + std::to_string(count);
+            YouKnow106Engine engine;
+            engine.prepare(192000.0, blockSize, false);
+            YouKnow106TestAccess::setInternalRateForTimingTest(
+                engine, rawClockRate);
+            YouKnow106TestAccess::setRangeClockPhase(engine, 1.0);
+            YouKnow106TestAccess::programDcoCount(
+                engine, 0, count, true);
+
+            int writeFrames = 0;
+            while (YouKnow106TestAccess::pitWriteState(engine, 0)
+                       != YouKnow106TestAccess::idlePitWriteState()
+                   && writeFrames < 200)
+            {
+                advance(engine, loadCase.range);
+                ++writeFrames;
+            }
+            expect(writeFrames == 132,
+                   context + " moved the 66-state control/LSB/MSB span");
+            expect(YouKnow106TestAccess::pitState(engine, 0)
+                       == YouKnow106TestAccess::awaitingInitialLoadState()
+                       && YouKnow106TestAccess::pendingDcoDividerValid(engine, 0)
+                       && YouKnow106TestAccess::pendingDcoDivider(engine, 0)
+                              == count,
+                   context + " did not leave one complete count awaiting CE");
+            expectNear(YouKnow106TestAccess::pitClocksToEvent(engine, 0),
+                       loadCase.clocksAfterMsb, 1.0e-12,
+                       context + " loaded on reload rather than TP5 falling");
+
+            int loadFrames = 0;
+            while (YouKnow106TestAccess::pitState(engine, 0)
+                       == YouKnow106TestAccess::awaitingInitialLoadState()
+                   && loadFrames < 16)
+            {
+                advance(engine, loadCase.range);
+                ++loadFrames;
+            }
+            expect(loadFrames == loadCase.framesToInitialLoad,
+                   context + " missed the next TP5 falling edge");
+            const auto highClocks =
+                YouKnow106TestAccess::mode3HalfClocks(count, true);
+            const auto lowClocks =
+                YouKnow106TestAccess::mode3HalfClocks(count, false);
+            expect(YouKnow106TestAccess::activeDcoDivider(engine, 0) == count
+                       && YouKnow106TestAccess::pitOutHigh(engine, 0)
+                       && !YouKnow106TestAccess::pendingDcoDividerValid(engine, 0),
+                   context + " did not enter CE cleanly");
+            expectNear(YouKnow106TestAccess::pitClocksToEvent(engine, 0),
+                       static_cast<double>(highClocks), 1.0e-12,
+                       context + " has the wrong first high half");
+            expect(YouKnow106TestAccess::consumePitEvent(engine, 0)
+                       == YouKnow106TestAccess::fallingPitEvent()
+                       && YouKnow106TestAccess::pitClocksToEvent(engine, 0)
+                              == static_cast<double>(lowClocks),
+                   context + " has the wrong first OUT transition");
+            expect(YouKnow106TestAccess::consumePitEvent(engine, 0)
+                       == YouKnow106TestAccess::risingPitEvent()
+                       && highClocks + lowClocks == count,
+                   context + " did not complete one count across high+low");
+
+            const double correctedLoadSeconds =
+                static_cast<double>(loadFrames) / rawClockRate;
+            const double legacyReloadSeconds = correctedLoadSeconds
+                + 1.0 / YouKnow106TestAccess::masterClockHz();
+            expectNear((legacyReloadSeconds - correctedLoadSeconds)
+                           * selectedClockHz,
+                       loadCase.legacyReloadDelayClocks, 1.0e-12,
+                       context + " lost the separated-edge latency delta");
+            expect(loadCase.legacyReloadDelayClocks <= 1.0,
+                   context + " moved reload by more than one selected period");
+        }
+    }
+
     // Policy A compares the completed MSB's /WR trailing/latch edge only
     // with TP5 falling/count. It is independent of IC35 reload. Sweep nearly
     // one selected period at every RANGE: an earlier write supplies the count

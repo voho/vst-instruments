@@ -2828,7 +2828,7 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
     auto companion = std::make_unique<juce::ParameterAttachment> (
         *companionParameter, refresh, nullptr);
 
-    button.onClick = [this, parameterId, otherParameterId]
+    button.onClick = [this, parameterId]
     {
         // Read the decision from the parameter atomics, not from the lamp:
         // the lamp update is asynchronous and can lag a host write.
@@ -2839,45 +2839,14 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
                 return value->load (std::memory_order_relaxed) > 0.5f;
             return false;
         };
-        const auto set = [this] (const char* id, bool on)
-        {
-            if (auto* target = audioProcessor.parameters.getParameter (id))
-            {
-                target->beginChangeGesture();
-                target->setValueNotifyingHost (
-                    target->convertTo0to1 (on ? 1.0f : 0.0f));
-                target->endChangeGesture();
-            }
-        };
-
         const bool oneWasOn = isOn (parameters::chorusI);
         const bool twoWasOn = isOn (parameters::chorusII);
         const auto currentMode = chorusModeFor (oneWasOn, twoWasOn);
         const auto selectedMode = std::strcmp (parameterId,
                                                parameters::chorusI) == 0
                                 ? ChorusMode::One : ChorusMode::Two;
-        const bool ownWasOn = selectedMode == ChorusMode::One ? oneWasOn
-                                                               : twoWasOn;
-        const bool otherWasOn = selectedMode == ChorusMode::One ? twoWasOn
-                                                                 : oneWasOn;
-
-        if (currentMode == selectedMode)
-        {
-            // Pressing the visibly lit single-mode key switches the chorus off.
-            if (otherWasOn)
-                set (otherParameterId, false);
-            if (ownWasOn)
-                set (parameterId, false);
-        }
-        else
-        {
-            // Engaging first keeps the audio on the old, I+II or target mode
-            // until the companion releases.
-            if (! ownWasOn)
-                set (parameterId, true);
-            if (otherWasOn)
-                set (otherParameterId, false);
-        }
+        audioProcessor.setChorusModeFromUi (
+            currentMode == selectedMode ? ChorusMode::Off : selectedMode);
 
         // A ParameterAttachment may defer its callback when a host invokes
         // this action outside JUCE's registered message thread. The completed
@@ -3079,13 +3048,7 @@ void YouKnow106AudioProcessorEditor::attachChorusOffButton (juce::Button& button
         *second, refresh, nullptr);
     button.onClick = [this]
     {
-        for (const char* id : { parameters::chorusI, parameters::chorusII })
-            if (auto* target = audioProcessor.parameters.getParameter (id))
-            {
-                target->beginChangeGesture();
-                target->setValueNotifyingHost (target->convertTo0to1 (0.0f));
-                target->endChangeGesture();
-            }
+        audioProcessor.setChorusModeFromUi (ChorusMode::Off);
         refreshChorusButtons();
     };
 
@@ -3122,16 +3085,11 @@ void YouKnow106AudioProcessorEditor::attachChorusBothButton (
                 return value->load (std::memory_order_relaxed) > 0.5f;
             return false;
         };
-        const bool enable = ! (isOn (parameters::chorusI)
-                               && isOn (parameters::chorusII));
-        for (const char* id : { parameters::chorusI, parameters::chorusII })
-            if (auto* target = audioProcessor.parameters.getParameter (id))
-            {
-                target->beginChangeGesture();
-                target->setValueNotifyingHost (
-                    target->convertTo0to1 (enable ? 1.0f : 0.0f));
-                target->endChangeGesture();
-            }
+        const auto current = chorusModeFor (isOn (parameters::chorusI),
+                                            isOn (parameters::chorusII));
+        audioProcessor.setChorusModeFromUi (
+            current == ChorusMode::OneTwo ? ChorusMode::Off
+                                           : ChorusMode::OneTwo);
         refreshChorusButtons();
     };
 

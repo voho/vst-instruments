@@ -376,6 +376,25 @@ struct HostChangeRecorder final : juce::AudioProcessorListener
     ChangeDetails lastDetails {};
 };
 
+struct FirstParameterStateSaver final : juce::AudioProcessorListener
+{
+    void audioProcessorParameterChanged (juce::AudioProcessor* processor,
+                                         int, float) override
+    {
+        if (! saved)
+        {
+            saved = true;
+            processor->getStateInformation (state);
+        }
+    }
+
+    void audioProcessorChanged (
+        juce::AudioProcessor*, const ChangeDetails&) override {}
+
+    juce::MemoryBlock state;
+    bool saved { false };
+};
+
 float maximumBufferDifference (const juce::AudioBuffer<float>& first,
                                const juce::AudioBuffer<float>& second)
 {
@@ -3636,24 +3655,7 @@ void testReentrantStateSaveReturnsThePreRecallSnapshot()
 {
     YouKnow106AudioProcessor source;
     source.setCurrentProgram (1);
-
-    struct StateSavingListener final : juce::AudioProcessorListener
-    {
-        void audioProcessorParameterChanged (juce::AudioProcessor* processor,
-                                             int, float) override
-        {
-            if (! saved)
-            {
-                saved = true;
-                processor->getStateInformation (state);
-            }
-        }
-        void audioProcessorChanged (
-            juce::AudioProcessor*, const ChangeDetails&) override {}
-
-        juce::MemoryBlock state;
-        bool saved { false };
-    } listener;
+    FirstParameterStateSaver listener;
 
     source.addListener (&listener);
     source.setCurrentProgram (2);
@@ -5806,6 +5808,67 @@ void testChorusSelectionOnlyRunsForARealPress()
                 "window opens");
 }
 
+// I+II is encoded by two established automation parameters, but one panel
+// press is still one state transition. A host can synchronously request state
+// from the first parameter notification; that save must contain the complete
+// old mode, never the transient single lamp between the two writes.
+void testChorusButtonTransitionsAreAtomicForReentrantStateSaves()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr,
+            "cannot test atomic chorus transitions without an editor");
+    if (editor == nullptr)
+        return;
+
+    auto* chorusBoth = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "I+II"));
+    expect (chorusBoth != nullptr && static_cast<bool> (chorusBoth->onClick),
+            "the I+II key has no click action");
+    if (chorusBoth == nullptr || ! chorusBoth->onClick)
+        return;
+
+    FirstParameterStateSaver entering;
+    processor.addListener (&entering);
+    chorusBoth->onClick();
+    processor.removeListener (&entering);
+    expect (entering.saved && ! entering.state.isEmpty(),
+            "entering I+II produced no re-entrant state snapshot");
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
+                && parameterValue (processor, parameters::chorusII) > 0.5f,
+            "entering I+II did not commit both contacts");
+
+    if (! entering.state.isEmpty())
+    {
+        YouKnow106AudioProcessor restored;
+        restored.setStateInformation (entering.state.getData(),
+                                      static_cast<int> (entering.state.getSize()));
+        expect (parameterValue (restored, parameters::chorusI) < 0.5f
+                    && parameterValue (restored, parameters::chorusII) < 0.5f,
+                "a re-entrant save while entering I+II captured one contact");
+    }
+
+    FirstParameterStateSaver leaving;
+    processor.addListener (&leaving);
+    chorusBoth->onClick();
+    processor.removeListener (&leaving);
+    expect (leaving.saved && ! leaving.state.isEmpty(),
+            "leaving I+II produced no re-entrant state snapshot");
+    expect (parameterValue (processor, parameters::chorusI) < 0.5f
+                && parameterValue (processor, parameters::chorusII) < 0.5f,
+            "leaving I+II did not commit both contacts off");
+
+    if (! leaving.state.isEmpty())
+    {
+        YouKnow106AudioProcessor restored;
+        restored.setStateInformation (leaving.state.getData(),
+                                      static_cast<int> (leaving.state.getSize()));
+        expect (parameterValue (restored, parameters::chorusI) > 0.5f
+                    && parameterValue (restored, parameters::chorusII) > 0.5f,
+                "a re-entrant save while leaving I+II captured one contact");
+    }
+}
+
 // The programmer row is one row of keys sharing one cell top and one cell
 // height. The drawn key face is placed at a fraction of that cell, so the whole
 // row has to carry one fraction: reading it from the cell height alone left
@@ -6789,6 +6852,7 @@ int main()
     testEditorRandomizeStrengthsAndReset();
     testClickingTheSelectedRadioKeepsItsLampLit();
     testChorusSelectionOnlyRunsForARealPress();
+    testChorusButtonTransitionsAreAtomicForReentrantStateSaves();
     testProgrammerRowKeysShareOneKeyFace();
     testPerformanceLeverKeepsTheAxisStillHeld();
     testPolyButtonsKeepAValidFirmwareLatch();

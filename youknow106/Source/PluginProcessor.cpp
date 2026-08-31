@@ -1678,6 +1678,27 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
 
 }
 
+void YouKnow106AudioProcessor::setChorusModeFromUi (
+    youknow106::ChorusMode mode)
+{
+    using namespace youknow106::parameters;
+
+    ScopedParameterWrite write { *this };
+    const auto set = [this] (const char* id, bool on)
+    {
+        auto* target = parameters.getParameter (id);
+        if (target == nullptr || (target->getValue() > 0.5f) == on)
+            return;
+
+        target->beginChangeGesture();
+        target->setValueNotifyingHost (target->convertTo0to1 (on ? 1.0f : 0.0f));
+        target->endChangeGesture();
+    };
+
+    set (chorusI, youknow106::chorusOneEngaged (mode));
+    set (chorusII, youknow106::chorusTwoEngaged (mode));
+}
+
 void YouKnow106AudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
     // Parameter notifications are synchronous, so a host may save state from

@@ -126,6 +126,10 @@ public:
     // Call from the message thread. The amount is a proportion of every
     // control's normalised legal range.
     void randomizeParameters (float amount);
+    // The two public chorus parameters encode one four-state panel choice.
+    // Keep a physical button press atomic for audio snapshots and re-entrant
+    // host state saves while still notifying both existing automation lanes.
+    void setChorusModeFromUi (youknow106::ChorusMode mode);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
     // The on-screen performance lever is event-like controller input, not a
     // stored parameter. A one-slot latest-value mailbox coalesces dense mouse
