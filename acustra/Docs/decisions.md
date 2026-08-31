@@ -2516,3 +2516,29 @@ free parameters from walking in the same direction by other routes. The lesson
 is narrower than "do not refit": it is that on this corpus a refit has to be
 gated on development validation every time, and that until the steel corpus is
 a flat-top there is no run of the optimiser that can be trusted unattended.
+
+## 2026-08-31 — the committed demos stopped being a cross-platform checksum
+
+The build section has claimed that a clean Release build reproduces the
+committed WAVs byte for byte. Half of that is still true and half is not, and
+the half that is not is worth knowing before someone treats a diff as a defect.
+
+Two independent local Release builds still agree exactly. The committed files,
+which CI renders, do not match a local render of the same source: the
+difference is at most 9 of 32767 on `01-steel-sustain-range`, a sequence of
+single held notes, and at most 981 on `06-playing-behaviours`, which changes
+chords over ringing strings under the bridge hand. Same source, same
+calibration, different machine.
+
+That gradient is the explanation. A last-bit rounding difference is amplified
+by the parts of the model that feed back and multiply - the junction that
+couples six strings through one bridge, and now a longitudinal path whose drive
+is a square - so it stays at the bottom bit on a single sustained note and
+grows over seconds of chords. Nothing here is nondeterministic; each machine
+reproduces itself exactly.
+
+So the byte-exactness claim is scoped to one platform, and the committed WAVs
+are CI's rendering rather than a checksum anyone can reproduce. A local render
+that differs is not evidence of a defect, and the way to compare two builds
+remains what it has been: score them over identical rows with identical
+settings.

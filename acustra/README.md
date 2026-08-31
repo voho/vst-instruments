@@ -820,10 +820,17 @@ ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/AcustraRenderDemos Docs/audio
 ```
 
-Render the demos from a Release build, which is what CI does. A clean Release
-build reproduces the committed WAVs byte for byte; an unoptimised one does not,
-because the arithmetic contracts differently, and the diff that produces is
-noise rather than a change in the instrument.
+Render the demos from a Release build, which is what CI does. On one platform
+a clean Release build reproduces its own WAVs byte for byte - two independent
+Release builds here agree exactly - while an unoptimised one does not, because
+the arithmetic contracts differently. Across platforms it no longer holds: the
+committed files come from CI, and a local render of the same source differs
+from them by up to 981 of 32767 on the polyphonic demo and by 9 on the
+single-note one. The instrument has become chaotic enough - a junction that
+couples six strings and a squared-drive longitudinal path - that a last-bit
+rounding difference grows over seconds of chords, and it grows with how
+polyphonic and how hard-played the passage is. Treat the committed WAVs as
+CI's, not as a cross-platform checksum.
 
 The plug-in build fetches pinned JUCE 8.0.14 unless `ACUSTRA_JUCE_PATH` names a
 local checkout:
