@@ -505,6 +505,18 @@ being pinned to one window size. Standalone powers up at Init rather than
 letting an automatic last-state restore put an edited panel behind the Init
 name.
 
+The fidelity pass also carries ten panel details into the software rather
+than treating the original layout as decoration: (1) engraved 0--10 knob
+divisions, (2) a positive centre index on bipolar controls, (3) 0/5/10 slider
+marks, (4) multi-position selector index slots, (5) explicit ON/OFF rocker
+legends, (6) the dark wood side cheeks, (7) recessed chassis screws, (8) an
+`L -> U` reminder of the Spirit's defining series-filter order, (9) visible
+keyboard-focus rings, and (10) safe editing semantics -- keyboard operation,
+double-click return to the patch default, and disabled accidental wheel
+scrolling. These are derived from the surviving panel silkscreen and control
+geometry cited under Primary sources; the accessibility treatment is an
+intentional software addition, not attributed to the hardware.
+
 **Host behaviour.** Every modelled panel control is an automatable parameter
 with the silkscreen's own detent labels — the spring-loaded bend wheel is the
 one momentary exception, riding MIDI pitch bend. CC1/CC2 ride the X and Y
