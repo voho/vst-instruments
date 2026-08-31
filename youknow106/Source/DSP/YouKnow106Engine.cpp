@@ -1693,6 +1693,38 @@ float YouKnow106Engine::outputBoundaryGain() noexcept
     return outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
 }
 
+float YouKnow106Engine::outputSummerResistorNoiseDensity() noexcept
+{
+    // Each input resistor's own voltage noise is multiplied by its inverting
+    // signal gain Rf/Rin. The feedback resistor appears directly at the
+    // output. Uncorrelated sources add as powers, never as amplitudes.
+    const float equivalentResistance = outputSummerFeedbackOhms
+        + outputSummerFeedbackOhms * outputSummerFeedbackOhms
+            / outputSummerDryInputOhms
+        + outputSummerFeedbackOhms * outputSummerFeedbackOhms
+            / outputSummerWetInputOhms;
+    return std::sqrt(4.0f * boltzmannConstant * outputNoiseTemperatureKelvin
+                     * equivalentResistance);
+}
+
+float YouKnow106Engine::outputWiperNoiseResistance(
+    float volumePosition) noexcept
+{
+    // At thermal equilibrium the complete passive network's open-circuit
+    // voltage noise is 4kTR_th. With IC6's ideal small-signal output grounded,
+    // the wiper sees its upper track plus R54/R57, its lower track, the selector
+    // ladder and the headphone-amplifier input as parallel paths to ground.
+    const float position = clamp01(sanitised(volumePosition, 0.0f));
+    const float upper = outputCouplingSeriesOhms
+                      + (1.0f - position) * outputCouplingPotOhms;
+    const float lower = position * outputCouplingPotOhms;
+    if (lower == 0.0f)
+        return 0.0f;
+    float conductance = 1.0f / upper + 1.0f / outputWiperInternalLoadOhms;
+    conductance += 1.0f / lower;
+    return 1.0f / conductance;
+}
+
 float YouKnow106Engine::outputCouplingHighGain() noexcept
 {
     return outputCouplingPotOhms
@@ -4838,6 +4870,17 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     processingCoefficients_.outputSlewMaxStep =
         static_cast<float>(outputSummerSlewRateVoltsPerSecond
                            * voltsToSample / oversampledRate_);
+    processingCoefficients_.outputSummerBandwidthBlend = 1.0f - std::exp(
+        -2.0f * std::numbers::pi_v<float> * outputSummerBandwidthHz()
+        / oversampledRate_);
+    // bipolarFromState() is uniform [-1,1] with RMS 1/sqrt(3). Integrating a
+    // one-sided V/sqrt(Hz) density to the host Nyquist frequency therefore
+    // needs sqrt(3*Fs/2). Noise is generated after decimation: doing it in
+    // every quality domain would change its physical bandwidth and waste CPU.
+    processingCoefficients_.outputSummerNoiseScale =
+        outputSummerResistorNoiseDensity()
+        * std::sqrt(1.5f * static_cast<float>(sampleRate_))
+        * voltsToSample;
 
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
@@ -5052,6 +5095,12 @@ void YouKnow106Engine::clearOutputPath() noexcept
     // reset is not something a deterministic re-render can rely on.
     outputSlewStateLeft_ = 0.0f;
     outputSlewStateRight_ = 0.0f;
+    outputBandwidthStateLeft_ = 0.0f;
+    outputBandwidthStateRight_ = 0.0f;
+    outputNoiseStateLeft_ = 0x91e10da5u;
+    outputNoiseStateRight_ = 0xd1b54a35u;
+    outputWiperNoiseStateLeft_ = 0x94d049bbu;
+    outputWiperNoiseStateRight_ = 0x8538ecadu;
 }
 
 void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
@@ -8020,6 +8069,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     bool outputCouplingCacheValid = false;
     std::uint32_t outputCouplingCacheKey = 0u;
     float outputCouplingCacheGain = 0.0f;
+    float outputCouplingCacheNoiseScale = 0.0f;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -8622,6 +8672,22 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 outputSlewStateRight_ = wetRight;
             }
 
+            // TA75558S open-loop gain is finite. With both signal legs
+            // connected, the feedback/input resistor network sets the noise
+            // gain and turns the part's 3 MHz typical GBW into the derived
+            // closed-loop pole above. At ordinary rates the exponential is
+            // effectively one (as the real pole is far above Nyquist); at
+            // high-rate/offline operation this state supplies the missing
+            // ultrasonic roll-off without adding another quality domain.
+            outputBandwidthStateLeft_ +=
+                coefficients.outputSummerBandwidthBlend
+                * (wetLeft - outputBandwidthStateLeft_);
+            outputBandwidthStateRight_ +=
+                coefficients.outputSummerBandwidthBlend
+                * (wetRight - outputBandwidthStateRight_);
+            wetLeft = outputBandwidthStateLeft_;
+            wetRight = outputBandwidthStateRight_;
+
             stageLeft[static_cast<std::size_t>(step)] = wetLeft;
             stageRight[static_cast<std::size_t>(step)] = wetRight;
         }
@@ -8667,6 +8733,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         const auto outputCouplingKey =
             std::bit_cast<std::uint32_t>(glidedVolume_);
         float outputCouplingGain;
+        float outputWiperNoiseScale;
         if (!outputCouplingCacheValid
             || outputCouplingCacheKey != outputCouplingKey)
         {
@@ -8683,16 +8750,42 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 : 0.0f;
             outputCouplingCacheKey = outputCouplingKey;
             outputCouplingCacheGain = outputCouplingGain;
+            const float wiperNoiseDensity = std::sqrt(
+                4.0f * boltzmannConstant * outputNoiseTemperatureKelvin
+                * outputWiperNoiseResistance(glidedVolume_));
+            outputWiperNoiseScale = wiperNoiseDensity
+                * std::sqrt(1.5f * static_cast<float>(sampleRate_))
+                * voltsToSample;
+            outputCouplingCacheNoiseScale = outputWiperNoiseScale;
             outputCouplingCacheValid = true;
         }
         else
         {
             outputCouplingGain = outputCouplingCacheGain;
+            outputWiperNoiseScale = outputCouplingCacheNoiseScale;
         }
+        outputNoiseStateLeft_ = xorshift32(outputNoiseStateLeft_);
+        outputNoiseStateRight_ = xorshift32(outputNoiseStateRight_);
+        // Unit Character zero is the project's deterministic calibrated-
+        // nominal reference, including an exact digital silence floor; one is
+        // the declared physical reference. Keep that established endpoint
+        // contract while introducing the derived real-resistor floor.
+        const float outputNoiseLeft = bipolarFromState(outputNoiseStateLeft_)
+                                    * parameters.calibration;
+        const float outputNoiseRight = bipolarFromState(outputNoiseStateRight_)
+                                     * parameters.calibration;
+        outputLeft += outputNoiseLeft * coefficients.outputSummerNoiseScale;
+        outputRight += outputNoiseRight * coefficients.outputSummerNoiseScale;
         outputLeft = outputCouplingLeft_.process(
             outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
             outputRight, outputCouplingG_, 0.0f, outputCouplingGain);
+        outputWiperNoiseStateLeft_ = xorshift32(outputWiperNoiseStateLeft_);
+        outputWiperNoiseStateRight_ = xorshift32(outputWiperNoiseStateRight_);
+        outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
+                    * parameters.calibration * outputWiperNoiseScale;
+        outputRight += bipolarFromState(outputWiperNoiseStateRight_)
+                     * parameters.calibration * outputWiperNoiseScale;
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.

@@ -11696,9 +11696,11 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
         return 10.0 * std::log10(meanSquare + 1.0e-40);
     };
 
-    // With the chorus switched out this fixture renders bit-exact zero, so the
-    // BBD line noise is the only thing in the floor below and the figure is
-    // fully determined by `independentLineRandomAmplitude`.
+    // With the chorus switched out this fixture carries only the newly
+    // modelled output-resistor floor. Keep it far enough below the BBD line
+    // noise that the chorus-on figure remains determined by
+    // `independentLineRandomAmplitude`, rather than requiring an unphysical
+    // exact zero from five warm resistors.
     {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
@@ -11715,9 +11717,9 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
             peak = std::max({ peak,
                               static_cast<double>(std::abs(rendered.left[index])),
                               static_cast<double>(std::abs(rendered.right[index])) });
-        expect(peak == 0.0,
-               "the idle fixture is no longer silent with the chorus switched "
-               "out, so its floor is not the BBD line noise alone (peak "
+        expect(peak > 0.0 && peak < std::pow(10.0, -110.0 / 20.0),
+               "the output-resistor floor can contaminate the BBD line-noise "
+               "fixture (peak "
                    + std::to_string(peak) + ")");
     }
 

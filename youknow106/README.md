@@ -185,12 +185,24 @@ forty-year-old unit will null against the plug-in.
   four-position high-pass (derived shelf and cut corners, MNA-qualified);
   the stored VCA LEVEL byte drives the common µPC1252H2 through its derived
   gain law and 9.08 ms control settling (anchored/derived).
-- The final TA75558 summer mixes dry 100/47 and wet 100/39. Its provisional
+- The final TA75558 summer mixes dry 100/47 and wet 100/39. Its 3 MHz typical
+  gain-bandwidth is reduced by the two connected input legs' derived 5.692
+  noise gain to a 527 kHz closed-loop pole, evaluated as one state per channel
+  at the existing internal rate (anchored/derived). Its provisional
   ±13.5 V loaded-swing asymptote sits inside the ±15 V supplies; output AC
   coupling and the nominal-linear dual 10K volume law with its real internal
   loading follow (anchored/derived). Its nominal 1.0 V/µs slew is Toshiba's
   [typical value](https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3)
   at unity gain and 2 kΩ, not a guaranteed installed-unit limit.
+  Five previously ideal resistor groups now contribute their derived 25 °C
+  Johnson noise: IC6's feedback, dry-input and wet-input resistors, its output
+  series resistor, and the loaded volume/output network. Their independent
+  powers are summed at the correct pre- or post-coupling node and generated
+  once per host frame, so quality does not multiply either level or cost
+  (anchored topology and component values; fundamental thermal-noise law).
+  Like the other optional physical-detail layers, this floor scales from the
+  exact-silence calibrated nominal at Unit Character 0% to its physical value
+  at 100%.
   Digital full scale is referred to the model asymptote so it adds no lower
   digital ceiling (product policy, OQ-05).
 - Power-rail droop under load is computed and measurably inert (0.1 cents
@@ -589,6 +601,13 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 - Model and performance extensions: Unit Character, Aging, velocity, variable
   polyphony, unison, master tune, transpose and chorus noise; contextual
   control help, live output display, panic, reset and patch randomisation.
+- IC6's TA75558 output summer now carries its resistor-derived 527 kHz
+  closed-loop pole and the Johnson noise of its feedback, dry and wet input
+  legs; the following series resistor and loaded volume/output network add
+  their own thermal floor after the coupling capacitor. The five new physical
+  noise terms are deterministic, quality-invariant and remain around the
+  analogue circuit's roughly -120 dBFS floor rather than becoming a sound-
+  design hiss control.
 - Replaced instantaneous DCO timer programming with explicit M82C53 Mode-3
   OUT/count staging, the recovered µPD7810 control/LSB/MSB timing relative to
   each pitch-converter poll, and the synchronous IC35 range handoff. PIT count,
