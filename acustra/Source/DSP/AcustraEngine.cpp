@@ -17,7 +17,6 @@ namespace
 {
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 2.0f * pi;
-constexpr float bridgePositionFraction = 0.995f;
 constexpr int localMaximumDelaySamples = 8192;
 // The g21 minimum-phase residues retain the calibrated H1 coefficient scale
 // and the measured treble/bass microphone balance. The string drive remains a
@@ -604,7 +603,9 @@ PhysicalCalibration AcustraEngine::sanitise(
         bounded(source.bridgeConductanceFloor, 0.0f, 0.02f,
                 fittedPhysicalCalibration.bridgeConductanceFloor),
         bounded(source.bridgeConductanceCornerHz, 100.0f, 8000.0f,
-                fittedPhysicalCalibration.bridgeConductanceCornerHz)
+                fittedPhysicalCalibration.bridgeConductanceCornerHz),
+        bounded(source.bridgeTailLengthMetres, 0.008f, 0.060f,
+                fittedPhysicalCalibration.bridgeTailLengthMetres)
     };
 }
 
@@ -689,6 +690,28 @@ void AcustraEngine::StringLoop::reset() noexcept
     lossFilter.reset();
     dispersion.reset();
     bridgeDerivative.reset();
+    derivativeNeedsPriming = true;
+}
+
+float AcustraEngine::StringLoop::bridgeVelocity(
+    float incident, float sampleRateRatio) noexcept
+{
+    if (derivativeNeedsPriming)
+    {
+        bridgeDerivative.reset(incident);
+        derivativeNeedsPriming = false;
+    }
+    else if (derivativeCrossesRelease)
+    {
+        // The release gain is a loss per round trip, but advance() applies it
+        // to the sample it returns, so the moment it changes the whole wave
+        // steps by that factor at once. The hand landing on a string damps it;
+        // it does not move it, so the step is not motion either.
+        derivativeCrossesRelease = false;
+        return bridgeDerivative.processAcrossRelease(
+            incident, sampleRateRatio);
+    }
+    return bridgeDerivative.process(incident, sampleRateRatio);
 }
 
 float AcustraEngine::FixedDerivative::process(float input,
@@ -712,6 +735,18 @@ float AcustraEngine::FixedDerivative::process(float input,
     const float delayed = first + fraction * (at(whole + 1) - first);
     index = (index + 1) % static_cast<int>(history.size());
     return input - delayed;
+}
+
+float AcustraEngine::FixedDerivative::processAcrossRelease(
+    float input, float sampleRateRatio) noexcept
+{
+    int previous = index - 1;
+    while (previous < 0)
+        previous += static_cast<int>(history.size());
+    const float shift = input - history[static_cast<std::size_t>(previous)];
+    for (auto& value : history)
+        value += shift;
+    return process(input, sampleRateRatio);
 }
 
 float AcustraEngine::StringLoop::readDelay(float samples) const noexcept
@@ -789,11 +824,13 @@ float AcustraEngine::BridgeLoad::process(
     float incident, float characteristicAdmittance,
     float tailStiffness, float samplePeriod) noexcept
 {
-    // DAFx-26 attaches the measured body at xi_b=0.995, leaving a short
-    // fixed-end string tail.  Below its first resonance that segment is the
-    // passive spring K=T/((1-xi_b)L).  Trapezoidal integration gives the
-    // spring's current-step impedance c=K*dt/2; solving it together with the
-    // immediate mobility keeps the scattering junction algebraic-loop-free.
+    // DAFx-26 attaches the measured body a short distance from the string's
+    // end, leaving a fixed-end tail.  Below its first resonance that segment
+    // is the passive spring K=T/L_t, and this stiffness is the sum over all
+    // six strings, since every one of them is anchored behind the saddle at
+    // all times.  Trapezoidal integration gives the spring's current-step
+    // impedance c=K*dt/2; solving it together with the immediate mobility
+    // keeps the scattering junction algebraic-loop-free.
     const float springImpedance = 0.5f * tailStiffness * samplePeriod;
     const float tailHistory = tailIntegratedForce
                             + springImpedance * previousDisplacement;
@@ -917,8 +954,8 @@ void AcustraEngine::resetSoundState() noexcept
     lastBridgeBodyPower_ = 0.0f;
     lastBridgeTailPower_ = 0.0f;
     bridgeDerivativesNeedPriming_ = true;
+    bridgeDerivativesCrossRelease_ = false;
     lastImpedanceSum_ = 0.0f;
-    lastTailStiffnessSum_ = 0.0f;
     for (auto& mode : bodyModes_)
         mode.reset();
     for (auto& mode : fadingBodyModes_)
@@ -977,6 +1014,14 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
         else if (constructionChanged || ageChanged || stringChanged)
             configureVoice(voice, string, voice.midiNote, false);
     }
+    // Switching the string set or the tuning under a ringing chord changes
+    // every string's impedance at once, so the junction's wave variables step
+    // with the port. That is the strings being exchanged, not the bridge
+    // moving, and differencing it made a click 26 times the chord it landed
+    // on. Shape, material and age move smoothly and are left alone.
+    if (stringChanged || tuningChanged)
+        bridgeDerivativesCrossRelease_ = true;
+
     // A tail belongs to the construction it was taken from, and its loop is
     // not redesigned by the passes below. Drop it rather than let a steel
     // string ring on into a nylon instrument.
@@ -1201,17 +1246,24 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     // in the Mores bridge measurement.
     const float characteristicAdmittance = 1.0f / impedance;
     const std::complex<float> bodyImpedance = 1.0f / mobility;
-    const std::complex<float> tailImpedance
-        = voices_[static_cast<std::size_t>(stringIndex)].bridgeTailStiffness / s;
+    const std::complex<float> tailImpedance = bridgeAnchorStiffness() / s;
     const std::complex<float> effectiveMobility
         = 1.0f / (bodyImpedance + tailImpedance);
     // This is the folded full-round-trip multiplier -b/a.  Its phase is the
-    // phase contributed by both measured body motion and the xi_b tail; the
+    // phase contributed by both measured body motion and the saddle anchor; the
     // speaking-string delay is shortened by exactly that amount when tuned.
     const std::complex<float> selfReflection
         = (characteristicAdmittance - effectiveMobility)
         / (characteristicAdmittance + effectiveMobility);
     return -std::arg(selfReflection) / digitalOmega;
+}
+
+float AcustraEngine::bridgeAnchorStiffness() const noexcept
+{
+    float sum = 0.0f;
+    for (const auto& voice : voices_)
+        sum += voice.bridgeTailStiffness;
+    return sum;
 }
 
 void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
@@ -1376,8 +1428,11 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     const float rawDelay = static_cast<float>(tunedCatmullDelay(
         frequency, sampleRate_, broadLossCoefficient, broadLoss,
         lowpassCoefficient, mutedHighLoss, dispersionA1, dispersionA2));
+    // The segment between saddle and anchor does not move when a string is
+    // fretted and does not change tension, so its spring T/L is a constant of
+    // the string rather than a fraction of the speaking length.
     voice.bridgeTailStiffness = tension / std::max(
-        (1.0f - bridgePositionFraction) * soundingLength, 1.0e-5f);
+        physicalCalibration_.bridgeTailLengthMetres, 1.0e-5f);
     const float measuredBridgeDelay = bridgePhaseDelay(frequency, stringIndex);
     const float desiredPeriodGain = std::pow(0.001f,
         1.0f / std::max(fundamentalT60 * frequency, 1.0f));
@@ -1621,11 +1676,6 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
                 loop.writeIndex - sample))] = residual
                     + amplitude * polarisationGain * triangle;
         }
-
-        // A plucked string is released from rest. Seed the whole finite-
-        // difference history from its initial displacement; reset-time zero
-        // otherwise becomes an artificial harpsichord-like velocity impulse.
-        loop.bridgeDerivative.reset(loop.readDelay(loop.currentDelay));
     }
 
     if (steel)
@@ -1691,6 +1741,7 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.mpeMember = false;
     voice.memberPitchBendFrozen = false;
     voice.ownerCount = 0;
+    voice.legatoHeldCount = 0;
     voice.midiNote = voice.openMidi;
     voice.midiChannel = 1;
     voice.fret = 0;
@@ -1727,6 +1778,7 @@ void AcustraEngine::captureTail(Voice& voice) noexcept
         return;
     }
     voice.tailLoop = voice.loops[0];
+    voice.tailLoop.derivativeCrossesRelease = true;
     constexpr float contactSeconds = 0.16f;
     voice.tailDamping = std::pow(0.001f,
         1.0f / std::max(contactSeconds * midiFrequency(voice.midiNote), 1.0f));
@@ -1741,6 +1793,12 @@ void AcustraEngine::beginRelease(Voice& voice) noexcept
     const float releaseSeconds = voice.fret == 0 ? 1.25f : 0.16f;
     voice.releaseDamping = std::pow(0.001f,
         1.0f / std::max(releaseSeconds * midiFrequency(voice.midiNote), 1.0f));
+    // The release gain steps the wave this string presents to the junction,
+    // and the junction's own wave variables step with it. Neither is motion:
+    // the hand damps the string, it does not displace the bridge.
+    for (auto& loop : voice.loops)
+        loop.derivativeCrossesRelease = true;
+    bridgeDerivativesCrossRelease_ = true;
 }
 
 void AcustraEngine::freezeMemberPitchBend(Voice& voice) noexcept
@@ -1907,6 +1965,30 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
         }
     }
 
+    if (legato_)
+    {
+        const int hammered = chooseLegatoString(midiNote, midiChannel);
+        if (hammered >= 0)
+        {
+            auto& voice = voices_[static_cast<std::size_t>(hammered)];
+            // The fretting finger stops the string; it does not release it
+            // from rest. So the loop keeps what it holds and only its length
+            // changes, on the same slew a slide already uses. The finger's own
+            // strike on the fretboard is not modelled, and neither is the
+            // velocity of the hammer.
+            if (voice.legatoHeldCount == 0)
+                voice.legatoHeld[0] = voice.midiNote;
+            voice.legatoHeldCount = std::max(voice.legatoHeldCount, 1);
+            voice.legatoHeld[static_cast<std::size_t>(voice.legatoHeldCount)]
+                = midiNote;
+            ++voice.legatoHeldCount;
+            voice.ownerCount = voice.legatoHeldCount;
+            voice.startOrder = ++noteOrder_;
+            configureVoice(voice, hammered, midiNote, false);
+            return;
+        }
+    }
+
     int string = chooseString(midiNote);
     int harmonic = 1;
     if (string < 0)
@@ -1931,6 +2013,7 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
     voice.keyDown = true;
     voice.pedalHeld = false;
     voice.ownerCount = 1;
+    voice.legatoHeldCount = 0;
     voice.midiChannel = midiChannel;
     voice.mpeMember = isLowerZoneMember(midiChannel);
     voice.memberPitchBendFrozen = false;
@@ -1953,12 +2036,15 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
     }
     configureVoice(voice, string, midiNote, true);
     initialisePluck(voice, string, velocity);
+    bridgeDerivativesCrossRelease_ = true;
     configureVoice(voice, string, midiNote, false);
 }
 
 void AcustraEngine::noteOff(int midiNote, int midiChannel) noexcept
 {
     if (midiChannel < 1 || midiChannel > midiChannelCount)
+        return;
+    if (releaseLegatoNote(midiNote, midiChannel))
         return;
     int candidateIndex = -1;
     for (int string = 0; string < stringCount; ++string)
@@ -2002,6 +2088,101 @@ void AcustraEngine::setSustainPedal(bool down, int midiChannel) noexcept
             continue;
         beginRelease(voice);
     }
+}
+
+void AcustraEngine::setLegato(bool on) noexcept
+{
+    if (legato_ == on)
+        return;
+    legato_ = on;
+    if (on)
+        return;
+    // Lifting the switch leaves each string sounding what it is sounding; it
+    // only stops the fretting hand's stack being tracked, so the notes under
+    // the top one are forgotten rather than pulled off to.
+    for (auto& voice : voices_)
+        voice.legatoHeldCount = 0;
+}
+
+// A guitarist hammers on to the string already under the hand, so prefer the
+// nearest pitch and then the string played most recently. A hammer-on only
+// goes up: the way down is a pull-off, which is a note-off on this instrument
+// because that is what it is on the guitar.
+int AcustraEngine::chooseLegatoString(int midiNote,
+                                      int midiChannel) const noexcept
+{
+    int best = -1;
+    int bestInterval = fretCount + 1;
+    std::uint64_t bestOrder = 0;
+    for (int string = 0; string < stringCount; ++string)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(string)];
+        if (!voice.played || !voice.keyDown || voice.harmonic != 1
+            || voice.midiChannel != midiChannel
+            || midiNote <= voice.midiNote)
+            continue;
+        const int fret = midiNote - voice.openMidi;
+        if (fret < 0 || fret > fretCount)
+            continue;
+        if (voice.legatoHeldCount >= legatoHeldLimit)
+            continue;
+        const int interval = midiNote - voice.midiNote;
+        if (best < 0 || interval < bestInterval
+            || (interval == bestInterval && voice.startOrder > bestOrder))
+        {
+            best = string;
+            bestInterval = interval;
+            bestOrder = voice.startOrder;
+        }
+    }
+    return best;
+}
+
+// Releasing one of the notes a string is holding. If it was the sounding one,
+// the string falls back to the newest note still held on it, which is the
+// pull-off; if it was underneath, nothing sounds different.
+bool AcustraEngine::releaseLegatoNote(int midiNote, int midiChannel) noexcept
+{
+    for (int string = 0; string < stringCount; ++string)
+    {
+        auto& voice = voices_[static_cast<std::size_t>(string)];
+        if (voice.legatoHeldCount <= 0 || voice.midiChannel != midiChannel)
+            continue;
+        int found = -1;
+        for (int index = voice.legatoHeldCount - 1; index >= 0; --index)
+            if (voice.legatoHeld[static_cast<std::size_t>(index)] == midiNote)
+            {
+                found = index;
+                break;
+            }
+        if (found < 0)
+            continue;
+        const bool wasSounding = voice.midiNote == midiNote;
+        for (int index = found; index + 1 < voice.legatoHeldCount; ++index)
+            voice.legatoHeld[static_cast<std::size_t>(index)]
+                = voice.legatoHeld[static_cast<std::size_t>(index + 1)];
+        --voice.legatoHeldCount;
+        voice.ownerCount = voice.legatoHeldCount;
+        if (voice.legatoHeldCount <= 0)
+        {
+            voice.ownerCount = 0;
+            freezeMemberPitchBend(voice);
+            voice.keyDown = false;
+            voice.pedalHeld = sustainIsDown(voice);
+            if (!voice.pedalHeld)
+                beginRelease(voice);
+            return true;
+        }
+        if (wasSounding)
+        {
+            voice.startOrder = ++noteOrder_;
+            configureVoice(voice, string,
+                voice.legatoHeld[static_cast<std::size_t>(
+                    voice.legatoHeldCount - 1)], false);
+        }
+        return true;
+    }
+    return false;
 }
 
 void AcustraEngine::setPitchBend(float semitones, int midiChannel) noexcept
@@ -2052,6 +2233,7 @@ void AcustraEngine::allNotesOff(int midiChannel) noexcept
         if (!voice.played || !channelControlsVoice(midiChannel, voice))
             continue;
         voice.ownerCount = 0;
+        voice.legatoHeldCount = 0;
         freezeMemberPitchBend(voice);
         voice.keyDown = false;
         voice.pedalHeld = sustainIsDown(voice);
@@ -2103,6 +2285,7 @@ void AcustraEngine::setBridgeCouplingEnabled(bool enabled) noexcept
     lastBridgeBodyPower_ = 0.0f;
     lastBridgeTailPower_ = 0.0f;
     bridgeDerivativesNeedPriming_ = true;
+    bridgeDerivativesCrossRelease_ = false;
     if (!prepared_)
         return;
     for (int string = 0; string < stringCount; ++string)
@@ -2154,9 +2337,9 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
     voice.loops[1].write(horizontalIncident + 0.51f * excitation);
 
     const float sampleRateRatio = static_cast<float>(sampleRate_) / 48000.0f;
-    const float verticalVelocity = voice.loops[0].bridgeDerivative.process(
+    const float verticalVelocity = voice.loops[0].bridgeVelocity(
         verticalIncident, sampleRateRatio);
-    const float horizontalVelocity = voice.loops[1].bridgeDerivative.process(
+    const float horizontalVelocity = voice.loops[1].bridgeVelocity(
         horizontalIncident, sampleRateRatio);
     if (voice.played
         && parameters_.stringMaterial == StringMaterial::Steel)
@@ -2186,7 +2369,7 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
         // string keeps radiating while the hand damps it, but it does not
         // load the junction a second time.
         voice.tailLoop.write(tailIncident - bridgeDisplacement);
-        const float tailVelocity = voice.tailLoop.bridgeDerivative.process(
+        const float tailVelocity = voice.tailLoop.bridgeVelocity(
             tailIncident, sampleRateRatio);
         const float tailForce = impedance
             * (2.0f * tailVelocity - bridgeVelocity);
@@ -2318,10 +2501,15 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             if (voice.tailActive)
                 tailIncident[static_cast<std::size_t>(string)]
                     = voice.tailLoop.advance(delaySmoothing_, voice.tailDamping);
+            // Every string is anchored behind the saddle whether or not it
+            // is being played, and springs between the same two nodes add, so
+            // the anchor the junction sees is a constant of the instrument.
+            // Summing only the played ones made it stiffen with each voice
+            // held, which more than doubled a note's sustain inside a chord.
+            tailStiffnessSum += voice.bridgeTailStiffness;
             if (voice.played)
             {
                 impedanceSum += voice.characteristicImpedance;
-                tailStiffnessSum += voice.bridgeTailStiffness;
                 weightedIncident += voice.characteristicImpedance
                     * verticalIncident[static_cast<std::size_t>(string)];
             }
@@ -2337,15 +2525,9 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         // click.
         const bool hasActivePort = impedanceSum > 1.0e-6f;
         if (hasActivePort)
-        {
             lastImpedanceSum_ = impedanceSum;
-            lastTailStiffnessSum_ = tailStiffnessSum;
-        }
         else if (lastImpedanceSum_ > 1.0e-6f)
-        {
             impedanceSum = lastImpedanceSum_;
-            tailStiffnessSum = lastTailStiffnessSum_;
-        }
         const bool portIsLoaded = impedanceSum > 1.0e-6f;
         const float aggregateIncident = portIsLoaded
             ? weightedIncident / impedanceSum : 0.0f;
@@ -2383,14 +2565,24 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             }
             bridgeDerivativesNeedPriming_ = false;
         }
-        lastBridgeVelocity_ = bridgeVelocityDerivative_.process(
-            bridgeDisplacement, sampleRateRatio);
-        lastBridgeReactionForce_ = bridgeForceDerivative_.process(
-            reactionWave, sampleRateRatio);
-        lastBridgeBodyForce_ = bridgeBodyForceDerivative_.process(
-            bodyForceWave, sampleRateRatio);
-        lastBridgeTailForce_ = bridgeTailForceDerivative_.process(
-            tailForceWave, sampleRateRatio);
+        // A note that starts while the instrument is sounding puts a whole
+        // released shape into the junction's wave variables in one sample.
+        // Differencing that reads as a bridge velocity the size of the entire
+        // displacement: an impulse about ten times the note it belongs to,
+        // on every note-on after the first.
+        const bool crossingRelease = bridgeDerivativesCrossRelease_;
+        bridgeDerivativesCrossRelease_ = false;
+        const auto motion = [&] (FixedDerivative& derivative, float wave)
+        {
+            return crossingRelease
+                ? derivative.processAcrossRelease(wave, sampleRateRatio)
+                : derivative.process(wave, sampleRateRatio);
+        };
+        lastBridgeVelocity_ = motion(
+            bridgeVelocityDerivative_, bridgeDisplacement);
+        lastBridgeReactionForce_ = motion(bridgeForceDerivative_, reactionWave);
+        lastBridgeBodyForce_ = motion(bridgeBodyForceDerivative_, bodyForceWave);
+        lastBridgeTailForce_ = motion(bridgeTailForceDerivative_, tailForceWave);
         lastBridgePower_ = lastBridgeVelocity_ * lastBridgeReactionForce_;
         lastBridgeBodyPower_ = lastBridgeVelocity_ * lastBridgeBodyForce_;
         lastBridgeTailPower_ = lastBridgeVelocity_ * lastBridgeTailForce_;

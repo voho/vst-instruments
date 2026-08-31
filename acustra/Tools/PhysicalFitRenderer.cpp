@@ -38,13 +38,18 @@ using acustra::dense::ZoneView;
 constexpr int modelSampleRate = 48000;
 constexpr int renderBlockSize = 127;
 constexpr double renderSeconds = 4.2;
-constexpr std::size_t calibrationValueCount = 26;
+constexpr std::size_t calibrationValueCount = 27;
 constexpr float int16Scale = 1.0f / 32768.0f;
 
 enum class Material
 {
     Nylon,
-    Steel
+    Steel,
+    // The Eastman E1D regions are the only flat-top steel acoustic in the
+    // bank, and the steel fit is against a miked archtop. They are never
+    // fitted or used to gate anything: they are a standing reading of how
+    // far the instrument sits from the kind of guitar it claims to be.
+    SteelFlatTop
 };
 
 struct Example
@@ -59,6 +64,7 @@ struct Schedule
 {
     std::vector<Example> train;
     std::vector<Example> validation;
+    std::vector<Example> flatTop;
 };
 
 struct AudioFile
@@ -86,30 +92,40 @@ constexpr CalibrationValues calibrationMinimums {{
     0.96f, 0.05f, 0.25f, -6.0f, 0.0f,
     0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
     0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
-    -1.0f, 0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f,
+    -1.0f, 0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f, 0.008f,
 }};
 
 constexpr CalibrationValues calibrationMaximums {{
     1.04f, 1.8f, 4.0f, 6.0f, 0.12f,
     4.0f, 2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
     4.0f, 2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
-    1.0f, 32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f,
+    1.0f, 32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f, 0.060f,
 }};
 
 const char* materialName(Material material) noexcept
 {
-    return material == Material::Steel ? "steel" : "nylon";
+    switch (material)
+    {
+        case Material::Steel: return "steel";
+        case Material::SteelFlatTop: return "flattop";
+        default: return "nylon";
+    }
 }
 
 Bank targetBank(Material material) noexcept
 {
-    return material == Material::Steel ? Bank::SteelPicked : Bank::Nylon;
+    switch (material)
+    {
+        case Material::Steel: return Bank::SteelPicked;
+        case Material::SteelFlatTop: return Bank::SteelPlucked;
+        default: return Bank::Nylon;
+    }
 }
 
 StringMaterial engineMaterial(Material material) noexcept
 {
-    return material == Material::Steel
-        ? StringMaterial::Steel : StringMaterial::Nylon;
+    return material == Material::Nylon
+        ? StringMaterial::Nylon : StringMaterial::Steel;
 }
 
 template <std::size_t NoteCount, std::size_t VelocityCount,
@@ -163,6 +179,12 @@ Schedule makeSchedule(bool smoke)
                     std::array { 91 }, std::array { 0 });
     appendCartesian(result.validation, Material::Nylon,
                     std::array { 41, 43, 47, 52, 57, 61, 66, 71, 76, 81 },
+                    std::array { 91 }, std::array { 0 });
+    // The eight Eastman E1D flat-top roots, at the one dynamic they were
+    // captured at. This split is reported and never fitted; nothing in the
+    // optimiser reads it.
+    appendCartesian(result.flatTop, Material::SteelFlatTop,
+                    std::array { 40, 46, 52, 58, 64, 71, 77, 83 },
                     std::array { 91 }, std::array { 0 });
     return result;
 }
@@ -322,6 +344,7 @@ PhysicalCalibration makeCalibration(const CalibrationValues& values)
     calibration.highLossCutoffScale = values[23];
     calibration.bridgeConductanceFloor = values[24];
     calibration.bridgeConductanceCornerHz = values[25];
+    calibration.bridgeTailLengthMetres = values[26];
     return calibration;
 }
 
@@ -378,12 +401,12 @@ void writeManifest(const std::filesystem::path& path,
            "\"apertureRegisterExponent\", \"lowBodyModeGain\", "
            "\"steelDisplacementScaleMetres\", \"steelFretT60Slope\", "
            "\"highLossCutoffScale\", \"bridgeConductanceFloor\", "
-           "\"bridgeConductanceCornerHz\"],\n"
+           "\"bridgeConductanceCornerHz\", \"bridgeTailLengthMetres\"],\n"
         << "  \"provenance\": {\n"
         << "    \"target_timing\": \"source frame 0; recorded pre-roll/onset retained; cropped or zero-padded to 4.2 seconds\",\n"
         << "    \"target_gain\": \"dense::Sampler calibrated playback gain: layer/peak normalisation times (velocity/127)^0.82\",\n"
         << "    \"target_processing\": \"calibrated gain only; no age, tone, or pan processing\",\n"
-        << "    \"calibration_source\": \"26 positional CLI values in calibration_order\",\n"
+        << "    \"calibration_source\": \"27 positional CLI values in calibration_order\",\n"
         << "    \"model_render\": \"fresh AcustraEngine per material/MIDI/velocity; 48000 Hz; 127-sample blocks; default controls; outputGain excluded from calibration\"\n"
         << "  },\n"
         << "  \"examples\": [\n";
@@ -532,9 +555,12 @@ std::size_t renderReferencedModels(
             + directory.string());
     validateModelsOnlySplit(directory, "train.json", schedule.train);
     validateModelsOnlySplit(directory, "validation.json", schedule.validation);
+    if (!schedule.flatTop.empty())
+        validateModelsOnlySplit(directory, "flattop.json", schedule.flatTop);
 
     std::map<ModelKey, Example> unique;
-    for (const auto* examples : { &schedule.train, &schedule.validation })
+    for (const auto* examples : { &schedule.train, &schedule.validation,
+                                  &schedule.flatTop })
         for (const auto& example : *examples)
             unique.emplace(ModelKey {
                 example.material, example.midi, example.velocity }, example);
@@ -698,11 +724,19 @@ void renderCorpus(const std::filesystem::path& directory,
     const auto validation = renderExamples(
         schedule.validation, library, calibration, directory, models,
         writtenFiles, determinismChecked);
+    const auto flatTop = renderExamples(
+        schedule.flatTop, library, calibration, directory, models,
+        writtenFiles, determinismChecked);
 
     writeManifest(directory / "train.json", train);
     writtenFiles.push_back(directory / "train.json");
     writeManifest(directory / "validation.json", validation);
     writtenFiles.push_back(directory / "validation.json");
+    if (!flatTop.empty())
+    {
+        writeManifest(directory / "flattop.json", flatTop);
+        writtenFiles.push_back(directory / "flattop.json");
+    }
 
     if (smoke)
     {
@@ -725,9 +759,9 @@ void renderCorpus(const std::filesystem::path& directory,
         return;
     }
 
-    std::printf("Wrote %zu training and %zu validation examples (%zu unique "
-                "model renders) to %s\n",
-                train.size(), validation.size(), models.size(),
+    std::printf("Wrote %zu training, %zu validation and %zu flat-top "
+                "examples (%zu unique model renders) to %s\n",
+                train.size(), validation.size(), flatTop.size(), models.size(),
                 directory.string().c_str());
 }
 
@@ -764,7 +798,7 @@ void printUsage()
         "APERTURE_REGISTER_EXPONENT LOW_BODY_MODE_GAIN "
         "STEEL_DISPLACEMENT_METRES STEEL_FRET_T60_SLOPE "
         "HIGH_LOSS_CUTOFF_SCALE BRIDGE_CONDUCTANCE_FLOOR "
-        "BRIDGE_CONDUCTANCE_CORNER_HZ\n");
+        "BRIDGE_CONDUCTANCE_CORNER_HZ BRIDGE_TAIL_LENGTH_METRES\n");
 }
 } // namespace
 

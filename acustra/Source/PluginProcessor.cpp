@@ -443,6 +443,15 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
         {
             engine.setSustainPedal (value >= 64u, midiChannel);
         }
+        else if (controller == 68u)
+        {
+            // MIDI's Legato Footswitch. While it is down a note a sounding
+            // string can reach is hammered on rather than replucked, and
+            // releasing it pulls off to what that string is still holding.
+            // Like the bridge hand it is one gesture across the instrument,
+            // not a per-channel setting.
+            engine.setLegato (value >= 64u);
+        }
         else if (controller == 120u)
         {
             engine.allSoundOff (midiChannel);

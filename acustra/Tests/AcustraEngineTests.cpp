@@ -8,6 +8,7 @@
 #include <limits>
 #include <numbers>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1520,18 +1521,46 @@ void testSteadyPitchIsCompensated()
 
 void testPhysicalSustainSettlesNearRequestedPitch()
 {
-    for (const int midiNote : { 40, 45, 52, 64 })
+    // Measure the string that was played. The idle strings ring at their own
+    // open pitches, and their harmonics are just intervals while the fretboard
+    // is equal-tempered: the low E's third harmonic is a just twelfth, two
+    // cents above an equal-tempered B3, and playing B3 drives it. The peak of
+    // the summed radiation therefore sits a couple of cents sharp of the note,
+    // which is what a guitar does and not a tuning error. Reading it as one
+    // put a 2-cent bound on a real behaviour and left the played string's own
+    // pitch untested.
+    const auto isolated = [] (int midiNote, bool sympathetic)
+    {
+        acustra::AcustraEngine engine;
+        engine.prepare(sampleRate, blockSize);
+        engine.setSympatheticStringsEnabled(sympathetic);
+        engine.noteOn(midiNote, 0.72f);
+        const int samples = static_cast<int>(1.5 * sampleRate);
+        Audio audio { std::vector<float>(static_cast<std::size_t>(samples)),
+                      std::vector<float>(static_cast<std::size_t>(samples)) };
+        for (int offset = 0; offset < samples; offset += blockSize)
+            engine.process(audio.left.data() + offset,
+                           audio.right.data() + offset,
+                           std::min(blockSize, samples - offset));
+        return audio;
+    };
+    for (const int midiNote : { 40, 45, 52, 59, 64, 71 })
     {
         const double expected = 440.0
             * std::exp2((static_cast<double>(midiNote) - 69.0) / 12.0);
-        const auto audio = render({}, midiNote, 0.72f, 1.5);
-        const double actual = spectralPeakFrequency(
-            audio, expected, 20.0, 0.82, 1.32);
-        const double cents = 1200.0 * std::log2(actual / expected);
-        expect(std::abs(cents) < 2.0,
-               "physical steel sustain missed settled pitch for MIDI "
+        const double alone = 1200.0 * std::log2(spectralPeakFrequency(
+            isolated(midiNote, false), expected, 20.0, 0.82, 1.32) / expected);
+        expect(std::abs(alone) < 1.0,
+               "the played steel string missed settled pitch for MIDI "
                    + std::to_string(midiNote) + " by "
-                   + std::to_string(cents) + " cents");
+                   + std::to_string(alone) + " cents");
+        // With the idle strings sounding the peak may be pulled, but only as
+        // far as their own just harmonics reach.
+        const double loaded = 1200.0 * std::log2(spectralPeakFrequency(
+            isolated(midiNote, true), expected, 20.0, 0.82, 1.32) / expected);
+        expect(std::abs(loaded) < 4.0,
+               "sympathetic strings pulled MIDI " + std::to_string(midiNote)
+                   + " by " + std::to_string(loaded) + " cents");
     }
 }
 
@@ -1855,12 +1884,12 @@ void testHostilePhysicalCalibrationIsSanitised()
     const acustra::PhysicalCalibration lowSource {
         -100.0f, -100.0f, -100.0f, -100.0f, -100.0f,
         uniformMaterial(-100.0f), uniformMaterial(-100.0f), -100.0f, -100.0f,
-        -100.0f, -100.0f, -100.0f, -100.0f, -100.0f
+        -100.0f, -100.0f, -100.0f, -100.0f, -100.0f, -100.0f
     };
     const acustra::PhysicalCalibration highSource {
         100.0f, 100.0f, 100.0f, 100.0f, 100.0f,
         uniformMaterial(100.0f), uniformMaterial(100.0f), 100.0f, 100.0f,
-        100.0f, 100.0f, 100.0f, 100.0f, 100000.0f
+        100.0f, 100.0f, 100.0f, 100.0f, 100000.0f, 100.0f
     };
     const auto sanitised = [] (acustra::PhysicalCalibration source)
     {
@@ -1877,9 +1906,11 @@ void testHostilePhysicalCalibrationIsSanitised()
                         low.steelDisplacementScaleMetres,
                         low.steelFretT60Slope, low.highLossCutoffScale,
                         low.bridgeConductanceFloor,
-                        low.bridgeConductanceCornerHz }
+                        low.bridgeConductanceCornerHz,
+                        low.bridgeTailLengthMetres }
                == std::array { 0.96f, 0.05f, 0.25f, -6.0f, 0.0f, -1.0f,
-                               0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f },
+                               0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f,
+                               0.008f },
            "low physical calibration bounds were not enforced");
     expect(std::array { high.bodyFrequencyScale, high.bodyQScale,
                         high.bridgeMobilityScale, high.residueTiltDbPerOctave,
@@ -1888,9 +1919,11 @@ void testHostilePhysicalCalibrationIsSanitised()
                         high.steelDisplacementScaleMetres,
                         high.steelFretT60Slope, high.highLossCutoffScale,
                         high.bridgeConductanceFloor,
-                        high.bridgeConductanceCornerHz }
+                        high.bridgeConductanceCornerHz,
+                        high.bridgeTailLengthMetres }
                == std::array { 1.04f, 1.8f, 4.0f, 6.0f, 0.12f, 1.0f,
-                               32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f },
+                               32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f,
+                               0.060f },
            "high physical calibration bounds were not enforced");
     const std::array materialLow {
         0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f
@@ -2545,6 +2578,327 @@ void testNaturalHarmonicsReachAboveTheFretboard()
            "the fourth harmonic of the open high E was not near E6");
 }
 
+void testHeldStringsDoNotLengthenANoteDecay()
+{
+    // Every string is anchored behind the saddle at all times, so the spring
+    // the junction sees is a constant of the instrument. Summing it over the
+    // played strings alone made the port stiffen with each voice held, and a
+    // note inside a chord then rang 2.15 times longer than the same note
+    // alone - including beside a note too quiet to hear, which is the proof
+    // that it was the aggregation and not energy arriving from the neighbour.
+    constexpr int subject = 43;
+    const auto decayRate = [] (const Audio& audio)
+    {
+        const double early = tailBandRms(audio, sampleRate, 1.0, 2.0, 88.0, 108.0);
+        const double late = tailBandRms(audio, sampleRate, 2.5, 3.5, 88.0, 108.0);
+        expect(early > 1.0e-7 && late > 1.0e-9,
+               "a held-string decay render had no measurable fundamental");
+        return 20.0 * std::log10(early / late) / 1.5;
+    };
+    const auto renderWith = [] (const std::vector<int>& companions,
+                                float companionVelocity)
+    {
+        acustra::AcustraEngine engine;
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = acustra::StringMaterial::Steel;
+        engine.setParameters(parameters);
+        engine.prepare(sampleRate, blockSize);
+        // The idle-string path is one-way radiation, not the junction; mute
+        // it so this measures the bridge port and nothing else.
+        engine.setSympatheticStringsEnabled(false);
+        for (const int note : companions)
+            engine.noteOn(note, companionVelocity);
+        engine.noteOn(subject, 0.85f);
+        const int samples = static_cast<int>(4.0 * sampleRate);
+        Audio result { std::vector<float>(static_cast<std::size_t>(samples)),
+                       std::vector<float>(static_cast<std::size_t>(samples)) };
+        for (int offset = 0; offset < samples; offset += blockSize)
+            engine.process(result.left.data() + offset,
+                           result.right.data() + offset,
+                           std::min(blockSize, samples - offset));
+        return result;
+    };
+
+    const double alone = decayRate(renderWith({}, 0.0f));
+    expect(alone > 1.0, "the subject note did not decay on its own");
+    struct Case { const char* name; std::vector<int> companions; float velocity; };
+    // The companions all sound above the 88-108 Hz band this measures, so
+    // only the subject's own fundamental is in it.
+    const std::vector<Case> cases {
+        { "one inaudible neighbour", { 50 }, 0.001f },
+        { "one loud neighbour", { 50 }, 0.85f },
+        { "a full six-string chord", { 47, 50, 55, 59, 64 }, 0.85f },
+    };
+    for (const auto& item : cases)
+    {
+        const double rate = decayRate(renderWith(item.companions, item.velocity));
+        const double ratio = alone / rate;
+        expect(ratio > 0.80 && ratio < 1.25,
+               std::string("holding ") + item.name
+                   + " changed the note's own decay");
+    }
+}
+
+
+void testANoteOverASoundingInstrumentDoesNotClick()
+{
+    // Starting a note while the instrument is still ringing used to put the
+    // whole released shape into the junction's wave variables in one sample.
+    // The finite differences that turn those displacement waves into bridge
+    // velocity read that as motion, so every note-on after the first arrived
+    // as an impulse about ten times the note it belonged to. A pluck is a
+    // release from rest: the shape was standing on the string before the
+    // finger let go, and nothing about it is a bridge velocity.
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = acustra::StringMaterial::Steel;
+        // Measure below the safety limiter, which would otherwise flatten a
+        // transient into something that looks like the note it buried.
+        parameters.outputGain = 0.04f;
+        const int block = 64;
+        const auto peakAfter = [&] (const std::vector<int>& held,
+                                    bool release, int note)
+        {
+            acustra::AcustraEngine engine;
+            engine.setParameters(parameters);
+            engine.prepare(rate, block);
+            std::vector<float> left(static_cast<std::size_t>(block));
+            std::vector<float> right(static_cast<std::size_t>(block));
+            for (const int other : held)
+                engine.noteOn(other, 0.85f);
+            for (int i = 0; i < static_cast<int>(1.5 * rate); i += block)
+                engine.process(left.data(), right.data(), block);
+            if (release)
+            {
+                for (const int other : held)
+                    engine.noteOff(other);
+                for (int i = 0; i < static_cast<int>(0.05 * rate); i += block)
+                    engine.process(left.data(), right.data(), block);
+            }
+            engine.noteOn(note, 0.85f);
+            double maximum = 0.0;
+            for (int i = 0; i < static_cast<int>(0.06 * rate); i += block)
+            {
+                engine.process(left.data(), right.data(), block);
+                for (int k = 0; k < block; ++k)
+                {
+                    const auto index = static_cast<std::size_t>(k);
+                    expect(std::isfinite(left[index])
+                               && std::isfinite(right[index]),
+                           "a note over a sounding instrument was not finite");
+                    maximum = std::max(maximum, static_cast<double>(std::max(
+                        std::abs(left[index]), std::abs(right[index]))));
+                }
+            }
+            return maximum;
+        };
+
+        const double fresh = peakAfter({}, false, 43);
+        expect(fresh > 1.0e-5, "the reference note was silent");
+        struct Case { const char* name; std::vector<int> held; bool release; };
+        const std::vector<Case> cases {
+            // A free string under a held neighbour.
+            { "beside a held neighbour", { 45 }, false },
+            // The same string, taken from the note already on it.
+            { "taking a sounding string", { 40 }, false },
+            // A whole chord, every string occupied.
+            { "over a six-string chord", { 40, 47, 52, 56, 59, 64 }, false },
+            // And after the hand has left, while the strings ring on.
+            { "over a released chord", { 40, 47, 52, 56, 59, 64 }, true },
+        };
+        for (const auto& item : cases)
+        {
+            const double peak = peakAfter(item.held, item.release, 43);
+            expect(peak < 2.0 * fresh,
+                   std::string("a note started ") + item.name
+                       + " peaked far above the same note on a silent engine");
+        }
+    }
+}
+
+
+void testSwitchingStringsOrTuningUnderAChordDoesNotClick()
+{
+    // Exchanging the string set or the tuning changes every string's
+    // impedance at once, so the junction's wave variables step with the port.
+    // The strings were swapped; the bridge did not move.
+    acustra::EngineParameters steel;
+    steel.stringMaterial = acustra::StringMaterial::Steel;
+    steel.outputGain = 0.04f;
+    const int block = 64;
+    const auto stepPeak = [&] (acustra::EngineParameters after)
+    {
+        acustra::AcustraEngine engine;
+        engine.setParameters(steel);
+        engine.prepare(sampleRate, block);
+        std::vector<float> left(static_cast<std::size_t>(block));
+        std::vector<float> right(static_cast<std::size_t>(block));
+        const auto sweep = [&] (double seconds)
+        {
+            double maximum = 0.0;
+            for (int i = 0; i < static_cast<int>(seconds * sampleRate);
+                 i += block)
+            {
+                engine.process(left.data(), right.data(), block);
+                for (int k = 0; k < block; ++k)
+                {
+                    const auto index = static_cast<std::size_t>(k);
+                    expect(std::isfinite(left[index])
+                               && std::isfinite(right[index]),
+                           "a construction switch produced non-finite audio");
+                    maximum = std::max(maximum, static_cast<double>(std::max(
+                        std::abs(left[index]), std::abs(right[index]))));
+                }
+            }
+            return maximum;
+        };
+        for (const int note : { 40, 47, 52, 56, 59, 64 })
+            engine.noteOn(note, 0.85f);
+        sweep(1.2);
+        const double before = sweep(0.05);
+        after.outputGain = 0.04f;
+        engine.setParameters(after);
+        return std::pair { before, sweep(0.05) };
+    };
+
+    acustra::EngineParameters nylon;
+    nylon.stringMaterial = acustra::StringMaterial::Nylon;
+    acustra::EngineParameters dadgad;
+    dadgad.stringMaterial = acustra::StringMaterial::Steel;
+    dadgad.tuning = acustra::Tuning::Dadgad;
+    for (const auto& item : { std::pair { "the string set", nylon },
+                              std::pair { "the tuning", dadgad } })
+    {
+        const auto [before, after] = stepPeak(item.second);
+        expect(before > 1.0e-6, "the chord under the switch was silent");
+        expect(after < 2.0 * before,
+               std::string("switching ") + item.first
+                   + " under a ringing chord produced a transient");
+    }
+}
+
+
+void testLegatoHammersOnAndPullsOff()
+{
+    // A hammer-on stops the string with the fretting finger; it does not
+    // release it from rest. So the loop keeps what it holds and only its
+    // length changes, and the arrival must not sound like a pluck. The
+    // footswitch is what separates a hammer-on from a strum, which the model
+    // alone cannot do: one note arriving over a held string is a hammer-on,
+    // six arriving together are a chord.
+    const int block = 64;
+    const auto phrase = [&] (double rate, bool legato, bool touchTheSwitch)
+    {
+        acustra::AcustraEngine engine;
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = acustra::StringMaterial::Steel;
+        parameters.outputGain = 0.04f;
+        engine.setParameters(parameters);
+        engine.prepare(rate, block);
+        if (touchTheSwitch)
+        {
+            engine.setLegato(true);
+            engine.setLegato(false);
+        }
+        engine.setLegato(legato);
+        engine.setSympatheticStringsEnabled(false);
+        std::vector<float> left, right;
+        const auto sweep = [&] (double seconds)
+        {
+            const int samples = static_cast<int>(seconds * rate);
+            std::vector<float> l(static_cast<std::size_t>(block));
+            std::vector<float> r(static_cast<std::size_t>(block));
+            for (int i = 0; i < samples; i += block)
+            {
+                engine.process(l.data(), r.data(), block);
+                left.insert(left.end(), l.begin(), l.end());
+                right.insert(right.end(), r.begin(), r.end());
+            }
+        };
+        engine.noteOn(52, 0.85f);
+        sweep(1.0);
+        const std::size_t hammer = left.size();
+        engine.noteOn(55, 0.85f);
+        sweep(1.0);
+        const std::size_t pull = left.size();
+        engine.noteOff(55);
+        sweep(1.0);
+        return std::tuple { Audio { left, right }, hammer, pull };
+    };
+
+    // The switch up is exactly what it was, including after being pressed and
+    // released again.
+    const auto [plain, plainHammer, plainPull] = phrase(sampleRate, false, false);
+    const auto [touched, touchedHammer, touchedPull]
+        = phrase(sampleRate, false, true);
+    expect(plain.left == touched.left && plain.right == touched.right,
+           "the legato footswitch was not an exact no-op when up");
+
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const auto [audio, hammer, pull] = phrase(rate, true, false);
+        for (std::size_t index = 0; index < audio.left.size(); ++index)
+            expect(std::isfinite(audio.left[index])
+                       && std::isfinite(audio.right[index])
+                       && std::abs(audio.left[index]) <= 1.0f
+                       && std::abs(audio.right[index]) <= 1.0f,
+                   "a legato phrase left headroom or went non-finite");
+
+        const auto band = [&] (double frequency, std::size_t begin,
+                               std::size_t end)
+        {
+            double real = 0.0;
+            double imaginary = 0.0;
+            const double count = static_cast<double>(end - begin);
+            for (std::size_t index = begin; index < end; ++index)
+            {
+                const double window = 0.5 - 0.5 * std::cos(
+                    2.0 * std::numbers::pi
+                    * static_cast<double>(index - begin) / count);
+                const double mono = window * 0.5
+                    * (audio.left[index] + audio.right[index]);
+                const double angle = 2.0 * std::numbers::pi * frequency
+                    * static_cast<double>(index) / rate;
+                real += mono * std::cos(angle);
+                imaginary += mono * std::sin(angle);
+            }
+            return 2.0 * std::hypot(real, imaginary) / count;
+        };
+        const double lower = 440.0 * std::exp2((52.0 - 69.0) / 12.0);
+        const double upper = 440.0 * std::exp2((55.0 - 69.0) / 12.0);
+        const auto quarter = static_cast<std::size_t>(0.25 * rate);
+        const auto half = static_cast<std::size_t>(0.5 * rate);
+
+        // Hammered on, the string sounds the new note and not the old one.
+        expect(band(upper, hammer + quarter, hammer + half)
+                   > 4.0 * band(lower, hammer + quarter, hammer + half),
+               "a hammer-on did not move the string to the new note");
+        // Released, it falls back to the note the hand is still holding.
+        expect(band(lower, pull + quarter, pull + half)
+                   > 4.0 * band(upper, pull + quarter, pull + half),
+               "a pull-off did not return the string to the held note");
+
+        // No pluck happened: the arrival stays far below the same note
+        // struck from rest, and below what the string already had.
+        const auto peakOver = [&] (std::size_t begin, std::size_t end)
+        {
+            double maximum = 0.0;
+            for (std::size_t index = begin;
+                 index < std::min(end, audio.left.size()); ++index)
+                maximum = std::max(maximum, static_cast<double>(std::max(
+                    std::abs(audio.left[index]),
+                    std::abs(audio.right[index]))));
+            return maximum;
+        };
+        const double sounding = peakOver(hammer - half, hammer);
+        const double arrival = peakOver(hammer, hammer + half);
+        expect(sounding > 1.0e-6, "the note under the hammer-on was silent");
+        expect(arrival < 2.0 * sounding,
+               "a hammer-on arrived like a pluck rather than a refret");
+    }
+}
+
 void testTodaysMechanismsSurviveEachOther()
 {
     // The plate conductance floor, the stolen-string tail, bridge-hand
@@ -2984,6 +3338,10 @@ int main()
     testStolenStringKeepsRingingUnderHandDamping();
     testBridgeHandPressureShortensAndDarkens();
     testNaturalHarmonicsReachAboveTheFretboard();
+    testHeldStringsDoNotLengthenANoteDecay();
+    testANoteOverASoundingInstrumentDoesNotClick();
+    testSwitchingStringsOrTuningUnderAChordDoesNotClick();
+    testLegatoHammersOnAndPullsOff();
     testTodaysMechanismsSurviveEachOther();
     testNoteAfterSilenceDoesNotClick();
     testRepluckKeepsTheContactResidual();

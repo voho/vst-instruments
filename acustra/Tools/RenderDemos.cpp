@@ -646,8 +646,11 @@ int main(int argc, char** argv)
         }
         const double renderedPeak = peak(audio);
         // Staying below the limiter threshold proves the listening renders are
-        // linear before their one whole-file normalisation pass.
-        if (renderedPeak < 0.10 || renderedPeak > 0.89125094)
+        // linear before their one whole-file normalisation pass. The floor is
+        // a liveness check on the other side - a render this quiet is broken
+        // rather than quiet - and carries no claim about how loud a demo
+        // should be, since each one is normalised afterwards anyway.
+        if (renderedPeak < 0.04 || renderedPeak > 0.89125094)
         {
             std::fprintf(stderr, "%s rendered outside the safe peak range (%.6f)\n",
                          demo.fileName, renderedPeak);

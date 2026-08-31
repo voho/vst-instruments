@@ -38,16 +38,24 @@ struct PhysicalCalibration
     // junction active.
     float bridgeConductanceFloor { 0.0f };
     float bridgeConductanceCornerHz { 1000.0f };
+    // Length of string between the saddle and its anchor, which sets the
+    // stiffness T/L of the spring each string presents to the bridge node.
+    // DAFx-26 attaches the body at xi_b=0.995 and leaves whatever stub that
+    // fraction implies; a real bridge anchors the string at a fixed distance
+    // behind the saddle instead - roughly 12-16 mm at a steel-string's pins,
+    // further at a classical's tie block - and the distance is not part of
+    // the g21 measurement, so it is bounded and fitted rather than assumed.
+    float bridgeTailLengthMetres { 0.020f };
 };
 
 inline constexpr PhysicalCalibration fittedPhysicalCalibration {
-    1.04f, 0.0887389657f, 0.820061659f, 1.89075253f, 0.0f,
-    { 1.79971856f, 1.13984718f, 1.31840079f, 1.69750718f,
+    1.04f, 0.097990747f, 0.754677154f, 1.86155763f, 0.0f,
+    { 1.94971856f, 1.13984718f, 1.42440079f, 1.69750718f,
       0.182559111f, 1.09385889f, 0.000716432382f },
     { 1.48177734f, 1.2668308f, 0.597412435f, 0.65992123f,
-      0.523383307f, 1.03116387f, 0.852115221f },
-    -0.0530251183f, 5.42528615f, 0.00617327847f, -0.0301260746f, 2.11353995f,
-    0.00359595621f, 2138.61659f
+      0.523383307f, 1.03116387f, 0.948115221f },
+    -0.0706290118f, 4.06622997f, 0.00617327847f, -0.0301260746f, 2.16964938f,
+    0.00628631882f, 2804.94773f, 0.0171860529f
 };
 
 } // namespace acustra

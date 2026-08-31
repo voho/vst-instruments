@@ -290,7 +290,7 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     // arrives on CC2 and would otherwise be undiscoverable from the plug-in.
     // Naming it here costs no control and keeps the surface as it was.
     subtitleLabel.setText (
-        "PHYSICAL ACOUSTIC GUITAR  /  CC2 = BRIDGE HAND",
+        "PHYSICAL ACOUSTIC GUITAR  /  CC2 BRIDGE HAND  /  CC68 LEGATO",
         juce::dontSendNotification);
     subtitleLabel.setFont (displayFont (15.5f, juce::Font::bold));
     subtitleLabel.setColour (juce::Label::textColourId, brass);
@@ -522,7 +522,7 @@ void AcustraAudioProcessorEditor::resized()
     titleLabel.setBounds (header.removeFromLeft (
         juce::jmin (318, header.getWidth() / 3)));
     subtitleLabel.setBounds (header.removeFromLeft (
-        juce::jmin (400, header.getWidth() / 2)).reduced (8, 0));
+        juce::jmin (480, header.getWidth() / 2)).reduced (8, 0));
     panicButton.setBounds (header.removeFromRight (80).reduced (3, 10));
     statusLabel.setBounds (header.reduced (8, 0));
 

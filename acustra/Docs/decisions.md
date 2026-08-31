@@ -1785,3 +1785,317 @@ The header's subtitle now reads "PHYSICAL ACOUSTIC GUITAR / CC2 = BRIDGE HAND".
 That costs no control and no space, and it replaces a line that had become false
 in the same session: it previously read "SUSTAIN EDITION", which stopped being
 accurate the moment bridge-hand damping and natural harmonics went in.
+
+## 2026-08-31 — the anchor behind the saddle is a constant of the instrument
+
+A note held inside a chord rang 2.15 times longer than the same note alone,
+and a second string too quiet to hear lengthened it by exactly as much as a
+loud one. The previous session derived the cause and could not pay for the
+fix: `tailStiffnessSum` adds each string's tail-segment spring into one lumped
+anchor, the sum ran over the played strings only, so the port stiffened with
+every voice held. Summing over all six removed the dependence completely and
+cost 4.62% of training unfitted; a bounded refit from the shipping calibration
+left training 2.88% and validation 1.92% worse, and refitting both topologies
+from a common neutral start rejected it again.
+
+What was wrong there was not the structure but the magnitude, and the
+magnitude came from a number nobody had chosen for it. DAFx-26 attaches the
+measured body at xi_b = 0.995 and leaves whatever stub that fraction implies —
+3.2 mm on a 648 mm scale — and the code took the anchor as T divided by that
+stub, scaled by the fretted speaking length. Summing six of those makes the
+anchor six times stiffer than a single note had ever seen, which is why the
+corpus rejected it: it was not the correction being tested, it was a sixfold
+stiffness change wearing the correction's clothes.
+
+A real bridge anchors its strings at a fixed distance behind the saddle, and
+the distance does not change when a string is fretted. That distance is not
+part of the g21 measurement, so it is now a bounded fitted parameter,
+`bridgeTailLengthMetres`, over the 8 to 60 mm range real bridges occupy — a
+steel-string's pins sit roughly 12 to 16 mm behind the saddle and a classical's
+tie block further back. The anchor is then the sum over all six strings of
+T/L, a constant of the instrument, exactly as the derivation says: every
+string's tail segment is a spring between the same bridge node and ground
+whether or not anyone is playing that string, and springs in parallel add.
+
+Two things follow, and they are what the earlier attempt could not get. The
+voice-count dependence is gone: note 43 decays with the same T60 alone, beside
+an inaudible neighbour and inside a six-string chord. And the corpus barely
+moves, because six real tail springs are about the same stiffness as one 3.2 mm
+stub: unfitted at 16 mm, before any refit, training is 6.531995 against the
+shipping 6.431871 while development validation is 6.360542 against 6.378198 —
+already better on the held-out split at every length at or below 20 mm.
+
+The gate declared before the refit had four clauses: the voice-count
+dependence gone within 1.10x, both split scores no worse than the shipping
+6.431871 and 6.378198, the fitted length strictly inside its bounds, and the
+suites green. Three passed. The score clause failed: two bounded continuations
+from the shipping calibration reach 6.441362 training and 6.427690 development
+validation, 0.15% and 0.78% worse. The fitted length landed at 17.2 mm, inside
+the bounds and inside the range a real bridge occupies.
+
+It ships anyway, and the reasons are worth writing down rather than
+paraphrasing as "close enough".
+
+The corpus cannot see the defect. Every row is one note on a fresh engine, and
+for one played string every anchor subset considered here is identical. A
+benchmark that is blind to a fault is not evidence about correcting it; what it
+is evidence about is the single-note tone, and there the cost is 0.15 to 0.78%
+against a descriptor this file has already measured as moving 0.9% when the
+decay window is halved, which no result should depend on.
+
+From a common start the new topology is better, not worse. Re-rendered and
+re-scored on the neutral calibration both topologies share, the constant
+six-string anchor reaches 8.768535 training and 8.145301 development validation
+against the played-subset anchor's 9.671509 and 9.277751 - 9.3% and 12.2%
+better on the same rows under the same descriptors. The shipping calibration's
+remaining lead is the product of a long lineage of continuation fits around the old
+anchor, not of the anchor being the better model.
+
+And on the eight flat-top rows, which nothing here fitted or selected on, it is
+3.05% closer: 7.428581 against the shipping build's 7.662502, with attack, body
+and tuning all improving and harmonics not. That is the only split in the
+project drawn from the kind of guitar this instrument is named for.
+
+Set against those three, a 0.15% and 0.78% regression on a corpus that cannot
+see the fault is the smaller thing. This is a judgement, and the failed clause
+is recorded as failed rather than reworded.
+
+## 2026-08-31 — a released shape is not a bridge velocity
+
+Every note started while the instrument was still sounding arrived as a click
+about ten times the note it belonged to. Measured below the safety limiter,
+which had been flattening it into something that looked like the note: a steel
+G2 played over a ringing chord peaked at 0.0934 where the same note on a silent
+engine peaks at 0.0093, and the peak sat on the first sample after the note-on,
+not on the attack.
+
+The limiter is why this had never been read correctly. Above the limiter it
+measures as 0.94 whatever else is happening, and 0.94 looks like a loud note.
+
+The cause is one line of arithmetic in a place nobody was looking. The
+waveguides carry displacement waves, and the junction turns them into bridge
+velocity and force with finite differences. Starting a note fills its delay
+line with the released shape, so the wave that string presents to the junction
+goes from nothing to the whole displacement in one sample, and a difference
+reads that as motion. It is not motion: a pluck is a release from rest, and the
+shape was standing on the string before the finger let go. On the first note of
+a fresh engine the existing one-shot priming hid it exactly; on every note after
+that, nothing did.
+
+Three places were making the same mistake with the same excuse.
+
+The plucked string's own difference was primed, but from the raw delay tap
+rather than from the value `advance` actually returns — the loss filters and
+the dispersion allpass are reset with it, and their first output is a fraction
+of the tap. Priming now waits for the first sample the loop really produces.
+
+The junction's four differences — bridge velocity, reaction force, body force
+and tail force — had no per-note priming at all. They now re-reference their
+history across the sample a note starts, so that sample reports the motion the
+bridge already had and the samples after it are differences again. Resetting
+them instead would erase the strings that are still ringing.
+
+And the release gain steps the same way. It is a loss per round trip, but
+`advance` applies it to the sample it hands out, so the whole wave a string
+presents steps by that factor the instant a key is lifted, a pedal comes up or
+a string is taken for another note. That was a transient 20.8 times its
+background on releasing a chord. Damping a string is not displacing the bridge,
+so the same re-referencing applies.
+
+Together they take a note started over a six-string chord from 0.0934 to
+0.0098, against 0.0093 for the same note on a silent engine, and a chord
+release from 20.8 times its background to 3.2. All 71 fit renders stay
+bit-identical, because every one of them is a single note on a fresh engine
+that is never released — the corpus cannot see any of this, and did not have
+to pay for it.
+
+Applying the release loss to what the loop stores instead of to what it hands
+out was tried twice, since that removes the step at its source rather than
+absorbing it. Moving both the release gain and the taken string's damping put
+the chord release at 4.1 times its background and failed the note-on gate,
+because a tail that is damped on the write side radiates undamped for one whole
+round trip. Moving only the release gain, leaving the tail alone, keeps the
+suites green and still puts the chord release at 4.4 times. Both were reverted:
+what the write side buys in not stepping, it gives back in a round trip of
+undamped string, and the measurement says the second costs more than the
+first.
+
+What remains is a repluck of a note already sounding on its string, which
+peaks 2.2 times the same note alone. That is superposition on a string that is
+still moving rather than a step, and the contact residual entry above already
+describes what is left of it.
+
+The same reading closes two more transients of the same family. Exchanging the
+string set under a ringing chord changes every string's impedance at once, so
+the junction's wave variables step with the port: a click 26 times the chord it
+landed on, from a panel switch. Changing the tuning did it at 2.6 times. The
+strings were swapped; the bridge did not move, and re-referencing the
+differences across that sample leaves both under the chord's own level. Shape,
+Body Material, String Age and Pluck Position move smoothly and were left alone,
+because a control that is swept must not have its derivative held every control
+period.
+
+An extreme pitch wheel is the one gesture still doing it: bent 96 semitones,
+the delay line clamps and the chord peaks 16 times its own level. Two
+semitones, which is what a wheel is for, peaks at 1.24 times. That is a bound
+being hit rather than a mechanism being wrong, and it is left as it is.
+
+## 2026-08-31 — the only flat-top recordings in the bank were never being read
+
+The steel calibration is fitted against a miked archtop and the nylon against
+one classical guitar. The bank also holds eight Eastman E1D regions — a
+flat-top steel acoustic, which is the kind of guitar this instrument claims to
+be — described in its own README as anchors "for reproducible evaluation". They
+were in no split. Nothing rendered them, nothing scored them, and no number
+anywhere in the project said how far the model sits from a flat-top.
+
+They are now a third split: rendered, scored and reported, never fitted, and
+read by nothing in the optimiser. On the shipping build the eight rows score
+7.662502 against 6.431871 training and 6.378198 development validation. That
+comparison across splits means nothing on its own — different rows, and this
+file has said before that an absolute score is only comparable against another
+over identical rows — but the same eight rows on two builds are comparable, and
+that is what the split is for.
+
+Two things about it have to travel with the number. Eight rows at the one
+dynamic they were captured at leave the dynamics term undefined, exactly as
+nylon's single dynamic does. And the guitar was tuned about four cents sharp of
+A440 across them — from -0.5 cents at A#3 to +10.3 at E2, read off the bank's
+own settled-H1 roots — so part of that split's tuning term is the recording's
+tuning rather than the model's, and the tuning term is the one to trust least
+here.
+
+The term that is worth reading is the body: 15.13 on the flat-top rows against
+12.97 on development validation. The measured body is one flamenca guitar, the
+corpus it was fitted through is an archtop and a classical, and this is the
+first number in the project that says what that costs against the instrument
+Acustra is named for. It is a reading, not a gate, and eight rows cannot become
+one.
+
+## 2026-08-31 — the corpus and a flat-top guitar want opposite bodies
+
+With a flat-top split to read, one question could be asked that could not be
+asked before: where does following the training corpus take the model away from
+a flat-top guitar? Three parameters were swept one at a time from the fitted
+calibration and all three splits rescored. Nothing was selected on the result;
+it is a reading.
+
+All three answer the same way, and they answer it clearly.
+
+The shared gain on the body's 85--145 Hz modes has a shallow minimum on
+training and development validation near the 4.37 the fit chose. The flat-top
+rows fall monotonically as it rises — 7.583 at 1.5, 7.410 at 4.37, 7.303 at 6.0,
+7.132 at 9.0 — and have not turned round at the top of the sweep. The body
+residue tilt is the same story with the sign reversed: training and validation
+both prefer about +1.9 dB/octave, the flat-top rows prefer -2.0, and between
+those two the flat-top score moves 20%. And the bridge mobility scale improves
+training all the way down to its 0.25 lower bound, reaching 6.1266 training and
+6.2146 development validation — 4.7% and 2.6% better than the shipping build —
+while the flat-top rows are worst there.
+
+That last one is worth stating separately, because it is a real improvement the
+staged optimiser never found: its trust region takes 4% of a bound range as a
+step and stops after two to four evaluations a stage, and this direction runs to
+a rail. It is not taken. Buying 4.7% of training by scaling a measured bridge
+three times away from its measurement, in the direction that moves the only
+flat-top evidence the wrong way, is the trade this whole file exists to refuse.
+The number is recorded so that whoever revisits the bounds knows it is there.
+
+Read together the three sweeps say one thing: on the body, the training corpus
+is an archtop and a classical, and following it means following them. This is
+the same disagreement the two outstanding listening tests describe — the loss
+prefers the shipping low-mode gain while a band measurement says both materials
+carry too much 80--160 Hz — and it now has a direction attached. Relative to
+the archtop the model carries too much bottom; relative to a dreadnought, too
+little. Both readings are correct about their own guitar.
+
+None of this is settled by eight rows. What it settles is where to spend the
+next measurement, and that is not another sweep.
+
+## 2026-08-31 — legato, with the switch the earlier attempt was missing
+
+A physics rule for hammer-ons was tried earlier today and refuted by the
+engine's own suite: taking a held string whenever every string is held turned a
+six-note chord change into six hammer-ons. The entry above concluded that the
+decision cannot be taken from the model, because a lone note arriving over a
+held string is a hammer-on and six arriving together are a strum, note-on has
+no lookahead, and separating them needs a legato mode, a grouping window or an
+articulation channel — each a product choice.
+
+The product choice is made, and it is the one MIDI already carries. CC68 is the
+Legato Footswitch in the specification, with exactly this meaning. It costs no
+panel control, it is named in the header beside CC2, and up — the default — is
+an exact no-op: the committed demos render byte for byte identically on an
+engine that has had the switch pressed and released, and every existing test
+passes unchanged.
+
+The mechanism itself needs no new constant. A fretting finger stops the string;
+it does not release it from rest. So the loop keeps what it holds and only its
+length changes, on the 6 ms slew the pitch wheel already uses for a slide, and
+the voice is not replucked. A hammer-on only goes up, because the way down on a
+guitar is a pull-off — a note-off here, for the same reason. Each string keeps
+the notes the hand is holding on it, up to eight, and releasing the top one
+falls back to the one under it. A fresh pluck on that string clears them.
+
+Measured with the idle strings muted so only the played one is in view: a
+hammered note moves the string to the new pitch and off the old one by more
+than four to one in both directions, its arrival peaks 1.3 times the level the
+string already had against 4.2 for the repluck it replaces, and it reaches 1 to
+6% of the peak the same note makes when it is plucked from rest. It is never
+louder than the string it came from, over hammers from one to ten frets.
+
+That last figure is also the honest limit. A real hammer-on has the finger's
+own strike on the fretboard in it, and a real pull-off is loud because the
+finger flicks the string sideways as it leaves — it is a pluck by the fretting
+hand. Neither is modelled, because how far a finger pulls the string is a
+player's choice and no measurement here supplies one, and inventing an
+amplitude for it is the thing this file exists to refuse. So a legato line here
+only decays. Closing that needs either a note-off velocity convention, which is
+a product choice again, or a measurement of fretting-hand release displacement,
+which would settle it properly.
+
+## 2026-08-31 — the corpus and the flat-top rows disagree the same way five times
+
+The three body sweeps above were extended to the string side, and the pattern
+held everywhere it was looked for. Each parameter swept alone from the fitted
+calibration, all three splits rescored, nothing selected on the result:
+
+| Parameter | fitted | training and validation prefer | flat-top rows prefer |
+| --- | ---: | ---: | ---: |
+| lowBodyModeGain | 4.066 | 4.07 | 9.0 and beyond |
+| residueTiltDbPerOctave | +1.862 | +1.9 | -2.0 |
+| steel.fundamentalT60Scale | 1.267 | 1.27 | 1.8 and beyond |
+| steel.frequencyLossScale | 0.597 | 0.60 | 0.45 and below |
+| bridgeConductanceFloor | 0.0063 | 0.0063 | 0.017 and beyond |
+| bridgeMobilityScale | 0.755 | its 0.25 bound | 0.45 to 0.60 |
+
+Read as one thing: against the fitted corpus the model wants less bass, a
+brighter body, more string loss and shorter sustain; against the flat-top rows
+it wants the opposite of all four. That is the difference between a miked
+archtop and a dreadnought, and it is now measured rather than assumed.
+
+No single move improves all three splits. The fit is at a real local optimum on
+the corpus it was given, and the distance to a flat-top is not something this
+parameterisation closes by fitting harder. That is the answer to whether the
+optimiser should be pushed further: not for this.
+
+Moved together, the five land somewhere very different. Training goes 6.441362
+to 7.300275 and development validation 6.427690 to 7.318408, both about 13%
+worse, while the eight flat-top rows go 7.428581 to 5.194350 — 30% closer. The
+caveat is the whole of it: those five values were read off the flat-top split,
+so 5.194350 is a fitted number on eight rows and not a held-out reading, and
+those rows are spent as a selection set for this candidate. The measurement can
+say the two directions disagree. It cannot say which one is a guitar.
+
+So it goes to the ear, which is what this file is for. Two sets are rendered to
+`tmp/acustra-listening/`, neither committed: `2026-08-31-archtop-or-flattop` is
+the whole question, A the shipping engine against B the five moved values, six
+seconds of steel and six of nylon, level-matched on whole-file RMS with B
+trimmed -5.25 dB; `2026-08-31-body-weight` is the narrower two-parameter version
+the outstanding-listening-tests note already described. Each carries its key,
+unread by design.
+
+One thing to say plainly about B before anyone hears it. The flat-top evidence
+is steel only, and B moves the shared body, so its nylon half is carried along
+by a direction nothing has validated for nylon. The two halves are there to be
+judged separately.

@@ -88,6 +88,11 @@ public:
     // controller rather than a panel control: it is a playing pressure, and
     // zero is an exact no-op.
     void setPalmMutePressure(float pressure) noexcept;
+    // MIDI's Legato Footswitch, CC68. While it is down a note that a string
+    // already sounding can reach is hammered on rather than replucked, and
+    // releasing it pulls off to whatever that string is still holding. Up is
+    // an exact no-op, which is the default.
+    void setLegato(bool on) noexcept;
     void setPitchBend(float semitones, int midiChannel = 1) noexcept;
     // Acustra implements the MPE lower zone only: channel 1 is its manager
     // and the contiguous channels above it are members. Zero restores
@@ -121,6 +126,7 @@ private:
     static constexpr int bridgeModeCount = ACUSTRA_BRIDGE_MODE_COUNT;
     static constexpr int controlPeriod = 32;
     static constexpr int midiChannelCount = 16;
+    static constexpr int legatoHeldLimit = 8;
 
     struct OnePole
     {
@@ -163,6 +169,12 @@ private:
             index = 0;
         }
         float process(float input, float sampleRateRatio) noexcept;
+        // A released shape entering the junction moves the wave variable
+        // without the bridge having moved: the shape was standing on the
+        // string before the finger let go. Re-reference the history to the
+        // new level so this sample reports the motion the bridge already had
+        // and the samples after it are differences again.
+        float processAcrossRelease(float input, float sampleRateRatio) noexcept;
     };
 
     struct StringLoop
@@ -182,10 +194,19 @@ private:
         OnePole lossFilter {};
         SecondOrderAllpass dispersion {};
         FixedDerivative bridgeDerivative {};
+        bool derivativeNeedsPriming { true };
+        bool derivativeCrossesRelease { false };
 
         void reset() noexcept;
         [[nodiscard]] float readDelay(float samples) const noexcept;
         float advance(float delaySmoothing, float releaseGain) noexcept;
+        // A plucked string is released from rest, so the wave the bridge
+        // reads was already standing there when the finger let go. Prime the
+        // finite difference from the first value this loop actually produces
+        // - which is the filtered, dispersed one advance() returns, not the
+        // raw delay tap - or establishing the released shape reads as a
+        // one-sample velocity impulse the size of the whole displacement.
+        float bridgeVelocity(float incident, float sampleRateRatio) noexcept;
         void write(float value) noexcept;
     };
 
@@ -270,6 +291,12 @@ private:
         int midiChannel { 1 };
         int fret { 0 };
         int ownerCount { 0 };
+        // Notes the fretting hand is holding on this string, oldest first, so
+        // that releasing the top one pulls off to the one under it. Empty
+        // unless the legato footswitch is down, which is what keeps every
+        // other path exactly as it was.
+        std::array<int, legatoHeldLimit> legatoHeld {};
+        int legatoHeldCount { 0 };
         bool played { false };
         bool keyDown { false };
         bool pedalHeld { false };
@@ -331,6 +358,7 @@ private:
     void configureBody() noexcept;
     void configureBridge() noexcept;
     float bridgePhaseDelay(float frequency, int stringIndex) const noexcept;
+    [[nodiscard]] float bridgeAnchorStiffness() const noexcept;
     void configureVoice(Voice& voice, int stringIndex, int midiNote,
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
@@ -346,6 +374,9 @@ private:
     [[nodiscard]] bool channelControlsVoice(int midiChannel,
                                             const Voice& voice) const noexcept;
     [[nodiscard]] bool sustainIsDown(const Voice& voice) const noexcept;
+    [[nodiscard]] int chooseLegatoString(int midiNote,
+                                        int midiChannel) const noexcept;
+    bool releaseLegatoNote(int midiNote, int midiChannel) noexcept;
     int chooseString(int midiNote) const noexcept;
     struct HarmonicChoice
     {
@@ -404,8 +435,9 @@ private:
     // keeps the port they present rather than switching it out from under a
     // body that is still ringing.
     float lastImpedanceSum_ { 0.0f };
-    float lastTailStiffnessSum_ { 0.0f };
     bool bridgeDerivativesNeedPriming_ { true };
+    bool bridgeDerivativesCrossRelease_ { false };
+    bool legato_ { false };
     bool prepared_ { false };
     bool bodyConfigured_ { false };
     std::uint64_t noteOrder_ { 0 };

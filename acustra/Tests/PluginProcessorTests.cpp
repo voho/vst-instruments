@@ -356,6 +356,57 @@ void testBridgeHandControllerReachesTheEngine()
             "CC2 did not reach the engine as bridge-hand pressure");
 }
 
+void testLegatoControllerReachesTheEngine()
+{
+    // CC68 is MIDI's Legato Footswitch. With it down, a second note a
+    // sounding string can reach must be hammered on rather than replucked,
+    // so it arrives without a pluck's attack.
+    const auto arrivalRise = [] (bool legato)
+    {
+        AcustraAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        const auto sweep = [&] (double seconds, juce::MidiBuffer& first)
+        {
+            double peak = 0.0;
+            const int blocks = std::max (1,
+                static_cast<int> (seconds * sampleRate / blockSize));
+            for (int block = 0; block < blocks; ++block)
+            {
+                juce::MidiBuffer empty;
+                processor.processBlock (audio, block == 0 ? first : empty);
+                for (int sample = 0; sample < blockSize; ++sample)
+                    peak = std::max (peak, static_cast<double> (std::max (
+                        std::abs (audio.getSample (0, sample)),
+                        std::abs (audio.getSample (1, sample)))));
+            }
+            return peak;
+        };
+        juce::MidiBuffer start;
+        if (legato)
+            start.addEvent (juce::MidiMessage::controllerEvent (1, 68, 127), 0);
+        start.addEvent (juce::MidiMessage::noteOn (1, 52, 0.85f), 1);
+        sweep (0.5, start);
+        juce::MidiBuffer none;
+        const double before = sweep (0.1, none);
+        juce::MidiBuffer second;
+        second.addEvent (juce::MidiMessage::noteOn (1, 57, 0.85f), 0);
+        const double after = sweep (0.2, second);
+        return after / std::max (before, 1.0e-9);
+    };
+    const double plucked = arrivalRise (false);
+    const double hammered = arrivalRise (true);
+    expect (plucked > 2.0, "the replucked reference arrival did not rise");
+    std::cout << "Acustra legato wrapper rise: plucked=" << plucked
+              << " hammered=" << hammered << "\n";
+    // The engine suite measures the mechanism itself, with the idle strings
+    // muted and below the safety limiter. This one only has to prove the
+    // controller arrives, through a default output gain that compresses both
+    // arrivals and over a first note that is still ringing under them.
+    expect (hammered < 0.7 * plucked,
+            "CC68 did not reach the engine as legato");
+}
+
 void testResetAllControllersReleasesSustain()
 {
     AcustraAudioProcessor processor;
@@ -1023,6 +1074,7 @@ int main()
     testSameSampleChordOrderIsCanonical();
     testSameSampleNoteOnOffDoesNotStick();
     testBridgeHandControllerReachesTheEngine();
+    testLegatoControllerReachesTheEngine();
     testResetAllControllersReleasesSustain();
     testMemberChannelOwnershipAndControllers();
     testMemberPitchBendDoesNotLeakChannels();
