@@ -68,7 +68,7 @@
   1.04,
   0.097990747,
   0.754677154,
-  1.86155763,
+  -1.0,
   0.0,
   1.94971856,
   1.13984718,
@@ -78,23 +78,23 @@
   1.09385889,
   0.000716432382,
   1.48177734,
-  1.2668308,
-  0.597412435,
+  1.53,
+  0.52,
   0.65992123,
   0.523383307,
   1.03116387,
   0.948115221,
   -0.0706290118,
-  4.06622997,
+  7.5,
   0.00617327847,
   -0.0301260746,
   2.16964938,
-  0.00628631882,
+  0.011,
   2804.94773,
   0.0171860529
  ],
  "neutral_baseline": {
-  "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length",
+  "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length; 20 mm saddle-to-anchor length",
   "calibration_in_calibration_order": [
    1.0,
    1.0,
@@ -130,105 +130,105 @@
   "training": {
    "examples": 83,
    "unique_model_renders": 47,
-   "fitted_score": 6.441362358204443,
+   "fitted_score": 6.836183775081619,
    "terms": {
     "attack": {
      "neutral": 9.309916832505955,
-     "fitted": 7.148393663761784
+     "fitted": 7.985525242806496
     },
     "harmonics": {
      "neutral": 10.441357549351897,
-     "fitted": 7.971743227817993
+     "fitted": 8.121419085189423
     },
     "tuning": {
      "neutral": 4.7200069586896545,
-     "fitted": 4.620744024122671
+     "fitted": 4.638650032232778
     },
     "pitch_trajectory": {
      "neutral": 0.5545940344615841,
-     "fitted": 0.5220703390447075
+     "fitted": 0.5262575027606922
     },
     "decay": {
      "neutral": 6.5023449891362235,
-     "fitted": 4.801675593517279
+     "fitted": 4.9696094269258655
     },
     "body": {
      "neutral": 15.462399754765235,
-     "fitted": 12.390933048862278
+     "fitted": 13.433390934300022
     },
     "dynamics": {
      "neutral": 5.262953607125741,
-     "fitted": 0.19161932319888428
+     "fitted": 0.1689068526684069
     }
    },
    "neutral_score": 8.768534755725106,
-   "change_percent": -26.540037330652286
+   "change_percent": -22.03733046027818
   },
   "held_out": {
    "examples": 24,
    "unique_model_renders": 24,
-   "fitted_score": 6.427689942890929,
+   "fitted_score": 6.823805438218757,
    "terms": {
     "attack": {
      "neutral": 9.155575861766145,
-     "fitted": 7.1127468115107
+     "fitted": 8.198283216092142
     },
     "harmonics": {
      "neutral": 10.831031892275846,
-     "fitted": 8.487752567152574
+     "fitted": 8.884231112172683
     },
     "tuning": {
      "neutral": 5.134666492710443,
-     "fitted": 4.906765370476146
+     "fitted": 4.937995911804933
     },
     "pitch_trajectory": {
      "neutral": 0.2159873722123093,
-     "fitted": 0.1606959981307732
+     "fitted": 0.16307255467845078
     },
     "decay": {
      "neutral": 5.464938238665436,
-     "fitted": 4.025326819240226
+     "fitted": 3.8526498560926994
     },
     "body": {
      "neutral": 15.82243218879784,
-     "fitted": 13.002912139511276
+     "fitted": 13.941907572480277
     },
     "dynamics": {
      "neutral": 0.42473841202342505,
-     "fitted": 0.025270855442641467
+     "fitted": 0.023020822038764377
     }
    },
    "neutral_score": 8.145301055652865,
-   "change_percent": -21.087140929799137
+   "change_percent": -16.224024236857222
   },
   "flat_top": {
    "examples": 8,
    "unique_model_renders": 8,
-   "fitted_score": 7.428580575549784,
+   "fitted_score": 5.655082046369026,
    "terms": {
     "attack": {
      "neutral": 9.036944038636934,
-     "fitted": 8.215071505814237
+     "fitted": 5.295534178913444
     },
     "harmonics": {
      "neutral": 8.586058487630032,
-     "fitted": 8.204850750944262
+     "fitted": 7.342174285799647
     },
     "tuning": {
      "neutral": 8.267588323509182,
-     "fitted": 2.6485768034885435
+     "fitted": 2.427095198950361
     },
     "pitch_trajectory": {
      "neutral": 0.6100492795473387,
-     "fitted": 0.660987135827659
+     "fitted": 0.6266468390211964
     },
     "decay": {
      "neutral": 8.690178706006728,
-     "fitted": 3.915285865110187
+     "fitted": 3.184382629625041
     },
     "body": {
      "neutral": 13.894703320071423,
-     "fitted": 14.784577400310209
+     "fitted": 10.51493614857389
     },
     "dynamics": {
      "neutral": null,
@@ -236,7 +236,7 @@
     }
    },
    "neutral_score": 9.309314823108725,
-   "change_percent": -20.202713983744015,
+   "change_percent": -39.253509481371424,
    "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
   }
  },
@@ -888,5 +888,54 @@
    "status": "a listening candidate, not a calibration: the five values were selected by looking at the flat-top split, so 5.194350 is a fitted number on eight rows and those rows are spent as a selection set for it",
    "listening_sets": "tmp/acustra-listening/2026-08-31-archtop-or-flattop and 2026-08-31-body-weight, neither committed"
   }
+ },
+ "listening_verdicts": {
+  "2026-08-31 archtop-or-flattop": "the flat-top direction is more realistic than the fitted build but a bit too dull; something in the middle would be best",
+  "2026-08-31 body-weight": "the fitted build is the worst of three; the ideal sits between the middle candidate and the full flat-top one",
+  "adopted": {
+   "lowBodyModeGain": [
+    4.06622997,
+    7.5
+   ],
+   "residueTiltDbPerOctave": [
+    1.86155763,
+    -1.0
+   ],
+   "steel.fundamentalT60Scale": [
+    1.2668308,
+    1.53
+   ],
+   "steel.frequencyLossScale": [
+    0.597412435,
+    0.52
+   ],
+   "bridgeConductanceFloor": [
+    0.00628631882,
+    0.011
+   ]
+  },
+  "cost": {
+   "training": [
+    6.441362,
+    6.836184
+   ],
+   "held_out": [
+    6.42769,
+    6.823805
+   ],
+   "flat_top": [
+    7.428581,
+    5.655082
+   ]
+  },
+  "status": "five of the twenty-seven values are a direction chosen by ear, not the fit's answer; recorded as chosen by ear in Docs/decisions.md",
+  "open": "tmp/acustra-listening/2026-08-31-how-far brackets the adopted point symmetrically, A the shipping engine"
+ },
+ "sympathetic_tail_ceiling": {
+  "was": 0.9,
+  "now": 0.97,
+  "measured": 0.948664,
+  "reason": "the ceiling bounds the balance of a fretted note's tail, not the coupling: holding the sympathetic path fixed and tilting the body's radiation down alone moves it 0.806 to 0.927, while doubling the low-mode gain at a fixed tilt moves it 0.806 to 0.819. It was re-pinned when a listening verdict chose that body",
+  "tightened_in_exchange": "the resonant share must now exceed five times the off-resonant share rather than three; measured 7.04"
  }
 }

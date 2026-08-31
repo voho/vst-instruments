@@ -2099,3 +2099,69 @@ One thing to say plainly about B before anyone hears it. The flat-top evidence
 is steel only, and B moves the shared body, so its nylon half is carried along
 by a direction nothing has validated for nylon. The two halves are there to be
 judged separately.
+
+## 2026-08-31 — the ear chose the flat-top direction, and how far
+
+Both sets were heard. On `archtop-or-flattop` the listener reported that B, the
+five values moved to what the flat-top rows prefer, "sounds a bit too dull but
+it is more realistic than A", and that "something in the middle would be best".
+On `body-weight` the report was that "A sounds worst, B is better, C probably
+best but something between C and B is ideal".
+
+That is a direction chosen by ear, and it is recorded as chosen by ear. The
+listener did not select constants and did not validate the flat-top rows; what
+the verdict says is that following the fitted corpus on the body is the wrong
+way round, which is the thing three separate measurements had already pointed
+at without being able to settle.
+
+Read together the two verdicts put the body between the `body-weight` middle
+and full candidates — lowBodyModeGain between 6.0 and 9.0, residue tilt between
+0.0 and -2.0 — and the string side at the middle of the five-parameter move.
+The midpoints of those ranges are what is adopted:
+
+| Value | was | now |
+| --- | ---: | ---: |
+| lowBodyModeGain | 4.066 | 7.500 |
+| residueTiltDbPerOctave | +1.862 | -1.000 |
+| steel.fundamentalT60Scale | 1.267 | 1.530 |
+| steel.frequencyLossScale | 0.597 | 0.520 |
+| bridgeConductanceFloor | 0.0063 | 0.0110 |
+
+Five of the twenty-seven calibration values are therefore no longer the fit's
+answer. The cost against the corpus is exactly what the sweeps predicted:
+training 6.441362 to 6.836184 and development validation 6.427690 to 6.823805,
+both 6.1% worse, while the eight flat-top rows go 7.428581 to 5.655082, 23.9%
+closer. The flat-top column stopped being a held-out reading two entries ago
+and is quoted only for continuity.
+
+## 2026-08-31 — a tail ceiling re-pinned by the same verdict
+
+The adopted body failed one predeclared bound. The sympathetic test measures
+the resonant open-string share of a fretted E3's 0.30-4.00 s tail and required
+it under 0.90; the new body puts it at 0.9487.
+
+What that number is, measured rather than assumed: it moves with the body, not
+with the coupling. Holding the sympathetic path fixed and only tilting the
+body's radiation down takes it from 0.806 to 0.927, while doubling the low-mode
+gain at a fixed tilt moves it 0.806 to 0.819. A darker, bassier body favours the
+open strings' long low ring over a fretted note's own tail, and the played note
+here is a fretted one on the D string while the ring is two open E strings. That
+is a guitar doing what a guitar does, and 0.90 was a plausibility line drawn
+around the body the corpus had chosen.
+
+So the ceiling is re-pinned to 0.97, and the two assertions that make this a
+sympathy test rather than a loudness test are tightened in exchange: the
+off-resonant share stays under 0.30, at 0.135, and the resonant share must now
+exceed five times it rather than three, at 7.04 times. The test is stronger
+where it measures selectivity and looser only where it measures balance.
+
+Worth being plain about the shape of this. A number was moved because a
+listening verdict moved the body under it. That is legitimate under this file's
+convention — re-pinning a calibrated constant is one of the cases a listening
+test exists for — and it is only legitimate because the verdict came first and
+the measurement showing the coupling unchanged came with it. It is not
+legitimate as a way to get a build past a gate it fails.
+
+The next set, `2026-08-31-how-far`, brackets the adopted point: A is now the
+shipping engine, B backs the string side out and keeps the body, C and D take
+the string side further. Its key is unread.

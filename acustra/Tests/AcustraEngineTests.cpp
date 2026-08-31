@@ -1308,11 +1308,20 @@ void testSympatheticStringsAreAudibleButBounded()
               << resonantOffRms << '\n';
     expect(resonantRatio > 0.05,
            "resonant open-string radiation was below -26 dB of the tail");
-    expect(resonantRatio < 0.90,
+    // This ceiling is on the balance of the tail, not on the coupling. It
+    // moves with the body: holding the sympathetic path fixed and only
+    // tilting the body's radiation down takes it from 0.806 to 0.927, while
+    // doubling the low-mode gain at a fixed tilt moves it 0.806 to 0.819. A
+    // darker, bassier body favours the open strings' long low ring over a
+    // fretted note's own tail, which is a guitar doing what a guitar does.
+    // It was re-pinned from 0.90 when a listening verdict chose that body.
+    expect(resonantRatio < 0.97,
            "resonant open-string radiation exceeded its safe tail ceiling");
     expect(offResonantRatio < 0.30,
            "off-resonant open strings coloured too much of the tail");
-    expect(resonantRatio > 3.0 * offResonantRatio,
+    // The assertions that make this a sympathy test rather than a loudness
+    // one are these two, and they are tightened in exchange.
+    expect(resonantRatio > 5.0 * offResonantRatio,
            "open-string radiation did not discriminate a harmonic match");
 }
 
