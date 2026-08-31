@@ -969,5 +969,29 @@
    "flat_top": 5.655082
   },
   "conclusion": "the disagreement is gone; the audit's old preference was measured on a build that no longer exists, three things having moved under it - the anchor topology, the plate conductance floor and steel's frequency loss. A number settles it, so no listening test is run"
+ },
+ "by_material": {
+  "note": "the ear-chosen body move, scored per material; before is the fitted calibration, after is what ships",
+  "training": {
+   "nylon": [
+    8.4087,
+    8.6722
+   ],
+   "steel": [
+    5.8249,
+    6.3053
+   ]
+  },
+  "held_out": {
+   "nylon": [
+    7.8169,
+    7.6228
+   ],
+   "steel": [
+    5.9964,
+    6.7997
+   ]
+  },
+  "reading": "nylon moves 3.1% worse on training and 2.5% better held out; steel carries the whole trade at 8.2% and 13.4%, with attack 14.9% and body 11.7% worse. Nylon's +13.5 dB 80-160 Hz attack excess is on a band 47 dB below the classical reference's own total, so it changes the aggregate by a fraction of a decibel"
  }
 }

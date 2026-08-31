@@ -613,12 +613,18 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   taken: it buys training score by scaling a measured bridge three times away
   from its measurement, in the direction that moves the flat-top evidence the
   wrong way.
-- Nylon was carried along by a decision made on steel. The flat-top rows are
-  steel, the body is shared, and moving it took nylon's 80--160 Hz attack from
-  +0.9 dB against the classical reference to +13.5 dB and its top octave from
-  +3.4 to −6.2 dB. No verdict and no measurement has validated that for nylon.
-  If the two materials want different bodies, the body has to stop being
-  shared, and that is a bigger change than any here.
+- Nylon was carried along by a decision made on steel evidence through a shared
+  body, and paid much less for it than the band numbers suggest. Its
+  80--160 Hz attack went from +0.9 dB against the classical reference to
+  +13.5 dB, but that band sits 47 dB below the reference's own total — a nylon
+  guitar puts almost nothing there — so the aggregate barely moves: nylon's
+  training score goes 8.4087 to 8.6722, 3.1% worse, while its held-out score
+  goes 7.8169 to 7.6228, 2.5% better. Term by term it moves 0.4 to 6.2%. Steel
+  carries the whole trade instead: 5.8249 to 6.3053 on training and 5.9964 to
+  6.7997 held out, with attack 14.9% and body 11.7% worse. That is the material
+  whose corpus is the wrong instrument, which is where the cost belongs. What
+  remains unvalidated for nylon is a direction, not a regression: nothing has
+  confirmed that a classical guitar wants the body a dreadnought wants.
 - No listening question is outstanding. The body direction is settled for this
   corpus — a symmetric bracket around the adopted point found the letter half
   way back toward the fitted calibration clearly worst and the letter half way

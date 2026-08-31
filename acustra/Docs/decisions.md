@@ -2230,3 +2230,39 @@ that no longer exists.
 So the number settles it, and this file's own rule applies — do not run a
 listening test to decide something a measurement already decides. The set is
 cancelled rather than rendered, and no listening question is outstanding.
+
+## 2026-08-31 — the nylon risk was overstated, and the numbers say where the cost went
+
+The entry adopting the ear-chosen body called nylon the live risk, on the
+grounds that the flat-top evidence is steel, the body is shared, and nylon's
+80--160 Hz attack band went from +0.9 dB against its classical reference to
++13.5 dB. Scoring the two materials separately corrects that.
+
+| Split | nylon before | nylon after | steel before | steel after |
+| --- | ---: | ---: | ---: | ---: |
+| Training | 8.4087 | 8.6722 | 5.8249 | 6.3053 |
+| Development validation | 7.8169 | 7.6228 | 5.9964 | 6.7997 |
+
+Nylon moves 3.1% worse on training and 2.5% *better* held out, and term by term
+it moves between 0.4% and 6.2%. Steel carries the entire trade: 8.2% and 13.4%,
+with its attack term 14.9% and its body term 11.7% worse.
+
+The band number was real and misleading at the same time. 80--160 Hz sits 47 dB
+below the classical reference's own total, because a nylon guitar's lowest
+strings put almost nothing there, so a 13.5 dB excess on it changes the total
+by a fraction of a decibel. A band audit reports each band on its own terms and
+says nothing about how much of the sound that band is; that is what the
+aggregate is for, and reading one without the other is how a dramatic number
+turns into a wrong conclusion.
+
+Where the cost went is the right place. Steel's corpus is the miked archtop the
+whole exercise was about, and the trade was made deliberately against it.
+Nylon's corpus is a classical guitar, which is the right instrument for nylon,
+and nylon's score against it is unchanged to within the noise.
+
+What is genuinely open for nylon is narrower than "a regression": nothing has
+confirmed that a classical guitar wants the body a dreadnought wants. The
+listener heard nylon in every set and did not separate it out, and the classical
+corpus is indifferent. If a future verdict does separate them, the body has to
+stop being shared - and the calibration already has per-material string values,
+so the shape of that change is known.
