@@ -4835,7 +4835,8 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         controlScanHz / oversampledRate_;
     processingCoefficients_.outputBoundaryGain = outputBoundaryGain();
     processingCoefficients_.outputSlewMaxStep =
-        static_cast<float>(653846.15 / oversampledRate_);
+        static_cast<float>(outputSummerSlewRateVoltsPerSecond
+                           * voltsToSample / oversampledRate_);
 
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
@@ -5045,7 +5046,7 @@ void YouKnow106Engine::clearOutputPath() noexcept
     // IC6's own output node. It was the one mutable state in the output path
     // this did not clear, so `reset()` did not put the engine in one state:
     // what it rendered next depended on what it had been rendering before. The
-    // leak is tiny -- the slew limit is 1.7 V/us, so the integrator collapses
+    // leak is tiny -- the slew limit is 1.0 V/us, so the integrator collapses
     // within an internal sample or two of a stop -- but a reset that does not
     // reset is not something a deterministic re-render can rely on.
     outputSlewStateLeft_ = 0.0f;
@@ -8487,12 +8488,13 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             wetRight = wetLeftKey == wetRightKey
                      ? wetLeft : outputSummerClip(wetRight);
 
-            // TA75558S IC6 output slew limit. A part
-            // property, so -- like the shared swing policy above -- it is not
-            // scaled by Unit Character: a previous revision divided it by
-            // calibration, granting the pristine reference a 10x faster
-            // op-amp and a full-character unit one slower than the part's own
-            // datasheet.
+            // TA75558S IC6 output slew limit. The datasheet's 1.0 V/us is a
+            // typical value at unity gain and 2 kOhm, not a guaranteed limit
+            // at the installed load. As a part policy -- like the shared swing
+            // above -- it is not scaled by Unit Character: a previous revision
+            // divided it by calibration, granting the pristine reference a
+            // 10x faster op-amp and a full-character unit one slower than the
+            // part's own datasheet.
             if (parameters.enableOpAmpSlewLimiting)
             {
                 const float deltaL = wetLeft - outputSlewStateLeft_;

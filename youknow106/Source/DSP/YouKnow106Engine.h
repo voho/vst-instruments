@@ -714,6 +714,12 @@ public:
     // OQ-05 still owns the installed low-level distortion, knee and swing.
     static constexpr float outputSummerSwingAsymptoteVolts = 13.5f;
     static constexpr float outputSummerClipExponent = 8.0f;
+    // Toshiba's era-correct TA75558P/S/F table specifies 1.0 V/us typical at
+    // +/-15 V, 25 C, unity gain and a 2 kOhm load, with no guaranteed limit.
+    // Use that value as the nominal shared-IC6 policy; the installed 8.22 kOhm
+    // load and inverting gains still need an OQ-05 capture.
+    // https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3
+    static constexpr float outputSummerSlewRateVoltsPerSecond = 1.0e6f;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
 
     // Digital full scale follows the provisional model asymptote through the
@@ -1007,10 +1013,9 @@ private:
     static constexpr float thermalVoltage = 0.026f;
     static constexpr float poleCapacitorFarads = 240.0e-12f;
     // Each stage attenuates its differential input by 560 / (68000 + 560)
-    // before the transconductor's differential pair sees it. That attenuator,
-    // not any voiced drive control, is what sets where this filter starts to
-    // compress: it places the pair's linear span at +/-6.4 V, right at the peak
-    // of a full-level ramp.
+    // before the transconductor's differential pair sees it. That attenuator
+    // refers the pair's linear span to about +/-6.4 V in the filter-module
+    // input coordinate; the upstream WAVE-to-input level remains OQ-15.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
     // Half-span of the integrating capacitors' tolerance. The four 240 pF

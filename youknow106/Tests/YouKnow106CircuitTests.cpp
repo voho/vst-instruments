@@ -551,6 +551,15 @@ struct YouKnow106TestAccess
         return engine.oversampledRate_;
     }
 
+    static double outputSlewVoltsPerSecond(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return static_cast<double>(
+                   engine.processingCoefficients_.outputSlewMaxStep)
+             * engine.oversampledRate_
+             * YouKnow106Engine::internalVoltsPerUnit;
+    }
+
     static std::array<double, 2> noiseSourceSupportState(
         const YouKnow106Engine& engine) noexcept
     {
@@ -2550,8 +2559,9 @@ void testServiceSpecificationEndpointReconciliation()
 
     // LFO endpoints. The printed 30 Hz top inverts to 4.1667 ms (inside the
     // cluster); the printed 0.1 Hz floor is unreconcilable with rate byte 0
-    // at any pass period (endpoint ratio 819.5 against the spec's 300), and
-    // the generator must not be bent toward it.
+    // at any pass period (endpoint ratio 819.5 against the spec's 300). Byte
+    // 1 happens to land near 0.1 Hz, but the assigner maps raw ADC codes 0--5
+    // to reachable byte 0, so that coincidence is not an endpoint correction.
     expectNear(1.0 / (8.0 * 30.0), nominalPassSeconds, clusterTolerance,
                "the printed 30 Hz LFO top no longer inverts near the 4.2 ms "
                "pass");
@@ -2592,8 +2602,9 @@ void testModulationAndGlideLaws()
     // Exact hash-matched B-2 rate vectors. A signed cycle is four clamped
     // 0..0x1fff ramps, each lasting ceil(8192 / coefficient) scan passes.
     struct LfoVector { int code; std::uint16_t coefficient; int rampPasses; };
-    constexpr std::array<LfoVector, 3> lfoVectors {{
+    constexpr std::array<LfoVector, 4> lfoVectors {{
         { 0,      5u, 1639 },
+        { 1,     15u,  547 },
         { 64,   666u,   13 },
         { 127, 4096u,    2 }
     }};
@@ -5929,39 +5940,42 @@ void testOutputSummerIsLinearBelowItsAsymptote()
                "the output summer is not symmetric");
 }
 
-void testFilterDriveMatchesTheDerivedBudget()
+void testOutputSummerSlewMatchesDatasheetTypical()
 {
-    // Working back from Roland's own ADJUSTMENT table gives a drive figure the
-    // model can be held to. The VCA GAIN step sets 4.8 Vp-p at the VCF output
-    // against 6 Vp-p at the VCA output, and the mixer node reaches pin 1 with
-    // no series attenuator, so a full-level source arrives at about +/-2.4 V.
-    // The IR3109's own internal 560 Ohm divider then refers that to the
-    // differential pair as +/-19.6 mV -- about 2.8 times the AS662D's 0.25%
-    // THD reference, which is why the pairs sit at the edge of their linear
-    // region rather than deep in saturation.
-    //
-    // This is a check on a *voiced* constant, `filterInputAttenuation`, which
-    // turns out to land on the derived budget to the digit. It is asserted so
-    // that it cannot drift away from it unnoticed.
-    constexpr double sourceVolts = 6.0;          // sawMixVolts
-    constexpr double filterInputAttenuation = 0.40;
-    const double atFilterInput = sourceVolts * filterInputAttenuation;
-    expectNear(atFilterInput, 2.4, 1.0e-9,
-               "a full-level source no longer arrives at the derived +/-2.4 V");
+    // Toshiba specifies 1.0 V/us typical at +/-15 V, 25 C, unity gain and a
+    // 2 kOhm load. The installed load is different and the table gives no
+    // minimum or maximum, so this pins a nominal policy rather than closing
+    // OQ-05. Reconstruct volts/second from the prepared per-sample step at
+    // several host rates and quality factors so neither grid can retime it.
+    struct RateCase { double hostRate; int factor; };
+    constexpr std::array<RateCase, 6> rates {{
+        { 8000.0, 1 }, { 44100.0, 1 }, { 44100.0, 2 },
+        { 44100.0, 4 }, { 48000.0, 4 }, { 192000.0, 4 }
+    }};
+    for (const auto& rate : rates)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(rate.hostRate, 64, rate.factor);
+        expectNear(YouKnow106TestAccess::outputSlewVoltsPerSecond(engine),
+                   1.0e6, 1.0,
+                   "IC6 slew changed with host rate or quality factor");
+    }
+}
 
-    const double atDifferentialPair =
-        atFilterInput * YouKnow106TestAccess::stageAttenuation();
-    expectNear(atDifferentialPair, 0.0196, 5.0e-5,
-               "the transconductor pair is not driven at the derived 19.6 mV");
-
-    // And the pair's own linear span, which is what makes that a soft edge
-    // rather than a hard one: 2 kT/q referred through the same divider.
+void testFilterCoreDividerMatchesSchematic()
+{
+    // Roland's BANK 3 procedure measures a self-oscillating VCF with every
+    // source off, then trims VCA output. It cannot establish the still-voiced
+    // WAVE-to-VCF-input level. What the schematic does establish is the
+    // IR3109's internal 68 kOhm / 560 Ohm divider and the 2 Vt differential-
+    // pair span it refers back to the module-node coordinate.
+    expectNear(YouKnow106TestAccess::stageAttenuation(),
+               560.0 / (68000.0 + 560.0), 1.0e-9,
+               "the filter-core input divider left the Roland schematic");
     expectNear(YouKnow106TestAccess::otaHeadroomVolts(), 2.0 * 0.026
                    / (560.0 / 68560.0), 1.0e-4,
                "the transconductor headroom is no longer 2 Vt over the "
                "IR3109's own input divider");
-    expect(atDifferentialPair < 0.5 * 2.0 * 0.026,
-           "the differential pair is driven past its own thermal span");
 }
 
 void testDecimatorProtectsTheTopOfTheBand()
@@ -6035,8 +6049,9 @@ void testDecimatorProtectsTheTopOfTheBand()
 int main()
 {
     testOutputSummerIsLinearBelowItsAsymptote();
+    testOutputSummerSlewMatchesDatasheetTypical();
     testDecimatorProtectsTheTopOfTheBand();
-    testFilterDriveMatchesTheDerivedBudget();
+    testFilterCoreDividerMatchesSchematic();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();
