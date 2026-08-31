@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
