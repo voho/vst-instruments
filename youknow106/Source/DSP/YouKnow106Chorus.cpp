@@ -1213,7 +1213,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableClockBleed,
                      bool enableHyperbolicSweep,
                      float calibration,
-                     bool useRateProportionalNoiseHypothesis) noexcept
+                     bool useRateProportionalNoiseHypothesis,
+                     bool enableNarrowOneTwo) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -1414,9 +1415,20 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetB += optionalB * noiseScale;
     }
 
-    // Both channels carry dry plus wet. The width comes from the two lines
-    // being clocked in antiphase, not from inverting one side, so summing to
-    // mono thins the effect rather than cancelling it.
+    // Both ordinary modes carry dry plus one wet line per channel. I+II is a
+    // live product extension rather than a tone-memory state, and its former
+    // implementation simply reused that wide routing. An original-unit owner
+    // remembers the physical both-button result as conspicuously narrow and
+    // coloured. Equal mid folding is the only zero-parameter continuation of
+    // the known two-line circuit: it preserves the exact mono sum (and thus
+    // the comb colour heard in mono) while removing only the unsupported side.
+    // The comparison switch retains the former wide result pending a capture.
+    if (mode == ChorusMode::OneTwo && enableNarrowOneTwo)
+    {
+        const float wetMid = 0.5f * (wetA + wetB);
+        wetA = wetMid;
+        wetB = wetMid;
+    }
     left = dryMixGain * (input + wetA * wetGain_);
     right = dryMixGain * (input + wetB * wetGain_);
 }
