@@ -38,7 +38,7 @@ jobs:
 
       # Every instrument is built and rendered independently, and a failure is
       # recorded rather than thrown: one broken renderer must not cost the
-      # other five their refreshed audio. The job still fails at the end, so a
+      # other eight their refreshed audio. The job still fails at the end, so a
       # broken renderer is never silently tolerated.
       - name: Render every instrument's demo audio
         run: |
@@ -56,6 +56,7 @@ jobs:
             "neuramar:NeuramarRenderDemos:8"
             "electry:ElectryRenderDemos:23"
             "taikor:TaikorRenderDemos:27"
+            "acustra:AcustraRenderDemos:6"
             "youknow106:YouKnow106RenderDemos:10"
             "septum:SeptumRenderDemos:11"
             "ghostar:GhostarRenderDemos:12"
@@ -131,10 +132,11 @@ jobs:
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
             neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
-            youknow106/Docs/audio septum/Docs/audio ghostar/Docs/audio \
+            acustra/Docs/audio youknow106/Docs/audio septum/Docs/audio \
+            ghostar/Docs/audio \
             vocalor/README.md drumalor/README.md neuramar/README.md \
-            electry/README.md taikor/README.md youknow106/README.md \
-            septum/README.md ghostar/README.md
+            electry/README.md taikor/README.md acustra/README.md \
+            youknow106/README.md septum/README.md ghostar/README.md
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
@@ -149,11 +151,12 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 \
+                vocalor drumalor neuramar electry taikor acustra youknow106 \
                 septum ghostar \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)taikor/Docs' ':(exclude)acustra/Docs' \
+                ':(exclude)youknow106/Docs' \
                 ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
@@ -183,9 +186,9 @@ jobs:
           fi
           echo "Every instrument rendered its full set of demo audio."
 
-  # One job per instrument. Building all six in sequence meant a single flaky
+  # One job per instrument. Building all nine in sequence meant a single flaky
   # test cost every instrument after it its screenshot and package; now a
-  # failure is contained to its own instrument, and the six
+  # failure is contained to its own instrument, and the nine
   # builds run concurrently instead of end to end.
   build-macos:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -210,6 +213,9 @@ jobs:
           - name: Taikor
             directory: taikor
             snapshot_variable: TAIKOR_EDITOR_SNAPSHOT
+          - name: Acustra
+            directory: acustra
+            snapshot_variable: ACUSTRA_EDITOR_SNAPSHOT
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
@@ -265,7 +271,7 @@ jobs:
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
 
-      # Handed to the commit job rather than committed here, so that all six
+      # Handed to the commit job rather than committed here, so that all nine
       # land in one commit. It is uploaded before packaging so that a packaging
       # failure cannot cost an instrument the screenshot it has already
       # rendered: the two are independent, and the commit job preserves
@@ -347,6 +353,9 @@ jobs:
           - name: Taikor
             directory: taikor
             build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: Acustra
+            directory: acustra
+            build_plugin_option: ACUSTRA_BUILD_PLUGIN
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
@@ -446,6 +455,9 @@ jobs:
           - name: Taikor
             directory: taikor
             build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: Acustra
+            directory: acustra
+            build_plugin_option: ACUSTRA_BUILD_PLUGIN
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
@@ -548,7 +560,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106 septum ghostar; do
+          for directory in vocalor drumalor neuramar electry taikor acustra youknow106 septum ghostar; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -577,7 +589,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106 septum ghostar; do
+          for directory in vocalor drumalor neuramar electry taikor acustra youknow106 septum ghostar; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -604,11 +616,12 @@ jobs:
             # churn (including the audio job's own commit) does not invalidate a
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 \
+                vocalor drumalor neuramar electry taikor acustra youknow106 \
                 septum ghostar \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)taikor/Docs' ':(exclude)acustra/Docs' \
+                ':(exclude)youknow106/Docs' \
                 ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
@@ -659,11 +672,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the thirty-two-file manifest
+      - name: Check the thirty-six-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 Septum Ghostar; do
+          for product in Vocalor Drumalor Neuramar Electry Taikor Acustra YouKnow106 Septum Ghostar; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
@@ -693,15 +706,15 @@ jobs:
             done
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 32 )); then
-            echo "error: expected exactly thirty-two release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 36 )); then
+            echo "error: expected exactly thirty-six release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
           printf 'Release asset: %s\n' "${assets[@]}"
 
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access), as one complete set rather than eight per-instrument artifacts.
+      # access), as one complete set rather than nine per-instrument artifacts.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

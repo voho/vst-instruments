@@ -1,0 +1,606 @@
+{
+  "date": "2026-08-30",
+  "runtime_source": "AcustraEngine physical model with a 50-mode passive bridge plus one positive-real plate conductance floor",
+  "analysis_sample_rate": 48000,
+  "render_seconds": 4.2,
+  "render_block_size": 127,
+  "runtime_output_reference_gain": 18.0,
+  "loss": "seven weighted robust descriptors: attack, harmonics, tuning, pitch_trajectory, decay (dB/s), body, dynamics",
+  "loss_weights": {
+    "attack": 0.2,
+    "harmonics": 0.2,
+    "tuning": 0.07,
+    "pitch_trajectory": 0.03,
+    "decay": 0.25,
+    "body": 0.15,
+    "dynamics": 0.1
+  },
+  "pitch_trajectory_windows_seconds": [
+    [
+      0.02,
+      0.1
+    ],
+    [
+      0.08,
+      0.2
+    ],
+    [
+      0.18,
+      0.4
+    ]
+  ],
+  "split_role": "held_out is development validation used for promotion gates, not an untouched final test",
+  "stored_calibration_values": 26,
+  "active_fit_parameters": 25,
+  "inactive_parameters": [
+    "directGain"
+  ],
+  "calibration_order": [
+    "bodyFrequencyScale",
+    "bodyQScale",
+    "bridgeMobilityScale",
+    "residueTiltDbPerOctave",
+    "directGain",
+    "nylon.stiffnessScale",
+    "nylon.fundamentalT60Scale",
+    "nylon.frequencyLossScale",
+    "nylon.apertureScale",
+    "nylon.transientScale",
+    "nylon.pluckDistanceScale",
+    "nylon.velocityBrightnessDepth",
+    "steel.stiffnessScale",
+    "steel.fundamentalT60Scale",
+    "steel.frequencyLossScale",
+    "steel.apertureScale",
+    "steel.transientScale",
+    "steel.pluckDistanceScale",
+    "steel.velocityBrightnessDepth",
+    "apertureRegisterExponent",
+    "lowBodyModeGain",
+    "steelDisplacementScaleMetres",
+    "steelFretT60Slope",
+    "highLossCutoffScale",
+    "bridgeConductanceFloor",
+    "bridgeConductanceCornerHz"
+  ],
+  "calibration": [
+    1.03999999991498,
+    0.08873896571407673,
+    0.8200616593987673,
+    1.890752525473209,
+    0.0,
+    1.7997185551981263,
+    1.1398471825372107,
+    1.3184007877848254,
+    1.6975071764253031,
+    0.18255911101582506,
+    1.0938588885342284,
+    0.0007164323815537493,
+    1.4817773384038717,
+    1.2668307981422595,
+    0.597412435023233,
+    0.6599212295395087,
+    0.5233833070322689,
+    1.0311638749708312,
+    0.852115221055097,
+    -0.053025118329649734,
+    5.425286145591117,
+    0.006173278473105517,
+    -0.03012607455658373,
+    2.113539946753685,
+    0.003595956214887636,
+    2138.6165905725284
+  ],
+  "neutral_baseline": {
+    "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0",
+    "calibration_in_calibration_order": [
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.018,
+      1.0,
+      0.0,
+      1000.0
+    ],
+    "purpose": "a reproducible neutral physical calibration, re-rendered on the current 50-mode runtime and re-scored under the corrected decay descriptor, so it is comparable with the fitted scores beside it; it is not the historical 26-mode-bridge neutral the earlier reports quoted"
+  },
+  "splits": {
+    "training": {
+      "examples": 83,
+      "unique_model_renders": 71,
+      "neutral_score": 9.671509,
+      "fitted_score": 6.431871,
+      "change_percent": -33.496717006622234,
+      "terms": {
+        "attack": {
+          "neutral": 9.802836916,
+          "fitted": 7.238562499
+        },
+        "harmonics": {
+          "neutral": 11.275480136,
+          "fitted": 7.977046297
+        },
+        "tuning": {
+          "neutral": 4.649209589,
+          "fitted": 4.359488898
+        },
+        "pitch_trajectory": {
+          "neutral": 0.745940608,
+          "fitted": 0.53843247
+        },
+        "decay": {
+          "neutral": 8.641826555,
+          "fitted": 4.690558499
+        },
+        "body": {
+          "neutral": 16.278111921,
+          "fitted": 12.376207886
+        },
+        "dynamics": {
+          "neutral": 5.058492078,
+          "fitted": 0.383609001
+        }
+      }
+    },
+    "held_out": {
+      "examples": 24,
+      "unique_model_renders": 24,
+      "neutral_score": 9.277751,
+      "fitted_score": 6.378198322677138,
+      "change_percent": -31.252753790469935,
+      "terms": {
+        "attack": {
+          "neutral": 9.687640536,
+          "fitted": 7.348147172421888
+        },
+        "harmonics": {
+          "neutral": 11.952303555,
+          "fitted": 8.313533301306014
+        },
+        "tuning": {
+          "neutral": 5.014191574,
+          "fitted": 4.816725862198075
+        },
+        "pitch_trajectory": {
+          "neutral": 0.284734995,
+          "fitted": 0.164620334055798
+        },
+        "decay": {
+          "neutral": 8.193591114,
+          "fitted": 3.817145192152561
+        },
+        "body": {
+          "neutral": 16.679982515,
+          "fitted": 12.96771668791442
+        },
+        "dynamics": {
+          "neutral": 0.398316792,
+          "fitted": 0.04309006330712932
+        }
+      }
+    }
+  },
+  "bridge_modal_extension": {
+    "source": "Robert Mores g21 treble-side bridge impact and co-located accelerometer",
+    "source_doi": "10.5281/zenodo.4604577",
+    "source_md5": "733cb10baf5ce36d8bf333610ffbb260",
+    "fit_band_hz": [
+      60,
+      10000
+    ],
+    "measured_candidates": 65,
+    "retained_positive_real_modes": 50,
+    "instrumentation_alignment_samples": 2,
+    "production_26_mode_fit": {
+      "relative_complex_error": 0.301071418,
+      "median_magnitude_error_db": 3.432411692,
+      "median_magnitude_error_4200_to_10000_hz_db": 8.551923897
+    },
+    "selected_50_mode_fit": {
+      "relative_complex_error": 0.185925823,
+      "median_magnitude_error_db": 0.823970887,
+      "median_magnitude_error_4200_to_10000_hz_db": 0.701418946
+    },
+    "selection": {
+      "training_before": 7.058992024106181,
+      "training_after": 6.959311242323791,
+      "change_percent": -1.412110701386038
+    },
+    "opened_after_freeze": {
+      "development_validation_before": 6.792615103647656,
+      "development_validation_after": 6.764893269784096,
+      "change_percent": -0.4081172485199902
+    },
+    "six_string_release_benchmark": {
+      "alternating_runs_per_build": 6,
+      "production_median_x_realtime": 0.0265932,
+      "selected_median_x_realtime": 0.0343352,
+      "change_percent": 29.112705503662607,
+      "gate_x_realtime": 0.25
+    },
+    "generator_check": "python3 Tools/GenerateMeasuredBridge.py --raw-mat /path/to/qualified_selected_impulses.mat --check",
+    "decision": "promoted; aggregate improves on both splits, while decay regresses on both and remains an explicit listening risk"
+  },
+  "post_bridge_calibration_continuation": {
+    "topology_change": "none",
+    "protocol": "four bounded train-only least-squares stages in global, nylon, steel, global order; max_nfev 2 per stage; development validation remained closed until the final vector was frozen",
+    "training_stage_scores": [
+      6.78276823622088,
+      6.720451177530855,
+      6.674004305503201,
+      6.634038947894676
+    ],
+    "selection": {
+      "training_before": 6.959311242323791,
+      "training_after": 6.634038947894676,
+      "change_percent": -4.6739150341622455
+    },
+    "opened_after_freeze": {
+      "development_validation_before": 6.764893269784096,
+      "development_validation_after": 6.473144460245942,
+      "change_percent": -4.312689024101413,
+      "improved_terms": [
+        "attack",
+        "harmonics",
+        "tuning",
+        "pitch_trajectory",
+        "decay",
+        "body",
+        "dynamics"
+      ]
+    },
+    "decision": "promoted; the same fixed 50-mode runtime improves aggregate score on both splits and all seven development-validation terms"
+  },
+  "mechanism_ablations": {
+    "high_loss_cutoff": {
+      "mechanism": "shared multiplier on the material- and age-dependent upper-string-loss cutoff",
+      "stage_selected_scale": 1.3,
+      "production_value_after_joint_continuation": 1.8693394148,
+      "training_grid": {
+        "1.00": 7.193228995469759,
+        "1.10": 7.116183913745176,
+        "1.15": 7.096187530367063,
+        "1.20": 7.082983323524745,
+        "1.25": 7.06248853234317,
+        "1.30": 7.058992024106181,
+        "1.35": 7.060754017164134,
+        "1.40": 7.0601986664246565,
+        "1.50": 7.078265843724744,
+        "2.00": 7.208790930357742,
+        "3.00": 7.30246236207392,
+        "4.00": 7.30246236207392
+      },
+      "scale_1_ablation": {
+        "training_score": 7.193228995469759,
+        "training_decay": 5.429767094627592,
+        "held_out_score": 6.9909908291374805,
+        "held_out_decay": 4.322596238797309
+      },
+      "selected": {
+        "training_score": 7.058992024106181,
+        "training_decay": 5.012553537136098,
+        "held_out_score": 6.792615103647656,
+        "held_out_decay": 3.912160091226171
+      },
+      "tested_invariants": "the 0.5-to-4.0 regression changes 8 kHz round-trip loss for nylon and steel while keeping fundamental decay within 0.001 dB and compensated pitch within 0.01 cent",
+      "decision": "1.30 was selected on training before validation was opened; it reduces excess upper-partial damping without changing the requested fundamental T60 law and repeated the total/decay improvement on development validation",
+      "postfit_diagnostic": {
+        "role": "diagnostic only; spectral flatness was not used to select the cutoff",
+        "spectral_flatness_model_minus_target_db_80_to_250_ms": {
+          "training": {
+            "steel_1_to_4khz": -14.65,
+            "steel_4_to_12khz": -28.97,
+            "nylon_1_to_4khz": -11.7,
+            "nylon_4_to_12khz": -24.79
+          },
+          "held_out": {
+            "steel_1_to_4khz": -12.05,
+            "steel_4_to_12khz": -29.26,
+            "nylon_1_to_4khz": -11.73,
+            "nylon_4_to_12khz": -23.9
+          }
+        },
+        "coverage": "all 88 examples remain less spectrally flat than their targets in both bands",
+        "strongest_decay_residual": "low-register 3.713-to-8 kHz model/target decay ratios are 0.380 training and 0.375 held out",
+        "cutoff_1_to_1_3_effect": "upper decay ratios improve consistently, but 4-to-12 kHz flatness moves -0.53/-2.73 dB on training steel/nylon and -0.65/-2.45 dB on held-out steel/nylon",
+        "interpretation": "the cutoff corrects decay, not the remaining sparse bridge/body radiation; the next justified input is force-referenced two-axis saddle admittance plus stereo pressure measurement"
+      }
+    },
+    "steel_kirchhoff_carrier": {
+      "mechanism": "bounded steel-only displacement-slope-energy surrogate for axial-tension attack sharpening",
+      "selected_displacement_scale_metres": 0.0061,
+      "pitch_bound_cents": [
+        0.0,
+        20.0
+      ],
+      "authored_plus_decay_selection_baseline": {
+        "evidence_stage": "historical pre-high-loss-cutoff selection",
+        "training_score": 7.197568718046208,
+        "training_pitch_trajectory": 0.7356033758070701,
+        "held_out_score": 6.995742795393383,
+        "held_out_pitch_trajectory": 0.2047598779363767
+      },
+      "selected_hybrid": {
+        "training_score": 7.058992024106181,
+        "training_pitch_trajectory": 0.6987881257453828,
+        "held_out_score": 6.792615103647656,
+        "held_out_pitch_trajectory": 0.17676217005471564
+      },
+      "off_ablation": {
+        "training_score": 7.07831900335126,
+        "training_pitch_trajectory": 0.9378590467891409,
+        "held_out_score": 6.771148730900196,
+        "held_out_pitch_trajectory": 0.24016485781383043
+      },
+      "current_training_grid": {
+        "0.0000": 7.07831900335126,
+        "0.0030": 7.077772499550409,
+        "0.0061": 7.058992024106181,
+        "0.0090": 7.0848902901060935,
+        "0.0120": 7.12977193570689
+      },
+      "steel_material_specific_selection": {
+        "evidence_stage": "historical pre-high-loss-cutoff material-specific selection",
+        "training_authored_score": 7.056921707,
+        "training_authored_pitch_trajectory": 0.845291439,
+        "training_selected_score": 7.051305954,
+        "training_selected_pitch_trajectory": 0.801241603,
+        "held_out_authored_score": 6.764593876,
+        "held_out_authored_pitch_trajectory": 0.270558788,
+        "held_out_selected_score": 6.756181355,
+        "held_out_selected_pitch_trajectory": 0.227837287,
+        "decision": "0.0061 was promoted because it improved both the total and mechanism-specific pitch term on training, then repeated both improvements on development validation"
+      },
+      "nylon_rejection": {
+        "evidence_stage": "historical pre-high-loss-cutoff topology selection",
+        "authored_training_score": 8.707613984,
+        "authored_training_pitch_trajectory": 0.143287834,
+        "best_tested_kc_total_score": 8.717053915,
+        "best_tested_kc_total_scale_metres": 0.0,
+        "decision": "every tested nylon KC scale lost on the training total; retain the exact authored 3-cent velocity-squared Touch-scaled cue with 75 ms decay"
+      },
+      "decision": "the current train-only interaction resweep again selected 0.0061 on total score; it improves pitch trajectory on both splits, while the held-out aggregate is 0.02147 lower with the mechanism off, so the retained mechanism-specific benefit and aggregate tradeoff are both explicit"
+    },
+    "steel_fret_decay": {
+      "selected_slope": -0.03,
+      "legacy_slope": 0.018,
+      "fitted": {
+        "training_score": 7.058992024106181,
+        "training_decay": 5.012553537136098,
+        "held_out_score": 6.792615103647656,
+        "held_out_decay": 3.912160091226171
+      },
+      "legacy_ablation": {
+        "training_score": 7.078426138556049,
+        "training_decay": 5.0951277855673025,
+        "held_out_score": 6.831946201675249,
+        "held_out_decay": 4.044131157584115
+      },
+      "current_training_grid": {
+        "-0.050": 7.06092677296988,
+        "-0.030": 7.058992024106181,
+        "-0.010": 7.059768022288564,
+        "+0.018": 7.078426138556049
+      },
+      "decision": "promoted one shared steel scalar; open steel and all nylon loop gains are unchanged"
+    }
+  },
+  "midi_expression": {
+    "default_mode": "conventional MIDI with independent channels",
+    "mpe_subset": "lower zone only, created/resized/removed by RPN 6 on channel 1",
+    "pitch_bend": "RPN 0 supports 0--96 semitones; lower-zone defaults are manager 2 and members 48; released tails freeze member bend while manager bend remains live",
+    "controller_scope": "manager bend, sustain, CC120, CC121 and CC123 address the lower zone; member controls stay scoped to their channel",
+    "limitations": "no upper MPE zone, per-note pressure or CC74 timbre"
+  },
+  "historical_score_compatibility": "Earlier aperture, body-mode and direct-path ablations used a six-term objective. The mechanism-ablation grids predate the frozen 50-mode bridge extension and the post-bridge joint calibration continuation. They remain historical topology-selection evidence and are not relabeled as current 50-mode scores.",
+  "corpus_integrity": {
+    "target_content_hash_scheme": "SHA-256 over each sorted UTF-8 basename, NUL byte and raw target bytes",
+    "target_content_sha256": "66befd04bcf573f5c80b6c20d09cb4ed7c042e21ff1df6a51d5fe77697e88e59",
+    "train_manifest_sha256": "4023501b9ea5b875bcda846e4794cd53d3303e4a4f535398cf053b8e98e4d234",
+    "validation_manifest_sha256": "81fe8d6accfa6686e0c427036b98418a40bc583f37a3588166206a8cecf092e7"
+  },
+  "claim_status": "Top of market is an unvalidated goal. These corpus scores do not establish perceptual equivalence, preference or market rank.",
+  "plate_conductance_floor": {
+    "mechanism": "one over-damped positive-real section added to the measured bridge mobility, restoring the flat conductance a plate keeps above its modal-overlap frequency",
+    "why": "a 50-mode positive-real fit of a 60-10000 Hz driving-point measurement reproduces |Y| but loses Re(Y) between modes, where a real top plate has dense modal overlap; Cremer and Heckl give the high-frequency limit of a plate driving-point mobility as a real constant",
+    "parameters": [
+      "bridgeConductanceFloor",
+      "bridgeConductanceCornerHz"
+    ],
+    "fixed_upper_corner_hz": 16000.0,
+    "identity": "bridgeConductanceFloor 0 renders the previous build bit-identically",
+    "bridge_ablation_dB_per_second_added_by_the_junction": {
+      "400-600": 30.3,
+      "600-900": 13.0,
+      "900-1350": 4.5,
+      "1350-2000": 12.4,
+      "2000-3000": 4.6,
+      "3000-4500": 1.1
+    },
+    "training_screen": {
+      "floor_0": 6.63403876,
+      "floor_0.004_corner_2400": 6.54038843
+    },
+    "selection": {
+      "training_before": 6.634038942691128,
+      "training_after": 6.417665711647007,
+      "change_percent": -3.261561062774665
+    },
+    "opened_after_freeze": {
+      "development_validation_before": 6.473144533101294,
+      "development_validation_after": 6.434786716997037,
+      "change_percent": -0.5925685099121392
+    },
+    "damping_audit_model_minus_recording_db_per_second": {
+      "protocol": "python3 Tools/AuditDampingCurve.py <rendered fit corpus>; bands whose answer moves with the analysis window are withheld as null, which withholds 4500-6800 and 6800-9000 for both materials",
+      "before": {
+        "nylon": {
+          "80-120": null,
+          "120-180": null,
+          "180-270": 8.137,
+          "270-400": 7.541,
+          "400-600": 9.324,
+          "600-900": 2.882,
+          "900-1350": 1.313,
+          "1350-2000": -1.063,
+          "2000-3000": -9.505,
+          "3000-4500": null,
+          "4500-6800": null,
+          "6800-9000": null
+        },
+        "steel": {
+          "80-120": 7.835,
+          "120-180": 1.721,
+          "180-270": 9.886,
+          "270-400": -2.725,
+          "400-600": -1.471,
+          "600-900": 2.503,
+          "900-1350": -1.021,
+          "1350-2000": -7.24,
+          "2000-3000": -7.25,
+          "3000-4500": -5.139,
+          "4500-6800": -1.553,
+          "6800-9000": null
+        }
+      },
+      "after": {
+        "nylon": {
+          "80-120": null,
+          "120-180": null,
+          "180-270": 8.844,
+          "270-400": 8.475,
+          "400-600": 10.295,
+          "600-900": 5.042,
+          "900-1350": 3.841,
+          "1350-2000": 1.945,
+          "2000-3000": -4.094,
+          "3000-4500": null,
+          "4500-6800": null,
+          "6800-9000": null
+        },
+        "steel": {
+          "80-120": 8.109,
+          "120-180": 1.728,
+          "180-270": 9.279,
+          "270-400": -2.828,
+          "400-600": -2.161,
+          "600-900": 2.325,
+          "900-1350": -0.615,
+          "1350-2000": -5.378,
+          "2000-3000": -3.034,
+          "3000-4500": -0.653,
+          "4500-6800": null,
+          "6800-9000": null
+        }
+      },
+      "note": "recomputed on the widened corpus with the stability guard; the earlier unguarded figures for 4500-6800 and 6800-9000 Hz are withdrawn, including the +15.5 to +3.7 improvement one clause of the promotion gate cited"
+    },
+    "decision": "promoted on a controlled ablation under the corrected decay descriptor: development validation 6.378198 with the floor against 6.462390 without it, from the same starting calibration",
+    "controlled_ablation": {
+      "protocol": "two bounded fits under the corrected descriptor from the same pre-plate-floor starting calibration, differing only in whether the two plate values were free",
+      "floor_free": {
+        "training": 6.132176903662072,
+        "development_validation": 6.378198322677138
+      },
+      "floor_pinned_at_zero": {
+        "training": 6.24692450930623,
+        "development_validation": 6.462390316788033
+      },
+      "decision": "floor free wins both splits; the mechanism is kept",
+      "replication": {
+        "protocol": "the same ablation repeated from an independent starting calibration, the shipping vector, on the widened 83-row corpus; development validation is the same 24 rows throughout, so all four fits are comparable on it",
+        "floor_free": {
+          "training": 6.410403693891456,
+          "development_validation": 6.355825508640519
+        },
+        "floor_pinned_at_zero": {
+          "training": 6.452317813432141,
+          "development_validation": 6.3879650229646785
+        },
+        "decision": "replicates: the floor wins both splits from both starting points. The held-out gap is 0.084 from the pre-floor start and 0.032 from the shipping start, so the effect is consistent in sign and smaller than one run alone suggested. No calibration is promoted from this run; it tests the mechanism, not a candidate."
+      }
+    }
+  },
+  "rejected_upper_loss_shelf_split": {
+    "mechanism": "per-material corner and depth for the string-side upper-loss shelf",
+    "selection": {
+      "training_before": 6.634038942691128,
+      "training_after": 6.580260149870737
+    },
+    "opened_after_freeze": {
+      "development_validation_after": 6.431137427889945
+    },
+    "damping_audit_steel_after": {
+      "1350-2000": -7.0,
+      "2000-3000": -7.3,
+      "3000-4500": -5.2
+    },
+    "decision": "rejected; the aggregate improved but the predeclared damping gate failed, the steel shelf parameters moved by less than 0.03 percent, and a direct sweep showed the shelf overshoots 3 kHz by three times its 1.35 kHz correction. All of its plumbing was removed."
+  },
+  "decay_descriptor_correction": {
+    "was": "robust log2(T60) per partial and per band over 0.12-4.0 s",
+    "now": "the same robust line's decay rate in dB/s, tolerance 6 dB/s",
+    "why": "what a decay error does to a note is a level difference, and after t seconds that difference is exactly (rate_model - rate_target) * t dB; log2(T60) measures the relative error instead, so the same 1.4x error scores identically at 25 dB after one second on a 0.5 s partial and at 3 dB on a 4 s partial",
+    "consequence": "every score in this report is under the corrected descriptor and is not comparable with the previously frozen numbers",
+    "scores_under_the_corrected_descriptor": {
+      "pre_plate_floor_build": {
+        "training": 6.280687,
+        "development_validation": 6.485961
+      },
+      "plate_floor_build_fitted_under_the_old_descriptor": {
+        "training": 6.118156,
+        "development_validation": 6.521663
+      }
+    }
+  },
+  "nylon_training_split_widened": {
+    "was": "10 FreePats nylon regions in training, 10 in development validation, 21 unused",
+    "now": "29 in training - every unused region playable on the six modelled strings; MIDI 38 and 39 lie below the lowest open string",
+    "validation": "unchanged, the same 24 rows, so held-out scores stay comparable",
+    "why": "seven nylon parameters against ten rows left that stage close to unidentifiable; it stalled without improving in two of three fits",
+    "material_balance": "training moves from 54 steel / 10 nylon to 54 / 29",
+    "first_fit_on_it": {
+      "development_validation": 6.355826,
+      "against": 6.378198,
+      "decision": "rejected: it passed the validation clause but failed the predeclared nylon damping clause, improving only 3 of 10 nylon bands. The shipping calibration is unchanged. Its net nylon band error did fall 6.1 dB/s, which is why the clause is recorded rather than reinterpreted."
+    }
+  },
+  "score_stability": {
+    "test": "the decay descriptor's STFT window halved from 8192 to 4096, a parameter no result should depend on",
+    "absolute_scores_move": {
+      "training": -0.0174,
+      "development_validation": -0.0588,
+      "development_validation_decay_term": -0.2354
+    },
+    "paired_gaps_hold": {
+      "plate_floor_ablation_run_1_pinned_minus_free": {
+        "window_8192": 0.0842,
+        "window_4096": 0.0519
+      },
+      "plate_floor_ablation_run_2_pinned_minus_free": {
+        "window_8192": 0.0321,
+        "window_4096": 0.0276
+      }
+    },
+    "conclusion": "an absolute score here is analysis-dependent at about the 1% level, so only paired comparisons over identical rows mean anything; the sensitivity is common-mode and cancels in the difference, and the plate floor wins in all four cells"
+  }
+}

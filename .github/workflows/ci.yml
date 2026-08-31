@@ -47,6 +47,11 @@ jobs:
             build_plugin_option: TAIKOR_BUILD_PLUGIN
             target_demo: TaikorRenderDemos
             expected_demos: 27
+          - name: Acustra
+            directory: acustra
+            build_plugin_option: ACUSTRA_BUILD_PLUGIN
+            target_demo: AcustraRenderDemos
+            expected_demos: 6
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
@@ -175,6 +180,9 @@ jobs:
           - name: Taikor
             directory: taikor
             snapshot_variable: TAIKOR_EDITOR_SNAPSHOT
+          - name: Acustra
+            directory: acustra
+            snapshot_variable: ACUSTRA_EDITOR_SNAPSHOT
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
@@ -244,6 +252,9 @@ jobs:
           - name: Taikor
             directory: taikor
             build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: Acustra
+            directory: acustra
+            build_plugin_option: ACUSTRA_BUILD_PLUGIN
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN

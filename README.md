@@ -3,7 +3,7 @@
 [![CI](https://github.com/voho/vst-instruments/actions/workflows/ci.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/ci.yml)
 [![Nightly](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml)
 
-Eight original virtual instruments built with C++20 and JUCE 8: VST3 and
+Nine original virtual instruments built with C++20 and JUCE 8: VST3 and
 Standalone for macOS, Linux and Windows, plus Audio Unit for macOS.
 
 Each instrument has one README covering how it works block by block, what it
@@ -90,6 +90,23 @@ okedo and shime — each with its own head tension, diameter, body depth, hide a
 shell, across four octaves.
 
 [Twenty-seven audio demos](taikor/README.md#audio-demos) · [How it works](taikor/README.md#how-it-works)
+
+---
+
+## [Acustra](acustra/README.md)
+
+[![Acustra](acustra/Docs/screenshots/acustra-standalone.png)](acustra/README.md)
+
+Physically modelled six-string acoustic guitar: fitted stiff-string waveguides
+drive a passive measured bridge, sympathetic idle strings and a 96-mode stereo
+body-radiation model. A plate conductance floor restores the damping a finite
+modal fit loses above the soundboard's modal overlap, a string taken for a new
+note rings on under the hand rather than being cut, and CC2 is continuous
+bridge-hand damping. A fret/tuning allocator enforces guitar playability while
+bounded Shape, Material, String Age, Touch and Position controls keep the
+surface simple.
+
+[Six audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
 
 ---
 
