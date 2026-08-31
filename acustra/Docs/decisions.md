@@ -2484,3 +2484,35 @@ treating it as.
 
 Source: J. Woodhouse, "Plucked Guitar Transients: Comparison of Measurements
 and Synthesis", Acta Acustica united with Acustica 90 (2004) 945-965.
+
+## 2026-08-31 — the refit around the ear-chosen body was rejected
+
+After the body moved by ear, every other value was still sitting where it had
+been fitted for a different body, so a full staged refit was run with the five
+values the verdict chose held fixed and the other twenty-four free. The
+freezing worked: none of the five moved. The refit did not.
+
+| Split | shipping | refit |
+| --- | ---: | ---: |
+| Training | 6.768470 | 6.672461 |
+| Development validation | 6.774969 | 6.833386 |
+| Flat top | 5.645406 | 6.271268 |
+
+Training 1.42% better, development validation 0.86% worse, the flat-top rows
+11.1% worse. That is the shape of an overfit, and development validation is
+what gates promotions here, so it is rejected and the shipping calibration
+stands.
+
+What moved is worth reading, because it is the same direction this file has
+been recording all day. Freed, `longitudinalGain` went from 0.03 to 0.075 and
+`highLossCutoffScale` from 2.170 to 2.503 - both the settings that buy the
+archtop corpus more attack brightness and move the flat-top rows away, and both
+past the point where the earlier sweeps showed the splits parting company. The
+optimiser was not doing anything wrong; it was minimising the training loss it
+was given, and the training loss it was given is a miked archtop.
+
+So freezing the five by-ear values keeps the verdict, and it does not stop the
+free parameters from walking in the same direction by other routes. The lesson
+is narrower than "do not refit": it is that on this corpus a refit has to be
+gated on development validation every time, and that until the steel corpus is
+a flat-top there is no run of the optimiser that can be trusted unattended.

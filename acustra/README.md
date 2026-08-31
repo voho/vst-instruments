@@ -352,7 +352,11 @@ conductance floor — after a listener heard the fitted build against the
 direction the flat-top rows prefer and reported the fitted one as the less
 realistic of the two. That trade is what the table shows: 6.1% worse on both
 fitted splits and 23.9% closer on the eight flat-top rows.
-`Docs/decisions.md` records the verdict as a verdict.
+`Docs/decisions.md` records the verdict as a verdict. A full staged refit
+around it, with those five held and the other twenty-four free, was then run
+and rejected: training 1.42% better, development validation 0.86% worse and the
+flat-top rows 11.1% worse, with the freed parameters walking back toward the
+archtop by other routes.
 
 The neutral column moved when the saddle anchor became a constant of the
 instrument: on the calibration both topologies share, the constant six-string

@@ -1080,5 +1080,25 @@
   "what_it_is_for": "plucks parallel to the soundboard have significantly lower levels, and where a string peak splits into a doublet the normal pluck excites the upper member and the parallel pluck the lower - an effect on angle and colour, which is what this project's take-to-take measurement pointed at",
   "minimal_form": "in a modal expansion both direct admittances and the cross admittance follow from each mode's normal and tangential components, the cross term being their product, so a passive 2x2 on the existing 96-mode body needs one extra number per mode and is passive by construction",
   "correction": "two-stage decay is a piano behaviour; the second axis is not the route to it on a guitar, and this project should stop implying that adding it would change how the instrument decays"
+ },
+ "refit_around_the_by_ear_body_rejected": {
+  "setup": "full staged refit, the five by-ear values frozen, the other twenty-four free",
+  "scores": {
+   "training": [
+    6.76847,
+    6.672461
+   ],
+   "held_out": [
+    6.774969,
+    6.833386
+   ],
+   "flat_top": [
+    5.645406,
+    6.271268
+   ]
+  },
+  "verdict": "training 1.42% better, development validation 0.86% worse, flat-top 11.1% worse; rejected on the development-validation gate",
+  "what_moved": "longitudinalGain 0.03 to 0.075 and highLossCutoffScale 2.170 to 2.503 - the settings that buy the archtop corpus attack brightness and move the flat-top rows away",
+  "reading": "the freezing kept the verdict and did not stop the free parameters walking the same way by other routes; on this corpus a refit has to be gated on development validation every time"
  }
 }
