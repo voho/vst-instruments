@@ -511,8 +511,25 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   frozen public guitar-49 nonlinear profile by 7.30% at 2.4 mm and 7.74% at
   3.6 mm, produced non-monotone velocity/pitch motion and failed its DC gate.
   It was stopped before TRAIN, validation or blind scoring and is not shipped.
-- The measured bridge is scalar and radiates one transverse string axis. A
-  proper second axis requires a measured passive 2-D bridge-admittance matrix;
+- The measured bridge is scalar and radiates one transverse string axis, and
+  what that costs has been corrected. Woodhouse, who measured the full 2x2
+  bridge admittance matrix on a guitar and synthesised with and without the
+  second string polarisation, reports that including it "makes rather little
+  difference" to the damping factors, and that across every note to the twelfth
+  fret on each string of his test guitar there was no convincing example of
+  double exponential decay. Two-stage decay is a piano behaviour, and the
+  second axis is not the route to it here. What he does report is that plucks
+  parallel to the soundboard have significantly lower levels, and that where a
+  string peak splits into a doublet the normal pluck excites the upper member
+  and the parallel pluck the lower — an effect on angle and colour, which is
+  what this instrument's own take-to-take measurement pointed at. The gap
+  stays, for that reason rather than for sustain. Two things the same source
+  settles: such a matrix has been measured and published, by Woodhouse and
+  earlier by Lambourg and Chaigne, and in a modal expansion the two direct
+  admittances and the cross admittance all follow from each mode's normal and
+  tangential components, so a passive 2x2 on the existing 96-mode body needs
+  one extra number per mode rather than a second measurement of everything.
+  A proper second axis requires that number;
   the tested arbitrary rotation did not generalise and is not shipped. Two
   independent lines now raise its priority rather than lower its bar: no
   excitation control can reach the take-to-take attack variation real recordings

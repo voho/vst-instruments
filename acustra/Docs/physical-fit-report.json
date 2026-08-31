@@ -1071,5 +1071,14 @@
   "steel.fundamentalT60Scale",
   "steel.frequencyLossScale",
   "bridgeConductanceFloor"
- ]
+ ],
+ "second_axis_corrected": {
+  "source": "J. Woodhouse, Plucked Guitar Transients: Comparison of Measurements and Synthesis, Acta Acustica united with Acustica 90 (2004) 945-965",
+  "measured": "the full 2x2 bridge admittance matrix, by a wire-break method; Lambourg and Chaigne, SMAC 93, 448-453, report an earlier one in good qualitative agreement",
+  "finding_1": "no convincing example of double exponential decay across every note to the twelfth fret on each string of the test guitar; the one candidate profile was the measurement noise floor",
+  "finding_2": "in synthesis with his own measured matrix, inclusion of the second polarisation makes rather little difference to the damping factors, and a normal-admittance-only synthesis is very similar",
+  "what_it_is_for": "plucks parallel to the soundboard have significantly lower levels, and where a string peak splits into a doublet the normal pluck excites the upper member and the parallel pluck the lower - an effect on angle and colour, which is what this project's take-to-take measurement pointed at",
+  "minimal_form": "in a modal expansion both direct admittances and the cross admittance follow from each mode's normal and tangential components, the cross term being their product, so a passive 2x2 on the existing 96-mode body needs one extra number per mode and is passive by construction",
+  "correction": "two-stage decay is a piano behaviour; the second axis is not the route to it on a guitar, and this project should stop implying that adding it would change how the instrument decays"
+ }
 }

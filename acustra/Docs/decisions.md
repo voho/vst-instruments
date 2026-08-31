@@ -2428,3 +2428,59 @@ corpus does not buzz", and the whole nonlinear regime - the pitch surrogate,
 the longitudinal drive promoted today, and any future collision - is scaled by
 a corpus that was not played hard enough to need it. That is another reading of
 the same gap this file keeps arriving at, and the same capture would close it.
+
+## 2026-08-31 — what the second axis is for, from the paper that measured it
+
+This file has carried the missing second radiating axis as its top structural
+gap, and a research brief today put it first as well, claiming it "eliminates
+the harpsichord effect" and supplies two-stage decay. That claim was checked
+against the source, and it does not survive.
+
+Woodhouse measured the full 2x2 bridge admittance matrix on a guitar, by a
+wire-break method after the hammer/laser approach failed in the tangential
+direction, and synthesised plucks with and without the second string
+polarisation. Two of his findings bear directly on this.
+
+He looked for double decay in real plucks and did not find it. Every note up to
+the twelfth fret on each string of his test guitar was played and analysed, and
+of that set: "What is not seen in Figure 5 is any convincing example of 'double
+exponential decay', which ... might arise from different decay rates of the two
+polarisations of string motion." The one profile that had the shape was, he
+says, probably the measurement noise floor rather than a decay rate.
+
+And in synthesis, using his own measured matrix, he concludes that "(i)
+inclusion of the second polarisation makes rather little difference" to the
+damping factors, and that a synthesis using only the normal admittance is "very
+similar" and "not in any better agreement with measurement".
+
+So the second axis is not the route to two-stage decay on a guitar. Two-stage
+decay is a documented piano behaviour, from coupled unison strings, and the
+brief appears to have carried it across. What Woodhouse does report for the
+tangential direction is that plucks parallel to the soundboard "have
+significantly lower levels", and that where a string peak splits into a
+doublet, the normal pluck excites the upper member and the parallel pluck the
+lower. That is an effect on level and on which of a split pair sounds - which
+is exactly what this file's own take-to-take measurement pointed at when it
+found that no excitation control could reach the attack-colour spread real
+recordings show, and traced it to the plucking angle.
+
+The gap therefore stays, with its reason corrected. The second axis is worth
+having for plucking angle, not for sustain, and this file should stop implying
+that adding it would change how the instrument decays.
+
+Two further things the source settles. The measurement is not unobtainable:
+Woodhouse published one and cites Lambourg and Chaigne, "Measurements and
+modeling of the admittance matrix at the bridge in guitars", SMAC 93, 448-453,
+as an earlier successful one in good qualitative agreement. And the passive
+form needs less than it looks: in a modal expansion each body mode contributes
+its normal and tangential components at the bridge, and the two direct
+admittances and the cross admittance all follow from those two numbers per
+mode, with the cross term their product. So a passive 2x2 built on the existing
+96-mode measured body needs one extra number per mode, not a second body, and
+being a sum of rank-one positive terms it is passive by construction. What the
+g21 archive does not carry is that tangential component. That is the thing to
+ask a measurement for, and it is a much smaller ask than this file has been
+treating it as.
+
+Source: J. Woodhouse, "Plucked Guitar Transients: Comparison of Measurements
+and Synthesis", Acta Acustica united with Acustica 90 (2004) 945-965.
