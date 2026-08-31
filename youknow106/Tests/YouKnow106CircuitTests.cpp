@@ -6163,6 +6163,62 @@ void testOutputSummerIsLinearBelowItsAsymptote()
                "the output summer is not symmetric");
 }
 
+void testOutputSummerBandwidthFollowsNoiseGain()
+{
+    // The inverting summer's signal gains are not its bandwidth-setting gain.
+    // Reconstruct the noise gain independently from the two live input legs;
+    // omitting either leg would overstate IC6's closed-loop bandwidth.
+    constexpr double feedback = 100000.0;
+    constexpr double dry = 47000.0;
+    constexpr double wet = 39000.0;
+    const double parallel = dry * wet / (dry + wet);
+    const double noiseGain = 1.0 + feedback / parallel;
+    expectNear(noiseGain, 5.691762, 1.0e-6,
+               "the output-summer resistor noise gain is wrong");
+    expectNear(YouKnow106Engine::outputSummerBandwidthHz(),
+               3.0e6 / noiseGain, 0.1,
+               "the TA75558 gain-bandwidth did not close through IC6's "
+               "noise gain");
+}
+
+void testOutputResistorNoiseFollowsJohnsonNyquistLaw()
+{
+    // Re-refer the three independent IC6 resistor sources to its output. The
+    // density is deliberately tested in V/sqrt(Hz), before any sample-rate or
+    // engine-normalisation policy can hide a circuit error.
+    constexpr double k = 1.380649e-23;
+    constexpr double temperature = 298.15;
+    constexpr double rf = 100000.0;
+    constexpr double rdry = 47000.0;
+    constexpr double rwet = 39000.0;
+    const double equivalent = rf + rf * rf / rdry + rf * rf / rwet;
+    const double expectedDensity = std::sqrt(4.0 * k * temperature * equivalent);
+    expectNear(YouKnow106Engine::outputSummerResistorNoiseDensity(),
+               expectedDensity, 1.0e-12,
+               "IC6 resistor noise did not add as independent powers");
+
+    // Solve the post-coupling wiper Thevenin resistance independently at both
+    // stops and mid travel. At zero the grounded lower pot segment shorts the
+    // output noise; at other positions all three paths remain in parallel.
+    constexpr double pot = 10000.0;
+    constexpr double series = 1500.0;
+    constexpr double selector = 41300.0;
+    constexpr double headphone = 101000.0;
+    constexpr double load = selector * headphone / (selector + headphone);
+    const auto reference = [=](double position) {
+        const double upper = series + (1.0 - position) * pot;
+        const double lower = position * pot;
+        if (lower == 0.0)
+            return 0.0;
+        return 1.0 / (1.0 / upper + 1.0 / lower + 1.0 / load);
+    };
+    for (const double position : { 0.0, 0.5, 1.0 })
+        expectNear(YouKnow106Engine::outputWiperNoiseResistance(
+                       static_cast<float>(position)),
+                   reference(position), 0.01,
+                   "the loaded output wiper has the wrong noise resistance");
+}
+
 void testOutputSummerSlewMatchesDatasheetTypical()
 {
     // Toshiba specifies 1.0 V/us typical at +/-15 V, 25 C, unity gain and a
@@ -6272,6 +6328,8 @@ void testDecimatorProtectsTheTopOfTheBand()
 int main()
 {
     testOutputSummerIsLinearBelowItsAsymptote();
+    testOutputSummerBandwidthFollowsNoiseGain();
+    testOutputResistorNoiseFollowsJohnsonNyquistLaw();
     testOutputSummerSlewMatchesDatasheetTypical();
     testDecimatorProtectsTheTopOfTheBand();
     testFilterCoreDividerMatchesSchematic();

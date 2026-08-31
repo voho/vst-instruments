@@ -738,6 +738,40 @@ public:
     // load and inverting gains still need an OQ-05 capture.
     // https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3
     static constexpr float outputSummerSlewRateVoltsPerSecond = 1.0e6f;
+    // The same table gives 3 MHz typical gain-bandwidth. IC6a/b are inverting
+    // summers with 100 kOhm feedback and simultaneous 47 kOhm dry / 39 kOhm
+    // wet input legs, hence noise gain 1 + 100k/(47k || 39k). The resulting
+    // closed-loop pole is well above the audio band, but retaining it prevents
+    // the otherwise ideal summer from passing unlimited ultrasonic energy
+    // into the output coupling network. This is two one-pole updates per
+    // internal frame, not an oversampling-domain expansion.
+    static constexpr float outputSummerGainBandwidthHz = 3.0e6f;
+    static constexpr float outputSummerFeedbackOhms = 100000.0f;
+    static constexpr float outputSummerDryInputOhms = 47000.0f;
+    static constexpr float outputSummerWetInputOhms = 39000.0f;
+    [[nodiscard]] static constexpr float outputSummerBandwidthHz() noexcept
+    {
+        const float parallelInput =
+            outputSummerDryInputOhms * outputSummerWetInputOhms
+            / (outputSummerDryInputOhms + outputSummerWetInputOhms);
+        const float noiseGain = 1.0f + outputSummerFeedbackOhms / parallelInput;
+        return outputSummerGainBandwidthHz / noiseGain;
+    }
+    // Johnson-Nyquist noise of the five independently identifiable resistor
+    // groups downstream of the voice bus: IC6 feedback, dry input, wet input,
+    // the R54/R57 output series legs, and the loaded VR1/output network. The
+    // first three are referred to IC6's output; the last two reduce to the
+    // passive wiper network's Thevenin resistance. 25 C is the TA75558
+    // datasheet condition used by the adjacent slew/GBW anchors.
+    // Boltzmann constant (exact SI value):
+    // https://physics.nist.gov/cgi-bin/cuu/Value?k
+    // Roland resistor designators/values, Service Notes pp. 14-15:
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
+    static constexpr float outputNoiseTemperatureKelvin = 298.15f;
+    static constexpr float boltzmannConstant = 1.380649e-23f;
+    [[nodiscard]] static float outputSummerResistorNoiseDensity() noexcept;
+    [[nodiscard]] static float outputWiperNoiseResistance(
+        float volumePosition) noexcept;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
 
     // Digital full scale follows the provisional model asymptote through the
@@ -1633,6 +1667,8 @@ private:
         double scanPhasePerInternalSample { 0.0 };
         float outputBoundaryGain { 1.0f };
         float outputSlewMaxStep { 0.0f };
+        float outputSummerBandwidthBlend { 1.0f };
+        float outputSummerNoiseScale { 0.0f };
     };
     [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
         double intervalSeconds) noexcept;
@@ -2318,6 +2354,12 @@ private:
 
     float outputSlewStateLeft_ { 0.0f };
     float outputSlewStateRight_ { 0.0f };
+    float outputBandwidthStateLeft_ { 0.0f };
+    float outputBandwidthStateRight_ { 0.0f };
+    std::uint32_t outputNoiseStateLeft_ { 0x91e10da5u };
+    std::uint32_t outputNoiseStateRight_ { 0xd1b54a35u };
+    std::uint32_t outputWiperNoiseStateLeft_ { 0x94d049bbu };
+    std::uint32_t outputWiperNoiseStateRight_ { 0x8538ecadu };
 
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };
