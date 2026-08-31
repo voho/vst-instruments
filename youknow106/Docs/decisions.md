@@ -5,6 +5,20 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-08-31 — I+II preserves the wet mid, not the stereo side
+
+The first I+II product implementation reused the normal two-line anti-phase
+stereo output and changed only modulation rate. An original Juno-106 owner
+reported that the physical both-button result was instead conspicuously narrow,
+nearly mono, with a characteristic colour. That directly falsifies the wide
+continuation but does not calibrate a fractional width. The corrected mode
+therefore uses the only zero-parameter narrow continuation: equal-fold the two
+existing wet returns to their mid. This preserves the former path's exact mono
+sum and its comb colour, removes only the unsupported side, and leaves I and II
+unchanged. The old wide result remains available internally for matched A/B;
+an identified-unit stereo capture is still required to establish any residual
+width or a different both-button clock law.
+
 ## 2026-08-31 — NOISE OTA drives C41
 
 Roland's [module-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13)

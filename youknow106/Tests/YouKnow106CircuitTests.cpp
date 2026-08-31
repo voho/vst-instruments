@@ -3279,6 +3279,51 @@ void testJuno60FallbackBucketBrigadeTiming()
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::OneTwo),
                Chorus::measuredModeNoiseGain(ChorusMode::Two), 1.0e-9,
                "I+II changed its provisional II noise profile without a capture");
+
+    // The original-unit recollection that prompted the I+II correction is
+    // qualitative (near-mono), so the implementation must not hide a fitted
+    // width constant. It folds the established two wet returns to their exact
+    // mid: side is zero, while the mono sum is unchanged from the former wide
+    // path and therefore retains its characteristic comb colour.
+    {
+        Chorus narrow;
+        Chorus wide;
+        narrow.prepare(48000.0);
+        wide.prepare(48000.0);
+        double maximumNarrowSide = 0.0;
+        double maximumWideSide = 0.0;
+        double maximumMonoDifference = 0.0;
+        for (int sample = 0; sample < 24000; ++sample)
+        {
+            const float input = static_cast<float>(
+                0.22 * std::sin(2.0 * pi * 311.0 * sample / 48000.0)
+                + 0.13 * std::sin(2.0 * pi * 997.0 * sample / 48000.0));
+            float narrowLeft = 0.0f, narrowRight = 0.0f;
+            float wideLeft = 0.0f, wideRight = 0.0f;
+            narrow.process(input, ChorusMode::OneTwo, 0.0f,
+                           narrowLeft, narrowRight,
+                           false, false, 1.0f, false, true);
+            wide.process(input, ChorusMode::OneTwo, 0.0f,
+                         wideLeft, wideRight,
+                         false, false, 1.0f, false, false);
+            maximumNarrowSide = std::max(
+                maximumNarrowSide,
+                std::abs(static_cast<double>(narrowLeft - narrowRight)));
+            maximumWideSide = std::max(
+                maximumWideSide,
+                std::abs(static_cast<double>(wideLeft - wideRight)));
+            maximumMonoDifference = std::max(
+                maximumMonoDifference,
+                std::abs(static_cast<double>(narrowLeft + narrowRight)
+                         - static_cast<double>(wideLeft + wideRight)));
+        }
+        expect(maximumNarrowSide < 1.0e-7,
+               "the narrow I+II path retained an unsupported stereo side");
+        expect(maximumWideSide > 1.0e-3,
+               "the legacy I+II A/B path did not expose its former width");
+        expect(maximumMonoDifference < 2.0e-6,
+               "narrowing I+II changed its established mono sum");
+    }
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::One), 1.0, 1.0e-9,
                "the empirical mode calibration moved mode I's product anchor");
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::Off), 1.0, 1.0e-9,

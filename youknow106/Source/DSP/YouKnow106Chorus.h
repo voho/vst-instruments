@@ -217,7 +217,8 @@ public:
                  bool enableClockBleed = false,
                  bool enableHyperbolicSweep = false,
                  float calibration = 1.0f,
-                 bool useRateProportionalNoiseHypothesis = false) noexcept;
+                 bool useRateProportionalNoiseHypothesis = false,
+                 bool enableNarrowOneTwo = true) noexcept;
 
     // The one usable real-instrument observation of this circuit's noise:
     // mode II's output floor was reported about 3.95 dB above mode I's, on

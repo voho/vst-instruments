@@ -217,13 +217,37 @@ Take renderNoiseOtaC41MemoryTake(bool enableNoiseLevelBeforeC41)
     return take;
 }
 
+// 14. The former I+II extension retained the ordinary anti-phase stereo
+// returns. The circuit candidate folds those same returns to their exact mid:
+// mono sum and colour are unchanged, while the unsupported side disappears.
+Take renderNarrowOneTwoChorusTake(bool enableNarrowOneTwo)
+{
+    auto p = defaultPanel();
+    p.enableNarrowOneTwoChorus = enableNarrowOneTwo;
+    p.chorus = ChorusMode::OneTwo;
+    p.cutoff = 0.74f;
+    p.resonance = 0.18f;
+    p.envDepth = 0.28f;
+    p.vcaMode = VcaMode::Envelope;
+    p.volume = 0.55f;
+    Take take(p);
+    take.rest(0.25);
+    for (int note : { 48, 55, 60, 64 })
+        take.on(note, 0.8f);
+    take.rest(4.0);
+    for (int note : { 48, 55, 60, 64 })
+        take.off(note);
+    take.rest(0.8);
+    return take;
+}
+
 struct Comparison
 {
     const char* slug;
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 9> comparisons {{
+const std::array<Comparison, 10> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
     { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
@@ -232,7 +256,8 @@ const std::array<Comparison, 9> comparisons {{
     { "09-chorus-hyperbolic-sweep",       renderChorusHyperbolicSweepTake },
     { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take },
     { "12-pulse-off-wave-node-coupling",  renderPulseOffWaveNodeTake },
-    { "13-noise-ota-c41-memory",           renderNoiseOtaC41MemoryTake }
+    { "13-noise-ota-c41-memory",           renderNoiseOtaC41MemoryTake },
+    { "14-narrow-i-plus-ii-chorus",        renderNarrowOneTwoChorusTake }
 }};
 
 struct Report

@@ -204,7 +204,10 @@ forty-year-old unit will null against the plug-in.
   instrument's own oscillator circuit; the 1.4–6.4 ms sweep endpoints are a
   third-party measurement of a designator-faithful build (below the
   anchoring bar; OQ-01). The separate I+II selector is a live product mode at
-  the established summed rate (1.4516 Hz), matching
+  the established summed-rate policy; its two wet returns fold to their exact
+  mid, preserving the mono colour while matching an original-unit owner's
+  report that the both-button result is conspicuously narrow. Residual width
+  still requires an identified-unit stereo capture. Its 1.4516 Hz rate matches
   [Roland's current JUNO-106-chorus mode vocabulary](https://static.roland.com/manuals/sh-4d/eng/68126343.html);
   that fourth transfer is explicit
   compatibility policy pending an identified-unit capture, not a third

@@ -216,6 +216,11 @@ struct EngineParameters
     // Coarse grids that cannot resolve its 33 us memory collapse it safely.
     // False retains the former post-C41 scalar solely for controlled A/Bs.
     bool enableNoiseLevelBeforeC41 { true };
+    // On by default: the live I+II extension collapses the two wet returns to
+    // their arithmetic mid, matching an original-unit owner's remembered
+    // narrow/near-mono result while preserving the ordinary I/II topology.
+    // False retains the former anti-phase stereo I+II path for controlled A/Bs.
+    bool enableNarrowOneTwoChorus { true };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
