@@ -380,10 +380,30 @@ output capacitors: both rear outputs are DC-coupled.
 The voice core runs at 4× with a two-stage decimation chain, and every
 waveform discontinuity is corrected as a sub-sample event. The high-Q
 limiter's capacitor is integrated alongside the CEM states and its diode
-current is solved implicitly, so the filter's nonlinearity is a term of the
-continuous system rather than a per-sample afterthought: self-oscillation
-level agrees within 0.5 dB at 8, 44.1 and 96 kHz host rates. A patch therefore
-sounds the same at every host rate.
+current is solved implicitly with a bracketed Newton method: a voltage-residual
+test closes the BA130 KVL equation to floating-point precision, while a
+physical-current bracket keeps hard-transient iterates bounded. The filter's
+nonlinearity is therefore a term of the continuous system rather than a
+per-sample clipper: self-oscillation level agrees within 0.5 dB at 8, 44.1 and
+96 kHz host rates. A patch therefore sounds the same at every host rate.
+
+The same residual-checked, physically bracketed solve now advances the
+D11/D14 envelope-release diodes, including the long low-current knee. One-pole
+coefficients for panel smoothing, both RC envelope segments and keyboard glide
+use `expm1`, retaining their analog time constants when the requested rate
+makes `1 − exp(−h/τ)` very small. Finally, both halfband decimators use
+compensated accumulation: deep-stopband cancellation remains cancellation
+rather than becoming a floating-point alias floor.
+
+Five further state updates use a fused `2v[n] − x[n−1]` trapezoidal companion
+instead of two separately rounded operations. They are not generic invented
+"analog warmth": each is tied to a capacitor present on the service drawing —
+(1) the CEM3350 22 nF state capacitors and switched C40, (2) the C33/C37 1 nF
+BA130 high-Q memories, (3) OVERDRIVE's C34 = 220 nF, (4) the output networks
+C30 = 470 nF and C18 = 27 nF, and (5) the ring input C15 = 1 µF. Fusing the
+companion update preserves charge when a small new state is the difference of
+two large values, especially at selector transients, without adding damping,
+saturation, tolerance spread or any other behavior absent from the schematic.
 
 Every continuous panel control and both performance wheels glide to new values
 over ~25 ms, so host automation at any block size and 7-bit MIDI CCs never

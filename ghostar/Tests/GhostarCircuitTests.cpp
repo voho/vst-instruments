@@ -1762,14 +1762,23 @@ void testHypotheticalA3B7C10NetworkMatchesReference()
     };
 
     constexpr double hostRate = 48000.0;
+    // Span the BA130's almost-open small-signal region, its knee and a hard
+    // transient. This guards the production solver's residual, not an
+    // iteration count: the independent 80-step bisection remains the oracle.
+    for (const double drive : { 1.0e-12, 1.0e-7, 1.0e-3, 0.12, 3.0 })
+    {
+        const auto actual = ghostar::GhostarCircuitTestAccess::overdriveStep(
+            drive, -0.015, hostRate);
+        const auto expected = reference(drive, -0.015, hostRate);
+        check(std::abs(actual.output - expected.output) < 1.0e-11,
+              "A3+B7+C10 implicit diode solve matches bisection across drive");
+        check(std::abs(actual.couplingCompanion
+                       - expected.couplingCompanion) < 1.0e-11,
+              "A3+B7+C10 C34 state matches bisection across drive");
+    }
+
     const auto actual = ghostar::GhostarCircuitTestAccess::overdriveStep(
         0.12, -0.015, hostRate);
-    const auto expected = reference(0.12, -0.015, hostRate);
-    check(std::abs(actual.output - expected.output) < 1.0e-11,
-          "A3+B7+C10 hypothesis matches its independent scalar/C34 oracle");
-    check(std::abs(actual.couplingCompanion - expected.couplingCompanion)
-              < 1.0e-11,
-          "A3+B7+C10 hypothesis preserves its C34 companion law");
 
     const auto negative = ghostar::GhostarCircuitTestAccess::overdriveStep(
         -0.12, 0.015, hostRate);
@@ -2179,6 +2188,26 @@ void testEnvelopeDiodeFloorAndReleaseKnee()
               && std::abs(referenceVolts * fastNewLevel - fastKvl)
                      < 1.0e-10,
           "the diode solve remains bounded at 8 kHz and minimum release R");
+
+    // Stress the implicit diode current from the nearly-open knee through a
+    // hard, low-rate discharge. Every point independently closes the
+    // backward-Euler capacitor KCL and the diode/resistor KVL.
+    for (const auto [level, releaseOhms, rate] :
+         { std::array { 1.0e-4, 2.0e6 + 100.0, 768000.0 },
+           std::array { floorLevel, 1.0e5, 192000.0 },
+           std::array { 0.5, 1.0e4, 44100.0 },
+           std::array { 1.0, 1.0e3 + 100.0, 8000.0 } })
+    {
+        const double next = ghostar::GhostarCircuitTestAccess::
+            envelopeReleaseStep(level, releaseOhms, rate);
+        const double stepCurrent = capacitance * referenceVolts
+            * (level - next) * rate;
+        const double stepKvl = releaseOhms * stepCurrent
+            + slopeVolts * std::log1p(stepCurrent / saturationAmps);
+        check(next >= 0.0 && next <= level
+                  && std::abs(referenceVolts * next - stepKvl) < 1.0e-10,
+              "bracketed envelope-diode solve closes KVL across its domain");
+    }
 }
 
 // P1015's selected X/Y edges use their 10 nF / 470 kOhm, ~5 ms reset lane.

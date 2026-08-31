@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace ghostar
@@ -276,9 +277,10 @@ namespace
         1.2479467973540046e-9;
 
     // Invert V = R*i + a*log(1+i/Is) for a forward diode in series with a
-    // positive resistance. Five clamped Newton steps start from the smaller
-    // one-drop upper bound; the logarithmic branch choice avoids evaluating
-    // an overflowing exponential. D11/D14 use this nominal law against an
+    // positive resistance. As with the BA130 solve below, retain the physical
+    // [0,V/R] bracket, reject Newton steps that leave it and stop on the KVL
+    // residual. The logarithmic branch choice avoids evaluating an
+    // overflowing exponential. D11/D14 use this nominal law against an
     // ideal-low GS; their real shared 4075 output resistance remains a
     // hardware seam.
     [[nodiscard]] double envelopeDiodeCurrent(double driveVolts,
@@ -298,17 +300,32 @@ namespace
                              : envelopeDiodeSaturationAmps
                                  * std::expm1(diodeOnlyLog);
 
-        for (int step = 0; step < 5; ++step)
+        double lowerCurrent = 0.0;
+        double upperCurrent = maximumCurrent;
+        constexpr int maximumIterations = 12;
+        constexpr double voltageTolerance =
+            16.0 * std::numeric_limits<double>::epsilon();
+        for (int step = 0; step < maximumIterations; ++step)
         {
             const double error = std::fma(seriesOhms, current, -driveVolts)
                 + envelopeDiodeSlopeVolts
                     * std::log1p(
                         current / envelopeDiodeSaturationAmps);
+            if (std::abs(error) <= voltageTolerance * (1.0 + driveVolts))
+                break;
+
+            if (error < 0.0)
+                lowerCurrent = current;
+            else
+                upperCurrent = current;
+
             const double slope = seriesOhms
                 + envelopeDiodeSlopeVolts
                     / (envelopeDiodeSaturationAmps + current);
-            current = std::clamp(current - error / slope,
-                                 0.0, maximumCurrent);
+            const double newton = current - error / slope;
+            current = newton > lowerCurrent && newton < upperCurrent
+                ? newton
+                : 0.5 * (lowerCurrent + upperCurrent);
         }
         return current;
     }
@@ -576,6 +593,18 @@ namespace
 
     // Solve V = R*i + Vd*asinh(i/(2*Is)), the inverse anti-parallel diode
     // equation. Current space avoids sinh overflow and has one monotone root.
+    // This is the scalar zero-delay-feedback reduction advocated for
+    // nonlinear virtual-analog circuits by Yeh et al., IEEE TASLP 18(4),
+    // DOI 10.1109/TASL.2010.2047331: the diode is solved inside the
+    // trapezoidal circuit, rather than clipped after the linear filter.
+    //
+    // A plain fixed-count Newton iteration is fast, but it is not a circuit
+    // solver: a large transient or an unusual host rate can leave a finite
+    // KVL error in the capacitor update. Keep the physical [0, V/R] current
+    // bracket and accept Newton only inside it. The fallback bisection keeps
+    // every iterate physical and moving toward the unique root; the voltage
+    // residual normally stops at roundoff rather than at an arbitrary
+    // "four iterations" of one.
     [[nodiscard]] double diodePairCurrent(double driveVolts,
                                           double seriesOhms) noexcept
     {
@@ -596,16 +625,31 @@ namespace
                              : pairSaturationAmps
                                  * std::sinh(diodeOnlyVoltage);
 
-        for (int step = 0; step < 4; ++step)
+        double lowerCurrent = 0.0;
+        double upperCurrent = maximumCurrent;
+        constexpr int maximumIterations = 12;
+        constexpr double voltageTolerance =
+            16.0 * std::numeric_limits<double>::epsilon();
+        for (int step = 0; step < maximumIterations; ++step)
         {
             const double error = std::fma(seriesOhms, current, -magnitude)
                 + diodeThermalVolts
                     * std::asinh(current / pairSaturationAmps);
+            if (std::abs(error) <= voltageTolerance * (1.0 + magnitude))
+                break;
+
+            if (error < 0.0)
+                lowerCurrent = current;
+            else
+                upperCurrent = current;
+
             const double slope = seriesOhms
                 + diodeThermalVolts
                     / std::hypot(pairSaturationAmps, current);
-            current = std::clamp(current - error / slope,
-                                 0.0, maximumCurrent);
+            const double newton = current - error / slope;
+            current = newton > lowerCurrent && newton < upperCurrent
+                ? newton
+                : 0.5 * (lowerCurrent + upperCurrent);
         }
 
         return std::copysign(current, driveVolts);
@@ -640,6 +684,17 @@ namespace
     [[nodiscard]] double flushDenormal(double value) noexcept
     {
         return std::abs(value) < 1.0e-30 ? 0.0 : value;
+    }
+
+    // Trapezoidal companions are physical endpoint memories: x[n] is stored
+    // as 2*v[n]-x[n-1].  A fused update retains the small new memory when the
+    // two large terms nearly cancel (most visibly after a switch transient),
+    // and rounds only once.  This one law is shared by the resolved Spirit
+    // capacitors rather than adding an ungrounded damping term to any of them.
+    [[nodiscard]] double trapezoidalCompanion(double endpoint,
+                                               double oldCompanion) noexcept
+    {
+        return flushDenormal(std::fma(2.0, endpoint, -oldCompanion));
     }
 
     // ------------------------------------------------- The resonance law
@@ -791,7 +846,12 @@ namespace
                                       const std::array<double, taps>& ring,
                                       int oldestIndex) noexcept
     {
+        // Neumaier compensation matters at the steep halfband boundary,
+        // where large alternating products cancel to make a tiny stop-band
+        // result. Preserve that cancellation instead of letting its error
+        // become a low-level alias floor.
         double accumulator = 0.0;
+        double compensation = 0.0;
         for (int index = 0; index < kernel.count; ++index)
         {
             int ringIndex =
@@ -799,10 +859,16 @@ namespace
                 + kernel.offsets[static_cast<std::size_t>(index)];
             if (ringIndex >= static_cast<int>(taps))
                 ringIndex -= static_cast<int>(taps);
-            accumulator += kernel.values[static_cast<std::size_t>(index)]
-                         * ring[static_cast<std::size_t>(ringIndex)];
+            const double product =
+                kernel.values[static_cast<std::size_t>(index)]
+                * ring[static_cast<std::size_t>(ringIndex)];
+            const double next = accumulator + product;
+            compensation += std::abs(accumulator) >= std::abs(product)
+                ? (accumulator - next) + product
+                : (product - next) + accumulator;
+            accumulator = next;
         }
-        return accumulator;
+        return accumulator + compensation;
     }
 
     [[nodiscard]] float sanitisedTravel(float value, float fallback) noexcept
@@ -876,7 +942,8 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
                              maximumSupportedSampleRate);
     internalRate_ = 4.0 * sampleRate_;
     // The travel smoother's one-pole: ~25 ms to target at any host rate.
-    travelSmoothing_ = 1.0 - std::exp(-1.0 / (0.025 * sampleRate_));
+    // expm1 retains the small difference from one at very high host rates.
+    travelSmoothing_ = -std::expm1(-1.0 / (0.025 * sampleRate_));
     highQChargeStep_ = 1.0
         / (2.0 * internalRate_ * cemTimingCapacitance
            * filterNodeVoltsPerUnit);
@@ -1276,8 +1343,8 @@ GhostarEngine::SvfOutputs GhostarEngine::runSection(SvfSection& section,
     {
         const double lp = section.ic2 + g * baselineBp;
         const double hp = input - k * baselineBp - lp;
-        section.ic1 = flushDenormal(2.0 * baselineBp - section.ic1);
-        section.ic2 = flushDenormal(2.0 * lp - section.ic2);
+        section.ic1 = trapezoidalCompanion(baselineBp, section.ic1);
+        section.ic2 = trapezoidalCompanion(lp, section.ic2);
         return { lp, baselineBp, hp };
     }
 
@@ -1303,10 +1370,10 @@ GhostarEngine::SvfOutputs GhostarEngine::runSection(SvfSection& section,
     const double hp = input - k * bp - lp;
     const double charge = highQ->chargeCompanion + chargeStep * current;
 
-    section.ic1 = flushDenormal(2.0 * bp - section.ic1);
-    section.ic2 = flushDenormal(2.0 * lp - section.ic2);
-    highQ->chargeCompanion = flushDenormal(
-        2.0 * charge - highQ->chargeCompanion);
+    section.ic1 = trapezoidalCompanion(bp, section.ic1);
+    section.ic2 = trapezoidalCompanion(lp, section.ic2);
+    highQ->chargeCompanion = trapezoidalCompanion(
+        charge, highQ->chargeCompanion);
     return { lp, bp, hp };
 }
 
@@ -1437,14 +1504,14 @@ double GhostarEngine::runUpperCascade(double input, double g,
     const double highQCharge = upperHighQ_.chargeCompanion
                              + highQChargeStep_ * current;
 
-    upperControlled_.ic1 = flushDenormal(
-        2.0 * controlledBp - upperControlled_.ic1);
-    upperControlled_.ic2 = flushDenormal(
-        2.0 * controlledLp - upperControlled_.ic2);
-    upperFixed_.ic1 = flushDenormal(2.0 * fixedBp - upperFixed_.ic1);
-    upperFixed_.ic2 = flushDenormal(2.0 * fixedLp - upperFixed_.ic2);
-    upperHighQ_.chargeCompanion = flushDenormal(
-        2.0 * highQCharge - upperHighQ_.chargeCompanion);
+    upperControlled_.ic1 = trapezoidalCompanion(
+        controlledBp, upperControlled_.ic1);
+    upperControlled_.ic2 = trapezoidalCompanion(
+        controlledLp, upperControlled_.ic2);
+    upperFixed_.ic1 = trapezoidalCompanion(fixedBp, upperFixed_.ic1);
+    upperFixed_.ic2 = trapezoidalCompanion(fixedLp, upperFixed_.ic2);
+    upperHighQ_.chargeCompanion = trapezoidalCompanion(
+        highQCharge, upperHighQ_.chargeCompanion);
     upperControlledLp_ = controlledLp;
     upperFixedLp_ = fixedLp;
 
@@ -1531,18 +1598,18 @@ GhostarEngine::SvfOutputs GhostarEngine::runLowerSection(
     const double highQCharge = lowerHighQ_.chargeCompanion
                              + highQChargeStep_ * current;
 
-    double nextBpCompanion = 2.0 * bp - lowerSection_.ic1;
-    lowerSection_.ic2 = flushDenormal(2.0 * lp - lowerSection_.ic2);
-    lowerHighQ_.chargeCompanion = flushDenormal(
-        2.0 * highQCharge - lowerHighQ_.chargeCompanion);
+    double nextBpCompanion = trapezoidalCompanion(bp, lowerSection_.ic1);
+    lowerSection_.ic2 = trapezoidalCompanion(lp, lowerSection_.ic2);
+    lowerHighQ_.chargeCompanion = trapezoidalCompanion(
+        highQCharge, lowerHighQ_.chargeCompanion);
 
     for (std::size_t index = 0; index < sourceTops.size(); ++index)
     {
         const double wiper = a0[index] + aLp[index] * lp
                            + aBp[index] * bp;
         const double capacitorVoltage = wiper - bp;
-        double nextCompanion = 2.0 * capacitorVoltage
-                             - lowerMixerCompanions_[index];
+        double nextCompanion = trapezoidalCompanion(
+            capacitorVoltage, lowerMixerCompanions_[index]);
 
         // At either exact pot end the zero-ohm source fixes the wiper. A
         // trapezoidal capacitor can otherwise hide an alternating companion
@@ -1588,8 +1655,8 @@ double GhostarEngine::processOverdrive(double lowerLowpass) noexcept
         / (1.0 + overdriveCouplingConductance_ * seriesOhms);
     const double capacitorVoltage = sourceVoltage
                                    - seriesOhms * capacitorCurrent;
-    overdriveCouplingCompanion_ = flushDenormal(
-        2.0 * capacitorVoltage - overdriveCouplingCompanion_);
+    overdriveCouplingCompanion_ = trapezoidalCompanion(
+        capacitorVoltage, overdriveCouplingCompanion_);
     return overdriveLoadOhms * capacitorCurrent;
 }
 
@@ -1600,8 +1667,8 @@ double GhostarEngine::processFilterCoupling(double input) noexcept
         / (1.0 + filterCouplingG_ * filterCouplingLoadOhms);
     const double output = filterCouplingLoadOhms * current;
     const double capacitorVoltage = input - output;
-    filterCouplingCompanion_ = flushDenormal(
-        2.0 * capacitorVoltage - filterCouplingCompanion_);
+    filterCouplingCompanion_ = trapezoidalCompanion(
+        capacitorVoltage, filterCouplingCompanion_);
     return output;
 }
 
@@ -1653,8 +1720,8 @@ GhostarEngine::OutputWipers GhostarEngine::processOutputNetwork(
     const double branchCurrent = gb * (shaperTop - brightnessCompanion_);
     const double capacitorVoltage = shaperTop
         - controlBrightnessResistanceOhms_ * branchCurrent;
-    brightnessCompanion_ = flushDenormal(
-        2.0 * capacitorVoltage - brightnessCompanion_);
+    brightnessCompanion_ = trapezoidalCompanion(
+        capacitorVoltage, brightnessCompanion_);
     return { filterWiper, shaperWiper, shaperTop };
 }
 
@@ -1666,8 +1733,8 @@ double GhostarEngine::processRingModulator(double triangleA,
         / (1.0 + ringCouplingG_ * ringCarrierLoadOhms);
     const double coupledA = ringCarrierLoadOhms * current;
     const double capacitorVoltage = triangleA - coupledA;
-    ringCouplingCompanion_ = flushDenormal(
-        2.0 * capacitorVoltage - ringCouplingCompanion_);
+    ringCouplingCompanion_ = trapezoidalCompanion(
+        capacitorVoltage, ringCouplingCompanion_);
 
     // With P2 adjusted to cancel A, the 0..4 V CEM3340 triangle and
     // R23/R24 bias make B's bipolar coefficient 15/26. The A branch's
@@ -2136,7 +2203,7 @@ void GhostarEngine::advanceControls() noexcept
     // endpoints land, where the previous three-time-constants read fit
     // neither (derived from SM DWG 3, OQ-04).
     const auto segmentCoefficient = [dt](double travel) {
-        return 1.0 - std::exp(-dt / envelopeTau(travel));
+        return -std::expm1(-dt / envelopeTau(travel));
     };
     advanceEnvelope(filterEnvelope_, gsHigh, triggerPulse,
                     segmentCoefficient(p.filterAttack),
@@ -2320,7 +2387,7 @@ void GhostarEngine::advanceControls() noexcept
             // P1 has no taper mark, so the quadratic travel remains voiced.
             const double tau = std::max(
                 1.0e-4, 0.94 * static_cast<double>(p.glide * p.glide));
-            const double coefficient = 1.0 - std::exp(-dt / tau);
+            const double coefficient = -std::expm1(-dt / tau);
             glidedNote_ +=
                 coefficient * (static_cast<double>(soundingNote) - glidedNote_);
         }
