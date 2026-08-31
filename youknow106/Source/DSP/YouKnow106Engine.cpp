@@ -68,9 +68,10 @@ constexpr float subMixVolts = 5.0f;
 // 20*log10(N), so noise chords reach full scale far sooner than oscillator
 // chords do. That is what "high Noise settings sound broken" was.
 //
-// What stays open is placement, not size: the anchors fix the product of this
-// constant and filterInputAttenuation, and only the coincidence between the
-// deficit and the shaping loss says the noise leg alone was light. OQ-15/OQ-16.
+// What stays open is the absolute source-coordinate boundary, not the ordered
+// topology below: the anchors fix the product of this constant and
+// filterInputAttenuation, and only the coincidence between the deficit and the
+// shaping loss says the noise leg alone was light. OQ-15/OQ-16.
 constexpr float noiseMixVolts = 7.4161f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
@@ -5332,6 +5333,31 @@ void YouKnow106Engine::updateSharedHighPass(const EngineParameters& parameters) 
     highPassHigh_ = highPassHighGain(parameters.highPass);
 }
 
+float YouKnow106Engine::processMainNoiseSource(
+    float rawNoise, float level, bool levelBeforeC41) noexcept
+{
+    // Module board p. 13 is ordered, not merely a pair of commuting fixed
+    // filters: Tr21 crosses C42 into the BA662 level OTA, then C41/R79 loads
+    // that OTA's output. At a fixed level the old post-C41 scalar has the same
+    // transfer, but during a scanned level move it exposes the wrong stored
+    // charge. Keep C42 running unconditionally and drive the existing C41
+    // state with the controlled OTA output; no extra pole or reset is added.
+    const float coupled = noiseSourceHighPass_.process(
+        rawNoise, noiseSourceHighPassG_, 0.0f, 1.0f);
+    // On coarse HQ-off grids below about 19.3 kHz, C41's 33 us memory is
+    // shorter than one sample while the established bilinear support pole is
+    // negative. Exposing that state would turn a physical monotonic discharge
+    // into an invented alternating tail. Preserve the qualified fixed-level
+    // filter there and treat the sub-sample control memory as instantaneous.
+    const bool resolvedC41Memory =
+        levelBeforeC41 && noiseSourceLowPassG_ <= 1.0f;
+    const float otaOutput = coupled * (resolvedC41Memory ? level : 1.0f);
+    const float shaped = noiseSourceLowPass_.process(
+        otaOutput, noiseSourceLowPassG_, 1.0f, 0.0f);
+    const float rail = shaped * noiseMixVolts;
+    return resolvedC41Memory ? rail : rail * level;
+}
+
 void YouKnow106Engine::setParameters(const EngineParameters& parameters)
 {
     // Before the first valid prepared audio interval, even an equal snapshot has
@@ -7511,7 +7537,7 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
                         parameters.enablePulseOffWaveNodeCoupling))
         mixed += pulseOut;
     mixed += subOut;
-    mixed += noiseSample * noiseMixVolts * noiseCv_
+    mixed += noiseSample
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration)
            * agedNoiseGain_;
 
@@ -8254,20 +8280,18 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // One noise generator feeds every voice, so noise grows as more
             // keys are held instead of staying put. Its support circuit
             // band-shapes the rail: C42 into the level OTA's 4.7 kOhm input
-            // bias high-passes at 33.9 Hz, and C41 against R79 low-passes at
-            // 4.82 kHz. The level control between the two poles is a scalar,
-            // so shaping the shared source once here is exact for every
-            // voice; the passband stays at unity, so in-band density keeps
-            // its established rate normalisation.
+            // bias high-passes at 33.9 Hz, the BA662 applies the scanned level,
+            // and C41 against R79 low-passes that controlled output at
+            // 4.82 kHz. One state still serves every voice; the passband stays
+            // at unity, so in-band density keeps its established rate
+            // normalisation.
             if (noiseState_ == 0u)
                 noiseState_ = 0x6d2b79f5u;
             noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
                 bipolarFromState(noiseState_) * noiseRateScale_;
-            const float noiseSample = noiseSourceLowPass_.process(
-                noiseSourceHighPass_.process(
-                    rawNoise, noiseSourceHighPassG_, 0.0f, 1.0f),
-                noiseSourceLowPassG_, 1.0f, 0.0f);
+            const float noiseSample = processMainNoiseSource(
+                rawNoise, noiseCv_, parameters.enableNoiseLevelBeforeC41);
 
             // Polyphonic current draw loads the +/-15 V regulators, so the
             // rails sag as more cards work. This is the DC part only. The

@@ -583,6 +583,19 @@ struct YouKnow106TestAccess
             engine.noiseSourceLowPassG_, 1.0f, 0.0f);
     }
 
+    static float processMainNoiseSource(
+        YouKnow106Engine& engine, float input, float level,
+        bool levelBeforeC41) noexcept
+    {
+        return engine.processMainNoiseSource(
+            input, level, levelBeforeC41);
+    }
+
+    static float noiseHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.noiseCv_;
+    }
+
     // HighPass::process's own non-finite-state guard: every one of the
     // engine's HighPass instances (voiceBusCoupling_, highPass_,
     // commonVcaInputCoupling_, both output-coupling filters, each voice's
@@ -5076,6 +5089,151 @@ void testNoiseSourceShapingFollowsItsCircuit()
            "the rendered noise lost its passband as well as its top");
 }
 
+void testNoiseLevelControlPrecedesC41()
+{
+    expect(EngineParameters {}.enableNoiseLevelBeforeC41,
+           "the schematic-ordered NOISE OTA/C41 path is not the default");
+
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine circuit;
+    YouKnow106Engine legacy;
+    circuit.prepare(sampleRate, 64, false);
+    legacy.prepare(sampleRate, 64, false);
+    YouKnow106TestAccess::setNoiseSourceSupportState(circuit, 0.0, 0.0);
+    YouKnow106TestAccess::setNoiseSourceSupportState(legacy, 0.0, 0.0);
+
+    const auto sourceAt = [](int sample) {
+        // A deterministic broad two-tone keeps C42 and C41 continuously
+        // excited without making this state-ordering contract depend on RNG.
+        return static_cast<float>(
+            0.63 * std::sin(2.0 * pi * 997.0
+                            * static_cast<double>(sample) / sampleRate)
+            + 0.31 * std::sin(2.0 * pi * 3137.0
+                              * static_cast<double>(sample) / sampleRate));
+    };
+
+    // At a fixed gain, linearity makes gain-before-C41 and gain-after-C41 the
+    // same transfer. Pin that non-regression before exercising a level move.
+    double fixedLevelMaximumDifference = 0.0;
+    for (int sample = 0; sample < 2048; ++sample)
+    {
+        const float raw = sourceAt(sample);
+        const float ordered = YouKnow106TestAccess::processMainNoiseSource(
+            circuit, raw, 0.5f, true);
+        const float former = YouKnow106TestAccess::processMainNoiseSource(
+            legacy, raw, 0.5f, false);
+        fixedLevelMaximumDifference = std::max(
+            fixedLevelMaximumDifference,
+            std::abs(static_cast<double>(ordered)
+                     - static_cast<double>(former)));
+    }
+    expect(fixedLevelMaximumDifference < 2.0e-6,
+           "moving the NOISE level around C41 changed a fixed-level transfer");
+    const auto fixedCircuitState =
+        YouKnow106TestAccess::noiseSourceSupportState(circuit);
+    const auto fixedLegacyState =
+        YouKnow106TestAccess::noiseSourceSupportState(legacy);
+    expect(fixedCircuitState[0] == fixedLegacyState[0],
+           "the level control leaked upstream through C42");
+
+    // At the supported 8 kHz HQ-off endpoint, C41's physical 33 us memory is
+    // shorter than one 125 us sample and the qualified TPT pole is negative.
+    // The circuit default must not expose that numerical pole as a fake
+    // alternating mute tail; it deliberately collapses to the legacy scalar
+    // while retaining the established fixed-level filter.
+    YouKnow106Engine endpointCircuit;
+    YouKnow106Engine endpointLegacy;
+    endpointCircuit.prepare(8000.0, 64, false);
+    endpointLegacy.prepare(8000.0, 64, false);
+    for (int sample = 0; sample < 256; ++sample)
+    {
+        const float raw = sourceAt(sample);
+        const float level = sample < 128 ? 1.0f : 0.0f;
+        expect(YouKnow106TestAccess::processMainNoiseSource(
+                   endpointCircuit, raw, level, true)
+                   == YouKnow106TestAccess::processMainNoiseSource(
+                       endpointLegacy, raw, level, false),
+               "the sub-sample C41 fallback exposed an alternating tail");
+    }
+    expect(YouKnow106TestAccess::noiseSourceSupportState(endpointCircuit)
+               == YouKnow106TestAccess::noiseSourceSupportState(endpointLegacy),
+           "the sub-sample C41 fallback changed the qualified endpoint filter");
+
+    // Exercise the public control path as well as the scalar circuit above:
+    // setParameters reaches the one shared NOISE hold through the converter
+    // scan, its 522 us slew drives process(), and the default flag chooses the
+    // ordered path without a test-only call to processMainNoiseSource().
+    YouKnow106Engine integratedCircuit;
+    YouKnow106Engine integratedLegacy;
+    integratedCircuit.prepare(sampleRate, 64, false);
+    integratedLegacy.prepare(sampleRate, 64, false);
+    EngineParameters noisePatch;
+    noisePatch.noiseLevel = 1.0f;
+    integratedCircuit.setParameters(noisePatch);
+    noisePatch.enableNoiseLevelBeforeC41 = false;
+    integratedLegacy.setParameters(noisePatch);
+    integratedCircuit.reset();
+    integratedLegacy.reset();
+
+    std::array<float, 64> left {};
+    std::array<float, 64> right {};
+    const auto processBlock = [&](YouKnow106Engine& engine, int frames) {
+        engine.process(left.data(), right.data(), frames);
+    };
+    for (int block = 0; block < 32; ++block)
+    {
+        processBlock(integratedCircuit, 64);
+        processBlock(integratedLegacy, 64);
+    }
+    expect(YouKnow106TestAccess::noiseSourceSupportState(integratedCircuit)
+               == YouKnow106TestAccess::noiseSourceSupportState(integratedLegacy),
+           "the integrated unity-level NOISE paths did not precharge identically");
+    expect(YouKnow106TestAccess::noiseHeld(integratedCircuit) > 0.999f,
+           "the integrated NOISE hold did not reach full level");
+
+    noisePatch.enableNoiseLevelBeforeC41 = true;
+    noisePatch.noiseLevel = 0.0f;
+    integratedCircuit.setParameters(noisePatch);
+    noisePatch.enableNoiseLevelBeforeC41 = false;
+    integratedLegacy.setParameters(noisePatch);
+    for (int block = 0; block < 56; ++block)
+    {
+        processBlock(integratedCircuit, 64);
+        processBlock(integratedLegacy, 64);
+    }
+
+    double circuitStateEnergy = 0.0;
+    double legacyStateEnergy = 0.0;
+    double maximumStateDifference = 0.0;
+    for (int sample = 0; sample < 512; ++sample)
+    {
+        processBlock(integratedCircuit, 1);
+        processBlock(integratedLegacy, 1);
+        const double circuitState =
+            YouKnow106TestAccess::noiseSourceSupportState(integratedCircuit)[1];
+        const double legacyState =
+            YouKnow106TestAccess::noiseSourceSupportState(integratedLegacy)[1];
+        circuitStateEnergy += circuitState * circuitState;
+        legacyStateEnergy += legacyState * legacyState;
+        maximumStateDifference = std::max(
+            maximumStateDifference, std::abs(circuitState - legacyState));
+    }
+    const auto integratedCircuitState =
+        YouKnow106TestAccess::noiseSourceSupportState(integratedCircuit);
+    const auto integratedLegacyState =
+        YouKnow106TestAccess::noiseSourceSupportState(integratedLegacy);
+    expect(integratedCircuitState[0] == integratedLegacyState[0],
+           "the integrated mute altered the upstream C42 state");
+    expect(YouKnow106TestAccess::noiseHeld(integratedCircuit) < 1.0e-6f,
+           "the scanned NOISE hold did not settle at zero");
+    expect(std::sqrt(circuitStateEnergy / 512.0) < 1.0e-6,
+           "the integrated circuit path kept C41 excited behind Noise zero");
+    expect(std::sqrt(legacyStateEnergy / 512.0) > 1.0e-3,
+           "the integrated legacy path unexpectedly discharged C41");
+    expect(maximumStateDifference > 1.0e-3,
+           "the integrated NOISE control did not reach C41's stored charge");
+}
+
 void testNoiseSourceLowRateSafetyAndStateSemantics()
 {
     constexpr double endpointRate = 8000.0;
@@ -6115,6 +6273,7 @@ int main()
     testHighPassReachesTheSummedSignal();
     testHighPassStateGuardSelfHeals();
     testNoiseSourceShapingFollowsItsCircuit();
+    testNoiseLevelControlPrecedesC41();
     testNoiseSourceLowRateSafetyAndStateSemantics();
     testCorrectionResidualsVanishAtTheEdges();
     

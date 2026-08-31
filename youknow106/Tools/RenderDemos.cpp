@@ -441,8 +441,9 @@ Take renderSelfOscillation()
     return take;
 }
 
-// One pad through the effect's three states: off, I, II. Mode II is faster,
-// not deeper, and the lines' own hiss rides underneath both.
+// One pad through all four live effect states: off, I, II, I+II. Mode II is
+// faster, not deeper; I+II runs the established summed-rate product mode, and
+// the lines' own hiss rides underneath every wet state.
 Take renderChorusModes()
 {
     auto parameters = plainPanel();
@@ -456,7 +457,8 @@ Take renderChorusModes()
 
     take.rest (0.10);
     for (const ChorusMode mode :
-         { ChorusMode::Off, ChorusMode::One, ChorusMode::Two })
+         { ChorusMode::Off, ChorusMode::One, ChorusMode::Two,
+           ChorusMode::OneTwo })
     {
         parameters.chorus = mode;
         take.setParameters (parameters);
@@ -602,7 +604,7 @@ const std::array<Demo, 10>& demos()
           "The filter played as a voice at full resonance and key follow",
           renderSelfOscillation },
         { "06-chorus-modes.wav",
-          "The same pad with the effect off, in mode I, then in mode II",
+          "The same pad with the effect off, in mode I, mode II, then I+II",
           renderChorusModes },
         { "07-unison-glide.wav",
           "Six-voice unison lead with constant-rate portamento",

@@ -185,13 +185,45 @@ Take renderPulseOffWaveNodeTake(bool enablePulseOffWaveNodeCoupling)
     return take;
 }
 
+// 13. The scanned NOISE level controls the BA662 before its C41/R79 output
+// pole. Repeated zero/full moves expose the short physical discharge/refill
+// memory without adding a synthetic click or changing the settled spectrum.
+Take renderNoiseOtaC41MemoryTake(bool enableNoiseLevelBeforeC41)
+{
+    auto p = defaultPanel();
+    p.enableNoiseLevelBeforeC41 = enableNoiseLevelBeforeC41;
+    p.sawEnabled = false;
+    p.pulseEnabled = false;
+    p.subLevel = 0.0f;
+    p.noiseLevel = 0.0f;
+    p.cutoff = 1.0f;
+    p.resonance = 0.0f;
+    p.envDepth = 0.0f;
+    p.vcaMode = VcaMode::Gate;
+    p.vcaLevel = 1.0f;
+    p.volume = 0.65f;
+    Take take(p);
+    take.rest(0.20);
+    take.on(48, 1.0f);
+    take.rest(0.35);
+    for (int transition = 0; transition < 8; ++transition)
+    {
+        p.noiseLevel = (transition % 2 == 0) ? 1.0f : 0.0f;
+        take.setParameters(p);
+        take.rest(0.28);
+    }
+    take.off(48);
+    take.rest(0.30);
+    return take;
+}
+
 struct Comparison
 {
     const char* slug;
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 8> comparisons {{
+const std::array<Comparison, 9> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
     { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
@@ -199,7 +231,8 @@ const std::array<Comparison, 8> comparisons {{
     { "08-chorus-thiran-clock-bleed",     renderChorusClockBleedTake },
     { "09-chorus-hyperbolic-sweep",       renderChorusHyperbolicSweepTake },
     { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take },
-    { "12-pulse-off-wave-node-coupling",  renderPulseOffWaveNodeTake }
+    { "12-pulse-off-wave-node-coupling",  renderPulseOffWaveNodeTake },
+    { "13-noise-ota-c41-memory",           renderNoiseOtaC41MemoryTake }
 }};
 
 struct Report

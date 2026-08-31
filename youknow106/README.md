@@ -41,7 +41,7 @@ the high-pass ladder and the deterministic Unit Character profile.
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −27.1 dBFS | +24.1 dB |
 | `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −24.5 dBFS | +21.5 dB |
 | `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −28.0 dBFS | +25.0 dB |
-| `06-chorus-modes.wav` | The same pad with the effect off, in mode I, then in mode II | 15.8 s | −16.3 dBFS | +13.3 dB |
+| `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −16.3 dBFS | +13.3 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −10.9 dBFS | +7.9 dB |
 | `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −22.2 dBFS | +19.2 dB |
 | `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −15.1 dBFS | +12.1 dB |
@@ -154,8 +154,10 @@ forty-year-old unit will null against the plug-in.
 - Fixed legs, not switchable mixer resistors: saw and pulse arrive summed on
   one WAVE node, Pulse Off leaves its comparator's constant-high state there,
   the sub joins as a diode-gated half-cycle current, one shared Tr21
-  noise source with its own 33.9 Hz–4.8 kHz band shaping feeds every voice
-  (anchored topology and shaping; the level coordinates remain voiced).
+  noise source crosses C42's 33.9 Hz high-pass into the scanned BA662 level
+  OTA, whose output drives the stateful C41/R79 4.8 kHz pole before feeding
+  every voice (anchored topology, shaping and control ordering; the level
+  coordinates remain voiced).
 - C56/C50 couple the mixer into the filter, keeping duty-dependent DC out
   of the signal path (anchored).
 
@@ -484,7 +486,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
 | OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly. Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) has no minimum-stop resistor on LFO RATE, and the A-5 assigner's [exact ADC conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296) maps raw codes 0–5 to stored byte 0; the physical control path therefore does not force byte 1. Its coincidental 0.109 Hz rate cannot replace the reachable byte-0 rate without a unit measurement. The [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bounds PWM's loaded full-travel duty while raw SysEx retains its overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
-| OQ-16 | Main noise spectrum and self-oscillation startup. Level is settled; the shape class is settled from designators (33.9 Hz high-pass, 4822.877 Hz pole), independently corroborated by a restorer's description | P2 |
+| OQ-16 | Installed main-noise spectrum and self-oscillation startup. Level is settled; Roland's p. 13 designators settle the shape class and state ordering (C42's 33.9 Hz high-pass, scanned BA662 level OTA, then C41/R79's 4822.877 Hz pole). Installed-device PSD and startup remain capture questions | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy | P2 |
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056° | P2 |

@@ -5,6 +5,31 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-08-31 — NOISE OTA drives C41
+
+Roland's [module-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13)
+settles the order of one existing circuit: Tr21 crosses C42 into the BA662
+level OTA, and C41/R79 loads that OTA's output. The former model ran both poles
+at full level and multiplied the scanned NOISE hold afterwards in every voice.
+That is equivalent at a fixed level, but not during a move: it kept C41 fully
+excited behind Noise zero and exposed that unrelated stored charge when the
+control rose.
+
+The scanned level now drives the existing C41 state. C42 and the noise source
+continue running while muted, C41 discharges and refills through its existing
+4822.877 Hz pole, and no new pole, reset, click, leakage or BA662 transfer is
+invented. The post-C41 path remains as an internal comparison switch. In a
+matched eight-transition A/B, the difference is −17.5 dBc peak and −54.2 dBc
+RMS, both referenced to the legacy take's whole-take RMS; the settled spectrum
+and gain are unchanged. On coarse HQ-off grids below about 19.3 kHz internal,
+the physical 33 us memory is shorter than one sample and the existing bilinear
+C41 pole is negative; those grids retain the qualified fixed-level filter but
+apply its level afterwards, avoiding a nonphysical alternating mute tail. A
+native Apple M1 Max Release benchmark at 48 kHz/4×
+(256-frame blocks, 1024 timed blocks, 13 alternating repetitions,
+Poly/Cubic/RK4) changed median thread CPU by less than 1% in both the idle and
+six-noise-voice cases, negligible against the standing CPU budget.
+
 ## 2026-08-31 — Pulse-Off WAVE node and evidence boundaries
 
 The service drawings settle one previously provisional behavior: Pulse Off's

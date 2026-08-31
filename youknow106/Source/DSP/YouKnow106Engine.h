@@ -210,6 +210,12 @@ struct EngineParameters
     // existing C56/C50 coupling capacitor remove it. False retains the former
     // hard-zero gate solely for controlled A/B renders.
     bool enablePulseOffWaveNodeCoupling { true };
+    // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
+    // loaded by C41/R79. Putting the scanned NOISE control before that output
+    // pole lets C41 discharge while muted and recharge when the level returns.
+    // Coarse grids that cannot resolve its 33 us memory collapse it safely.
+    // False retains the former post-C41 scalar solely for controlled A/Bs.
+    bool enableNoiseLevelBeforeC41 { true };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
@@ -932,9 +938,9 @@ public:
     // The shared noise generator's own support circuit, module board p. 13:
     // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
     // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
-    // C41 100 pF against R79 330 kOhm (low-pass). The level control sits
-    // between the two poles and is a plain scalar, so shaping the shared
-    // source once ahead of the per-voice level scaling is exact.
+    // C41 100 pF against R79 330 kOhm (low-pass). The BA662 level control sits
+    // between the two poles, so its time-varying gain must drive C41 rather
+    // than scale the already-shaped rail afterwards.
     [[nodiscard]] static float noiseSourceHighPassHz() noexcept;
     [[nodiscard]] static float noiseSourceLowPassHz() noexcept;
 
@@ -2071,6 +2077,8 @@ private:
     void primeStartupVoiceWaveNodes(
         const EngineParameters& parameters) noexcept;
     void updateSharedHighPass(const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float processMainNoiseSource(
+        float rawNoise, float level, bool levelBeforeC41) noexcept;
     struct VoiceFilterFrame
     {
         float input {};

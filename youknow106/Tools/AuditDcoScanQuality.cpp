@@ -58,6 +58,7 @@ struct YouKnow106TestAccess
         EngineParameters parameters;
         parameters.sawEnabled = waveform == Waveform::Saw;
         parameters.pulseEnabled = waveform == Waveform::Pulse;
+        parameters.enablePulseOffWaveNodeCoupling = false;
         parameters.subLevel = waveform == Waveform::Sub ? 1.0f : 0.0f;
         parameters.noiseLevel = 0.0f;
         parameters.cutoff = 0.0f;

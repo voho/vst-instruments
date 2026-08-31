@@ -609,6 +609,7 @@ struct YouKnow106TestAccess
         auto parameters = engine.activeParameters_;
         parameters.sawEnabled = false;
         parameters.pulseEnabled = false;
+        parameters.enablePulseOffWaveNodeCoupling = false;
         parameters.noiseLevel = 0.0f;
         parameters.calibration = 0.0f;
         engine.activeParameters_ = parameters;
