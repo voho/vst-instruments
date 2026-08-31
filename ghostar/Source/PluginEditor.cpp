@@ -28,6 +28,9 @@ const juce::Colour trackPale { 0xff8b8b8e };
 const juce::Colour hairline { 0xff4c4c50 };
 const juce::Colour lampLit { 0xfff2f2f2 };
 const juce::Colour lampDark { 0xff2a2a2c };
+const juce::Colour walnutDark { 0xff38251d };
+const juce::Colour walnutLight { 0xff684735 };
+const juce::Colour focusGold { 0xffffd36a };
 
 // The panel's design geometry. Everything is laid out and painted against
 // these numbers; the window scales the result.
@@ -126,6 +129,23 @@ void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
                                              juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
 
+    // Eleven engraved divisions reproduce the panel's 0--10 control scale.
+    // Longer end and centre marks make the range readable even at the
+    // minimum editor size, without turning the software panel into a meter.
+    g.setColour(silkscreenDim);
+    for (int division = 0; division <= 10; ++division)
+    {
+        const float tickAngle = rotaryStartAngle
+            + static_cast<float>(division) * (rotaryEndAngle - rotaryStartAngle)
+                  / 10.0f;
+        const float length = (division == 0 || division == 5 || division == 10)
+            ? radius * 0.13f : radius * 0.075f;
+        const auto outer = centre.getPointOnCircumference(radius, tickAngle);
+        const auto inner = centre.getPointOnCircumference(radius - length,
+                                                           tickAngle);
+        g.drawLine({ inner, outer }, division % 5 == 0 ? 1.4f : 0.8f);
+    }
+
     const bool bipolar = slider.getProperties()["bipolar"];
     const float originAngle = bipolar
         ? (rotaryStartAngle + rotaryEndAngle) * 0.5f
@@ -162,6 +182,22 @@ void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
     g.setColour(markingBlack);
     g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(
                             centre.x, centre.y));
+
+    // The original bipolar controls call out electrical zero at noon.
+    if (bipolar)
+    {
+        juce::Path zero;
+        zero.addTriangle(centre.x - 3.5f, bounds.getY(), centre.x + 3.5f,
+                         bounds.getY(), centre.x, bounds.getY() + 5.0f);
+        g.setColour(silkscreen);
+        g.fillPath(zero);
+    }
+
+    if (slider.hasKeyboardFocus(false))
+    {
+        g.setColour(focusGold);
+        g.drawEllipse(bounds.expanded(1.0f), 1.5f);
+    }
 }
 
 void GhostarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y,
@@ -205,6 +241,24 @@ void GhostarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y,
     g.setColour(markingBlack);
     g.fillRect(cap.getX() + 4.0f, cap.getCentreY() - 1.0f,
                cap.getWidth() - 8.0f, 2.0f);
+
+    // The Spirit's mixer and envelope travels are explicitly 0--10. Three
+    // restrained scale marks preserve that orientation without crowding the
+    // narrow ADSR banks.
+    g.setColour(silkscreenDim);
+    for (int division : { 0, 5, 10 })
+    {
+        const float yy = track.getBottom()
+            - static_cast<float>(division) * track.getHeight() / 10.0f;
+        g.drawHorizontalLine(juce::roundToInt(yy), track.getX() - 5.0f,
+                             track.getX() - 1.0f);
+    }
+    if (slider.hasKeyboardFocus(false))
+    {
+        g.setColour(focusGold);
+        g.drawRoundedRectangle(slider.getLocalBounds().toFloat().reduced(1.0f),
+                               3.0f, 1.5f);
+    }
 }
 
 void GhostarLookAndFeel::drawToggleButton(juce::Graphics& g,
@@ -245,6 +299,22 @@ void GhostarLookAndFeel::drawToggleButton(juce::Graphics& g,
     g.drawText(button.getButtonText(),
                button.getLocalBounds().withTrimmedLeft(33),
                juce::Justification::centredLeft);
+
+    // Small polarity legends make the two physical throws unambiguous; the
+    // highlighted paddle alone is deliberately not the only state cue.
+    g.setColour(silkscreenDim);
+    g.setFont(juce::FontOptions { 8.0f, juce::Font::bold });
+    g.drawText("ON", juce::Rectangle<int>(0, 0, 17, button.getHeight() / 2),
+               juce::Justification::centred);
+    g.drawText("OFF", juce::Rectangle<int>(0, button.getHeight() / 2, 20,
+                                            button.getHeight() / 2),
+               juce::Justification::centred);
+    if (button.hasKeyboardFocus(false))
+    {
+        g.setColour(focusGold);
+        g.drawRoundedRectangle(button.getLocalBounds().toFloat().reduced(0.5f),
+                               3.0f, 1.5f);
+    }
 }
 
 void GhostarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height,
@@ -266,6 +336,17 @@ void GhostarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height,
     arrow.lineTo(cx + 4.0f, cy - 2.0f);
     g.setColour(silkscreen);
     g.strokePath(arrow, juce::PathStrokeType(1.6f));
+
+    // A short index slot reads like the multi-position rotary selectors on
+    // the hardware while retaining a conventional, accessible popup.
+    g.setColour(trackPale);
+    g.fillRoundedRectangle(bounds.getX() + 6.0f, bounds.getBottom() - 4.0f,
+                           bounds.getWidth() - 25.0f, 1.5f, 0.75f);
+    if (box.hasKeyboardFocus(false))
+    {
+        g.setColour(focusGold);
+        g.drawRoundedRectangle(bounds, 3.0f, 1.5f);
+    }
 }
 
 juce::Font GhostarLookAndFeel::getComboBoxFont(juce::ComboBox&)
@@ -597,6 +678,13 @@ void GhostarAudioProcessorEditor::addKnob(Knob& knob, const char* parameterId,
     knob.slider.setRotaryParameters(rotaryStart, rotaryEnd, true);
     knob.slider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
     knob.slider.setTooltip(tooltip);
+    knob.slider.setName(text);
+    knob.slider.setWantsKeyboardFocus(true);
+    knob.slider.setScrollWheelEnabled(false);
+    knob.slider.setMouseDragSensitivity(220);
+    if (auto* parameter = processor.parameters.getParameter(parameterId))
+        knob.slider.setDoubleClickReturnValue(true,
+                                              parameter->getDefaultValue());
     knob.slider.onValueChange = [this, &knob] {
         if (wiringUp)
             return;
@@ -626,6 +714,12 @@ void GhostarAudioProcessorEditor::addFader(Fader& fader,
     fader.slider.setSliderStyle(juce::Slider::LinearVertical);
     fader.slider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
     fader.slider.setTooltip(tooltip);
+    fader.slider.setName(text);
+    fader.slider.setWantsKeyboardFocus(true);
+    fader.slider.setScrollWheelEnabled(false);
+    if (auto* parameter = processor.parameters.getParameter(parameterId))
+        fader.slider.setDoubleClickReturnValue(true,
+                                               parameter->getDefaultValue());
     fader.slider.onValueChange = [this, &fader] {
         if (wiringUp)
             return;
@@ -652,6 +746,8 @@ void GhostarAudioProcessorEditor::addRocker(Rocker& rocker,
                                           const juce::String& tooltip)
 {
     rocker.button.setTooltip(tooltip);
+    rocker.button.setName(text);
+    rocker.button.setWantsKeyboardFocus(true);
     canvas.addAndMakeVisible(rocker.button);
     rocker.label.setText(text, juce::dontSendNotification);
     rocker.label.setFont(juce::FontOptions { 12.0f });
@@ -670,6 +766,8 @@ void GhostarAudioProcessorEditor::addSelector(Selector& selector,
                                             const juce::String& tooltip)
 {
     selector.box.setTooltip(tooltip);
+    selector.box.setName(text);
+    selector.box.setWantsKeyboardFocus(true);
     canvas.addAndMakeVisible(selector.box);
     selector.label.setText(text, juce::dontSendNotification);
     selector.label.setFont(juce::FontOptions { 12.0f });
@@ -853,6 +951,35 @@ void GhostarAudioProcessorEditor::PanelCanvas::paint(juce::Graphics& g)
 
     g.fillAll(panelCharcoal);
 
+    // Dark walnut cheeks and recessed cross-head fasteners frame the panel as
+    // an instrument rather than a generic collection of widgets. They remain
+    // deliberately narrow so the modelled control geometry does not move.
+    const auto cheek = [this, &g](bool left) {
+        const float x = left ? 0.0f : static_cast<float>(getWidth() - 8);
+        juce::ColourGradient grain(walnutLight, x, 0.0f, walnutDark, x + 8.0f,
+                                   0.0f, false);
+        g.setGradientFill(grain);
+        g.fillRect(x, 0.0f, 8.0f, static_cast<float>(getHeight()));
+    };
+    cheek(true);
+    cheek(false);
+
+    const auto screw = [&g](float x, float y) {
+        g.setColour(markingBlack);
+        g.fillEllipse(x - 4.0f, y - 4.0f, 8.0f, 8.0f);
+        g.setColour(knobRim);
+        g.fillEllipse(x - 3.0f, y - 3.0f, 6.0f, 6.0f);
+        g.setColour(markingBlack);
+        g.drawLine(x - 2.0f, y, x + 2.0f, y, 0.8f);
+        g.drawLine(x, y - 2.0f, x, y + 2.0f, 0.8f);
+    };
+    for (const auto point : { juce::Point<float> { 17.0f, 17.0f },
+                              juce::Point<float> { getWidth() - 17.0f, 17.0f },
+                              juce::Point<float> { 17.0f, getHeight() - 17.0f },
+                              juce::Point<float> { getWidth() - 17.0f,
+                                                   getHeight() - 17.0f } })
+        screw(point.x, point.y);
+
     // The header plate, so the browser reads as chrome rather than as
     // another panel section.
     const auto header =
@@ -895,6 +1022,20 @@ void GhostarAudioProcessorEditor::PanelCanvas::paint(juce::Graphics& g)
         g.setFont(juce::FontOptions { 12.0f, juce::Font::bold });
         const auto titleArea = section.bounds.withHeight(20).reduced(9, 4);
         g.drawText(section.title, titleArea, juce::Justification::centredLeft);
+
+        // The series order is the Spirit's defining architecture. A subtle
+        // L -> U arrow makes that hardware routing visible on the one block
+        // where the order matters, instead of relying on a tooltip.
+        if (section.accent)
+        {
+            const float y = frame.getY() + 12.0f;
+            const float right = frame.getRight() - 10.0f;
+            g.setColour(silkscreenDim);
+            g.drawText("L  →  U", juce::Rectangle<float> { right - 54.0f,
+                                                               y - 7.0f,
+                                                               54.0f, 14.0f },
+                       juce::Justification::centredRight);
+        }
     }
 }
 
