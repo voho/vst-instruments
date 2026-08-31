@@ -53,6 +53,24 @@ reverb, room effect or recorded-note layer.
 | `06-playing-behaviours.wav` | A chord change over a ringing chord, CC2 bridge-hand damping, then two natural harmonics above the fretted range | 10.7 s | −9.4 dBFS | +6.4 dB |
 <!-- peaks-table-end -->
 
+## Real dry-note benchmark
+
+The physical fit is compared with 115 real, dry guitar-note recordings. The
+frozen report separates 83 training examples, 24 development-validation
+examples, and 8 independent flat-top examples; it measures attack, harmonics,
+tuning, early pitch trajectory, decay rate, body spectrum, and dynamics. Lower
+is better, but the absolute score depends on analysis settings, so only paired
+comparisons over identical notes support a decision. Against the reproducible
+neutral calibration, the shipping calibration changes the three scores by
+-22.0%, -16.2%, and -39.3%, respectively. These are engineering descriptors,
+not a listening preference or a claim of perceptual equivalence.
+
+Run `python3 Tools/SummarizePhysicalBenchmark.py` to print the compact split
+table and the five retained realism paths from the committed
+[`physical-fit-report.json`](Docs/physical-fit-report.json). The full renderer
+and scoring protocol remain in [`PhysicalFitRenderer.cpp`](Tools/PhysicalFitRenderer.cpp)
+and [`FitPhysicalModel.py`](Tools/FitPhysicalModel.py).
+
 ## How it works
 
 ### Six-string performance model
