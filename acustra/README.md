@@ -546,14 +546,17 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   12.99 on development validation, and the body is the largest term in both.
   Eight rows cannot become a corpus, and their score is not comparable with the
   other splits' — different rows — but the same eight rows on two builds are.
-- Damping a chord still makes a sound of its own. Releasing six held strings, or
-  lifting the sustain pedal under them, peaks 3.5 times the level the chord had
-  reached, and All Notes Off 2.5 times; the release loss is a per-round-trip
-  gain applied to the sample the loop hands out, so the junction filter is
-  driven by a step even after the differences across it are re-referenced.
-  Moving the loss to what the loop stores removes the step and costs more than
-  it saves, twice measured. A 96-semitone pitch bend, where the delay line
-  clamps, peaks 17 times the chord; two semitones peaks 1.5 times.
+- Damping a chord no longer makes a sound of its own, and the body chosen by
+  ear is what finished it. After the differences across a release were
+  re-referenced it still peaked 3.5 times the level the chord had reached,
+  because the release loss is a per-round-trip gain applied to the sample the
+  loop hands out and the junction filter was still driven by a step. The
+  darker, more damped body rings less on that step: releasing six held strings
+  or lifting the pedal under them now peaks 0.83 times the chord's own level,
+  and All Notes Off 0.84. Moving the loss to what the loop stores removes the
+  step at its source and costs more than it saves, twice measured, so it is
+  still not done. A 96-semitone pitch bend, where the delay line clamps, peaks
+  5.7 times the chord; two semitones peaks 1.4 times.
 - The plate conductance floor extrapolates past a 60--10000 Hz measurement
   rather than measuring the plate asymptote; a wider-band driving-point
   measurement would replace the extrapolation with data. Its effect above
@@ -674,10 +677,12 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   the bridge's immediate admittance at 0.00305 and a string impedance of
   1.0371, the junction's `1 + Y_b*sum(Z)` moves only from 1.0032 to 1.0114
   between one string and six. What made the noise was differencing a released
-  shape. A repluck of a note already sounding on its string still peaks 2.2
-  times the same note alone, and a chord release still peaks 3.2 times its own
-  background; both are superposition and filter response rather than a step,
-  and neither has been reduced further.
+  shape. On this build a note over a six-string chord peaks 0.0162 against
+  0.0169 for the same note on a silent engine, and always on its own attack
+  rather than the first sample. What remains is a repluck of a note already
+  sounding on its string, which peaks 1.6 times the same note struck alone and
+  does so at the first sample: that is the contact residual above, applied in
+  one sample rather than over a contact duration nothing here measures.
 - None of the three faults above could be seen by the reference corpus, which
   renders one note on a fresh engine and never releases it. A benchmark of
   single notes cannot measure a polyphonic error of any size, and this

@@ -683,7 +683,19 @@
    "after": 1.04
   },
   "remaining": "a repluck of a note already sounding on its string peaks 2.2x the same note alone, and a 96-semitone bend, where the delay line clamps, peaks 17x the chord it lands on",
-  "corpus_effect": "none; all 71 model renders are bit-identical, because every fit render is a single note on a fresh engine that is never released"
+  "corpus_effect": "none; all 71 model renders are bit-identical, because every fit render is a single note on a fresh engine that is never released",
+  "after_the_body_chosen_by_ear": {
+   "note_over_a_six_string_chord": {
+    "peak": 0.0162,
+    "same_note_on_a_silent_engine": 0.0169
+   },
+   "chord_release_over_its_own_background": 0.83,
+   "all_notes_off_over_its_own_background": 0.84,
+   "ninety_six_semitone_bend": 5.72,
+   "two_semitone_bend": 1.42,
+   "repluck_of_a_sounding_note": 1.6,
+   "reading": "every gesture measured is now within 1.42x of the level it lands on, most below 1.0x; the darker more damped body rings less on the residual release step that the derivative re-referencing could not remove"
+  }
  },
  "corpus_mismatch_probes": {
   "method": "one parameter swept from the fitted calibration, all three splits rescored; reported, never used to select",

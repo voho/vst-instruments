@@ -2266,3 +2266,43 @@ listener heard nylon in every set and did not separate it out, and the classical
 corpus is indifferent. If a future verdict does separate them, the body has to
 stop being shared - and the calibration already has per-material string values,
 so the shape of that change is known.
+
+## 2026-08-31 — the body chosen by ear finished the transients off
+
+Two transients were left standing this morning after the released-shape and
+release-loss differences were re-referenced: a chord release still peaked 3.5
+times the level the chord had reached, All Notes Off 2.5, and a 96-semitone
+pitch bend 17. The cause was named at the time - the release loss is a
+per-round-trip gain applied to the sample the loop hands out, so the junction
+filter is driven by a step even when the difference across it is not - and two
+attempts at moving the loss to what the loop stores were measured and rejected.
+
+Re-measuring the same gestures on the build the listening verdict produced,
+every one of them is gone:
+
+| Gesture | after the derivative fixes | after the body chosen by ear |
+| --- | ---: | ---: |
+| chord release | 3.5x | 0.83x |
+| sustain pedal up | 3.5x | 0.83x |
+| All Notes Off | 2.5x | 0.84x |
+| 96-semitone bend | 17.3x | 5.72x |
+| two-semitone bend | 1.5x | 1.42x |
+| string set switched | 0.66x | 0.70x |
+| tuning switched | 1.04x | 0.94x |
+
+Nothing in the code changed. The step is still there; what changed is what it
+excites. A darker, more damped body with less high-frequency radiation rings
+less on a step, and the residue the derivative re-referencing could not remove
+was always the junction filter's response to one rather than the step itself.
+
+A note started over a six-string chord now peaks 0.0162 against 0.0169 for the
+same note on a silent engine - indistinguishable - and on its own attack rather
+than the first sample. The one gesture still peaking at the first sample is a
+repluck of a note already sounding on its string, at 1.6 times the same note
+struck alone, and that is the contact residual this file already records: a
+contact applied in one sample because no measurement here supplies a duration.
+
+Worth noting for its own sake. A change made for tone closed a defect that two
+targeted attempts at the mechanism had not, and it did so without touching the
+mechanism. That is an argument for measuring the instrument being played after
+every change to it, not only after changes aimed at how it is played.
