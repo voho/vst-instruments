@@ -605,7 +605,11 @@ PhysicalCalibration AcustraEngine::sanitise(
         bounded(source.bridgeConductanceCornerHz, 100.0f, 8000.0f,
                 fittedPhysicalCalibration.bridgeConductanceCornerHz),
         bounded(source.bridgeTailLengthMetres, 0.008f, 0.060f,
-                fittedPhysicalCalibration.bridgeTailLengthMetres)
+                fittedPhysicalCalibration.bridgeTailLengthMetres),
+        bounded(source.longitudinalGain, 0.0f, 0.5f,
+                fittedPhysicalCalibration.longitudinalGain),
+        bounded(source.longitudinalQ, 10.0f, 400.0f,
+                fittedPhysicalCalibration.longitudinalQ)
     };
 }
 
@@ -950,6 +954,7 @@ void AcustraEngine::resetSoundState() noexcept
     lastBridgeBodyForce_ = 0.0f;
     lastBridgeTailForce_ = 0.0f;
     lastSympatheticRadiationForce_ = 0.0f;
+    lastLongitudinalForce_ = 0.0f;
     lastBridgePower_ = 0.0f;
     lastBridgeBodyPower_ = 0.0f;
     lastBridgeTailPower_ = 0.0f;
@@ -1433,6 +1438,45 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     // the string rather than a fraction of the speaking length.
     voice.bridgeTailStiffness = tension / std::max(
         physicalCalibration_.bridgeTailLengthMetres, 1.0e-5f);
+    // The longitudinal wave speed is sqrt(E*A/mu) for a wound string, whose
+    // axial load the core carries while the whole construction supplies the
+    // mass; plain strings use the same expression with their own diameter.
+    // Both come from the tables the transverse model already uses.
+    {
+        // Where the axial construction is determined. Steel's wound basses
+        // have a published core diameter and plain nylon is homogeneous, but
+        // nylon's three wound basses are given an effective composite density
+        // that is right for transverse mass and wrong for axial stiffness -
+        // the wrap carries almost no axial load - so their longitudinal speed
+        // is not something this data fixes, and they are left out rather than
+        // given a frequency nothing supports.
+        const bool axialKnown = steel || stringIndex >= 3;
+        const float axialDiameter = steel ? steelBendingDiameter[index]
+                                          : diameter;
+        const float axialArea = 0.25f * pi * axialDiameter * axialDiameter;
+        const float longitudinalSpeed = std::sqrt(std::max(
+            youngsModulus * axialArea / std::max(linearMass, 1.0e-9f), 1.0f));
+        const float longitudinal = clamp(
+            longitudinalSpeed / (2.0f * soundingLength), 100.0f,
+            0.45f * static_cast<float>(sampleRate_));
+        const float omegaLong = twoPi * longitudinal * inverseSampleRate_;
+        const float radius = std::exp(-omegaLong
+            / (2.0f * std::max(physicalCalibration_.longitudinalQ, 1.0f)));
+        voice.longitudinalA1 = 2.0f * radius * std::cos(omegaLong);
+        voice.longitudinalA2 = -radius * radius;
+        // Constant peak gain. Without the sin(omega) the resonator's gain at
+        // its own frequency grows with the host rate, and a note rendered at
+        // 192 kHz came out three times the same note at 48.
+        voice.longitudinalB0 = (1.0f - radius * radius) * std::sin(omegaLong);
+        // DAFx-26's tension increase, in newtons, from the same displacement
+        // scale the attack-pitch surrogate is calibrated with.
+        const float displacement
+            = physicalCalibration_.steelDisplacementScaleMetres;
+        voice.longitudinalDrive = axialKnown
+            ? youngsModulus * axialArea * displacement * displacement
+                / (2.0f * soundingLength * soundingLength)
+            : 0.0f;
+    }
     const float measuredBridgeDelay = bridgePhaseDelay(frequency, stringIndex);
     const float desiredPeriodGain = std::pow(0.001f,
         1.0f / std::max(fundamentalT60 * frequency, 1.0f));
@@ -1755,6 +1799,8 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.frozenMemberPitchBendSemitones = 0.0f;
     voice.attackSlopeEnergy = 0.0f;
     voice.observedSlopeEnergy = 0.0f;
+    voice.longitudinalY1 = 0.0f;
+    voice.longitudinalY2 = 0.0f;
     voice.harmonic = 1;
     voice.releaseDamping = 1.0f;
     voice.quietSamples = 0;
@@ -2281,6 +2327,7 @@ void AcustraEngine::setBridgeCouplingEnabled(bool enabled) noexcept
     lastBridgeBodyForce_ = 0.0f;
     lastBridgeTailForce_ = 0.0f;
     lastSympatheticRadiationForce_ = 0.0f;
+    lastLongitudinalForce_ = 0.0f;
     lastBridgePower_ = 0.0f;
     lastBridgeBodyPower_ = 0.0f;
     lastBridgeTailPower_ = 0.0f;
@@ -2327,7 +2374,8 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
                                 float tailIncident, float bridgeDisplacement,
                                 float bridgeVelocity, float& directLeft,
                                 float& directRight,
-                                float& sympatheticForce) noexcept
+                                float& sympatheticForce,
+                                float& longitudinalForce) noexcept
 {
     // A rigid bridge and nut each invert a displacement wave, so the collapsed
     // full-round-trip loop writes +incident.  A moving bridge has reflected
@@ -2341,6 +2389,31 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
         verticalIncident, sampleRateRatio);
     const float horizontalVelocity = voice.loops[1].bridgeVelocity(
         horizontalIncident, sampleRateRatio);
+    // The squared slope is the same quantity for both materials; only the
+    // pitch surrogate above it is steel-only.
+    const float referenceRate48 = 48000.0f / static_cast<float>(sampleRate_);
+    const float slopeV = voice.loops[0].currentDelay
+                       * referenceRate48 * verticalVelocity;
+    const float slopeH = voice.loops[1].currentDelay
+                       * referenceRate48 * horizontalVelocity;
+    const float slopeEnergy = slopeV * slopeV + slopeH * slopeH;
+    if (physicalCalibration_.longitudinalGain > 0.0f && voice.played)
+    {
+        // Stretching the string adds tension, and that tension is a
+        // longitudinal wave with the string's own axial resonances. The drive
+        // is a square, so it carries the products of transverse partials: what
+        // comes out are the sum and difference phantom partials rather than an
+        // added tone.
+        const float excitation = voice.longitudinalB0
+            * voice.longitudinalDrive * slopeEnergy;
+        const float output = excitation
+            + voice.longitudinalA1 * voice.longitudinalY1
+            + voice.longitudinalA2 * voice.longitudinalY2;
+        voice.longitudinalY2 = voice.longitudinalY1;
+        voice.longitudinalY1 = std::isfinite(output) ? output : 0.0f;
+        longitudinalForce += physicalCalibration_.longitudinalGain
+            * voice.longitudinalY1;
+    }
     if (voice.played
         && parameters_.stringMaterial == StringMaterial::Steel)
     {
@@ -2590,6 +2663,7 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         float directLeft = 0.0f;
         float directRight = 0.0f;
         float sympatheticForce = 0.0f;
+        float longitudinalForce = 0.0f;
         for (int string = 0; string < stringCount; ++string)
             finishVoice(voices_[static_cast<std::size_t>(string)], string,
                 verticalIncident[static_cast<std::size_t>(string)],
@@ -2597,15 +2671,17 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                 excitation[static_cast<std::size_t>(string)],
                 tailIncident[static_cast<std::size_t>(string)],
                 bridgeDisplacement, lastBridgeVelocity_,
-                directLeft, directRight, sympatheticForce);
+                directLeft, directRight, sympatheticForce,
+                longitudinalForce);
 
         // DAFx-26 Eq. (45): only Fb participates in the measured body
         // compliance, while unplayed open-string voices are summed one-way
         // into radiation. This force-scaled waveguide analogue uses unity
         // gain; neither term returns from the microphone radiation bank.
         lastSympatheticRadiationForce_ = sympatheticForce;
-        const BodyOutput body = renderBody(
-            lastBridgeBodyForce_ + lastSympatheticRadiationForce_);
+        lastLongitudinalForce_ = longitudinalForce;
+        const BodyOutput body = renderBody(lastBridgeBodyForce_
+            + lastSympatheticRadiationForce_ + lastLongitudinalForce_);
 
         // Strings themselves radiate poorly. Keep the small bridge-local path
         // separate from the measurement-derived, author-transformed soundboard
@@ -2673,6 +2749,11 @@ float AcustraEngine::getLastBridgeTailForce() const noexcept
 float AcustraEngine::getLastSympatheticRadiationForce() const noexcept
 {
     return lastSympatheticRadiationForce_;
+}
+
+float AcustraEngine::getLastLongitudinalForce() const noexcept
+{
+    return lastLongitudinalForce_;
 }
 
 float AcustraEngine::getLastBridgePower() const noexcept

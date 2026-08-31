@@ -114,6 +114,9 @@ public:
     [[nodiscard]] float getLastBridgeBodyForce() const noexcept;
     [[nodiscard]] float getLastBridgeTailForce() const noexcept;
     [[nodiscard]] float getLastSympatheticRadiationForce() const noexcept;
+    // The played strings' own axial wave, kept apart from the idle strings'
+    // radiation because it is a different mechanism on the same one-way path.
+    [[nodiscard]] float getLastLongitudinalForce() const noexcept;
     [[nodiscard]] float getLastBridgePower() const noexcept;
     [[nodiscard]] float getLastBridgeBodyPower() const noexcept;
     [[nodiscard]] float getLastBridgeTailPower() const noexcept;
@@ -321,6 +324,16 @@ private:
         float attackPitchDecay { 1.0f };
         float frozenMemberPitchBendSemitones { 0.0f };
         float attackSlopeEnergy { 0.0f };
+        // Transverse motion stretches the string, and the tension it adds is
+        // carried by the string's own longitudinal modes. One resonator at
+        // c_long/(2L) per voice, driven by the same slope energy the pitch
+        // surrogate uses.
+        float longitudinalY1 { 0.0f };
+        float longitudinalY2 { 0.0f };
+        float longitudinalA1 { 0.0f };
+        float longitudinalA2 { 0.0f };
+        float longitudinalB0 { 0.0f };
+        float longitudinalDrive { 0.0f };
         float observedSlopeEnergy { 0.0f };
         float dispersionDesignFrequency { 0.0f };
         float dispersionDesignInharmonicity { -1.0f };
@@ -389,7 +402,8 @@ private:
                      float horizontalIncident, float excitation,
                      float tailIncident, float bridgeDisplacement,
                      float bridgeVelocity, float& directLeft,
-                     float& directRight, float& sympatheticForce) noexcept;
+                     float& directRight, float& sympatheticForce,
+                     float& longitudinalForce) noexcept;
     BodyOutput renderBody(float bridgeInput) noexcept;
     float nextNoise(Voice& voice) noexcept;
 
@@ -415,6 +429,7 @@ private:
     float lastBridgeBodyForce_ { 0.0f };
     float lastBridgeTailForce_ { 0.0f };
     float lastSympatheticRadiationForce_ { 0.0f };
+    float lastLongitudinalForce_ { 0.0f };
     float lastBridgePower_ { 0.0f };
     float lastBridgeBodyPower_ { 0.0f };
     float lastBridgeTailPower_ { 0.0f };

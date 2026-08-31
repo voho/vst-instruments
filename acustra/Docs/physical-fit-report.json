@@ -30,8 +30,8 @@
   ]
  ],
  "split_role": "held_out is development validation used for promotion gates, not an untouched final test",
- "stored_calibration_values": 27,
- "active_fit_parameters": 26,
+ "stored_calibration_values": 29,
+ "active_fit_parameters": 28,
  "inactive_parameters": [
   "directGain"
  ],
@@ -1005,5 +1005,44 @@
    ]
   },
   "reading": "nylon moves 3.1% worse on training and 2.5% better held out; steel carries the whole trade at 8.2% and 13.4%, with attack 14.9% and body 11.7% worse. Nylon's +13.5 dB 80-160 Hz attack excess is on a band 47 dB below the classical reference's own total, so it changes the aggregate by a fraction of a decibel"
+ },
+ "longitudinal_modes": {
+  "frequencies_hz": {
+   "steel": [
+    1481,
+    1684,
+    2079,
+    2551,
+    3903,
+    3906
+   ],
+   "plain_nylon": 1184
+  },
+  "derivation": "c_long = sqrt(E*A_axial/mu) from the published EJ16 tensions, the Jarvelainen core diameters the bending model uses, and steel's Young's modulus; plain nylon from its own density and modulus. Nothing chosen",
+  "drive": "DAFx-26's EA/(2L) times mean square slope, through the same displacement scale the attack-pitch surrogate is calibrated with; a square, so it carries the products of transverse partials",
+  "measured_band_growth_db": {
+   "quarter_velocity": 5.4,
+   "near_full": 12.7
+  },
+  "adopted": {
+   "longitudinalGain": 0.03,
+   "longitudinalQ": 35
+  },
+  "scores": {
+   "training": [
+    6.836184,
+    6.76847
+   ],
+   "held_out": [
+    6.823805,
+    6.774969
+   ],
+   "flat_top": [
+    5.655082,
+    5.645406
+   ]
+  },
+  "selection": "the strongest setting no split objects to, rather than the training minimum: stronger settings keep improving the two fitted splits and move the flat-top rows away",
+  "excluded": "nylon's three wound basses, whose published density is an effective composite figure right for transverse mass and wrong for axial stiffness"
  }
 }

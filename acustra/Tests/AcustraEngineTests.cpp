@@ -2908,6 +2908,84 @@ void testLegatoHammersOnAndPullsOff()
     }
 }
 
+
+void testLongitudinalModesGrowWithVelocity()
+{
+    // Transverse motion stretches the string, and the tension it adds is a
+    // longitudinal wave at the string's own axial resonances. Its drive is a
+    // squared slope, so what it puts into the band is the products of the
+    // transverse partials and it must grow faster than the note that made it.
+    const auto bandEnergy = [] (const Audio& audio, double low, double high)
+    {
+        return tailBandRms(audio, sampleRate, 0.0, 0.12, low, high);
+    };
+    auto silent = acustra::fittedPhysicalCalibration;
+    silent.longitudinalGain = 0.0f;
+    const auto& sounding = acustra::fittedPhysicalCalibration;
+    expect(sounding.longitudinalGain > 0.0f,
+           "the shipping build has no longitudinal path to test");
+
+    acustra::EngineParameters steel;
+    steel.stringMaterial = acustra::StringMaterial::Steel;
+    double quietGrowth = 0.0;
+    double loudGrowth = 0.0;
+    for (const int midiNote : { 40, 52 })
+    {
+        double growth[2] = { 0.0, 0.0 };
+        int index = 0;
+        for (const float velocity : { 0.25f, 0.95f })
+        {
+            const auto off = renderCalibrated(steel, silent, midiNote,
+                                              velocity, 0.5);
+            const auto on = renderCalibrated(steel, sounding, midiNote,
+                                             velocity, 0.5);
+            const double before = bandEnergy(off, 1500.0, 4000.0);
+            const double after = bandEnergy(on, 1500.0, 4000.0);
+            expect(before > 0.0 && after > before,
+                   "the longitudinal path added no axial-band energy");
+            growth[index++] = 20.0 * std::log10(after / before);
+            for (std::size_t sample = 0; sample < on.left.size(); ++sample)
+                expect(std::isfinite(on.left[sample])
+                           && std::isfinite(on.right[sample]),
+                       "a longitudinal render was not finite");
+        }
+        expect(growth[1] > growth[0] + 3.0,
+               "the longitudinal band did not grow faster than the note");
+        quietGrowth = std::max(quietGrowth, growth[0]);
+        loudGrowth = std::max(loudGrowth, growth[1]);
+    }
+    std::cout << "Acustra longitudinal band growth: quiet=" << quietGrowth
+              << " dB, loud=" << loudGrowth << " dB\n";
+
+    // Zero is an exact no-op, and the idle-string path stays separate from it.
+    acustra::AcustraEngine engine;
+    engine.setPhysicalCalibration(silent);
+    engine.prepare(sampleRate, blockSize);
+    acustra::AcustraEngine playing;
+    playing.setPhysicalCalibration(acustra::fittedPhysicalCalibration);
+    playing.prepare(sampleRate, blockSize);
+    playing.setSympatheticStringsEnabled(false);
+    engine.noteOn(52, 0.9f);
+    playing.noteOn(52, 0.9f);
+    std::vector<float> left(static_cast<std::size_t>(blockSize));
+    std::vector<float> right(static_cast<std::size_t>(blockSize));
+    double silentForce = 0.0;
+    double leakedSympathy = 0.0;
+    for (int block = 0; block < 96; ++block)
+    {
+        engine.process(left.data(), right.data(), blockSize);
+        playing.process(left.data(), right.data(), blockSize);
+        silentForce = std::max(silentForce, static_cast<double>(
+            std::abs(engine.getLastLongitudinalForce())));
+        leakedSympathy = std::max(leakedSympathy, static_cast<double>(
+            std::abs(playing.getLastSympatheticRadiationForce())));
+    }
+    expect(silentForce == 0.0,
+           "a zero longitudinal gain still produced a force");
+    expect(leakedSympathy == 0.0,
+           "the longitudinal force leaked into the idle-string path");
+}
+
 void testTodaysMechanismsSurviveEachOther()
 {
     // The plate conductance floor, the stolen-string tail, bridge-hand
@@ -2950,6 +3028,19 @@ void testTodaysMechanismsSurviveEachOther()
                     case 3:
                         engine.setPitchBend(2.0f);
                         engine.setPalmMutePressure(0.0f);
+                        // Legato goes through the same grinder: hammered on
+                        // over held strings, chained, released out of order,
+                        // and switched off mid-phrase so the fretting hand's
+                        // stack is dropped while the strings are still
+                        // sounding.
+                        engine.setLegato(true);
+                        engine.noteOn(45, 0.8f);
+                        engine.noteOn(48, 0.8f);
+                        engine.noteOn(52, 0.8f);
+                        engine.noteOff(48);
+                        engine.noteOff(52);
+                        if ((step / 6) % 2 == 0)
+                            engine.setLegato(false);
                         break;
                     case 4:
                         parameters.stringMaterial
@@ -3351,6 +3442,7 @@ int main()
     testANoteOverASoundingInstrumentDoesNotClick();
     testSwitchingStringsOrTuningUnderAChordDoesNotClick();
     testLegatoHammersOnAndPullsOff();
+    testLongitudinalModesGrowWithVelocity();
     testTodaysMechanismsSurviveEachOther();
     testNoteAfterSilenceDoesNotClick();
     testRepluckKeepsTheContactResidual();

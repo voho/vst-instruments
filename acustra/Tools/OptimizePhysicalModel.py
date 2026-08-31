@@ -50,29 +50,31 @@ NAMES = (
     "bridgeConductanceFloor",
     "bridgeConductanceCornerHz",
     "bridgeTailLengthMetres",
+    "longitudinalGain",
+    "longitudinalQ",
 )
 LOWER = np.asarray((
     0.96, 0.05, 0.25, -6.0, 0.0,
     0.25, 0.4, 0.35, 0.35, 0.0, 0.7, 0.0,
     0.25, 0.4, 0.35, 0.35, 0.0, 0.7, 0.0,
-    -1.0, 0.25, 0.0, -0.06, 0.5, 0.0, 100.0, 0.008,
+    -1.0, 0.25, 0.0, -0.06, 0.5, 0.0, 100.0, 0.008, 0.0, 10.0,
 ))
 UPPER = np.asarray((
     1.04, 1.8, 4.0, 6.0, 0.12,
     4.0, 2.0, 3.0, 2.5, 3.0, 1.3, 1.2,
     4.0, 2.0, 3.0, 2.5, 3.0, 1.3, 1.2,
-    1.0, 32.0, 0.04, 0.05, 4.0, 0.02, 8000.0, 0.060,
+    1.0, 32.0, 0.04, 0.05, 4.0, 0.02, 8000.0, 0.060, 0.5, 400.0,
 ))
 INITIAL = np.asarray((
     1.0, 1.0, 1.0, 0.0, 0.0,
     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0,
     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0,
-    1.0, 1.0, 0.0061, -0.030, 1.30, 0.0, 1000.0, 0.020,
+    1.0, 1.0, 0.0061, -0.030, 1.30, 0.0, 1000.0, 0.020, 0.0, 80.0,
 ))
 # The bridge-local direct path is deliberately fixed off. Its score direction
 # was flat (and slightly worse on validation), so fitting it only lets a
 # numerical solver choose an arbitrary raw-string mixture.
-GLOBAL = np.asarray((0, 1, 2, 3, 19, 20, 23, 24, 25, 26))
+GLOBAL = np.asarray((0, 1, 2, 3, 19, 20, 23, 24, 25, 26, 27, 28))
 NYLON = np.arange(5, 12)
 STEEL = np.append(np.arange(12, 19), (21, 22))
 

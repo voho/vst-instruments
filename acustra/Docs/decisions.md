@@ -2306,3 +2306,86 @@ Worth noting for its own sake. A change made for tone closed a defect that two
 targeted attempts at the mechanism had not, and it did so without touching the
 mechanism. That is an argument for measuring the instrument being played after
 every change to it, not only after changes aimed at how it is played.
+
+## 2026-08-31 — five proposed mechanisms, checked one at a time
+
+A research brief proposed five mechanisms for realism. Each was checked against
+this codebase and this file's history before any of it was written, because
+three of the five had already been tried here and two of those had been
+rejected on evidence.
+
+**Longitudinal modes and phantom partials — verified, implemented, promoted.**
+The brief's claim that steel's longitudinal modes sit at 1.5 to 3.5 kHz is
+reproduced from the model's own constants: `c_long = sqrt(EA/mu)` with the
+published EJ16 tensions, the Jarvelainen core diameters the bending model
+already uses, and steel's Young's modulus gives 1481, 1684, 2079, 2551, 3903
+and 3906 Hz across the set. Plain nylon gives 1184 Hz. Nothing is chosen. The
+drive is DAFx-26's `EA/(2L)` times mean square slope, through the displacement
+scale the attack-pitch surrogate is already calibrated with, so it is the same
+tension increase that surrogate uses, per sample instead of smoothed. Because
+the drive is a square it carries the products of transverse partials, which is
+what makes the output phantom partials rather than an added tone.
+
+Measured: the 1.5--4 kHz band grows 5.4 dB at a quarter velocity and 12.7 dB
+near full, so 7.3 dB faster than the note. Swept against the corpus it is the
+first change today that improves all three splits at once - training 6.836184
+to 6.768470, development validation 6.823805 to 6.774969, flat-top 5.655082 to
+5.645406 - at a gain of 0.03 and a Q of 35. Stronger settings keep improving
+the two fitted splits and move the flat-top rows away, the same disagreement as
+everything else here, so the value taken is the strongest one no split objects
+to rather than the training minimum.
+
+Two things had to be got right. The resonator needed a constant-peak-gain
+normalisation: without the `sin(omega)` its gain at its own frequency grows
+with the host rate, and the suite caught a note rendered at 192 kHz coming out
+three times the same note at 48. And nylon's three wound basses are excluded,
+because their published density is an effective composite figure that is right
+for transverse mass and wrong for axial stiffness - the wrap carries almost no
+axial load - so nothing in this data fixes their longitudinal speed. With them
+included the mechanism scored worse; with them excluded it improves everything.
+The force also has its own accumulator rather than sharing the idle strings',
+so the sympathetic bypass is still exactly zero.
+
+**Dual-polarisation 2-D bridge — diagnosis correct, numbers invented, not
+taken.** The brief is right that `loops[1]` is computed and does not radiate:
+its only outlet is the bridge-local direct path, whose gain the fit put at zero.
+But the proposed `Y_hh = 0.15 Y_vv` and `Y_vh = 0.05 Y_vv` are chosen numbers,
+and this file already carries a standing decision not to claim a radiating
+second axis without a measured passive 2-D admittance matrix, after a rank-one
+rotation improved a training-only sweep and then failed held-out. One thing the
+brief adds is worth recording: a true 2x2 with an independent `Y_hh` is not the
+same object as the rank-one rotation that was rejected, since a rotation has no
+independent horizontal admittance and therefore cannot produce two-stage decay.
+That distinction does not license inventing the ratio, but it does mean the
+rejection does not cover the proposal.
+
+**Viscoelastic pluck — mostly present, and its two new parts were tried and
+rejected here.** The release aperture already depends on Touch, string, fret
+and register through a fitted law. A finite-release initializer and a smoother
+half-cosine release were both built and both failed predeclared gates, on
+2026-08-30. The remaining proposal, damping the pluck point for 5 to 10 ms
+before release, is the contact duration this file has twice recorded as needing
+a measurement; 5 to 10 ms is a chosen number.
+
+**Coupled Helmholtz A0 and top plate T1 — the premise is wrong.** The body is
+not a bank of independent plate modes fitted to a guess: it is a modal fit to a
+measured force-to-pressure response of a real guitar, so whatever coupling that
+guitar's air cavity and top plate have is already in the data. Replacing it
+with a two-degree-of-freedom lumped model would replace a measurement with a
+model, and this file already records two attempts at replacing that body - a
+raw-phase modal fit and an exact 3000-tap two-microphone FIR - both materially
+worse. What is true is that `Shape` morphs one measured body rather than
+selecting between measured ones, which is already the standing gap.
+
+**Bidirectional bridge and fret collisions — half refuted, half open.** The
+proposed junction `a_k^- = a_k^+ - 2 Z_k/(sum Z_i + Z_bridge) sum a_i^+` is the
+parallel-admittance form, which was derived here on 2026-08-31 to be the wrong
+convention for this junction: strings meeting at a common bridge point share
+its displacement and their forces add, so the load is `sum(Z_i)` and the
+admittance `1/sum(Z_i)`, which is what the code does. Adopting the brief's
+formula would reinstate an error. Fret collision is genuinely absent and
+genuinely valuable, and its threshold - the action height - is a real published
+guitar dimension rather than a chosen one; the reflection penalty of 0.75 the
+brief proposes is not, and a collision that is a barrier rather than a lossy
+reflector needs no penalty at all. That is the next mechanism worth building.
+The hammer-on fret-strike impulse is an authored sound and stays out.
