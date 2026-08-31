@@ -12749,9 +12749,8 @@ void testFactoryPresetCorpusStaysNumericallySafe()
 }
 
 // The firmware may latch both POLY lamps for Solo Unison; the physical contacts
-// themselves are momentary. The CHORUS buttons are electrically interlocked,
-// so a legacy state with both bits set is resolved to the stronger mode II
-// rather than inventing a fourth clock programme.
+// themselves are momentary. The product chorus state, unlike the original
+// patch-memory encoding, deliberately preserves all four button combinations.
 void testPairedSwitchModes()
 {
     expect(keyModeFor(true, false) == KeyMode::Poly1, "POLY 1 alone is not Poly 1");
@@ -12767,14 +12766,15 @@ void testPairedSwitchModes()
            "neither chorus button is not off");
     expect(chorusModeFor(true, false) == ChorusMode::One, "I alone is not mode I");
     expect(chorusModeFor(false, true) == ChorusMode::Two, "II alone is not mode II");
-    expect(chorusModeFor(true, true) == ChorusMode::Two,
-           "a legacy both-chorus state is not canonical mode II");
+    expect(chorusModeFor(true, true) == ChorusMode::OneTwo,
+           "both chorus buttons do not select I+II");
 
     // Round-trip: the engaged-state helpers the editor and the SysEx writer use
     // have to agree with the mode they came from.
-    for (const auto mode : { ChorusMode::Off, ChorusMode::One, ChorusMode::Two })
+    for (const auto mode : { ChorusMode::Off, ChorusMode::One, ChorusMode::Two,
+                             ChorusMode::OneTwo })
         expect(chorusModeFor(chorusOneEngaged(mode), chorusTwoEngaged(mode)) == mode,
-               "a hardware chorus mode did not round trip through its buttons");
+               "a chorus mode did not round trip through its buttons");
     for (int one = 0; one <= 1; ++one)
         for (int two = 0; two <= 1; ++two)
         {

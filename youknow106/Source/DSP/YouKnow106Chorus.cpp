@@ -605,12 +605,15 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     {
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
-        // Compatibility with states written while the plug-in exposed both
-        // buttons at once. The 106 has no fourth control line or fourth clock
-        // programme, so the stronger/faster hardware mode II is the canonical
-        // result.
+        // Product compatibility policy, not a claim about a third resistance
+        // in the original circuit: Roland's current JUNO-106 chorus models
+        // expose I+II, but neither their transfer nor a calibrated original-unit
+        // trace is published. Retain this plug-in's established summed-rate
+        // sound so the fourth state is stable and audibly distinct. The shared
+        // centre, depth and gain are the least speculative continuation of the
+        // two measured modes; a qualifying I+II capture can replace this policy.
         case ChorusMode::OneTwo:
-            return { rateTwo, centre, sweep, lineGain };
+            return { rateOne + rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:
         default:
             // Bypass only mutes the wet return. The oscillator and both BBDs
@@ -1245,8 +1248,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         rateHz_ = target.rateHz;
         sweep_ = target.sweepSeconds;
         centreDelay_ = target.centreDelaySeconds;
-        runningMode_ = chorusTwoEngaged(mode) ? ChorusMode::Two
-                                              : ChorusMode::One;
+        runningMode_ = mode;
     }
     wetGain_ += (target.wetGain - wetGain_) * wetMuteGlide_;
     // TR11/TR12 add no modelled distortion or switching artefact of their own.

@@ -156,17 +156,18 @@ constexpr Placement placements[controlCount] = {
       "Release: sets the exponential fall time after the key is released.",
       ControlKind::Slider, 7, 3, 0, 1, -1, 0 },
 
-    // CHORUS. The hardware gives Off its own key beside the two interlocked
-    // effect keys. The pair remains authoritative underneath.
+    // CHORUS. The two contacts remain authoritative underneath; the editor
+    // adds an I+II convenience key in the fourth row without adding a public
+    // parameter or changing the legacy three-choice automation lane.
     { parameters::legacyChorus, "OFF",
       "Switches the hardware chorus off by releasing both Chorus I and Chorus II latches.",
-      ControlKind::Toggle, 8, 0, 0, 3, -1, 0 },
+      ControlKind::Toggle, 8, 0, 0, 4, -1, 0 },
     { parameters::chorusI, "I",
-      "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.553 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
-      ControlKind::Toggle, 8, 0, 1, 3, -1, 0 },
+      "Selects the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.553 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
+      ControlKind::Toggle, 8, 0, 1, 4, -1, 0 },
     { parameters::chorusII, "II",
-      "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.898 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
-      ControlKind::Toggle, 8, 0, 2, 3, -1, 0 },
+      "Selects the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.898 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
+      ControlKind::Toggle, 8, 0, 2, 4, -1, 0 },
 };
 
 struct Layout

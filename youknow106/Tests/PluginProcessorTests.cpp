@@ -2203,7 +2203,7 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
     expected.vcaMode = VcaMode::Gate;
     expected.envPolarity = EnvPolarity::Inverted;
     expected.highPass = HighPassMode::Three;
-    expected.chorus = ChorusMode::Two;
+    expected.chorus = ChorusMode::OneTwo;
 
     processor.applyPatch (expected);
     const auto recalled = processor.currentPatch();
@@ -2271,6 +2271,16 @@ void testRandomizerPreservesQualityAndLevel()
                          processor, parameters::vcfFastEarlyMode)
                      - vcfFastEarly) < 1.0e-4f,
             "the randomiser moved the VCF Fast Early setting");
+
+    // A subtle randomisation cannot move a boolean through its one-step range.
+    // In particular, it must not treat the valid I+II pair as a state to repair.
+    YouKnow106AudioProcessor both;
+    setParameterValue (both, parameters::chorusI, 1.0f);
+    setParameterValue (both, parameters::chorusII, 1.0f);
+    both.randomizeParameters (0.1f);
+    expect (parameterValue (both, parameters::chorusI) > 0.5f
+                && parameterValue (both, parameters::chorusII) > 0.5f,
+            "the randomiser collapsed I+II to Chorus II");
 }
 
 void testBusLayoutsAndTail()
@@ -2856,6 +2866,25 @@ void testSysExPatchRoundTripsThroughTheParameters()
     expect (returned.highPass == HighPassMode::Boost, "the high-pass did not survive");
     expect (returned.chorus == ChorusMode::One, "the chorus mode did not survive");
 
+    // I+II is a live four-state panel setting even though the hardware tone
+    // memory cannot store it. Export degrades the file to II without changing
+    // the session's authoritative pair.
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+    expect (processor.currentPatch().chorus == ChorusMode::OneTwo,
+            "the current patch did not expose automated I+II");
+    const auto bothEmitted = processor.currentPatchAsSysEx (0);
+    sysex::Patch bothReturned {};
+    expect (sysex::readPatchMessage (
+                bothEmitted.getRawData(),
+                static_cast<std::size_t> (bothEmitted.getRawDataSize()),
+                bothReturned, channel),
+            "the I+II export was not readable");
+    expect (bothReturned.chorus == ChorusMode::Two,
+            "the unstorable I+II export did not degrade to Chorus II");
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
+                && parameterValue (processor, parameters::chorusII) > 0.5f,
+            "exporting I+II changed the live chorus pair");
+
     processor.releaseResources();
 }
 
@@ -3203,6 +3232,7 @@ void testSingleParameterSysExDoesNotDisturbAnythingElse()
     // shows up as a changed value.
     constexpr float awkward = 0.5001f;
     setParameterValue (processor, parameters::decay, awkward);
+    setParameterValue (processor, parameters::chorusI, 1.0f);
     setParameterValue (processor, parameters::chorusII, 1.0f);
 
     // One control moves on the hardware.
@@ -3220,9 +3250,9 @@ void testSingleParameterSysExDoesNotDisturbAnythingElse()
             "a single-parameter message did not reach its control");
     expect (std::abs (parameterValue (processor, parameters::decay) - awkward) < 1.0e-4f,
             "a single-parameter message quantised an untouched control");
-    expect (parameterValue (processor, parameters::chorusI) < 0.5f
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
                 && parameterValue (processor, parameters::chorusII) > 0.5f,
-            "a single-parameter message disturbed chorus II");
+            "a single-parameter message disturbed I+II");
 
     // Now edit something else from the UI side, then send another hardware
     // update. The second message must not resurrect the panel as it stood when
@@ -3696,6 +3726,14 @@ void testLegacyAutomationIdsStillReachTheSwitches()
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
             "the legacy bridge overwrote a switch the player had just moved");
 
+    // The modern pair has four valid combinations. The old three-way id cannot
+    // select I+II, but neither may its timer erase a direct automation write.
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+    processor.forwardLegacyModeParametersForTest();
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
+                && parameterValue (processor, parameters::chorusII) > 0.5f,
+            "the legacy bridge collapsed automated I+II to Chorus II");
+
     processor.releaseResources();
 }
 
@@ -4064,10 +4102,9 @@ void testLegacyForwarderCanonicalisesBothPolyLampsOff()
 void testRestoringASessionDoesNotOverwriteItsOwnModeSwitches()
 {
     YouKnow106AudioProcessor source;
-    // Reach Unison and Chorus II through the legacy ids, then present the
-    // invalid both-buttons-on state that a short-lived older build could save.
-    // Restore keeps Unison, but canonicalises that chorus state to II because
-    // the JUNO-106 cannot engage both modes simultaneously.
+    // Reach Unison and Chorus II through the legacy ids, then select I+II
+    // through the complete modern pair. The old chorus choice cannot name that
+    // mode, so the saved pair must remain authoritative after restore.
     setParameterValue (source, parameters::legacyKeyMode, 2.0f);
     setParameterValue (source, parameters::legacyChorus, 2.0f);
     source.forwardLegacyModeParametersForTest();
@@ -4081,9 +4118,9 @@ void testRestoringASessionDoesNotOverwriteItsOwnModeSwitches()
     restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
     restored.forwardLegacyModeParametersForTest();
 
-    expect (parameterValue (restored, parameters::chorusI) < 0.5f
+    expect (parameterValue (restored, parameters::chorusI) > 0.5f
                 && parameterValue (restored, parameters::chorusII) > 0.5f,
-            "restoring both chorus buttons did not canonicalise the state to II");
+            "restoring a session collapsed I+II to Chorus II");
     expect (parameterValue (restored, parameters::poly1) > 0.5f
                 && parameterValue (restored, parameters::poly2) > 0.5f,
             "the first tick after a restore put the assign mode back to the legacy id");
@@ -4361,16 +4398,16 @@ void testFactoryProgramsLoad()
     expect (processor.getCurrentProgram() == 2,
             "a program index past the end changed the selection");
 
-    // The 106 has only off, I and II, and every factory entry must therefore
-    // survive its real patch-memory representation without an invented I+II
-    // suffix or a change to its effective 7-bit state.
+    // The factory bank contains only the three chorus states its tone memory
+    // can store. Live I+II remains a valid panel state, but no factory entry can
+    // carry it through the 18-byte patch format.
     for (int index = 1; index < processor.getNumPrograms(); ++index)
     {
         expect (presets::factoryBank()[static_cast<std::size_t> (index - 1)]
                     .exportsLosslessly(),
                 "a factory preset does not survive patch memory");
         expect (! processor.getProgramName (index).contains ("I+II"),
-                "a factory preset still advertises an impossible chorus mode");
+                "a factory preset advertises an unstorable I+II chorus mode");
     }
 }
 
@@ -4848,13 +4885,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Seven extension knobs, ten utility buttons plus the QUALITY and VCF
+    // Seven extension knobs, eleven utility buttons plus the QUALITY and VCF
     // SOLVER selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 7 + 12 + 6 + 21 + 1 + 1;
+        panel::controlCount + 7 + 13 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -5172,6 +5209,35 @@ void testPersistentContextHelpAndValueBubbles()
         }
         setPoly (parameters::poly1, true);
         setPoly (parameters::poly2, false);
+
+        // The chorus pair is likewise one categorical value. Its legacy host
+        // choice has only three names, so the fourth live state must still
+        // report its own literal value from all four selectors.
+        const std::pair<std::array<bool, 2>, const char*> chorusModes[] = {
+            { { false, false }, "Off" },
+            { { true, false },  "I" },
+            { { false, true },  "II" },
+            { { true, true },   "I+II" }
+        };
+        for (const auto& mode : chorusModes)
+        {
+            setPoly (parameters::chorusI, mode.first[0]);
+            setPoly (parameters::chorusII, mode.first[1]);
+            for (const auto* selector : { "OFF", "I", "II", "I+II" })
+            {
+                auto* target = findDescendantNamed (*editor, selector);
+                expect (target != nullptr,
+                        std::string ("the panel has no chorus ") + selector
+                            + " selector");
+                if (target != nullptr)
+                    expect (ourEditor->parameterValueTextFor (target)
+                                == mode.second,
+                            std::string ("hovering chorus ") + selector
+                                + " did not report " + mode.second);
+            }
+        }
+        setPoly (parameters::chorusI, false);
+        setPoly (parameters::chorusII, false);
     }
 
     // Numeric readouts are JUCE Slider popups, independent of the removed
@@ -5608,15 +5674,15 @@ void testClickingTheSelectedRadioKeepsItsLampLit()
             "clicking the selected range radio moved its parameter");
 }
 
-// The two chorus contacts interlock, so a press on one releases the other.
-// That is a property of a press. While the interlock ran from a
-// ButtonAttachment it also ran for parameter-driven lamp updates, so a host
+// A direct Chorus I or II press selects that single mode, while the dedicated
+// I+II key selects both contacts. Those transitions are properties of a press.
+// While the single-key selection ran from a ButtonAttachment it also ran for
+// parameter-driven lamp updates, so a host
 // automating Chorus I silently wrote Chorus II as well -- but only while the
 // editor happened to be open, which made the rendered mode depend on whether
-// the window was on screen. Automation can also leave the raw 11 pair until
-// the processor's compatibility timer runs; the DSP calls that mode II, so the
-// lamps and the action of its visibly lit key must call it mode II as well.
-void testChorusInterlockOnlyRunsForARealPress()
+// the window was on screen. Keep automation passive while checking all four
+// canonical lamps and button transitions.
+void testChorusSelectionOnlyRunsForARealPress()
 {
     YouKnow106AudioProcessor processor;
     setParameterValue (processor, parameters::chorusI, 1.0f);
@@ -5632,38 +5698,42 @@ void testChorusInterlockOnlyRunsForARealPress()
         findDescendantNamed (*editor, "II"));
     auto* chorusOff = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "OFF"));
-    expect (chorusOff != nullptr && chorusOne != nullptr && chorusTwo != nullptr,
-            "the editor's three chorus buttons were not found");
-    if (chorusOff == nullptr || chorusOne == nullptr || chorusTwo == nullptr)
+    auto* chorusBoth = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "I+II"));
+    expect (chorusOff != nullptr && chorusOne != nullptr && chorusTwo != nullptr
+                && chorusBoth != nullptr,
+            "the editor's four chorus buttons were not found");
+    if (chorusOff == nullptr || chorusOne == nullptr || chorusTwo == nullptr
+        || chorusBoth == nullptr)
         return;
 
-    const auto expectLamps = [chorusOff, chorusOne, chorusTwo] (
-                                 bool off, bool one, bool two,
+    const auto expectLamps = [chorusOff, chorusOne, chorusTwo, chorusBoth] (
+                                 bool off, bool one, bool two, bool both,
                                  const char* transition)
     {
         expect (chorusOff->getToggleState() == off
                     && chorusOne->getToggleState() == one
-                    && chorusTwo->getToggleState() == two,
+                    && chorusTwo->getToggleState() == two
+                    && chorusBoth->getToggleState() == both,
                 std::string ("the chorus lamps do not show ") + transition
                     + " (actual "
                     + (chorusOff->getToggleState() ? "1" : "0")
                     + (chorusOne->getToggleState() ? "1" : "0")
-                    + (chorusTwo->getToggleState() ? "1" : "0") + ")");
+                    + (chorusTwo->getToggleState() ? "1" : "0")
+                    + (chorusBoth->getToggleState() ? "1" : "0") + ")");
     };
 
     expect (! chorusOne->getClickingTogglesState()
-                && ! chorusTwo->getClickingTogglesState(),
+                && ! chorusTwo->getClickingTogglesState()
+                && ! chorusBoth->getClickingTogglesState(),
             "the chorus keys still drive their own lamps");
-    expectLamps (false, false, true, "canonical Chorus II for the I+II pair");
+    expectLamps (false, false, false, true, "I+II");
 
-    // II is the key the player can see lit for 11. Pressing it must therefore
-    // switch the effect off, rather than reveal the otherwise hidden I bit.
-    chorusTwo->onClick();
+    chorusBoth->onClick();
     expect (parameterValue (processor, parameters::chorusI) < 0.5f
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
-            "pressing canonical Chorus II did not clear the raw I+II pair");
-    expectLamps (true, false, false,
-                 "Off after pressing canonical Chorus II");
+            "pressing the lit I+II key did not switch the chorus off");
+    expectLamps (true, false, false, false, "Off after I+II");
 
     // A host lane -- or a preset recall, or a patch dump -- writing one of the
     // pair must leave the other exactly where it was.
@@ -5675,38 +5745,43 @@ void testChorusInterlockOnlyRunsForARealPress()
     expect (parameterValue (processor, parameters::chorusI) > 0.5f,
             "a host write to Chorus I did not take");
 
-    // A press still interlocks, which is what the panel does.
-    setParameterValue (processor, parameters::chorusI, 0.0f);
-    setParameterValue (processor, parameters::chorusII, 1.0f);
+    // A direct single-mode press reduces I+II to that selected mode.
     chorusOne->onClick();
     expect (parameterValue (processor, parameters::chorusI) > 0.5f,
             "pressing the Chorus I key did not engage it");
     expect (parameterValue (processor, parameters::chorusII) < 0.5f,
             "pressing the Chorus I key left Chorus II engaged");
-    expectLamps (false, true, false, "Chorus I after a live switch");
+    expectLamps (false, true, false, false, "Chorus I after I+II");
 
     // And pressing the lit key switches the chorus off, as on the panel.
     chorusOne->onClick();
     expect (parameterValue (processor, parameters::chorusI) < 0.5f
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
             "pressing the lit Chorus I key did not switch the chorus off");
-    expectLamps (true, false, false, "Off after a live switch");
+    expectLamps (true, false, false, false, "Off after a live switch");
 
     chorusTwo->onClick();
     expect (parameterValue (processor, parameters::chorusI) < 0.5f
                 && parameterValue (processor, parameters::chorusII) > 0.5f,
             "pressing the Chorus II key did not engage it");
-    expectLamps (false, false, true, "Chorus II after a live switch");
+    expectLamps (false, false, true, false, "Chorus II after a live switch");
+
+    chorusBoth->onClick();
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
+                && parameterValue (processor, parameters::chorusII) > 0.5f,
+            "pressing I+II did not engage both chorus contacts");
+    expectLamps (false, false, false, true, "I+II after Chorus II");
 
     chorusOne->onClick();
     expect (parameterValue (processor, parameters::chorusI) > 0.5f
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
             "switching back to Chorus I did not interlock the pair");
-    expectLamps (false, true, false, "Chorus I after switching back from II");
+    expectLamps (false, true, false, false,
+                 "Chorus I after switching back from I+II");
 
     // The lamps read their own parameters when the window opens, so a session
     // or patch recalled while the editor was shut shows the right key lit.
-    setParameterValue (processor, parameters::chorusI, 0.0f);
+    setParameterValue (processor, parameters::chorusI, 1.0f);
     setParameterValue (processor, parameters::chorusII, 1.0f);
     editor.reset();
     std::unique_ptr<juce::AudioProcessorEditor> reopened (processor.createEditor());
@@ -5717,10 +5792,16 @@ void testChorusInterlockOnlyRunsForARealPress()
         findDescendantNamed (*reopened, "I"));
     auto* reopenedTwo = dynamic_cast<juce::Button*> (
         findDescendantNamed (*reopened, "II"));
-    expect (reopenedOne != nullptr && reopenedTwo != nullptr,
+    auto* reopenedBoth = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*reopened, "I+II"));
+    expect (reopenedOne != nullptr && reopenedTwo != nullptr
+                && reopenedBoth != nullptr,
             "the reopened editor lost its chorus buttons");
-    if (reopenedOne != nullptr && reopenedTwo != nullptr)
-        expect (reopenedTwo->getToggleState() && ! reopenedOne->getToggleState(),
+    if (reopenedOne != nullptr && reopenedTwo != nullptr
+        && reopenedBoth != nullptr)
+        expect (reopenedBoth->getToggleState()
+                    && ! reopenedOne->getToggleState()
+                    && ! reopenedTwo->getToggleState(),
                 "the chorus lamps do not follow their parameters when the "
                 "window opens");
 }
@@ -6246,6 +6327,7 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                     + sectionName + " section");
     };
     checkInsideSection ("UNISON", 1, "Voice Mode");
+    checkInsideSection ("I+II", 8, "Chorus");
     checkInsideSection ("Chorus noise", 8, "Chorus");
     checkInsideSection ("Chorus noise label", 8, "Chorus");
 
@@ -6271,13 +6353,15 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     auto* chorusOff = findDescendantNamed (editor, "OFF");
     auto* chorusI = findDescendantNamed (editor, "I");
     auto* chorusII = findDescendantNamed (editor, "II");
+    auto* chorusBoth = findDescendantNamed (editor, "I+II");
     expect (hiss != nullptr && hissLabel != nullptr && chorusOff != nullptr
-                && chorusI != nullptr && chorusII != nullptr,
-            "Chorus is missing HISS or an OFF/I/II key");
+                && chorusI != nullptr && chorusII != nullptr
+                && chorusBoth != nullptr,
+            "Chorus is missing HISS or an OFF/I/II/I+II key");
     if (hiss != nullptr && hissLabel != nullptr && chorusOff != nullptr
-        && chorusI != nullptr && chorusII != nullptr)
+        && chorusI != nullptr && chorusII != nullptr && chorusBoth != nullptr)
     {
-        for (auto* chorusKey : { chorusOff, chorusI, chorusII })
+        for (auto* chorusKey : { chorusOff, chorusI, chorusII, chorusBoth })
             expect (! componentArea (hiss).intersects (componentArea (chorusKey))
                         && ! componentArea (hissLabel).intersects (
                             componentArea (chorusKey)),
@@ -6704,7 +6788,7 @@ int main()
     testEditorReloadButtonDiscardsPatchEdits();
     testEditorRandomizeStrengthsAndReset();
     testClickingTheSelectedRadioKeepsItsLampLit();
-    testChorusInterlockOnlyRunsForARealPress();
+    testChorusSelectionOnlyRunsForARealPress();
     testProgrammerRowKeysShareOneKeyFace();
     testPerformanceLeverKeepsTheAxisStillHeld();
     testPolyButtonsKeepAValidFirmwareLatch();

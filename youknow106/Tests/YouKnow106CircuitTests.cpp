@@ -3236,21 +3236,25 @@ void testJuno60FallbackBucketBrigadeTiming()
                    "chorus bypass moved the dry signal off centre");
     }
 
-    // The hardware interlock and its one enable plus one I/II control line
-    // cannot encode a fourth mode. Old sessions may still contain OneTwo, so
-    // that compatibility value has one deterministic canonical result: II.
+    // Roland's current JUNO-106 chorus models expose I+II, while the original
+    // control path still provides no evidence for a third analogue rate. The
+    // established summed rate is therefore an explicit product compatibility
+    // policy, not a conductance derivation. Keep it stable and distinct until
+    // a qualifying original-unit capture can replace it.
     const auto both = Chorus::settingsFor(ChorusMode::OneTwo);
-    expectNear(both.rateHz, two.rateHz, 1.0e-9,
-               "legacy I+II did not canonicalise to II's rate");
-    expectNear(both.sweepSeconds, two.sweepSeconds, 1.0e-9,
-               "legacy I+II did not canonicalise to II's depth");
-    expectNear(both.centreDelaySeconds, two.centreDelaySeconds, 1.0e-9,
-               "legacy I+II did not canonicalise to II's centre delay");
-    expectNear(both.wetGain, two.wetGain, 1.0e-9,
-               "legacy I+II did not canonicalise to II's line gain");
+    expectNear(both.rateHz, static_cast<double>(one.rateHz) + two.rateHz, 1.0e-7,
+               "I+II lost its established summed-rate policy");
+    expect(both.rateHz > two.rateHz,
+           "I+II is not audibly distinct from mode II by rate");
+    expectNear(both.sweepSeconds, one.sweepSeconds, 1.0e-9,
+               "I+II changed the shared sweep depth");
+    expectNear(both.centreDelaySeconds, one.centreDelaySeconds, 1.0e-9,
+               "I+II changed the shared centre delay");
+    expectNear(both.wetGain, one.wetGain, 1.0e-9,
+               "I+II changed the shared line gain");
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::OneTwo),
                Chorus::measuredModeNoiseGain(ChorusMode::Two), 1.0e-9,
-               "legacy I+II did not canonicalise to II's noise calibration");
+               "I+II changed its provisional II noise profile without a capture");
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::One), 1.0, 1.0e-9,
                "the empirical mode calibration moved mode I's part anchor");
     expectNear(Chorus::measuredModeNoiseGain(ChorusMode::Off), 1.0, 1.0e-9,
@@ -3278,8 +3282,12 @@ void testJuno60FallbackBucketBrigadeTiming()
                "mode I did not replace the hidden running noise profile");
         chorus.process(0.0f, ChorusMode::OneTwo, 0.0f, left, right);
         expect(YouKnow106TestAccess::runningChorusMode(chorus)
-                   == ChorusMode::Two,
-               "legacy I+II did not select II's hidden noise profile");
+                   == ChorusMode::OneTwo,
+               "I+II was canonicalised before selecting its DSP profile");
+        chorus.process(0.0f, ChorusMode::Off, 0.0f, left, right);
+        expect(YouKnow106TestAccess::runningChorusMode(chorus)
+                   == ChorusMode::OneTwo,
+               "chorus bypass discarded the hidden I+II profile");
     }
 
     // And it has to be observable, not just tabulated: run the effect in each
@@ -3303,8 +3311,10 @@ void testJuno60FallbackBucketBrigadeTiming()
     const double travelTwo = phaseTravel(ChorusMode::Two);
     const double travelBoth = phaseTravel(ChorusMode::OneTwo);
     const double travelOff = phaseTravel(ChorusMode::Off);
-    expectNear(travelBoth, travelTwo, 1.0e-6,
-               "legacy I+II renders a different clock programme from II");
+    expectNear(travelBoth, travelOne + travelTwo, 1.0e-4,
+               "rendered I+II did not retain the summed-rate policy");
+    expect(travelBoth > travelTwo,
+           "rendered I+II is not distinct from mode II");
     expectNear(travelOff, travelOne, 1.0e-6,
                "the chorus oscillator stopped or changed speed in bypass");
     // The derived ratio has to survive all the way to rendered audio, not just

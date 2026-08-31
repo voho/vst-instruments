@@ -422,13 +422,6 @@ void YouKnow106AudioProcessor::migrateSplitModeParameters (juce::ValueTree& stat
         }
     }
 
-    // Builds that briefly exposed I+II could save both booleans. A JUNO-106
-    // has one enable line and one I/II line, so canonicalise that obsolete
-    // fourth state to the hardware's stronger Mode II on restore.
-    if (storedParameterValue (state, chorusI, 0.0f) > 0.5f
-        && storedParameterValue (state, chorusII, 0.0f) > 0.5f)
-        setStoredParameterValue (state, chorusI, 0.0f);
-
     // The two-state HQ switch became the three-rung quality ladder. Its stored
     // value is a boolean, so it names the two endpoints and nothing in between:
     // on is the deepest rung, off the cheapest. A state that already carries the
@@ -1602,13 +1595,6 @@ void YouKnow106AudioProcessor::serialiseStateSnapshot (
     if (! state.isValid())
         return;
 
-    // Host automation can address the two compatibility booleans without
-    // going through the interlocked panel. Persist the audio engine's
-    // canonical interpretation, mode II, rather than another both-on state.
-    if (storedParameterValue (state, youknow106::parameters::chorusI, 0.0f) > 0.5f
-        && storedParameterValue (state, youknow106::parameters::chorusII, 0.0f)
-               > 0.5f)
-        setStoredParameterValue (state, youknow106::parameters::chorusI, 0.0f);
     if (storedParameterValue (state, youknow106::parameters::poly1, 0.0f) <= 0.5f
         && storedParameterValue (state, youknow106::parameters::poly2, 0.0f)
                <= 0.5f)
@@ -1686,12 +1672,6 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
         parameter->endChangeGesture();
     }
 
-    // The hardware buttons interlock. A full randomisation can independently
-    // land both automatable booleans high, so resolve that obsolete state to
-    // mode II just as state restore and patch recall do.
-    if (valueOf (chorusI) > 0.5f && valueOf (chorusII) > 0.5f)
-        if (auto* first = parameters.getParameter (chorusI))
-            first->setValueNotifyingHost (first->convertTo0to1 (0.0f));
     if (valueOf (poly1) <= 0.5f && valueOf (poly2) <= 0.5f)
         if (auto* first = parameters.getParameter (poly1))
             first->setValueNotifyingHost (first->convertTo0to1 (1.0f));
@@ -2005,10 +1985,8 @@ void YouKnow106AudioProcessor::applyPatchValues (
     set (vcaMode, static_cast<float> (patch.vcaMode));
     set (envPolarity, static_cast<float> (patch.envPolarity));
     set (highPass, static_cast<float> (patch.highPass));
-    const auto chorus = patch.chorus == youknow106::ChorusMode::OneTwo
-                           ? youknow106::ChorusMode::Two : patch.chorus;
-    set (chorusI, youknow106::chorusOneEngaged (chorus) ? 1.0f : 0.0f);
-    set (chorusII, youknow106::chorusTwoEngaged (chorus) ? 1.0f : 0.0f);
+    set (chorusI, youknow106::chorusOneEngaged (patch.chorus) ? 1.0f : 0.0f);
+    set (chorusII, youknow106::chorusTwoEngaged (patch.chorus) ? 1.0f : 0.0f);
 
     // A compatibility automation write can arrive just before this recall and
     // still be waiting for both the audio bridge and the message-thread timer.
@@ -2034,6 +2012,9 @@ void YouKnow106AudioProcessor::applyProgramValues (
             parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
     };
 
+    // The compatibility choice predates the independent contacts and has no
+    // I+II value. Keep its old three-value host contract while applyPatchValues
+    // below writes the complete four-state pair.
     const auto chorus = patch.chorus == youknow106::ChorusMode::OneTwo
                           ? youknow106::ChorusMode::Two : patch.chorus;
     set (legacyKeyMode, static_cast<float> (controls.keyMode));
@@ -2119,8 +2100,7 @@ void YouKnow106AudioProcessor::applyPatchToEngineParameters (
     destination.vcaMode = patch.vcaMode;
     destination.envPolarity = patch.envPolarity;
     destination.highPass = patch.highPass;
-    destination.chorus = patch.chorus == youknow106::ChorusMode::OneTwo
-                           ? youknow106::ChorusMode::Two : patch.chorus;
+    destination.chorus = patch.chorus;
 }
 
 void YouKnow106AudioProcessor::applyPendingMidiEventToEngine (
@@ -2594,13 +2574,6 @@ void YouKnow106AudioProcessor::forwardLegacyModeParameters()
         forwardedLegacyChorus.store (chorusMode, std::memory_order_relaxed);
         chorusForwardGeneration.fetch_add (1, std::memory_order_release);
     }
-
-    // Direct host automation can bypass the editor's button interlock. The
-    // audio side already interprets both high as II; bring the public state and
-    // lamps to the same canonical value on this message-thread tick.
-    if (valueOf (chorusI) > 0.5f && valueOf (chorusII) > 0.5f)
-        if (auto* first = parameters.getParameter (chorusI))
-            first->setValueNotifyingHost (first->convertTo0to1 (0.0f));
 
     // Likewise, direct automation can clear both assign lamps even though the
     // firmware always leaves Poly 1, Poly 2 or both latched. The audio fallback

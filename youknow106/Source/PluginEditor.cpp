@@ -2087,6 +2087,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     nameButton (randomize50Button);
     nameButton (resetButton);
     nameButton (unisonButton);
+    nameButton (chorusBothButton);
     portamentoToggleButton.setName ("Portamento switch");
     portamentoToggleButton.setTitle ("Portamento switch");
     syxLoadButton.setName ("Load patch file");
@@ -2197,6 +2198,23 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     addAndMakeVisible (unisonButton);
     attachUnisonButton (unisonButton);
 
+    chorusBothButton.setClickingTogglesState (false);
+    chorusBothButton.getProperties().set (hardwareStyleProperty, true);
+    chorusBothButton.getProperties().set (hardwareKeyCentreProperty,
+                                          hardwareKeyCentre);
+    chorusBothButton.setColour (
+        juce::TextButton::buttonColourId,
+        fromPalette (panel::colour::control));
+    chorusBothButton.setColour (
+        juce::TextButton::buttonOnColourId,
+        fromPalette (panel::colour::control).brighter (0.08f));
+    chorusBothButton.setTooltip (
+        "Selects the dedicated I+II chorus state represented by both chorus "
+        "contacts. Sessions retain it; hardware-format .syx files save it as "
+        "Chorus II because the Juno-106 tone-memory byte has only Off, I and II.");
+    addAndMakeVisible (chorusBothButton);
+    attachChorusBothButton (chorusBothButton);
+
     portamentoToggleButton.setClickingTogglesState (false);
     portamentoToggleButton.getProperties().set (hardwareStyleProperty, true);
     portamentoToggleButton.getProperties().set (hardwareKeyCentreProperty,
@@ -2258,6 +2276,8 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
     syxSaveButton.setTooltip (
         "Saves the current tone as a hardware-compatible .syx patch dump. "
+        "The live I+II chorus state is written as Chorus II because the tone "
+        "format has no fourth chorus code. "
         "Volume, the benders, portamento, the assign mode and the plug-in "
         "extensions are performance controls and are not stored, exactly as "
         "on the hardware.");
@@ -2693,6 +2713,14 @@ void YouKnow106AudioProcessorEditor::importPatchFile (const juce::File& file)
 
 void YouKnow106AudioProcessorEditor::exportPatchFile (const juce::File& file)
 {
+    const auto engaged = [this] (const char* id)
+    {
+        const auto* value = audioProcessor.parameters.getRawParameterValue (id);
+        return value != nullptr
+            && value->load (std::memory_order_relaxed) > 0.5f;
+    };
+    const bool exportedBothAsTwo = engaged (parameters::chorusI)
+                                && engaged (parameters::chorusII);
     const auto message = audioProcessor.currentPatchAsSysEx (
         audioProcessor.sysExMidiChannel());
     if (message.getRawDataSize() == 0
@@ -2708,8 +2736,11 @@ void YouKnow106AudioProcessorEditor::exportPatchFile (const juce::File& file)
     contextHelp.showNotice (
         "SAVE",
         "Saved the current tone as \"" + file.getFileName()
-            + "\". Performance controls travel with the session, not the "
-              "patch, as on the hardware.");
+            + (exportedBothAsTwo
+                   ? "\". I+II was stored as Chorus II because hardware "
+                     "tone memory has no I+II code."
+                   : "\". Performance controls travel with the session, not "
+                     "the patch, as on the hardware."));
 }
 
 void YouKnow106AudioProcessorEditor::attachSlider (juce::Slider& slider,
@@ -2766,12 +2797,15 @@ void YouKnow106AudioProcessorEditor::refreshChorusButtons()
                           : mode == ChorusMode::Two,
             juce::dontSendNotification);
     }
+    chorusBothButton.setToggleState (mode == ChorusMode::OneTwo,
+                                     juce::dontSendNotification);
 }
 
 void YouKnow106AudioProcessorEditor::attachExclusiveButton (
     juce::Button& button, const char* parameterId, const char* otherParameterId)
 {
-    // The two chorus contacts interlock, so pressing one releases the other.
+    // A direct I or II press selects that single contact, so pressing one
+    // releases the other even when the current state is I+II.
     // That transition belongs to a real press. Driving the lamp from a
     // ButtonAttachment ran it for parameter-driven lamp changes as well --
     // the hazard attachPolyButton below is written to avoid -- so a host lane
@@ -2787,9 +2821,6 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
         return;
 
     button.setClickingTogglesState (false);
-    // The raw 11 pair is a compatibility/automation midpoint which the DSP
-    // canonicalises to mode II. Refresh all three lamps from that same mode so
-    // they cannot temporarily describe a state the instrument is not playing.
     const auto refresh = [this] (float) { refreshChorusButtons(); };
 
     auto attachment = std::make_unique<juce::ParameterAttachment> (
@@ -2832,9 +2863,7 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
 
         if (currentMode == selectedMode)
         {
-            // Pressing the visibly lit key switches the chorus off. Clear the
-            // hidden raw companion first when 11 arrived from automation, so
-            // the rendered mode remains selected until the final release.
+            // Pressing the visibly lit single-mode key switches the chorus off.
             if (otherWasOn)
                 set (otherParameterId, false);
             if (ownWasOn)
@@ -2842,8 +2871,8 @@ void YouKnow106AudioProcessorEditor::attachExclusiveButton (
         }
         else
         {
-            // Engaging first keeps the audio on the old or target mode until
-            // the interlocked companion releases; 11 itself renders as II.
+            // Engaging first keeps the audio on the old, I+II or target mode
+            // until the companion releases.
             if (! ownWasOn)
                 set (parameterId, true);
             if (otherWasOn)
@@ -3068,6 +3097,52 @@ void YouKnow106AudioProcessorEditor::attachChorusOffButton (juce::Button& button
     secondPointer->sendInitialUpdate();
 }
 
+void YouKnow106AudioProcessorEditor::attachChorusBothButton (
+    juce::Button& button)
+{
+    auto* first = audioProcessor.parameters.getParameter (parameters::chorusI);
+    auto* second = audioProcessor.parameters.getParameter (parameters::chorusII);
+    jassert (first != nullptr && second != nullptr);
+    if (first == nullptr || second == nullptr)
+        return;
+
+    button.setClickingTogglesState (false);
+    const auto refresh = [this] (float) { refreshChorusButtons(); };
+    auto firstAttachment = std::make_unique<juce::ParameterAttachment> (
+        *first, refresh, nullptr);
+    auto secondAttachment = std::make_unique<juce::ParameterAttachment> (
+        *second, refresh, nullptr);
+
+    button.onClick = [this]
+    {
+        const auto isOn = [this] (const char* id)
+        {
+            if (const auto* value =
+                    audioProcessor.parameters.getRawParameterValue (id))
+                return value->load (std::memory_order_relaxed) > 0.5f;
+            return false;
+        };
+        const bool enable = ! (isOn (parameters::chorusI)
+                               && isOn (parameters::chorusII));
+        for (const char* id : { parameters::chorusI, parameters::chorusII })
+            if (auto* target = audioProcessor.parameters.getParameter (id))
+            {
+                target->beginChangeGesture();
+                target->setValueNotifyingHost (
+                    target->convertTo0to1 (enable ? 1.0f : 0.0f));
+                target->endChangeGesture();
+            }
+        refreshChorusButtons();
+    };
+
+    auto* firstPointer = firstAttachment.get();
+    auto* secondPointer = secondAttachment.get();
+    parameterAttachments.push_back (std::move (firstAttachment));
+    parameterAttachments.push_back (std::move (secondAttachment));
+    firstPointer->sendInitialUpdate();
+    secondPointer->sendInitialUpdate();
+}
+
 void YouKnow106AudioProcessorEditor::attachPortamentoToggle (juce::Button& button)
 {
     auto* parameter = audioProcessor.parameters.getParameter (parameters::portamento);
@@ -3183,6 +3258,7 @@ const char* YouKnow106AudioProcessorEditor::parameterIdFor (
         { &qualityBox,        quality },
         { &vcfSolverBox,      vcfSolverMode },
         { &unisonButton,      legacyKeyMode },
+        { &chorusBothButton,  legacyChorus },
         { &portamentoToggleButton, portamento },
         { &keyTransposeButton, transpose }
     };
@@ -3242,7 +3318,9 @@ juce::String YouKnow106AudioProcessorEditor::parameterValueTextFor (
         return {};
     }
 
-    if (isMode (youknow106::parameters::legacyChorus))
+    if (isMode (youknow106::parameters::legacyChorus)
+        || isMode (youknow106::parameters::chorusI)
+        || isMode (youknow106::parameters::chorusII))
     {
         const auto engaged = [this] (const char* id) {
             const auto* value = audioProcessor.parameters.getRawParameterValue (id);
@@ -3252,6 +3330,8 @@ juce::String YouKnow106AudioProcessorEditor::parameterValueTextFor (
         const auto mode = youknow106::chorusModeFor (
             engaged (youknow106::parameters::chorusI),
             engaged (youknow106::parameters::chorusII));
+        if (mode == youknow106::ChorusMode::OneTwo)
+            return "I+II";
         if (const auto* names = audioProcessor.parameters.getParameter (
                 youknow106::parameters::legacyChorus))
             return names->getText (
@@ -3297,6 +3377,13 @@ void YouKnow106AudioProcessorEditor::resized()
             entry.slider->setBounds (area.toNearestInt());
         else if (entry.button != nullptr)
             entry.button->setBounds (area.toNearestInt());
+
+        if (std::strcmp (description.parameterId,
+                         parameters::chorusII) == 0)
+            chorusBothButton.setBounds (
+                scaled (description.x,
+                        description.y + description.height + panel::stackGap,
+                        description.width, description.height).toNearestInt());
 
         if (entry.label != nullptr)
         {

@@ -290,6 +290,9 @@ private:
     // gesture. It owns no parameter; the two contacts remain authoritative.
     void attachUnisonButton (juce::Button&);
     void attachChorusOffButton (juce::Button&);
+    // The same convenience for the chorus pair. The existing two boolean
+    // contacts remain the complete four-state representation.
+    void attachChorusBothButton (juce::Button&);
     void refreshChorusButtons();
     void attachPortamentoToggle (juce::Button&);
     void attachKeyTransposeButton (juce::Button&);
@@ -335,6 +338,7 @@ private:
     juce::TextButton randomize50Button { "MORPH 50%" };
     juce::TextButton resetButton { "INIT" };
     juce::TextButton unisonButton { "UNISON" };
+    juce::TextButton chorusBothButton { "I+II" };
     juce::TextButton portamentoToggleButton { "ON" };
     // The tape section's own pairing: LOAD and SAVE move one patch between
     // the panel and a .syx file.

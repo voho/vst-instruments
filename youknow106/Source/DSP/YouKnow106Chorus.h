@@ -23,20 +23,21 @@ namespace youknow106
                      1.0 / exponent);
 }
 
-// Panel state of the two latching chorus buttons.
+// Panel state of the chorus selection.
 //
-// The instrument has three states: off, I and II. Its owner manual explicitly
-// says I and II cannot be used simultaneously, and the jack board receives one
-// enable line plus one binary I/II line. `OneTwo` remains as an input-compatibility
-// value for sessions written by the short-lived plug-in extension; the engine
-// canonicalises it to II and never synthesises an invented fourth clock mode.
+// The original instrument's owner manual and recovered control path describe
+// one enable bit plus one binary I/II bit, not a third analogue clock setting.
+// Roland's current JUNO-106 chorus models nevertheless expose I+II explicitly
+// as the sound of pressing both buttons. Keep that fourth product state here;
+// `settingsFor()` documents the compatibility policy used while its exact
+// original-unit transfer remains unmeasured.
 enum class ChorusMode { Off, One, Two, OneTwo };
 
-// The mode the two buttons select. Neither button engaged is the only Off state.
-// Both engaged is the legacy `OneTwo` input canonicalising to II, same as II
-// alone -- so a single `two` check already covers both cases below.
+// The four parameter states map one-to-one to the four button combinations.
 [[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
 {
+    if (one && two)
+        return ChorusMode::OneTwo;
     if (two)
         return ChorusMode::Two;
     if (one)
@@ -238,7 +239,9 @@ public:
     // usable even though its absolute dBFS figures and true-peak statistic
     // cannot calibrate this model. Apply 3.95 dB empirically by default while
     // leaving mode I -- whose per-line amplitude answers to the MN3009's own
-    // 0.2 mVrms A-weighted row -- untouched.
+    // 0.2 mVrms A-weighted row -- untouched. There is no corresponding
+    // calibrated I+II capture, so that product mode provisionally retains the
+    // measured mode-II profile until one exists.
     static constexpr float measuredModeTwoNoiseDeltaDb = 3.95f;
     static constexpr float measuredModeTwoNoiseGain = 1.57579602f;
     [[nodiscard]] static constexpr float measuredModeNoiseGain(

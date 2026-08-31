@@ -53,7 +53,8 @@ inline constexpr auto attack       = "attack";
 inline constexpr auto decay        = "decay";
 inline constexpr auto sustain      = "sustain";
 inline constexpr auto release      = "release";
-// The two interlocked chorus buttons. Neither down is off; only one can latch.
+// The two chorus contacts. Neither down is off and both down is the live I+II
+// mode exposed by the editor's convenience key.
 inline constexpr auto chorusI      = "chorusI";
 inline constexpr auto chorusII     = "chorusII";
 

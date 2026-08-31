@@ -192,7 +192,12 @@ forty-year-old unit will null against the plug-in.
   whose rates (0.5533/0.8983 Hz) and mode ratio are derived from this
   instrument's own oscillator circuit; the 1.4–6.4 ms sweep endpoints are a
   third-party measurement of a designator-faithful build (below the
-  anchoring bar; OQ-01).
+  anchoring bar; OQ-01). The separate I+II selector is a live product mode at
+  the established summed rate (1.4516 Hz), matching
+  [Roland's current JUNO-106-chorus mode vocabulary](https://static.roland.com/manuals/sh-4d/eng/68126343.html);
+  that fourth transfer is explicit
+  compatibility policy pending an identified-unit capture, not a third
+  resistance inferred from the original schematic.
 - BBD write nonlinearity fitted to the MN3009's typical 0.3%/0.78 Vrms table
   point and approximately 2%/2 Vrms curve while retaining its 2.5% input-swing
   guarantee and saturation rail; explicit zero-order hold plus residual
@@ -335,9 +340,11 @@ opcodes and wrong-length bodies are ignored rather than partially applied.
 Patch files carry the same messages: LOAD (or dropping a `.syx` on the
 editor) applies the first patch dump in the file, SAVE writes the current
 tone as one hardware-valid dump. Performance controls stay out of the
-file, exactly as they stay out of the hardware's tone memory. The chorus
-field has exactly the hardware's three states — Off, I, II; sessions from
-older builds carrying the invented both-buttons state canonicalise to II.
+file, exactly as they stay out of the hardware's tone memory. The live panel
+and plug-in session have four chorus states — Off, I, II and I+II — using the
+two modern boolean parameters as a complete two-bit pair. The hardware tone
+field still has only three codes, so SAVE writes I+II as II and says so without
+changing the live/session state.
 
 ### Performance and quality
 
@@ -372,11 +379,17 @@ chassis stays warm, while a new `prepare()` starts cold.
 
 Not to be reopened without contradictory primary evidence:
 
-- Chorus modes are Off/I/II only and mutually exclusive; obsolete
-  both-buttons states canonicalise to II. Off mutes the wet return only. The
-  Exact reference keeps the oscillator and BBDs running; faster tanh modes may
-  rebuild the inaudible wet history on engagement. Normal output is dry plus
-  wet.
+- The original Juno-106 control path has one chorus-enable line and one binary
+  I/II line, and its
+  [owner manual](https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf)
+  says I and II cannot be used together. Roland's current JUNO-106 chorus
+  models nevertheless expose I+II. This
+  product therefore keeps I+II as a distinct live/session mode at the
+  established summed-rate policy; it is not claimed as a third original
+  analogue setting, and hardware-format tone memory degrades it to II. Off
+  mutes the wet return only. The Exact reference keeps the oscillator and BBDs
+  running; faster tanh modes may rebuild the inaudible wet history on
+  engagement. Normal output is dry plus wet.
 - Chorus balance is dry 100/47, wet 100/39: the wet leg is the hotter one, by
   1.62 dB.
 - The chorus modulator is a straight symmetric triangle and line 2 is its
@@ -442,7 +455,7 @@ unit; the priority column is this project's own ranking of audible impact.
 
 | # | Open | Priority |
 | --- | --- | --- |
-| OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. The shipped 1.4–6.4 ms sweep endpoints come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar | P0 |
+| OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. The shipped 1.4–6.4 ms sweep endpoints come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar. The live I+II product mode uses the established 1.4515542 Hz summed-rate compatibility policy because Roland's current model names the state but publishes no transfer; an identified original-unit or reference-model capture remains open | P0 |
 | OQ-03 | Chorus noise and SNR under calibrated conditions. Mode I keeps the MN3009's 0.2 mVrms max A-weighted row at HISS 100%; the 29.86% default is an explicit new-part policy inferred from its 88 dB typical S/N and 1.5 Vrms guaranteed swing, not a specified typical-noise row. Mode II ships the reported ~3.95 dB delta as a relative factor. Installed-unit absolute noise PSD is open | P0 |
 | OQ-05 | Loaded TA75558S IC6 and High-output clipping swing. Device identity, resistor gains and ±15 V supply rails are settled. The traced maximum-volume, no-external-load midband impedance is about 8.22 kΩ; an approximate symmetric reading of the datasheet's 25 °C typical Vop-p graph is roughly ±13.9 V around 8–9 kΩ. The modelled ±13.5 V asymptote is therefore plausible and about 0.4 V below that typical curve, but is not a guaranteed limit. The exact installed-unit swing and knee remain open | P0 |
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced | P0 |
@@ -664,6 +677,9 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 - Fixed Chorus I and II so host automation of one no longer writes the other,
   which previously made the rendered chorus mode depend on whether the plug-in
   window was open.
+- Restored I+II as a distinct live and session-persistent chorus state with its
+  own fourth panel button. Hardware-format patch files intentionally save it as
+  II because the original 18-byte tone memory has no fourth chorus code.
 - Fixed sustain (CC 64) to latch on any non-zero value instead of only at 64
   and above, matching the original's MIDI implementation chart, which prints
   hold off at zero and hold on for 1–127. A half-pressed pedal now holds.

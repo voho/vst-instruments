@@ -252,8 +252,8 @@ void testPatchesRoundTripThroughTheToneBytes()
     }
 }
 
-// The one setting the format cannot hold. The hardware cannot store it either,
-// so the writer has to degrade predictably and say that it did.
+// Live I+II has no representation in the tone memory, so the writer has to
+// degrade predictably and say that it did.
 void testTheUnstorableChorusSettingIsReportedRatherThanHidden()
 {
     Patch patch {};

@@ -58,10 +58,9 @@ struct Preset
 
     // Whether this patch keeps the same effective 7-bit hardware state.
     //
-    // The factory bank uses only the hardware's Off/I/II chorus states, so its
-    // entries are exportable. The predicate also identifies the obsolete
-    // OneTwo compatibility value in imported old sessions; that value has no
-    // hardware encoding and canonicalises to II.
+    // The factory bank uses only the patch memory's Off/I/II chorus states, so
+    // its entries are exportable. Live I+II has no tone-memory encoding and is
+    // therefore reported as a categorical loss when written to hardware SysEx.
     [[nodiscard]] bool exportsLosslessly() const noexcept
     {
         return sysex::survivesPatchMemory(patch);

@@ -85,11 +85,9 @@ void toneBytesFromPatch(const Patch& patch, std::uint8_t* bytes) noexcept;
 //
 // Continuous panel travel is effective at the hardware's own 7-bit resolution:
 // for example 0.36 and 46/127 name the same stored control step, so that normal
-// quantisation is not a loss. The current panel exposes exactly the memory's
-// Off/I/II chorus states, but one obsolete compatibility value does not have an
-// effective equivalent: early YouKnow106 sessions could store both chorus
-// buttons on. `toneBytesFromPatch` canonicalises that value to II and this
-// predicate reports the categorical conversion.
+// quantisation is not a loss. The live panel can also select I+II, but the tone
+// memory has only Off/I/II. `toneBytesFromPatch` writes I+II as II and this
+// predicate reports that categorical conversion.
 [[nodiscard]] bool survivesPatchMemory(const Patch& patch) noexcept;
 
 // --- Messages ------------------------------------------------------------
