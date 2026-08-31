@@ -1044,5 +1044,32 @@
   },
   "selection": "the strongest setting no split objects to, rather than the training minimum: stronger settings keep improving the two fitted splits and move the flat-top rows away",
   "excluded": "nylon's three wound basses, whose published density is an effective composite figure right for transverse mass and wrong for axial stiffness"
- }
+ },
+ "fret_collision_unreachable": {
+  "method": "the attack-pitch surrogate's fitted 6.17 mm displacement scale converts a wave-unit slope to d/L of physical slope, and the pluck triangle that produces the measured slope energy gives the excursion",
+  "low_e_excursion_mm": {
+   "velocity_0.50": [
+    0.834,
+    0.053
+   ],
+   "velocity_0.85": [
+    1.385,
+    0.089
+   ],
+   "velocity_1.00": [
+    1.607,
+    0.103
+   ]
+  },
+  "columns": "[at the pluck point, at the first fret]",
+  "clearance_mm": "0.30 to 0.50 at the first fret on a set-up steel guitar",
+  "conclusion": "a unilateral barrier at the action height would never fire at any velocity, so it is not built; the excursion is downstream of the corpus, since the displacement scale is fitted against the pitch rise the recordings show and a hard pick stroke moves a low E two to four millimetres"
+ },
+ "by_ear_values_frozen_in_the_fit": [
+  "residueTiltDbPerOctave",
+  "lowBodyModeGain",
+  "steel.fundamentalT60Scale",
+  "steel.frequencyLossScale",
+  "bridgeConductanceFloor"
+ ]
 }

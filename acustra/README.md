@@ -649,10 +649,14 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   whose corpus is the wrong instrument, which is where the cost belongs. What
   remains unvalidated for nylon is a direction, not a regression: nothing has
   confirmed that a classical guitar wants the body a dreadnought wants.
-- Fret collision is absent and is the next mechanism worth building. A real
-  string is bounded underneath by the frets, and hard playing on the low
-  strings makes it chatter against the next crown; the threshold is the action
-  height, which is a published guitar dimension rather than a chosen one.
+- Fret collision is absent, and it would be inert if it were there. Converting
+  the attack-pitch surrogate's fitted displacement scale into metres, the low E
+  moves 1.607 mm at the pluck point at full velocity and passes 0.103 mm below
+  the string line at the first fret, where a set-up steel guitar clears 0.30 to
+  0.50 mm. A barrier at the action height would never fire. That is downstream
+  of the corpus rather than of the model: the displacement scale is fitted
+  against the pitch rise the recordings show, and a hard pick stroke moves a
+  low E two to four millimetres where this model's hardest pluck moves it 1.6.
   Nylon's three wound basses also sit outside the longitudinal path, because
   their published density is an effective composite figure that is right for
   transverse mass and wrong for axial stiffness, so nothing here fixes their

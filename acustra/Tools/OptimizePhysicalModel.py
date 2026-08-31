@@ -74,9 +74,27 @@ INITIAL = np.asarray((
 # The bridge-local direct path is deliberately fixed off. Its score direction
 # was flat (and slightly worse on validation), so fitting it only lets a
 # numerical solver choose an arbitrary raw-string mixture.
-GLOBAL = np.asarray((0, 1, 2, 3, 19, 20, 23, 24, 25, 26, 27, 28))
-NYLON = np.arange(5, 12)
-STEEL = np.append(np.arange(12, 19), (21, 22))
+# Values a listening verdict chose are not refit. The corpus disagrees with
+# them by construction - that disagreement is why they went to a listener - so
+# leaving them free would simply undo the verdict on the next run.
+BY_EAR = (
+    "residueTiltDbPerOctave",
+    "lowBodyModeGain",
+    "steel.fundamentalT60Scale",
+    "steel.frequencyLossScale",
+    "bridgeConductanceFloor",
+)
+FROZEN = frozenset(NAMES.index(name) for name in BY_EAR)
+
+
+def _free(indices: np.ndarray) -> np.ndarray:
+    return np.asarray([index for index in indices if index not in FROZEN],
+                      dtype=int)
+
+
+GLOBAL = _free(np.asarray((0, 1, 2, 3, 19, 20, 23, 24, 25, 26, 27, 28)))
+NYLON = _free(np.arange(5, 12))
+STEEL = _free(np.append(np.arange(12, 19), (21, 22)))
 
 
 def _command(renderer: Path, directory: Path, values: np.ndarray,

@@ -2389,3 +2389,42 @@ guitar dimension rather than a chosen one; the reflection penalty of 0.75 the
 brief proposes is not, and a collision that is a barrier rather than a lossy
 reflector needs no penalty at all. That is the next mechanism worth building.
 The hammer-on fret-strike impulse is an authored sound and stays out.
+
+## 2026-08-31 — fret buzz is out of reach, and the number says by how much
+
+The one half of the fifth proposed mechanism that survived its own entry was
+fret collision: a real string is bounded underneath by the frets, the threshold
+is the action height rather than a chosen number, and hard playing on the low
+strings makes it chatter. Before building the barrier, the question is whether
+this string ever reaches it.
+
+It does not, and the model already carries the scale needed to say so. The
+attack-pitch surrogate reads dT = E*A*d^2*S/(2L^2) against the physical
+dT = (EA/2L) times the integral of the squared slope, so a wave-unit slope maps
+to d/L of physical slope, with d the fitted displacement scale of 6.17 mm.
+Running the low E at three velocities and converting:
+
+| Velocity | excursion at the pluck point | at the first fret |
+| ---: | ---: | ---: |
+| 0.50 | 0.834 mm | 0.053 mm |
+| 0.85 | 1.385 mm | 0.089 mm |
+| 1.00 | 1.607 mm | 0.103 mm |
+
+A set-up steel guitar clears the first fret by 0.30 to 0.50 mm. At the loudest
+note this instrument can produce the string passes 0.103 mm below the string
+line there - three to five times short of touching. A unilateral barrier at the
+action height would never fire, at any velocity, on any string, and building it
+would add a branch to the inner loop that is provably inert.
+
+Two things follow. The first is that this file's rule applies again: a number
+settles it, so the mechanism is not built and the number is quoted instead.
+
+The second is more interesting and is not a defect to fix today. The excursion
+is what it is because `steelDisplacementScaleMetres` is fitted, and what it is
+fitted against is the pitch rise the reference recordings show. A hard pick
+stroke on a low E moves the string two to four millimetres; this model's
+hardest pluck moves it 1.6. So "the model does not buzz" is downstream of "the
+corpus does not buzz", and the whole nonlinear regime - the pitch surrogate,
+the longitudinal drive promoted today, and any future collision - is scaled by
+a corpus that was not played hard enough to need it. That is another reading of
+the same gap this file keeps arriving at, and the same capture would close it.
