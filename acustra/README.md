@@ -618,14 +618,13 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   +3.4 to −6.2 dB. No verdict and no measurement has validated that for nylon.
   If the two materials want different bodies, the body has to stop being
   shared, and that is a bigger change than any here.
-- Two listening sets are outstanding and nothing waits on anything else.
-  `2026-08-31-how-far` is rendered and waiting in `tmp/acustra-listening/`,
-  uncommitted with its key unread: it brackets the adopted point symmetrically,
-  A the shipping engine, B half way back toward the fitted calibration and C
-  half way further toward the flat-top rows, with a nylon half to judge
-  separately. The second is not rendered: upper-band damping, where the gated
-  loss and the damping audit disagree and the two materials want opposite
-  corrections above 4.5 kHz.
+- One listening set is outstanding and nothing waits on it: upper-band damping,
+  where the gated loss and the damping audit disagree and the two materials
+  want opposite corrections above 4.5 kHz. It is not rendered. The body
+  direction is settled for this corpus — a symmetric bracket around the
+  adopted point found the letter half way back toward the fitted calibration
+  clearly worst and the letter half way further indistinguishable from what
+  ships, so the corpus broke the tie in favour of not moving.
 - A mechanism-level scan of what else exists puts one gap ahead of the others.
   Applied Acoustics Systems' Strum GS-2, the established physically modelled
   acoustic guitar, states that it models the vertical *and* horizontal
@@ -688,6 +687,12 @@ git history rather than here.
 
 ### 2026-08-31
 
+- **Settled how far, by ear.** A symmetric bracket around the adopted point
+  found the letter half way back toward the fitted calibration clearly worst —
+  a third independent confirmation of the direction — and the letter half way
+  further indistinguishable from what ships. The corpus broke that tie in
+  favour of not moving, since spending 3% of its score buys nothing the ear can
+  hear.
 - **Followed the flat-top rows on the body, by ear.** A listener heard the
   fitted build against the direction the eight Eastman flat-top rows prefer and
   reported the fitted one as the less realistic of the two, with the full

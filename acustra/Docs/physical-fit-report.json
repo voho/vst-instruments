@@ -929,7 +929,8 @@
    ]
   },
   "status": "five of the twenty-seven values are a direction chosen by ear, not the fit's answer; recorded as chosen by ear in Docs/decisions.md",
-  "open": "tmp/acustra-listening/2026-08-31-how-far brackets the adopted point symmetrically, A the shipping engine"
+  "open": "upper-band damping, not rendered; the body direction is settled for this corpus",
+  "2026-08-31 how-far": "B, half way back toward the fitted calibration, is the worst of three; A, the shipping engine, and C, half way further toward the flat-top rows, are a tie. The corpus broke the tie in favour of A - 6.836184 and 6.823805 against C's 7.047400 and 7.062700 - so the adopted point stands and the direction is not pushed further"
  },
  "sympathetic_tail_ceiling": {
   "was": 0.9,

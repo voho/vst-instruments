@@ -2165,3 +2165,33 @@ legitimate as a way to get a build past a gate it fails.
 The next set, `2026-08-31-how-far`, brackets the adopted point: A is now the
 shipping engine, B backs the string side out and keeps the body, C and D take
 the string side further. Its key is unread.
+
+## 2026-08-31 — the bracket says the step was the right size
+
+`2026-08-31-how-far` put the adopted point between two symmetric neighbours: B
+half way back toward the fitted calibration, C half way further toward the
+flat-top rows, A the shipping engine. The verdict was that B is the worst of
+the three and that A and C are a tie.
+
+Both halves of that are useful. B being clearly worst is the third independent
+confirmation of the direction — going back toward the corpus is audibly wrong,
+and this time it was heard against a build that had already moved rather than
+against the fitted one. A and C being indistinguishable says the direction has
+been taken far enough: past the adopted point the ear stops registering the
+change.
+
+So the ear does not choose between A and C, and something else has to. The
+corpus does, and it prefers A: 6.836184 training and 6.823805 development
+validation against C's 7.047400 and 7.062700. When two candidates cannot be
+told apart by ear, spending 3% of the corpus score to move between them buys
+nothing, so the adopted point stands and the direction is not pushed further.
+
+That is the rule this file should follow whenever a listening test ties, and it
+is worth writing down as one: a tie is not a licence to take the letter that
+scores worse. The measurement is the tiebreaker precisely because the thing it
+is bad at — deciding which of two audibly different builds is a guitar — is not
+what is being asked of it here.
+
+The body direction is settled for this corpus. What is not settled is nylon,
+which was carried along by a decision made on steel evidence through a shared
+body, and the upper-band damping question, whose set is still unrendered.
