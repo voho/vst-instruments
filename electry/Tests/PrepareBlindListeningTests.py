@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import stat
 import struct
 import sys
@@ -17,6 +18,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# The preparer locks every private file to 0o600 so that nobody but the study
+# runner can read the answer key off a shared machine. Only POSIX has the bits
+# that express it: Windows' os.chmod honours the read-only attribute alone, so
+# a file asked for 0o600 stays writable and reads back as 0o666 there. The
+# guarantee is real where the platform offers it and simply absent where it
+# does not, so this asserts it exactly on POSIX rather than asserting on
+# Windows which runner the suite landed on.
+HAS_POSIX_PERMISSIONS = os.name == "posix"
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location(
     "prepare_blind_listening", ROOT / "Tools" / "PrepareBlindListening.py")
@@ -34,6 +43,12 @@ from BlindListeningTestSupport import (
 
 
 class PrepareBlindListeningTests(unittest.TestCase):
+    def assertOwnerOnly(self, path):
+        """Assert the preparer left `path` readable by its owner alone."""
+        if not HAS_POSIX_PERMISSIONS:
+            return
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
     def test_deterministic_balanced_opaque_pack(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -527,7 +542,7 @@ class PrepareBlindListeningTests(unittest.TestCase):
             self.assertEqual(len(key["participants"]), 30)
             comparison_archive = output_a / "private" / "comparison-manifest.json"
             self.assertEqual(comparison_archive.read_bytes(), comparison.read_bytes())
-            self.assertEqual(stat.S_IMODE(comparison_archive.stat().st_mode), 0o600)
+            self.assertOwnerOnly(comparison_archive)
             self.assertEqual(key["comparison_manifest"], {
                 "path": "private/comparison-manifest.json",
                 "schema": "electry-blind-comparison/v1",
@@ -540,8 +555,7 @@ class PrepareBlindListeningTests(unittest.TestCase):
                              manifest_path.read_bytes())
             self.assertEqual((output_a / "private" / "prepare.py").read_bytes(),
                              (ROOT / "Tools" / "PrepareBlindListening.py").read_bytes())
-            self.assertEqual(stat.S_IMODE(
-                (output_a / "private" / "prepare.py").stat().st_mode), 0o600)
+            self.assertOwnerOnly(output_a / "private" / "prepare.py")
             self.assertEqual(len(key["archives"]["capture_manifests"]), 5)
             self.assertEqual(len(key["archives"]["event_records"]), 9)
             self.assertEqual(len(key["archives"]["engineering_train_analysis"]), 3)
@@ -550,19 +564,19 @@ class PrepareBlindListeningTests(unittest.TestCase):
                     archived_path = output_a / archived["path"]
                     self.assertEqual(hashlib.sha256(archived_path.read_bytes()).hexdigest(),
                                      archived["sha256"])
-                    self.assertEqual(stat.S_IMODE(archived_path.stat().st_mode), 0o600)
+                    self.assertOwnerOnly(archived_path)
             for section in ("engineering_derivation_receipt",
                             "engineering_derivation_result"):
                 archived = key["archives"][section]
                 archived_path = output_a / archived["path"]
                 self.assertEqual(hashlib.sha256(archived_path.read_bytes()).hexdigest(),
                                  archived["sha256"])
-                self.assertEqual(stat.S_IMODE(archived_path.stat().st_mode), 0o600)
+                self.assertOwnerOnly(archived_path)
             for archived in key["archives"]["engineering_train_analysis"]:
                 archived_path = output_a / archived["path"]
                 self.assertEqual(hashlib.sha256(archived_path.read_bytes()).hexdigest(),
                                  archived["sha256"])
-                self.assertEqual(stat.S_IMODE(archived_path.stat().st_mode), 0o600)
+                self.assertOwnerOnly(archived_path)
             links_path = output_a / "private" / "participant-links.tsv"
             self.assertEqual(key["participant_links"], {
                 "path": "private/participant-links.tsv",
