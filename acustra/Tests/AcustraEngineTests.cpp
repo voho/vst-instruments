@@ -2937,11 +2937,11 @@ void testLongitudinalModesGrowWithVelocity()
     {
         return tailBandRms(audio, sampleRate, 0.0, 0.12, low, high);
     };
-    auto silent = acustra::fittedPhysicalCalibration;
-    silent.longitudinalGain = 0.0f;
-    const auto& sounding = acustra::fittedPhysicalCalibration;
-    expect(sounding.longitudinalGain > 0.0f,
-           "the shipping build has no longitudinal path to test");
+    const auto& silent = acustra::fittedPhysicalCalibration;
+    expect(silent.longitudinalGain == 0.0f,
+           "the shipping build reintroduced the drip-like axial onset");
+    auto sounding = silent;
+    sounding.longitudinalGain = 0.025f;
     const auto axial = acustra::AcustraEngineTestAccess::
         longitudinalFrequencies(40);
     expect(std::abs(axial[1] / axial[0] - 3.0) < 1.0e-4,

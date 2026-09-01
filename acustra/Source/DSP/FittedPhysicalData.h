@@ -66,7 +66,12 @@ inline constexpr PhysicalCalibration fittedPhysicalCalibration {
     { 1.48177734f, 1.53f, 0.52f, 0.65992123f,
       0.523383307f, 1.03116387f, 0.948115221f },
     -0.0706290118f, 7.5f, 0.00617327847f, -0.0301260746f, 2.16964938f,
-    0.011f, 2804.94773f, 0.0171860529f, 0.025f, 35.0f
+    // The axial resonators are physically motivated, but without a measured
+    // transfer level their narrow, high-Q onset reads as a pitched water-drop
+    // transient rather than part of the pluck. Keep the calibrated mechanism
+    // available for measurement work, but do not add that synthetic ping to
+    // the shipping voice.
+    0.011f, 2804.94773f, 0.0171860529f, 0.0f, 35.0f
 };
 
 } // namespace acustra
