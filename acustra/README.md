@@ -164,16 +164,19 @@ slope without applying note-dependent body EQ. The fitted exponent continues
 past the pitch-independent point, so low-note contact is broader and high-note
 contact narrower than in the earlier model.
 
-Transverse motion stretches the string, and the tension that adds is not a
-static number: it is a longitudinal wave with the string's own axial
+Transverse motion stretches the string, and the tension that adds can also be
+represented as a longitudinal wave with the string's own axial
 resonances, at `c_long/2L` with `c_long = sqrt(EA/mu)`. For this steel set that
 is 1.5 to 3.9 kHz and for plain nylon 1.18 kHz, both computed from the same
 construction data the transverse model uses, with the wound steel basses taking
 their axial area from the published core diameter. The first and third
-fixed-fixed axial modes per string are driven by DAFx-26's `EA/(2L)` times the
+fixed-fixed axial modes per string can be driven by DAFx-26's `EA/(2L)` times the
 mean square slope, through the same
-displacement scale the attack-pitch surrogate is calibrated with. Because the
-drive is a square it carries the products of the transverse partials, so what
+displacement scale the attack-pitch surrogate is calibrated with. That path is
+kept at zero in the shipping calibration: without a measured radiation level,
+its narrow onset sounds like a pitched water drop rather than a string pluck.
+Because the drive is a square it carries the products of the transverse
+partials, so what
 the resonators pass are sum and difference phantom partials rather than an
 added tone, and it grows faster than the note that made it: 4.3 dB of extra
 1.5--4 kHz energy at a quarter velocity against 11.1 dB near full. It radiates
@@ -778,6 +781,14 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
 A concise ledger of the changes that move what Acustra sounds like or how it is
 controlled. Pure refactors, deduplications and test-coverage additions are in
 git history rather than here.
+
+### 2026-09-01
+
+- **Removed the pitched drip from string attacks.** The unmeasured axial-mode
+  radiation was a narrow resonant ping at every pluck. Its mechanism remains
+  available to calibration and measurement tools, but its shipping gain is
+  now zero so the displacement release and bridge-contact transient define the
+  attack without an artificial water-drop tone.
 
 ### 2026-08-31
 
