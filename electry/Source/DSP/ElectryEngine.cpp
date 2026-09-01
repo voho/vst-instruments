@@ -241,6 +241,114 @@ constexpr float steelYoungModulus = 2.0e11f; // Pa
 // It converts the fret-clearance controls below into the loop's units.
 constexpr float waveguideDisplacementMetresPerUnit = 0.040f;
 
+#if ELECTRY_MEASURED_PICKUP_FLUX
+// Novak et al., DAFx-18 Eq. 6, fitted to the flux-linkage proxy obtained by
+// integrating their measured SSL-5 and SH-2N pickup voltages:
+// https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_39.pdf
+// A cancels when each law is normalised to its rest-position slope.
+constexpr double pickupRestGapMetres = 0.003;
+constexpr double maximumPickupDisplacementMetres =
+    0.999 * pickupRestGapMetres;
+constexpr std::size_t measuredPickupFluxTableSize = 257;
+
+struct MeasuredPickupParameters
+{
+    double equivalentLengthMetres;
+    double equivalentRadiusMetres;
+};
+
+constexpr MeasuredPickupParameters measuredHumbucker { 0.00986, 0.00134 };
+constexpr MeasuredPickupParameters measuredSingleCoil { 0.01298, 0.00277 };
+
+double pickupEq6(double distance,
+                 const MeasuredPickupParameters& pickup) noexcept
+{
+    const auto term = [&] (double x)
+    {
+        return x / std::cbrt(pickup.equivalentRadiusMetres
+                                 * pickup.equivalentRadiusMetres
+                             + x * x);
+    };
+    return term(distance + pickup.equivalentLengthMetres) - term(distance);
+}
+
+double pickupEq6Slope(double distance,
+                      const MeasuredPickupParameters& pickup) noexcept
+{
+    const auto term = [&] (double x)
+    {
+        const double radiusSquared = pickup.equivalentRadiusMetres
+                                   * pickup.equivalentRadiusMetres;
+        const double base = radiusSquared + x * x;
+        return (x * x + 3.0 * radiusSquared)
+             / (3.0 * base * std::cbrt(base));
+    };
+    return term(distance + pickup.equivalentLengthMetres) - term(distance);
+}
+
+float normalisedPickupEq6(double displacementMetres,
+                          const MeasuredPickupParameters& pickup) noexcept
+{
+    const double restFlux = pickupEq6(pickupRestGapMetres, pickup);
+    const double slopePerWaveguideUnit =
+        -pickupEq6Slope(pickupRestGapMetres, pickup)
+        * static_cast<double>(waveguideDisplacementMetresPerUnit);
+    return static_cast<float>(
+        (pickupEq6(pickupRestGapMetres - displacementMetres, pickup)
+         - restFlux) / slopePerWaveguideUnit);
+}
+
+struct MeasuredPickupFluxSample
+{
+    float humbucker;
+    float singleCoil;
+};
+
+const std::array<MeasuredPickupFluxSample, measuredPickupFluxTableSize>
+    measuredPickupFluxTable = []
+{
+    std::array<MeasuredPickupFluxSample, measuredPickupFluxTableSize> table {};
+    for (std::size_t index = 0; index < table.size(); ++index)
+    {
+        const double position = static_cast<double>(index)
+                              / static_cast<double>(table.size() - 1);
+        const double displacement = -maximumPickupDisplacementMetres
+                                  + 2.0 * maximumPickupDisplacementMetres
+                                        * position;
+        table[index] = {
+            normalisedPickupEq6(displacement, measuredHumbucker),
+            normalisedPickupEq6(displacement, measuredSingleCoil)
+        };
+    }
+    return table;
+}();
+
+float boundPickupDisplacement(float displacement) noexcept
+{
+    if (! std::isfinite(displacement))
+        return 0.0f;
+
+    const double ratio = static_cast<double>(displacement)
+                       * static_cast<double>(waveguideDisplacementMetresPerUnit)
+                       / maximumPickupDisplacementMetres;
+    const double magnitude = std::abs(ratio);
+    double boundedRatio = 0.0;
+    if (magnitude <= 1.0)
+    {
+        const double squared = ratio * ratio;
+        boundedRatio = ratio / std::sqrt(std::sqrt(1.0 + squared * squared));
+    }
+    else
+    {
+        const double inverse = 1.0 / magnitude;
+        const double squared = inverse * inverse;
+        boundedRatio = std::copysign(
+            1.0 / std::sqrt(std::sqrt(1.0 + squared * squared)), ratio);
+    }
+    return static_cast<float>(maximumPickupDisplacementMetres * boundedRatio);
+}
+#endif
+
 #if ELECTRY_ENERGY_ATTACK_PITCH
 // Default-off tension experiment. Bank's quasistatic store gives
 //
@@ -453,10 +561,6 @@ void ElectryEngine::DelayTap::setDelay(float delaySamples) noexcept
     const float ceiling = std::ceil(delaySamples);
     offset = static_cast<int>(ceiling);
     const float t = ceiling - delaySamples;
-#if ELECTRY_POSITIONED_FRET_COLLISION
-    linear0 = 1.0f - t;
-    linear1 = t;
-#endif
     const float tMinus1 = t - 1.0f;
     const float tMinus2 = t - 2.0f;
     const float tPlus1 = t + 1.0f;
@@ -815,6 +919,38 @@ float ElectryEngine::stringFluxScale(int stringIndex) noexcept
                 static_cast<float>(index) / static_cast<float>(stringCount - 1))
          * magneticMassBalance;
 }
+
+#if ELECTRY_MEASURED_PICKUP_FLUX
+float ElectryEngine::measuredPickupFlux(float displacement,
+                                        float pickupType) noexcept
+{
+    const float bounded = boundPickupDisplacement(displacement);
+    const float tablePosition = clampf(
+        static_cast<float>(
+            (static_cast<double>(bounded) + maximumPickupDisplacementMetres)
+            * static_cast<double>(measuredPickupFluxTableSize - 1)
+            / (2.0 * maximumPickupDisplacementMetres)),
+        0.0f, static_cast<float>(measuredPickupFluxTableSize - 1));
+    const auto index = std::min(
+        static_cast<std::size_t>(tablePosition),
+        measuredPickupFluxTableSize - 2);
+    const float fraction = tablePosition - static_cast<float>(index);
+    const auto& first = measuredPickupFluxTable[index];
+    const auto& second = measuredPickupFluxTable[index + 1];
+    const float humbucker = lerp(first.humbucker, second.humbucker, fraction);
+    const float singleCoil = lerp(first.singleCoil, second.singleCoil, fraction);
+    pickupType = finitef(pickupType) ? clampf(pickupType, 0.0f, 1.0f) : 0.0f;
+    return lerp(humbucker, singleCoil, pickupType);
+}
+
+float ElectryEngine::measuredPickupTransfer(float displacement,
+                                            float drive,
+                                            float inverseDrive,
+                                            float pickupType) noexcept
+{
+    return measuredPickupFlux(displacement * drive, pickupType) * inverseDrive;
+}
+#endif
 
 float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
 {
@@ -3236,6 +3372,10 @@ void ElectryEngine::configureVoiceDispersion(
 #if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
     voice.stringTensionNewtons = liveTension;
 #endif
+#if ELECTRY_PASSIVE_REPICK_SPRING
+    voice.stringWaveImpedance = std::sqrt(
+        std::max(liveTension * linearMass, 1.0e-12f));
+#endif
     const float bendingStiffness = pi * pi * pi * steelYoungModulus
                                  * bendingDiameter * bendingDiameter
                                  * bendingDiameter * bendingDiameter / 64.0f;
@@ -4316,7 +4456,8 @@ void ElectryEngine::drawVibratoCycle(Voice& voice) noexcept
     voice.vibratoDepthScale = 1.0f + 0.15f * normal();
 }
 
-void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
+void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato,
+                                    bool preservesExistingStringState) noexcept
 {
     const auto wholeHandStyle = [] (PlayStyle style)
     {
@@ -4327,6 +4468,17 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // the picking hand is already damping the bridge, they can change one
     // speaking length but cannot lift that hand or reopen sibling strings.
     const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+#if ELECTRY_PASSIVE_REPICK_SPRING
+    // Preserve the isolated-stroke model as the control. The spring candidate
+    // handles only the homogeneous response of state already in the string;
+    // by linear superposition the established release remains the new
+    // plectrum's drive. A fresh or effectively silent string therefore stays
+    // sample-identical even in the candidate build.
+    const bool passiveRepickCandidate = plectrumContact
+                                     && preservesExistingStringState;
+    voice.passiveRepickSpringActive = false;
+    voice.passiveRepickState = 0.0f;
+#endif
 #if ELECTRY_ANALYTIC_RELEASE_IC
     const bool analyticReleaseEligible = plectrumContact
                                       && voice.analyticReleaseFreshContact;
@@ -4389,6 +4541,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     }
     voice.pendingContactPreservesRing = false;
     (void) velocity; // The note-on velocity is cached in velocityProfile.
+    (void) preservesExistingStringState; // Candidate-only repick classification.
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
     const auto& profile = voice.velocityProfile;
@@ -4480,8 +4633,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                                        hardFretClearanceMetres, contact)
                                 / waveguideDisplacementMetresPerUnit;
 #if ELECTRY_POSITIONED_FRET_COLLISION
-        voice.artifactFollowingFretTap.setDelay(
-            voice.vertical.currentDelay * followingFretDelayScale);
+        const auto cells = followingFretContactCells(
+            voice.vertical.currentDelay);
+        voice.artifactFollowingFretNear = cells[0];
+        voice.artifactFollowingFretFar = cells[1];
 #endif
     }
     else
@@ -5042,6 +5197,69 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.releaseNoiseDone = false;
     updateStyleWeights(voice, legato);
 
+#if ELECTRY_PASSIVE_REPICK_SPRING
+    if (passiveRepickCandidate && contactSamples > 0)
+    {
+        // Evangelista and Smith, DAFx-10 Eq. 44:
+        // rho(s) = (R s + K) / ((R + 2 r) s + K).
+        // K reuses makeVelocityProfile()'s documented medium-plectrum anchor.
+        // R=2r is the impedance-matched case: rho tends to 0.5, so the common
+        // scattering eigenvalue Q=1-2rho tends to zero at high frequency,
+        // without adding a fitted material constant. Coefficients stay fixed
+        // through Contact.
+        constexpr float pickStiffnessNewtonsPerMetre = 6000.0f;
+        constexpr float highFrequencyReflectance = 0.5f; // R / (R + 2r)
+        const float waveImpedance = std::max(voice.stringWaveImpedance,
+                                             1.0e-6f);
+        const float timeConstant = 2.0f * waveImpedance
+            / ((1.0f - highFrequencyReflectance)
+               * pickStiffnessNewtonsPerMetre);
+        const float bilinearRate = 2.0f * sampleRate * timeConstant;
+        const float inverseDenominator = 1.0f / (bilinearRate + 1.0f);
+        voice.passiveRepickB0 =
+            (highFrequencyReflectance * bilinearRate + 1.0f)
+            * inverseDenominator;
+        voice.passiveRepickB1 =
+            (1.0f - highFrequencyReflectance * bilinearRate)
+            * inverseDenominator;
+        voice.passiveRepickPole = (bilinearRate - 1.0f)
+                                * inverseDenominator;
+
+        const float normalLength = std::sqrt(
+            voice.verticalWeight * voice.verticalWeight
+            + voice.horizontalWeight * voice.horizontalWeight);
+        voice.passiveRepickNormalVertical = voice.verticalWeight
+                                          / std::max(normalLength, 1.0e-6f);
+        voice.passiveRepickNormalHorizontal = voice.horizontalWeight
+                                            / std::max(normalLength, 1.0e-6f);
+
+        // The paper's junction is on an integer spatial grid. Snap each
+        // polarisation's current folded ring independently, rather than pair a
+        // cubic gather with a non-adjoint write. Logical cell zero is stored at
+        // writeIndex-1, so a ring of 2L cells and junction j addresses incident
+        // cells j-1 and 2L-1-j with history offsets j and 2L-j.
+        const auto contactCells = [combFraction] (const PolarisationLoop& loop)
+        {
+            const int railLength = std::max(
+                2, static_cast<int>(std::lround(0.5f * loop.currentDelay)));
+            const int junction = std::clamp(
+                static_cast<int>(std::lround(
+                    combFraction * static_cast<float>(railLength))),
+                1, railLength - 1);
+            return std::array<int, 2> {
+                junction, 2 * railLength - junction
+            };
+        };
+        const auto verticalCells = contactCells(voice.vertical);
+        const auto horizontalCells = contactCells(voice.horizontal);
+        voice.passiveRepickVerticalNear = verticalCells[0];
+        voice.passiveRepickVerticalFar = verticalCells[1];
+        voice.passiveRepickHorizontalNear = horizontalCells[0];
+        voice.passiveRepickHorizontalFar = horizontalCells[1];
+        voice.passiveRepickSpringActive = true;
+    }
+#endif
+
 #if ELECTRY_ENERGY_ATTACK_PITCH
     if (plectrumContact)
         voice.pendingAttackPitchClearOnRelease =
@@ -5186,6 +5404,11 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     const int fret = midiNote - spec.openMidiNote;
 
     const bool wasRinging = voice.active;
+    // A delayed pending contact captured this at scheduling time. `active`
+    // alone is insufficient: a fresh strummed voice is active throughout its
+    // silent pre-roll and may receive another same-note reservation there.
+    const bool preservesExistingStringState = keyStateAlreadyApplied
+        ? voice.pendingContactPreservesRing : wasRinging;
     // keyStateAlreadyApplied identifies a delayed contact whose MIDI owner
     // kept evolving during pre-roll. A released CC64 owner keeps its Note-Off
     // pitch snapshot; a new key owner thaws to the channel's cached target.
@@ -5416,7 +5639,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                      && voice.startDelaySamples > 0;
     updateStyleWeights(voice);
     if (voice.startDelaySamples == 0)
-        startExcitation(voice, velocity, false);
+        startExcitation(voice, velocity, false,
+                        preservesExistingStringState);
 }
 
 void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
@@ -5590,7 +5814,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     configureVoiceDamping(voice, voice.playStyle, fromFrequency, fromFret);
     configureVoicePitch(voice, false);
     configureVoicePickups(voice);
-    startExcitation(voice, velocity, true);
+    startExcitation(voice, velocity, true, false);
     // startExcitation() may restore a bridge hand that was already planted on
     // the string, which performs one final damping/phase solve. Express the
     // preserved sounding period in that final coordinate, not the temporary
@@ -5792,7 +6016,6 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.analyticReleaseFreshContact = false;
 #endif
 #if ELECTRY_ENERGY_ATTACK_PITCH
-    voice.stringTensionNewtons = 80.0f;
     voice.attackPitchTensionRatio = 0.0f;
     voice.pendingAttackPitchEnergyJoules = 0.0f;
     voice.pendingAttackPitchElasticScalePerJoule = 0.0f;
@@ -5800,8 +6023,16 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.attackPitchFrequencyFactor = 1.0f;
     voice.lastAttackPitchFrequencyFactor = 1.0f;
 #endif
+#if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
+    voice.stringTensionNewtons = 80.0f;
+#endif
     voice.excitationTailLength = 0;
     voice.contactFeedbackGain = 1.0f;
+#if ELECTRY_PASSIVE_REPICK_SPRING
+    voice.stringWaveImpedance = 1.0f;
+    voice.passiveRepickSpringActive = false;
+    voice.passiveRepickState = 0.0f;
+#endif
     voice.noiseRemaining = 0;
     voice.artifactCollisionRemaining = 0;
     voice.artifactCollisionLength = 0;
@@ -6322,58 +6553,53 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     float artifactContact = 0.0f;
     float artifactClearance = 0.0f;
     bool positionedFretLossActive = false;
-    // Advance the opportunity once per string sample, not once per
-    // polarisation: advanceLoop() is called for both axes below.
+    // Start the opportunity when the travelling wave reaches the actual local
+    // junction. The seam-derived output-energy follower wakes roughly half a
+    // round trip later and would spend the lowest Palm attacks only after their
+    // following-fret displacement peak had passed.
     if (voice.playStyle != PlayStyle::Dead && artifactsActive_
-        && voice.artifactCollisionRemaining > 0
-        && voice.outputEnergy > 0.0f)
+        && voice.artifactCollisionRemaining > 0)
     {
-        --voice.artifactCollisionRemaining;
-        const float progress = 1.0f
-            - static_cast<float>(voice.artifactCollisionRemaining)
-              / voice.artifactCollisionLengthDenominator;
-        artifactClearance = voice.artifactClearance
-                          * (1.0f + 3.5f * progress);
-        artifactContact = artifactContactShape_
-                        * voice.velocityProfile.collision
-                        * (0.70f + 0.30f * voice.lowStringWeight);
-        // Pitch motion is already control-smoothed. Refreshing the cached tap
-        // on the same 16-sample cadence tracks it without paying a fractional-
-        // coefficient solve throughout the short contact window.
+        // Pitch motion is already control-smoothed. Refreshing the snapped
+        // folded-ring junction on the same 16-sample cadence tracks it without
+        // doing position arithmetic throughout the short contact window.
         if (voice.ageSamples % static_cast<std::uint64_t>(controlPeriod) == 0u)
-            voice.artifactFollowingFretTap.setDelay(
-                voice.vertical.currentDelay * followingFretDelayScale);
-        positionedFretLossActive = true;
+        {
+            const auto cells = followingFretContactCells(
+                voice.vertical.currentDelay);
+            voice.artifactFollowingFretNear = cells[0];
+            voice.artifactFollowingFretFar = cells[1];
+        }
+        constexpr int mask = delayLineSize - 1;
+        const bool waveAtFollowingFret =
+            vertical.line[static_cast<std::size_t>(
+                (vertical.writeIndex - voice.artifactFollowingFretNear) & mask)]
+                != 0.0f
+            || vertical.line[static_cast<std::size_t>(
+                (vertical.writeIndex - voice.artifactFollowingFretFar) & mask)]
+                != 0.0f;
+        if (waveAtFollowingFret)
+        {
+            --voice.artifactCollisionRemaining;
+            const float progress = 1.0f
+                - static_cast<float>(voice.artifactCollisionRemaining)
+                  / voice.artifactCollisionLengthDenominator;
+            artifactClearance = voice.artifactClearance
+                              * (1.0f + 3.5f * progress);
+            artifactContact = artifactContactShape_
+                            * voice.velocityProfile.collision
+                            * (0.70f + 0.30f * voice.lowStringWeight);
+            positionedFretLossActive = true;
+        }
     }
 #endif
 
     // Loop reads and the damping/dispersion chain.
     const auto advanceLoop = [&] (PolarisationLoop& loop,
                                   float compensatedPeriod,
-                                  float extraFeedback
-#if ELECTRY_POSITIONED_FRET_COLLISION
-                                  , bool applyFretCollision
-#endif
-                                  )
+                                  float extraFeedback)
     {
         float sample = loop.readFractional(loop.currentDelay);
-#if ELECTRY_POSITIONED_FRET_COLLISION
-        // Poirot et al. found that a collision's longitudinal position is
-        // carried by the modal distribution (IEEE/ACM TASLP 2023,
-        // https://doi.org/10.1109/TASLP.2023.3284515). Compare the unfiltered
-        // travelling wave with one following-fret tap before touch, dispersion
-        // and fitted damping. This is only a cheap positioned-loss surrogate,
-        // but it lets modes with a node there survive.
-        if (applyFretCollision && positionedFretLossActive)
-        {
-            const float followingFretSample = loop.readLinearTap(
-                voice.artifactFollowingFretTap);
-            sample = applyPositionedFretCollision(
-                sample, followingFretSample, artifactClearance,
-                artifactContact,
-                artifactExcess);
-        }
-#endif
         if (touchWeight > 0.0f)
         {
             // The two reads must be separated by p times the complete live
@@ -6422,22 +6648,91 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         return sample;
     };
 
-    // Pick contact briefly chokes an already ringing string.
+#if ELECTRY_PASSIVE_REPICK_SPRING
+    if (voice.passiveRepickSpringActive
+        && voice.excitationPhase == ExcitationPhase::Contact)
+    {
+        // Folding stores the bridge-bound rail with the opposite sign. Gather
+        // both plectrum-normal incident waves before either write, run the
+        // paper's one-state bilinear reflectance, then scatter the same
+        // correction onto both physical outgoing waves (+y/-y in the folded
+        // storage). The orthogonal transverse coordinate passes unchanged.
+        constexpr int mask = delayLineSize - 1;
+        const auto incidentCommon = [] (const PolarisationLoop& loop,
+                                        int nearOffset, int farOffset)
+        {
+            constexpr int lineMask = delayLineSize - 1;
+            const float towardNut = loop.line[static_cast<std::size_t>(
+                (loop.writeIndex - nearOffset) & lineMask)];
+            const float storedTowardBridge = loop.line[static_cast<std::size_t>(
+                (loop.writeIndex - farOffset) & lineMask)];
+            return towardNut - storedTowardBridge;
+        };
+        const float common =
+            voice.passiveRepickNormalVertical * incidentCommon(
+                vertical, voice.passiveRepickVerticalNear,
+                voice.passiveRepickVerticalFar)
+            + voice.passiveRepickNormalHorizontal * incidentCommon(
+                horizontal, voice.passiveRepickHorizontalNear,
+                voice.passiveRepickHorizontalFar);
+        const float relativeDisplacement = -common; // fixed-edge component
+        const float correction = voice.passiveRepickB0 * relativeDisplacement
+                               + voice.passiveRepickState;
+        voice.passiveRepickState =
+            voice.passiveRepickB1 * relativeDisplacement
+            + voice.passiveRepickPole * correction;
+
+        const auto scatter = [] (PolarisationLoop& loop,
+                                 int nearOffset, int farOffset,
+                                 float amount)
+        {
+            loop.line[static_cast<std::size_t>(
+                (loop.writeIndex - nearOffset) & mask)] += amount;
+            loop.line[static_cast<std::size_t>(
+                (loop.writeIndex - farOffset) & mask)] -= amount;
+        };
+        scatter(vertical, voice.passiveRepickVerticalNear,
+                voice.passiveRepickVerticalFar,
+                voice.passiveRepickNormalVertical * correction);
+        scatter(horizontal, voice.passiveRepickHorizontalNear,
+                voice.passiveRepickHorizontalFar,
+                voice.passiveRepickNormalHorizontal * correction);
+    }
+#endif
+
+#if ELECTRY_POSITIONED_FRET_COLLISION
+    if (positionedFretLossActive)
+    {
+        // Evangelista and Eckerholm's rigid one-sided obstacle is a local
+        // two-port scatter, not a limiter at the loop seam. The single-delay
+        // loop stores the bridge-bound rail with opposite sign, so the two
+        // incident waves at the integer following-fret junction are exactly
+        // these paired history cells. Projecting their sum onto the signed
+        // clearance barrier leaves the differential component unchanged and
+        // changes squared-wave energy by (c^2-u^2)/2 <= 0.
+        constexpr int mask = delayLineSize - 1;
+        float& towardNut = vertical.line[static_cast<std::size_t>(
+            (vertical.writeIndex - voice.artifactFollowingFretNear) & mask)];
+        float& storedTowardBridge = vertical.line[static_cast<std::size_t>(
+            (vertical.writeIndex - voice.artifactFollowingFretFar) & mask)];
+        artifactExcess = scatterUnilateralFretCollision(
+            towardNut, storedTowardBridge, artifactClearance,
+            fretboardNormalSign);
+    }
+#endif
+
+    // Pick contact briefly chokes an already ringing string. The dynamic
+    // candidate replaces this seam placeholder only for the repick it owns.
     const float contactChoke = voice.excitationPhase == ExcitationPhase::Contact
+#if ELECTRY_PASSIVE_REPICK_SPRING
+        && ! voice.passiveRepickSpringActive
+#endif
         ? voice.contactFeedbackGain : 1.0f;
 
     float verticalSample = advanceLoop(
-        vertical, voice.compensatedPeriodVertical, contactChoke
-#if ELECTRY_POSITIONED_FRET_COLLISION
-                                       , true
-#endif
-                                       );
+        vertical, voice.compensatedPeriodVertical, contactChoke);
     float horizontalSample = advanceLoop(
-        horizontal, voice.compensatedPeriodHorizontal, contactChoke
-#if ELECTRY_POSITIONED_FRET_COLLISION
-                                         , false
-#endif
-                                         );
+        horizontal, voice.compensatedPeriodHorizontal, contactChoke);
 
 #if ELECTRY_POSITIONED_FRET_COLLISION
     if (voice.playStyle == PlayStyle::Dead && artifactsActive_
@@ -6565,6 +6860,12 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     {
         if (--voice.excitationRemaining <= 0)
         {
+#if ELECTRY_PASSIVE_REPICK_SPRING
+            // Dropping the contact's stored state is dissipative; carrying it
+            // into the free string would be an unmodelled release impulse.
+            voice.passiveRepickSpringActive = false;
+            voice.passiveRepickState = 0.0f;
+#endif
             voice.excitationPhase = ExcitationPhase::Release;
             voice.excitationRemaining = voice.excitationLength;
         }
@@ -6720,6 +7021,19 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // delay. The magnetic pole senses the perpendicular polarisation more
     // strongly than the parallel one. Taps are taken before the write index
     // advances so the interpolator never touches a stale slot.
+#if ELECTRY_MEASURED_PICKUP_FLUX
+    // The Eq. 6 law evaluated about Electry's 3 mm rest gap is rest-subtracted,
+    // slope-normalised and softly bounded before reaching the pole piece.
+    const auto magneticTransfer = [&] (float displacement, float drive,
+                                       float inverseDrive)
+    {
+        // Keep the established pickup-position/type displacement calibration;
+        // the reciprocal gain preserves the measurement-fitted proxy's unity
+        // small-signal slope, just as it does for the shipping polynomial.
+        return measuredPickupTransfer(displacement, drive, inverseDrive,
+                                      smoothedParameters_.pickupType);
+    };
+#else
     // Distance-dependent flux nonlinearity, second-order dominant. The
     // saturating pre-map bounds the polynomial's argument the way approaching
     // magnetic saturation actually bounds it: smoothly, with a unity slope and
@@ -6738,6 +7052,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
             / std::sqrt(1.0f + driven * driven * inverseCeilingSquared);
         return (x + x * x * (0.55f + 0.30f * x)) * inverseDrive;
     };
+#endif
 
     // A pickup whose selector mix has faded to silence contributes nothing, so
     // its two fractional reads, spatial aperture, flux polynomial, induced-EMF
@@ -7512,7 +7827,10 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 }
                 else
                 {
-                    startExcitation(voice, voice.velocity, false);
+                    const bool preservesExistingStringState =
+                        voice.pendingContactPreservesRing;
+                    startExcitation(voice, voice.velocity, false,
+                                    preservesExistingStringState);
                 }
             }
             rendered = true;

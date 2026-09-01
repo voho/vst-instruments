@@ -426,6 +426,202 @@ implementation fidelity and boundedness, not perceptual superiority. Promotion
 still requires identical-render, whole-file-level-matched blind listening
 across material-focused, metal, rock and blues renders.
 
+### Pre-source rejection of the distributed Palm-junction experiment
+
+A reversible 2026-09-01 candidate replaced only the bridge-hand part of the
+shipping Palm loss with three passive, memoryless junctions on the folded
+waveguide. The junctions used fixed `1/4, 1/2, 1/4` weights around a
+Mute-Tightness-derived centre, with finite widths `1.5, 3, 4.5, 6, 7.5 mm`;
+a collocated point-rate grid and the shipping lumped high-tilt grid were the
+equal-complexity controls. The stored-sign scatter itself was reciprocal and
+contractive, its rate exponents were internally consistent, and the macro-off
+engine remained byte-identical. The candidate-only patch is preserved outside
+the repository at
+`/private/tmp/electry-egipt-palm-20260901/CANDIDATE.patch`, SHA-256
+`bf519b8675b3ebf078c15825608d264696065aeccd3d346abf406daa92443af9`.
+
+The candidate was rejected before any corpus payload or stage-0 model render.
+In an unbound local production-suite run at 4.5 mm, the candidate reported
+eleven substantive failures; that run predates the immutable plan/self-test
+receipts below and is recorded as a local observation rather than sealed
+benchmark evidence:
+four F2 early-upper-contraction rails across sample rates, three above-500 Hz
+loss/attack-darkness rails, two contextual body/decay rails, one shared-hand
+Palm darkening rail and a `+12.5 cent` strong-contact pitch shift against the
+existing six-cent limit. Inspection found a direct cause for the pitch failure:
+the interior junctions were configured after the compensated period had been
+solved, so their reflected-wave pole phase never entered pitch compensation.
+The integer snapped contact coordinate also omitted the fractional seam and
+commuted damping/dispersion phase; those omissions are consistent with, but do
+not alone prove the cause of, the spectral and decay failures. Palm -> Open ->
+Palm on one ringing voice could additionally reuse a stale relaxation peak.
+
+The source-free benchmark plan and final synthetic self-test remain at
+`/private/tmp/electry-egipt-palm-20260901/PLAN.json` and
+`SELFTEST-FINAL.json`, SHA-256
+`4d8dfdcb53f5852e7f58f9c04b323ec14ce744973cbe0f1f5fca8db9d466d38f`
+and
+`63e21d1826fd84a63ea4b99c78985bee3f34ad8c122c01bb83a089b73489a920`.
+An independent fail-closed audit also stopped that harness: its unfinished
+stage-6 producer hard-coded six required engineering checks to false, while
+several receipt/rename trust boundaries could still admit replayed evidence.
+Stage 0 therefore would only have restated build provenance for a mechanism
+that could not ship. No high-gain processor ran, no selected-member payload
+request was made, no selected WAV payload was opened, no real or model
+benchmark waveform was decoded, rendered or auditioned, and the EG-IPT
+selection and holdout remain untouched.
+The four-file candidate patch was reversed exactly; shipping Palm is unchanged.
+
+#### Pre-source rejection of the point-contact modal comb
+
+The proposed follow-up was implemented as a second reversible, default-off
+experiment and also rejected before source access.  It removed only the
+shipping Palm differential high-frequency loss and hand dip.  The existing
+`handRate / 22` low-mode relief remained as equal fundamental/high-target loss;
+the replacement was one passive Mach-Zehnder loss cell at the declared hand
+coordinate.  For hand strength `R`, its static loop transfer was
+
+`H(z) = (1 - a) + a z^-D`, with `a = (1 - R) / 2`,
+
+and the implementation split and recombined with
+`c = sqrt(1-a)`, `s = sqrt(a)`.  Storing `s[n] * x[n]` in the delay arm made the
+cell exactly energy-accounting even while pressure changed:
+`y^2 + z_discarded^2 + E_next = x^2 + E_previous`.  Its exact fundamental
+phase was added to the existing compensated-period solve, contact distance was
+converted from the unbent open-string wave speed, and lift, replant, retap,
+repick and low-sample-rate lifecycle cases had explicit candidate tests.
+
+Those implementation invariants passed, but the complete Release engine suite
+reported sixteen failures in 41.38 seconds.  Twelve were expected legacy
+mechanism assertions about the removed hand dip or one-pole and did not decide
+the result.  Four unchanged audible/output rails did:
+
+- the late Palm note failed the `< 0.25 x Open` articulation-decay bound;
+- at least one pick direction failed the `< 0.30 x Open` Palm-decay bound;
+- Open/half/full pressure late RMS was `0.008855 / 0.005219 / 0.000854`, so
+  Open to half missed the required factor-of-two contraction; and
+- E2 extra loss above 500 Hz was only `7.72601 dB`, below the `> 10 dB`
+  selective-loss rail (its absolute upper loss also missed the existing
+  `18 dB` floor).
+
+The failure pattern is explained by the fixed-coordinate, one-delay topology
+rather than a nearby value of its one strength coefficient.  At harmonic
+`n`, the cell retains
+`|H_n|^2 = 1 - (1 - R^2) sin^2(n pi x/L)`.  A near-bridge point therefore
+couples only weakly to the late low modes and leaves exact unity nodes for all
+`R`.  At the default coordinate, the E2 `> 500 Hz` band begins near H7, where
+the overlap is still small; the E1 band begins near H13 and happened to lose
+more energy.  Fitting `a` at the shipping 3.6 kHz anchor could not remove the
+nodes and would have abandoned the declared spatial hypothesis, so no constant
+was tuned and no output gate was waived.
+
+The failed candidate executable and full log remain at
+`build-palm-modal-comb-release/ElectryEngineTests` and
+`build-palm-modal-comb-release/Testing/Temporary/LastTest.log`, with SHA-256
+`0732131fab78b9ebb30bf643a8e383124dcecc658ff15e54ea6f505174c2cc8c`
+and
+`03639cef913294a9f95d5edbcd40174419c5b97e3168ebb3e465a168393c3eca`.
+The macro-off Release executable was byte-identical before and after reversal,
+SHA-256
+`31e6e0c4b4a009bedb176725d365bbf082a78bf6a457b86eb126acd9a61b0dc1`,
+and passed the complete suite in 45.24 seconds.  Exact pre-candidate hashes were
+restored for CMake, both engine files and the engine tests; no candidate flag,
+state, manifest field or test remains in source.  No selected WAV, corpus
+payload, high-gain processor or real/model benchmark render was opened or run.
+
+The literature supports a distributed Palm force but does not publish a
+transferable heel footprint or pressure profile.  A future bounded experiment
+must therefore either measure and freeze that geometry independently, or label
+any width/profile search as TRAIN-only model identification with untouched
+player/guitar holdout.  It must preserve the measured broadband Palm decay and
+use a passive, phase-solvable finite-contact topology. This result rules out
+the tested fixed-coordinate, one-delay replacement under the unchanged output
+rails; it does not rule out every possible spatial contact model.
+
+### Source-inconclusive EG-IPT artificial-harmonic coordinate audit
+
+The shipping Pinch operator excites the string at one plectrum coordinate and
+then applies the touch at that same coordinate. On an ideal string this couples
+the mode shapes as `sin(n pi p) cos(n pi p) = 0.5 sin(2 n pi p)`. A reversible
+2026-09-01 candidate kept the plectrum fixed and moved only the touch by one
+shared signed distance in metres before fret stretch. Its equal-complexity
+control moved the co-located plectrum and touch together by the same distance.
+Both reused the existing event-time modal table and coordinate path: no voice
+state, callback loop work, control, solver or dependency was added. Spatial
+touch models motivate testing separated contacts, but the fitted distance was
+an Electry hypothesis, not a claimed anatomical measurement. EG-IPT calls the
+articulation `art-harmonic`; it does not establish that every take is a
+thumb-produced pinch harmonic, so even a successful result would support only
+an artificial-harmonic spectral operator on this corpus.
+
+The lawful source was the CC BY 4.0
+[EG-IPT archive](https://zenodo.org/records/15205644) and its
+[NIME paper](https://nime.org/proceedings/2025/nime2025_14.pdf): one
+professional player, a Gibson SG, simultaneous 96 kHz/24-bit DI and amplified
+channels, including the EVH 5150 III/Mesa V30/SM57 dynamic-microphone path.
+ZIP central-directory metadata fixed 60 complete cells across bridge/neck
+humbuckers, strings 6/5/4 and identifiers 04--22, with paired `ordinario` and
+`art-harmonic`, DI and dynamic-microphone members. Identifiers 06, 10, 14, 18
+and 22 formed the 30-cell selection surface; 04, 08, 12, 16 and 20 were sealed
+holdout. The Zenodo record reports the 23,757,983,313-byte archive MD5 as
+`48a5135adfd090515ff0af7dc5c3c32f`; that whole-file MD5 was not locally
+recomputed. Every selected range instead had to pass its central-directory
+CRC and receive a payload SHA-256 in the source receipt.
+
+The complete external protocol was frozen before any selected payload. Its
+PLAN SHA-256 is
+`2c8e5984fe419391005f0f7c67b4094ebf92e921be55fd3402f03a3f545b2d91`
+and its v2 pre-decode intake is
+`139b018c5d320b621b0a40e92e118b9e8174d1c93000f2814256b9aa9dfdf507`.
+The intake binds the extractor, source-pitch analyzer, inferential scorer,
+engineering gate and non-vetoing physical-microphone reporter at SHA-256
+`da8695fca539256bb70bc0e8ec2efe8a4c7b9f1e65d9972cccc88403f349e0e0`,
+`5ebb1f08faab1c649363c12e041ec36814fd8660a465f3bc1bae4e937618f8f3`,
+`d2d09a2e4e700c740167ddce70b3649517861b963d07d5f58137e81411fcc1f7`,
+`de14ac6f00cebafac251c701243dae0cc720eafe59e10f8ee51a283d72d9d0e1`
+and `9fba0871ee480b09ede41cc1bc1366e0ceebe337824584eb8e279f25e3a4b828`.
+All frozen files were made read-only; renderer/engineering manifests, exact
+zero-delta audio identity, an independently reproduced high-gain executable,
+broad-search YIN octave/stiff-string cases, metric identity/non-identity,
+failure builders and the engineering coordinate oracle passed using synthetic
+audio before extraction.
+
+Had source intake passed, ordinary-only nuisance selection would have chosen
+one pick fraction from 0.05 through 0.50. Raw selection would then have compared
+touch-only separation against the co-moving control on the fixed
+`-20..+20 mm` grid in 2 mm steps, using two-window H2--H16 normalized-contour
+RMSE, source-only measured ordinary-DI F0 for real signals and equal-tempered F0
+for model signals. Frozen raw, shared-high-gain, per-pickup/string, p90,
+per-cell, secondary and leave-one-pickup-out gates all had to advance before
+the untouched holdout and candidate-aware engineering proof. Only after those
+decisions could the paired dynamic-microphone surface report one descriptive
+direction; it could neither refit nor veto. A finite exact-zero shipping error
+was preregistered as a valid perfect baseline with an undefined JSON-null
+relative improvement and a failed positive-improvement gate, not a division
+error.
+
+Stage A made 124 byte-range requests and admitted all 30 selection
+`ordinario` DI members after 104,404,563 received bytes. The immutable source
+receipt SHA-256 is
+`a86e9df42e71086dd48dd3ace12e14d0481dc178d9f1cb526150a01dcf4e200a`.
+The first authorized source-only decode then stopped at
+`HB-neck_ordinario_02-06_5s_DI.wav`. The frozen centred-window detector placed
+its onset at frame 1872 at 96 kHz, or 19.5 ms; the contract required at least
+1920 frames/20 ms of prefix. It missed by 48 frames (0.5 ms). The terminal
+`source_abort_inconclusive` artifact has SHA-256
+`d991777cf1912b148de532b990603114a5f7d035ba353a7a916c48f95aa095d5`
+and is bound to both PLAN and source receipt. No recording was auditioned.
+
+No pitch unseal exists, so the extractor remains unable to open selection
+`art-harmonic`, either holdout half or the dynamic-microphone surface. No real/
+model partial spectrum, nuisance coefficient, candidate class/distance,
+high-gain comparison, transfer score, engineering candidate or A/B was
+computed. Relaxing 20 ms after seeing 19.5 ms, shifting the onset, or dropping
+the cell would invalidate the pre-registration. The correct conclusion is
+therefore source-inconclusive: EG-IPT did not falsify the fixed-metre mechanism,
+but it supplied no admissible evidence to implement it. The source branch is
+absent and shipping remains the co-located law.
+
 ### Historical CC0 Modern-cabinet audit
 
 [Jester Dyne's Brutal IR Pack](https://www.jester-dyne-productions.com/brutal-ir-pack/)
@@ -457,7 +653,7 @@ The measured IR reaches its first peak at sample 7 (0.146 ms), first crosses
 99% cumulative energy at sample 451 inclusive (452 samples, 9.42 ms), and its
 causal first 1,024 samples retain 99.636% of its energy with 0.495 dB smoothed
 response error against the full file over 80 Hz-8 kHz. That makes one fixed,
-phase-preserved cabinet a defensible future upgrade without another user
+phase-preserved cabinet a defensible candidate to test without another user
 control.
 
 The CC-BY-4.0 [EG-IPT archive](https://zenodo.org/records/15205644) is the
@@ -471,6 +667,45 @@ must not be deconvolved into another IR: the amplifier is nonlinear, its gain
 settings are not fully identified for that use, and the released guitar is a
 six-string whose range cannot validate Electry's E1 string mechanics.
 
+That direction was tested on 2026-09-01 with exact bridge-pickup `ordinario`
+and `muted` same-performance pairs: `_DI.wav` drove Electry and the simultaneous
+dynamic-microphone `_dyn.wav` was the target. The first 48,000 frames at 96 kHz
+were evaluated at DI peaks of -18, -12, -6 and -3 dBFS through fixed Distortion
+0.45, Amp 0.95, Modern High-Gain and Compressor 0.60 settings. The primary
+measure was normalized 36-band equal-log spectral-shape RMSE over 80 Hz-8 kHz
+in 0-30, 30-80, 80-250 and 250-500 ms windows. The secondary measure compared
+the last three windows' relative RMS against the first. Before either candidate
+render was inspected, the frozen gate required at least 10% primary-median
+improvement, improvement in each pair median, no primary cell more than 0.25 dB
+worse, and no worse secondary median or secondary cell by more than 0.5 dB.
+
+The external frozen artifacts are
+`/private/tmp/electry-fx-paired-20260901/PLAN.json` (SHA-256
+`7f1b86824841831c259ca94fb1dfc566616438a1b5298865e4e892121a38036b`),
+`/private/tmp/electry-fx-paired-20260901/analyze.py` (SHA-256
+`d52547c21cdacca2fdcd76ceca8fca0e9ddccfb73911b135a3be287d524d730f`)
+and `/private/tmp/electry-fx-paired-20260901/RESULT.json` (deterministic-rerun
+SHA-256
+`1aad021e713a4d027900de488a0f332133d9f57ea0b23f6bf2148f2e677f24cc`).
+They are not committed and their absolute paths identify the audit workspace,
+not durable repository inputs.
+
+The shipping filters' primary median/max errors were 17.418264/19.285118 dB;
+the phase-preserved IR reached 16.255076/17.830980 dB. It improved all eight
+pair/gain cells and both pair medians, but its 6.677982% median improvement
+missed the frozen 10% gate. Secondary relative-envelope median/max error fell
+from 6.247677/12.160929 to 4.965523/9.206289 dB, but every `ordinario` gain cell
+worsened by 0.78-1.09 dB, beyond the 0.5 dB rail, while every `muted` cell
+improved. The real target relative-RMS trajectories were
+`[+7.9644, +7.5412, +6.6098]` dB for `ordinario` and
+`[+7.1724, +3.5184, -26.5588]` dB for `muted`.
+
+This is only a whole-chain direction check: its Gibson SG humbuckers, named
+6L6 amplifier, Mesa/V30 cabinet, microphone and undocumented gain setting do
+not identify Electry's cabinet in isolation. The candidate therefore failed
+the preregistered objective gates, no A/B was licensed, and
+`ELECTRY_MEASURED_MODERN_CABINET` remains default-off.
+
 The cabinet remains inside the 8x nonlinear domain. At a 48 kHz host the
 1,024 source coefficients therefore prepare to 8,192 coefficients at 384 kHz;
 a correct direct stereo FIR would cost about 6.29 billion multiply-accumulates
@@ -478,9 +713,129 @@ per second, while one 8,192-sample FFT block would add 21.3 ms. The default-off
 `ELECTRY_MEASURED_MODERN_CABINET` candidate instead evaluates taps 0-63
 directly, taps 64-511 in seven FFT-128 partitions and the rest in up to fifteen
 FFT-1024 partitions. The tier offsets pay their own block schedules, so it adds
-no algorithmic latency. The shipping zero-latency filters stay unchanged until
-identical pre-cab, whole-file-level-matched renders and listener verification
-select that direction.
+no algorithmic latency. The shipping zero-latency filters stay unchanged; the
+paired-recording audit above rejected the measured candidate before listening.
+
+#### Rejected Modern measured-6L6 output-stage ablation
+
+A second single-factor audit on 2026-09-01 kept the shipping cabinet and
+controls fixed. After Modern's second triode, the default-off branch reused the
+existing measured 6L6-family `powerTubePairLookup()` at zero common drive. It
+passed the legacy droop expression as `railScale`, drove the existing
+transformer from the lookup output and fed plate-plus-screen `supplyDemand`
+into Modern's unchanged attack/release sag follower. It added no solver, state,
+constant or dependency.
+
+The protocol was frozen before candidate compilation or audio at
+`/private/tmp/electry-modern-6l6-20260901/PLAN.json` (SHA-256
+`c339c132a0d69856d2c6502edd4b0a20ac69d4ec6f50d5f6dd3eaf73c0c26f17`).
+Its analyzer is
+`/private/tmp/electry-modern-6l6-20260901/analyze_paired.py` (SHA-256
+`e49aa5d5a487b9d405c7cacfc37dcb218daabbf3e2aec5bbf1a75c96fbcb2a24`),
+its result is
+`/private/tmp/electry-modern-6l6-20260901/PAIRED_RESULT.json` (SHA-256
+`f1eb99929666d28fcf9c8fc3fc2909526947d99ade3891a5820acd3a66101924`),
+and the candidate processor's SHA-256 is
+`5ddd20d8f95ffb2a962b08de0ced2be876706fb0d60c4f1e705d08ed123efd0b`.
+These external artifacts are not committed repository inputs.
+
+Against the same eight EG-IPT pair/gain cells, median envelope error worsened
+from 6.2476765 to 8.3466921 dB: `-33.5967%` relative improvement, versus the
+required `+10%`. Both the each-pair-median and 0.5 dB per-cell envelope rails
+failed. Median spectral error worsened from 17.4182643 to 18.1519104 dB and
+failed both its no-worse median and 0.25 dB cell rails. Median crest error
+worsened from 3.1850492 to 3.4549171 dB and failed both its no-worse median and
+0.5 dB cell rails. Candidate-minus-baseline cell RMS ranged from -6.9449 to
+-5.7324 dB, far outside the frozen 1 dB level rail. Output finiteness and OFF
+audio identity passed.
+
+The EVH/Mesa microphone target remains a direction-only check of a different
+named chain, not evidence that could by itself promote an Electry model. The
+objective rejection stopped the experiment before CPU, A/B or full test-matrix
+work. The temporary flag and branch were removed; the shipping Modern path is
+unchanged.
+
+#### Aborted Guitar-TECHS fixed-metre pinch-offset audit
+
+The shipping Pinch touch is co-located with the pick. On an ideal string that
+couples the pluck and touch mode shapes into
+`sin(n pi p) cos(n pi p) = 0.5 sin(2 n pi p)`. A 2026-09-01 ablation separated
+the following thumb from the pick by one signed physical distance, added in the
+open-string coordinate before fret stretch. It reused the existing touch and
+pick geometry and added no state, sample-loop work, control or dependency. The
+hypothesis was motivated by spatial touch/collision models, but the fixed
+distance itself was an Electry hypothesis rather than a published anatomical
+measurement.
+
+The lawful source was the CC BY 4.0 [Guitar-TECHS release](https://zenodo.org/records/14963133)
+and [paper](https://doi.org/10.1109/ICASSP49660.2025.10887996). Its actual
+fixed-slot archive differs from the paper's headline pinch count: P1 contains
+72 four-second pinch slots (frets 1-12 on six strings), P2 contains 132 (frets
+1-22), and each ordinary file contains open plus frets 1-22 on six strings.
+Named-string MIDI was therefore used only for onset phase and QC, never to infer
+cell identity. P1 used an Ibanez PF300, `.011-.050` flatwounds and bridge pickup;
+P2 used an EVH Wolfgang Exotic, `.009-.042` nickel strings and neck pickup.
+Their undocumented amp settings cannot identify a metal high-gain target.
+
+The parent three-wound-string plan was frozen at
+`/private/tmp/electry-pinch-offset-20260901/PLAN.json` (SHA-256
+`f1c8d6c0545d622d90e4221073799769c01ce34a2e86429fb752293f11f91bcd`).
+Before any candidate partial metric, P2 pinch DI exceeded its 0.1% full-slot
+clipping ceiling at A frets 16, 17 and 18 and D fret 5: respectively
+0.108333%, 0.124479%, 0.113021% and 0.139583%. The complete surface was aborted;
+no cell was silently removed. The follow-up low-E-only plan and its alignment
+and two-window-secondary clarifications have SHA-256 hashes
+`c4ea953f08ba7aef6ca788768fc25dbdab033acc1b9bf5ff87ec6d94c201aafb`,
+`e4549d8dfc8aeeafa3c0027329d5bc30181ebd09eb45ab07a7b2d20febd65c16`
+and `06b7030a1396867d5b5354e1552de620fb550db4b35c80ad3bb24c75dec0465e`.
+Source, renderer and fixed high-gain receipts are
+`bc5746095730016e1e7234b346131fbc597511b00b8e17ee739452b26eb7ec64`,
+`2549a05b9b8cc52a6c827ec0048ff5908621c7ce38070a4b607ec47f611a9ea1`
+and `b58840629dcc046186c03d69f68512f6c6a1c78869890d658decf85d2ce92a94`.
+
+The final two-phase analyzer (SHA-256
+`12526ec4928cb08763e86ee3f1843a340302879b5bd9a12017b061f41bc0d54e`;
+external freeze receipt
+`b634ab6c76d05efbdef11f6a27d64fa732d7cb3d3225d3c3dc333d4b10f9913f`)
+stores raw crops without computing spectra until every intake cell passes. It
+also stops before odd-fret metrics if the even-fret fit chooses zero or a grid
+boundary. Two independent audits of that metric-control flow and its synthetic
+branch tests passed.
+Its byte-identical repeated result has SHA-256
+`bd9370e6b96f3562bae3e89f58c045aae670c96b8588f50914ce765a727c6cdc`.
+
+That result stopped at P1 ordinary low-E fret 1. The frozen alignment selected
+frame 191430 (3.988125 s); its preceding 100 ms RMS was
+0.005705661772051484 and maximum 5 ms attack RMS was
+0.035903514669955956, giving 15.976619 dB against the required 20 dB. The slot
+had no clipped frame. Candidate-neutral follow-up showed 99.8136% of the
+pre-onset-window energy in its last 25 ms and a second strong transient about
+10 ms before the selected onset, so the failure is not mainly the preceding
+open-note tail. The frozen no-manual-rejection rule was retained.
+
+A post-decision source-only scan recorded all 68 DI intake cells without calling
+the spectral, renderer, effects or candidate paths. Its external JSON SHA-256 is
+`9c33fe520fff9d8e3684eb9375affada34451be879637fe0cc26b12e313b8898`.
+It found additional independent P1 failures: ordinary frets 3, 5, 9 and 10
+also missed 20 dB, while P1 pinch fret 1 had only 8 recorded prefix frames
+against the required 960. It also exposed an analyzer limitation before that
+count could be interpreted: P2 ordinary MIDI phase `3.9979167 s mod 4` was
+treated as almost positive four seconds instead of negative 2.083 ms, shifting
+that surface by one slot. Its fifteen nominal P2-ordinary failures are therefore
+suspect and are not evidence for rejection. The first P1 failure occurs earlier
+in analyzer order and the independent P1 cells already fail the frozen intake,
+so this late finding does not change or rescue the decision.
+
+Consequently no real or model partial spectrum, ordinary-only pick-position
+fit, thumb-distance selection, high-gain score, amp-mic direction check or
+odd-fret holdout metric was opened. This does not falsify a physical
+thumb/pick separation; it leaves that mechanism unmeasured by this source. Per
+the frozen decision, it cannot justify shipping a coefficient: the temporary
+macro and branch were removed and no A/B was prepared. The restored build
+passes `Electry.ElectryEngine` and `Electry.RenderEvaluation`; its dry/high-gain
+metal benchmark SHA-256 hashes remain
+`69e1cd0094c899b7f5640ffc74b71dafd87978809323e01ace237906728b4ecb` and
+`ef32b65b6b8e0f7c04a0a18ddbe2196451d5528862d57a109006a582cbabbf64`.
 
 ## Reproducible model probes
 
@@ -687,6 +1042,73 @@ One edited sampler take, no pickup identity and no repeats cannot set a release
 time or shipping threshold. Preserve the current excitation, tuning and decay
 rails; use the attack result to prioritize a controlled multi-player
 exact-eight pick capture, never to fit path balance directly to these files.
+
+#### Exact released-displacement and finite-release-pole ablations
+
+The default-off `ELECTRY_ANALYTIC_RELEASE_IC` experiment replaces only a fresh
+plectrum attack's sustained modal injection with the exact cell-centred folded
+rail for a finite-width triangular displacement and zero initial velocity. It
+keeps the broad edge, scrape, pickup and string loop, and deliberately leaves
+ringing repicks on the shipping path. The 4.8 N force/compliance anchor was not
+fitted to the files below. An earlier 2.4--10.8 N sweep already showed why gain
+is not the missing variable: the E1 60--85 Hz rail first passed near 9.6 N,
+after the full-velocity level ceiling had failed near 7.6 N, while the partial
+shape errors remained.
+
+Fresh OFF/ON renders with the frozen native-rate envelope core show a useful
+but incomplete phase correction. E1 onset-to-peak moves from 25.510 to
+4.286 ms, toward the two anonymous 8ridgelite channels' 1.625--2.271 ms, and its
+returned/first crest ratio moves from +1.474 to -0.004 dB, versus -1.30 and
+-0.35 dB. E2 onset-to-peak barely moves, 12.721 to 13.084 ms; its crest ratio
+improves from +2.922 to +1.227 dB but remains opposite the real -0.67 and
+-0.38 dB. The normalized 1--2 second window worsens from -5.267 to -6.979 dB
+on E1 and from -8.487 to -12.290 dB on E2, versus real E1 -6.76/-4.66 and E2
+-6.13/-5.50 dB.
+
+A separate descriptive timbre check used Hann-windowed 0--30 and 30--80 ms
+segments, 20--6500 Hz power for the centroid denominator and 500--2000 Hz for
+the reported upper share. It is not the frozen comparison protocol. The exact
+triangle makes the E2 centroid 728/670 Hz and upper share 80.68/81.02%, versus
+shipping 410/401 Hz and 29.67/28.61%; the closest available EGFxSet Clean
+Bridge take is 347/338 Hz and 11.93/11.08%. Thus the candidate fixes one E1
+timing symptom by making the fresh low-string attack radically too thin and
+bright. It also fails 54 current-engine compatibility/calibration checks and
+leaves the repeated metal hits unchanged by design. It remains default off.
+
+One smallest-root-cause follow-up asked whether the analytic replacement had
+accidentally omitted the shipping excitation's independent finite-release
+pole. With its amplitude unchanged and no fundamental makeup, an O(N) trial
+applied that existing coefficient once to the complete odd-periodic rail:
+for logical history coordinate `q`, which a fixed tap encounters in descending
+order, `y(q) = (1-a) g(q) + a y(q+1)`. The recurrence was pre-rolled through
+the continuous-period raw rail below float roundoff, never reset at the seam,
+and the same shaped tail primed the pickup aperture and coil histories. This is
+an exponential release surrogate using an existing calibrated magnitude law,
+not a measured plectrum-force trajectory; its causal phase necessarily adds a
+particular, unmeasured release velocity.
+
+Both phase ablations were rejected and removed. The future-facing recurrence
+raises rather than lowers the audible early centroid: E1 becomes 736/366 Hz
+and E2 787/700 Hz; E2 upper share becomes 80.76/82.29%. E1 onset-to-peak falls
+back to 24.785 ms. Engine failures increase from the bare analytic candidate's
+54 to 67. In the 40-hit metal score, whole-file dry RMS is essentially
+unchanged (-36.1143 dBFS OFF versus -36.1161 dBFS with the ablation), while
+high-gain RMS falls from -30.2860 to -30.4616 dBFS; the first dry Palm hit's
+50--150 ms/onset and 150--500 ms/onset windows move from -1.576/-1.235 dB to
+-5.722/-4.470 dB.
+
+The conjugate recurrence, tested separately as return-directed velocity rather
+than mislabeled as the same causal filter, also destroys the timing benefit:
+E1 onset-to-peak becomes 24.376 ms and its centroid 645/419 Hz; E2 becomes
+917/771 Hz with a -13.437 dB 1--2 second window. Its E2 returned/first crest
+does improve to +0.511 dB, but remains on the wrong side of both real channels.
+Metal dry/high-gain RMS becomes -35.9960/-30.4326 dBFS and its raw peak rises
+1.595 dB. Opposite phase changes cannot rescue a magnitude law that does not
+identify the actual displacement/velocity pair. A zero-phase magnitude
+operator would be a different experiment and still could not repair the
+missing absolute E1 bass or same-string repicks. No coefficient was fitted, no
+listening choice was requested, no third-party audio is committed, and the
+shipping flag-off build remains the product baseline.
 
 ### CC0 seven-string muted/sustained matrix
 
@@ -1082,6 +1504,193 @@ require more than 6% and less than 0.97 respectively. They reject a materially d
 more periodic regression while leaving commissioned dry evidence free to
 support a different contact model.
 
+### Paired metal render and fitted pickup flux-linkage experiment
+
+`ElectryRenderEvaluation --metal-benchmark [directory]` now freezes a second,
+model-only comparison surface. It renders one 40-hit E1/E2 Palm/Dead score at
+44.1 kHz and variation seed zero, once through the production engine. The two
+mono float32 outputs tap that same pass immediately before `ElectryFx` and
+after a fixed Modern high-gain chain. They are not normalized, and the wet
+signal is returned to the engine in causal chunks exactly as in the plug-in.
+The generated `electry-metal-benchmark/v1` manifest records the score,
+parameters, signal path, build-feature flags and output peaks. It does not embed
+a source revision or executable digest, so cross-build studies must archive and
+hash the renderer separately. The evaluation test renders it twice and requires
+byte-identical WAVs and manifests. On one local arm64 Release build with
+`ELECTRY_MEASURED_PICKUP_FLUX=OFF`, the observed, non-provenance-bound hashes
+are:
+
+```text
+pre-FX dry  69e1cd0094c899b7f5640ffc74b71dafd87978809323e01ace237906728b4ecb
+post-FX     ef32b65b6b8e0f7c04a0a18ddbe2196451d5528862d57a109006a582cbabbf64
+manifest    54b548039edc0a53f9048d42e90db9c106bc567482c1f59676f1f56debe82016
+```
+
+This is an A/B transport, not a realism score. In particular, its two outputs
+are one synthetic performance at different taps; they do not become a real
+dry/reamp pair merely because both are present.
+
+The first experiment behind that transport replaces only the shipping pickup
+flux-linkage proxy polynomial when `ELECTRY_MEASURED_PICKUP_FLUX=ON`. It
+evaluates the empirical static law fitted in
+[Novak et al., DAFx-18](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_39.pdf),
+using their SH-2N humbucker and SSL-5 single-coil equivalent dimensions as the
+two Pickup Type endpoints. Their measured time-integral of pickup voltage
+differs from physical coil flux by sign, turns and an unknown constant; Electry
+also discards fitted amplitude `A` and unity-slope normalizes each endpoint.
+Equation 6 therefore supplies a measurement-fitted nonlinear flux-linkage
+shape, not measured physical gain or absolute flux. A 257-point table removes
+cube roots from the render loop. Each endpoint is rest-subtracted and normalized
+at the paper's measured 3 mm string/pole gap; the established neck/bridge
+displacement drive remains around the new law, so small-signal gain and the two
+pickup positions retain their existing calibration. Focused tests compare the
+table with Equation 6 after the documented soft displacement bound, and cover
+the render calibration wrapper, zero, endpoint interpolation and hostile
+inputs.
+
+The lawful real-audio direction check used open E2 (`6-0.wav`) from all five
+Clean and RAT pickup folders in [EGFxSet](https://zenodo.org/records/7044411).
+The corpus uses a conventional six-string, a fixed 2 mm pick and independently
+normalized clean/real-pedal files. Several notes already contain substantial
+signal in their first frame, so fixed 0-30 and 30-80 ms windows are descriptive;
+onset-rise and absolute-level comparisons are inadmissible. Across the five
+pickup selections the scale-invariant medians were:
+
+| EGFxSet E2 | 30-80 / 0-30 ms body | 0-30 ms crest | centroid 0-30 / 30-80 ms | upper-band share 0-30 / 30-80 ms | harmonicity 0-30 / 30-80 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Clean | -0.343 dB | 10.071 dB | 252 / 253 Hz | 2.597 / 2.327% | 0.903 / 0.996 |
+| RAT | -0.703 dB | 5.502 dB | 346 / 438 Hz | 16.724 / 17.268% | 0.615 / 0.956 |
+
+The closest available raw-domain row is still mismatched: EGFxSet Clean Bridge
+is a conventional single-coil E2, whereas Electry uses its eight-string default
+build, bridge selector and 32% pickup morph. It nevertheless gives a useful
+no-promotion check:
+
+| scale-invariant E2-open descriptor | EGFxSet Clean Bridge | Electry OFF | fitted-law shape ON |
+| --- | ---: | ---: | ---: |
+| 30-80 / 0-30 ms body | -0.804 dB | -0.493 dB | -1.648 dB |
+| 0-30 ms crest | 10.071 dB | 11.693 dB | 13.175 dB |
+| centroid, 0-30 / 30-80 ms | 347 / 338 Hz | 410 / 401 Hz | 395 / 385 Hz |
+| upper-band share, 0-30 / 30-80 ms | 11.889 / 11.062% | 25.095 / 22.931% | 21.123 / 18.463% |
+| harmonicity, 0-30 / 30-80 ms | 0.903 / 0.974 | 0.886 / 0.998 | 0.877 / 0.998 |
+| robust decay, 0.25-1.75 s | -2.253 dB/s | -5.421 dB/s | -4.945 dB/s |
+
+The fitted-law shape moves centroid, upper-band level and the output-decay slope
+toward that one real bridge take, but makes early body, crest, upper-share
+contraction and onset harmonicity worse. The deterministic metal score tells the
+same smaller story after distortion: full-file RMS changes by +0.166 dB dry and +0.052 dB
+wet; its first twelve Palm hits move from 7.5622% to 7.7114% upper-band share
+and from 0.897632 to 0.897016 harmonicity. Pickup/chain variation in the real
+set is much larger than that candidate delta.
+
+These real-reference descriptors came from an exploratory local analysis with
+no frozen analyzer or provenance receipt. They are descriptive diagnostics and
+cannot support promotion; a commissioned, registered raw/reamp corpus and a
+versioned analyzer remain required for that decision.
+
+The experiment therefore remains off. With the calibrated neck/bridge drive it
+still fails 32 current-engine spectral, transient, articulation and ultrasonic
+regression/compatibility rails; those rails protect the present instrument but
+are not independent realism evidence. Single local arm64 Release timing probes
+at 96 kHz observed roughly 25-45% more eight-string render time than flag off;
+that range is diagnostic, not an interleaved portable CPU estimate. It is not a
+plausible trade for a mixed real-reference result. No coefficient was fitted to
+EGFxSet, no waveform distance was taken between separate performances, no
+third-party recording is committed, and the shipping flag-off engine remains
+byte-identical. A registered two-axis displacement-to-flux-linkage map identified
+from target-instrument motion and open-circuit voltage—or de-embedded for the
+measurement load and pickup impedance—at known pickup heights is the next
+credible pickup experiment. This one-dimensional shape is retained only as a
+reproducible default-off research branch.
+
+### Reciprocal unilateral following-fret experiment
+
+The first `ELECTRY_POSITIONED_FRET_COLLISION` ablation was deliberately only
+one extra longitudinal read, a bilateral threshold and a one-sample output
+loss. It established that collision location can preserve modal nodes, but it
+was neither a local two-port junction nor a passive nonlinear-contact claim.
+The successor keeps the same default-off flag and deletes that surrogate.
+
+The replacement is the rigid one-sided obstacle in
+[Evangelista and Eckerholm](https://www.diva-portal.org/smash/get/diva2:316228/FULLTEXT01.pdf),
+placed at the equal-tempered following fret identified by
+[Poirot et al.](https://www.pure.ed.ac.uk/ws/portalfiles/portal/338872061/Bilbao2023IEEEPerceptually.pdf).
+For a speaking length `L`, its position from the bridge is
+`j/L = 2^(-1/12)`. Electry rounds `j` once to the nearest integer point of the
+folded ring. If the two physical incident waves are `a` and `b`, local
+displacement is `u = a + b`. With fretboard-normal sign `s` and existing
+clearance `c`, the update is identity while `s u <= c`; otherwise
+
+```text
+delta = (s c - u) / 2
+a' = a + delta
+b' = b + delta
+```
+
+It therefore lands exactly on `u' = s c`, preserves `a-b`, is reciprocal under
+port exchange, and changes squared-wave energy by
+`(c^2-u^2)/2 <= 0`. The signed single-delay ring stores `-b`, so production
+implements the same update as `near += delta; farStored -= delta`; no second
+delay line, interpolator, contact state, coefficient or dependency is needed.
+The candidate reuses the current 0.96-2.08 mm clearance map, 25-100 ms opening
+window, equal-tempered fret geometry, deterministic contact noise and saddle
+rattle. Dead notes retain their distributed-contact fallback, and fret 22
+retains an exact following-fret null.
+
+A reach failure exposed a separate timing bug. On maximum-force 48 kHz Palm
+attacks, the physical E1/E2 junction first moved about 7.25/5.10 ms after Note
+On and reached fretboard-side displacement `0.03510/0.03116` loop units against
+base clearances `0.02439/0.02676`. The old seam-derived output-energy gate did
+not wake until about 19.15/11.02 ms, after those local peaks. The collision
+opportunity now waits for either actual incident cell to become nonzero, then
+advances once per string sample. This changes no threshold and prevents a
+fresh string's window from opening over zero history.
+
+Structural tests cover inactive-side identity, exact barrier projection,
+reciprocity, energy nonincrease for both orientations, maximum-force E1/E2 Palm
+reach, finite maximum-artifact eight-string output, bend-tracked cells and every
+supported host rate from 44.1 through 384 kHz including 96.001 kHz. A
+one-period harmonic fixture measures `0.016630` gain for near-antinode H9 and
+`0.997882` for near-node H18; H1-H32 never exceed unity. Complete Release DSP
+suites pass with the flag both OFF and ON.
+
+The frozen evaluator gives a clear non-promotion result:
+
+| comparison | OFF -> unilateral ON | decision |
+| --- | ---: | --- |
+| 40-hit pre-FX Palm/Dead metal WAV | byte-identical, SHA-256 `69e1cd0094c899b7...` | No raw metal exposure |
+| same take after Modern high gain | byte-identical, SHA-256 `ef32b65b6b8e0f7c...` | No distorted metal exposure |
+| six v3 Palm plus two Dead probes | all byte-identical | No muted-note improvement |
+| v3 Open E1 | `+0.0123 dB` RMS; difference `-51.66 dB` relative to OFF | Tiny non-isolating change |
+| v3 Open E2 | `+0.0063 dB` RMS; difference `-57.67 dB` relative to OFF | Tiny non-isolating change |
+
+The manifests differ only because they truthfully record the build flag. Since
+the registered raw and distorted metal waveforms are identical, their distance
+to every real recording and every previously reported direction descriptor is
+also identical; the candidate supplies no metal-realism win to promote. The
+available lawful exact-eight recordings do not isolate a known following-fret
+hit, action, relief, fret height and attack force, and the most relevant
+published collision experiment does not provide a transferable target-guitar
+clearance map. Lowering `c` after seeing the null benchmark would manufacture
+exposure rather than validate physics. The flag therefore remains OFF, with no
+A--Z listening gate: a byte-identical product score is already an objective
+tie. Reopening promotion requires a controlled low-action capture with measured
+geometry and held-out raw DI plus reamped high gain.
+
+Two other low-CPU mechanisms were audited but not implemented. The local
+negative-stiffness law in
+[Harazono et al.](https://www.jstage.jst.go.jp/article/ast/33/5/33_E1148/_pdf)
+uses `0.8/1.3 N/m` values fitted to one commercial two-row specimen; the
+[Yamaha/CIRMMT two-axis programme](https://www.cirmmt.org/en/research/projects/yamaha-rnd_guitar-analysis)
+supports amplitude-dependent signed splitting but publishes no force grid that
+transfers to Electry's pickups and .080 string. Likewise,
+[Yudasaka et al.](https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Ayudasaka_ismra2025.pdf)
+show greater than 40 dB fret-to-fret admittance variation and a decisive 175 Hz
+example on one Yamaha Pacifica, but not the complex modal residues, Q and phase
+for the target eight-string. Importing either specimen's constants would be a
+new fit with no valid benchmark, so pickup back-action and fret-specific neck
+mobility remain measurement plans.
+
 ### Fretting-hand ghost comparison
 
 The same CC0 Drop-E recording contains four separately picked ghost attacks,
@@ -1252,6 +1861,137 @@ measured E2 re-excitation at 12 and 70 ms did not return to the single-pluck
 spectrum even after one fundamental period. Adding a moving one-sided rigid
 contact at least reproduced the observed damping, ringing and pitch glides,
 although neither simulation matched the measured spectra accurately.
+
+The next default-off experiment retained that exact integer topology and added
+the dynamic spring from Evangelista and Smith rather than tuning another
+memoryless loss. With `ELECTRY_PASSIVE_REPICK_SPRING=ON`, the production engine
+computes characteristic wave impedance `r = sqrt(T mu)`, uses the already
+documented medium-plectrum stiffness `K = 6 kN/m`, and evaluates the
+representative impedance-matched case `R = 2r`. For
+`rho(s) = (R s + K) / ((R + 2r) s + K)`, a bilinear one-state realization
+drives the common two-rail mode; the orthogonal transverse coordinate passes
+unchanged. A 2,049-point sweep of the production coefficients at 44.1, 96 and
+384 kHz checks `|1 - 2 rho(e^jw)| <= 1`, while focused lifecycle checks require
+fresh-contact identity, a first-round-trip repick before the output-energy
+follower can respond, two committed folded-ring history cells, a stable pole,
+and state removal at detachment. An explicit dynamic two-rail reference and the
+production-style in-place folded ring remain sample-exact with zero measured
+state delta.
+
+The scope is deliberately narrower than a complete plectrum. The existing
+release supplies the new stroke by linear superposition, while the spring acts
+only on the homogeneous response already ringing before a repick. It replaces
+the scalar seam choke for that Contact window, projects one state onto the
+existing normalized two-axis plectrum direction, and snaps each polarization to
+integer cells because a cubic gather paired with a non-adjoint write would not
+inherit the proof. The edge is fixed at zero displacement; no measured drive,
+unilateral contact/recontact, deflection threshold or detachment impulse is
+claimed.
+
+The frozen comparisons reject this representative dynamic candidate:
+
+| frozen check | OFF | spring ON | result |
+| --- | ---: | ---: | --- |
+| ten isolated v3 evaluator WAVs | reference hashes | byte-identical | No one-shot raw-DI change or improvement |
+| rapid Palm, median absolute cell-mean error | 2.05031 dB | 6.93366 dB | 3.38x worse |
+| rapid Palm, median worst-cell error | 3.48144 dB | 9.64469 dB | 2.77x worse |
+| stateful clean Dead, first-to-repick contextual RMSE | 4.81647 dB | 5.50563 dB | 14.3% worse |
+| stateful clean Dead, three hit medians | -7.4665/-14.0726/-22.0588 dB | -7.6885/-14.6553/-22.9398 dB | All three farther from the contextual rail |
+
+The frozen 40-hit metal score makes the audible scale and direction explicit.
+Its OFF dry/high-gain SHA-256 values remain
+`69e1cd0094c899b7f5640ffc74b71dafd87978809323e01ace237906728b4ecb` and
+`ef32b65b6b8e0f7c04a0a18ddbe2196451d5528862d57a109006a582cbabbf64`;
+ON produces
+`f52a5f65fc14a27dac3d7df6f1a322ef431de1b5c8e51ee235390d51d5746e34` and
+`8de68b3a4b3b5f02fa1393d97b21078f514cac291448aa15a0827514f93bc9b3`.
+Dry RMS changes -0.066826 dB and high-gain RMS +0.060298 dB, yet the respective
+difference signals are -18.9462 and -15.8859 dB relative to OFF. The descriptor
+comparison supplies no compensating realism win:
+
+| distorted descriptor | public real | OFF | spring ON | direction |
+| --- | ---: | ---: | ---: | --- |
+| Palm 30-80/0-30 ms body | +0.87 dB | -2.3162 dB | -2.4351 dB | Worse |
+| Palm body/attack centroid | 1,033/1,506 Hz | 183.0/303.4 Hz | 174.7/294.8 Hz | Worse |
+| Palm upper-band share | 73.0696% | 7.5622% | 7.5236% | Worse |
+| Palm harmonicity | 0.212544 | 0.897632 | 0.896516 | Better by only 0.00112 |
+| Dead 30-80/0-30 ms body | +3.12/+1.30 dB first/second repick | -1.7259 dB | -1.4784 dB | Slightly closer |
+| Dead body/attack centroid | 652/310 or 754/1,314 Hz | 196.4/320.9 Hz | 203.3/314.6 Hz | Mixed |
+| Dead upper-band share | 9.9994% or 64.6730% | 8.3287% | 7.8233% | Worse |
+| Dead harmonicity | 0.786 or 0.247 | 0.905119 | 0.910024 | Worse |
+
+Those public clean and distorted previews are different performances, not a
+raw-DI/reamp pair, and the distorted descriptors are only rejection/direction
+alarms. No local true paired raw/high-gain corpus exists. Accordingly the flag
+remains OFF, the ordinary build and isolated output stay unchanged, and neither
+market-realism nor promotion is claimed. The `electry-repick-phase/v1` capture
+contract below freezes a single dimensionless memoryless contact amount; a
+dynamic `K/R/tau` or moving-edge candidate needs a new versioned preregistration
+before capture and cannot inherit that contract after observing data.
+
+#### Moving unilateral plectrum-contact ablation
+
+A temporary mutually exclusive default-off candidate tested the missing drive
+and release topology without fitting another coefficient. The existing
+reciprocal one-state junction followed a prescribed plectrum edge along the
+signed normalized two-polarisation stroke direction. If
+`q = edge - string` was nonpositive, the one-sided contact separated and
+cleared its filter state while remaining able to recontact. At the existing
+4.8 N / 6 kN/m compression threshold, or at the bounded Contact timeout,
+detach was final and went directly to Idle: the moving edge had supplied the
+new stroke, so entering the legacy Release/Tail would have counted the plectrum
+work twice. The trajectory reused the existing physical force, compliance,
+pick position and 0.55--3 ms contact duration. That was a deliberately testable
+engineering inference, not a measured edge path.
+
+The temporary focused regression covered 44.1, 96 and 384 kHz. A fresh attack
+never armed the candidate; a same-note ringing repick did, with positive finite
+edge step and release compression, `|pole| < 1`, unit DC reflectance and 0.5
+Nyquist reflectance. Final detach cleared the one filter state and reached Idle
+without ever passing through legacy Release. Output remained finite and
+nonzero. The ten isolated evaluator WAVs were byte-identical to OFF, while two
+complete candidate metal renders, including their manifests, were byte-
+identical to each other.
+
+The frozen stateful checks reject the inferred moving edge:
+
+| frozen check | OFF | moving contact ON | result |
+| --- | ---: | ---: | --- |
+| ten isolated v3 evaluator WAVs | reference hashes | byte-identical | Fresh path remains the control |
+| rapid Palm, median absolute cell-mean error | 2.05031 dB | 4.75360 dB | 2.32x worse |
+| rapid Palm, median worst-cell error | 3.48144 dB | 6.07624 dB | 1.75x worse |
+| stateful clean Dead, first-to-repick contextual RMSE | 4.81647 dB | 6.88066 dB | 42.9% worse |
+| repeated-score dry RMS | -36.1143 dBFS | -42.6526 dBFS | 6.5383 dB collapse |
+| repeated-score high-gain RMS | -30.2860 dBFS | -34.8939 dBFS | 4.6079 dB collapse |
+
+The unchanged first metal hit fixes interpretation: the dry render first
+differs one sample after hit two begins, so the level loss comes from modeled
+repicks rather than a global gain or FX change. Candidate dry/high-gain hashes
+are `7f76d072145bac6e04195f1c2ac06b406cf070aea2d7318cb02fd0c835d6725f`
+and `7258be6e03e2ea2fe637662e6be40450fcd029a7870eb2ea2fd6fb23f118ee2a`.
+Relative to OFF, median Palm repick attack/body levels fall
+9.8266/17.5083 dB dry and 3.6228/12.4164 dB after high gain; Dead falls
+11.0624/17.3390 dB dry and 5.4423/12.2588 dB after high gain.
+
+The distorted descriptors confirm that this is not a useful trade. Palm
+30--80/0--30 ms body falls from -2.3162 to -11.2100 dB and Dead from -1.7259
+to -8.1954 dB, versus the public +0.87 and +3.12/+1.30 dB direction alarms.
+Palm centroid, upper share and harmonicity move to 1,753/1,808 Hz, 89.6784%
+and 0.160795—past the public 1,033/1,506 Hz, 73.0696% and 0.212544 values—but
+only by deleting the pitched body. Dead is more extreme at 1,660/2,158 Hz,
+97.0702% and 0.062950. A closer isolated spectral ratio cannot compensate for
+a missing repick.
+
+This falsifies the inferred trajectory and release threshold for Electry; it
+does not falsify moving unilateral contact itself. Evangelista and Smith's
+junction explicitly requires edge motion, and the robotic E2 study observed
+pre-release contact but did not measure a transferable exact-eight edge path.
+Public recordings can reject the result but cannot identify position,
+velocity, force or damping. The implementation, compile flag and focused test
+were therefore removed after recording the hashes and result. Any v2 capture
+must add synchronized edge position/velocity or force to the existing
+string-motion and bridge-DI channels, freeze trajectory/release equations on
+TRAIN, and open untouched HOLDOUT only once.
 
 The missing experiment is now frozen as the separate
 [`electry-repick-phase/v1` capture contract](capture/electry-repick-phase-v1/README.md).
@@ -1557,6 +2297,69 @@ The literature points toward player/contact detail before more resonators:
    ([DAFx-18](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_39.pdf)).
    A modern active anchor is a defensible later step, but published Fishman and
    EMG voicing points do not provide enough Q/gain data for a blind fit.
+
+For the next implementation rounds, the evidence/risk ranking is:
+
+1. A passive finite-duration plectrum junction with a finite contact width.
+   [Evangelista and Smith](https://dafx10.iem.at/proceedings/papers/EvangelistaSmith_DAFx10_P21.pdf)
+   provide the mass-spring-damper scattering structure and threshold release;
+   sub-sample release interpolation would be Electry's numerical refinement. It
+   is attack-local, cheap and directly testable against clean plus distorted
+   note pairs, but its compliance, trajectory and release still need controlled
+   captures.
+2. Distributed time-varying bridge-hand contact. The preliminary pressure
+   distributions measured by
+   [Biral, d'Alessandro and Freed](https://speech.di.uoa.gr/ICMC-SMC-2014/images/VOL_2/1483.pdf)
+   extend several centimetres, while pressure at a sampled region varies around
+   each pick. They motivate a later passive finite-contact model rather than
+   another global low-pass, but only after a footprint/pressure profile is
+   measured and the complete topology has a phase-compensated energy proof.
+   They do not identify its width, stiffness or damping. Calibration risk is
+   higher because public audio does not identify hand pressure or geometry.
+3. Registered two-axis pickup transduction: retain the two existing string
+   planes separately through a measured 2-D displacement-to-flux-linkage map,
+   then differentiate and use the existing loaded circuit; that requires an
+   open-circuit source measurement or de-embedding the measurement load and
+   pickup impedance to avoid counting electrical loading twice. Longitudinal
+   pickup aperture remains a separate spatial dimension. Novak's setup measured
+   acceleration-derived displacement and finite-input-impedance terminal voltage
+   together at known gaps, but the target Electry instrument still lacks a
+   registered displacement scale, pickup height/loading, horizontal motion, and
+   high-frequency/full-aperture validation. [Their later two-dimensional measurements](https://aes.org/publications/elibrary-page/?id=20728)
+   are the relevant starting point.
+4. Energy-stable unilateral fret/fretboard contact only after a controlled
+   low-action capture. [Bilbao et al.'s SAV/IEQ formulation](https://www.pure.ed.ac.uk/ws/portalfiles/portal/470239305/BilbaoEtal2024RealTimeGuitarSynthesis.pdf)
+   avoids iterative Newton solves while retaining a discrete energy balance,
+   but adapting that distributed state to the waveguide architecture is
+   substantially riskier than the first three items.
+5. Fret-specific neck mobility and one shared passive bridge modal bank after
+   measured mobility is available. A passive multiport/shared-bridge formulation
+   gives one coupled structural state with port-, string- and polarization-specific
+   residues, rather than independent arbitrary resonators; see
+   [Bank and Karjalainen](https://www.dafx.de/paper-archive/2010/DAFx10/BankKarjalainen_DAFx10_P60.pdf)
+   and [Maestre et al.](https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Amaestre_jointmodeling_ieeeaslp_2017.pdf).
+
+Full longitudinal-string dynamics and a synthetic “phantom partial” generator
+remain deferred. For rigid electric-guitar terminations,
+[Bank's analysis](https://home.mit.bme.hu/~bank/publist/dafx09.pdf) identifies
+quasistatic tension and pitch glide as the salient nonlinear effect; it does not
+support adding a longitudinal resonator without measured longitudinal bridge
+force/admittance. The existing default-off energy-derived glide is therefore
+the bounded experiment.
+Pickup nonlinearity and fret impacts can also create extra partials, making an
+uncontrolled DI an ambiguous way to identify longitudinal coupling.
+
+Useful public research leads are [EGFxSet](https://zenodo.org/records/7044411)
+for fixed-pick clean/real-pedal notes, [Guitar-TECHS](https://zenodo.org/records/14963133)
+for simultaneously captured normal/Palm DI and miked output,
+[IDMT-SMT-Guitar](https://zenodo.org/records/7544110) for string/fret/articulation
+labels, and [GUITAR-FX-DIST](https://zenodo.org/records/4298000) for paired
+unprocessed/software-distorted examples. Rights and timing must be reviewed per
+corpus: IDMT's CC BY-NC-ND terms do not authorize commercial-product evaluation,
+and Guitar-TECHS warns that its simultaneously captured channels can be offset
+by as much as 100 ms. None combines controlled exact-eight string mechanics,
+raw DI and a calibrated high-gain reamp, so the commissioned capture and blind
+gates remain necessary.
 
 ## Competitive and claim boundary
 

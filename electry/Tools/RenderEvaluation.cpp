@@ -1,8 +1,18 @@
-// Renders small, controlled dry-DI probes for comparison with real eight-string
-// recordings. This tool is intentionally separate from RenderDemos: it never
-// normalises audio, never touches Docs/audio, and writes only into its requested
-// evaluation directory.
+// Evaluation protocols enforced here:
+//
+//   * The default electry-evaluation/v3 render is frozen: ten controlled dry-DI
+//     probes, with its established files and manifest left byte-for-byte stable.
+//   * --metal-benchmark freezes RenderDemos' deterministic E1/E2 Palm/Dead metal
+//     score at variation seed zero. One production-path pass taps mono immediately
+//     before ElectryFx and immediately after the fixed high-gain chain, without
+//     normalisation. Wet output is returned to ElectryEngine in causal chunks just
+//     as the plug-in does; the frozen zero resonance control makes its injection
+//     inactive while retaining the real transport path.
+//
+// Both modes write only into their requested evaluation directory. Protocol facts
+// live in the generated machine-readable manifests rather than a standalone doc.
 #include "DSP/ElectryEngine.h"
+#include "DSP/ElectryFx.h"
 
 #include <algorithm>
 #include <array>
@@ -28,7 +38,10 @@
 namespace
 {
 using electry::ElectryEngine;
+using electry::ElectryFx;
+using electry::AmpModel;
 using electry::EngineParameters;
+using electry::FxParameters;
 using electry::OutputMode;
 using electry::PickStyle;
 using electry::PickupSelector;
@@ -517,10 +530,487 @@ bool writeManifest(const std::filesystem::path& path,
     output.close();
     return output.good();
 }
+
+constexpr std::uint32_t metalVariationSeed = 0u;
+constexpr double metalLeadInSeconds = 0.25;
+constexpr double metalPreScoreWaitSeconds = 0.25;
+constexpr double metalHitHoldSeconds = 0.055;
+constexpr double metalHitGapSeconds = 0.028333;
+constexpr double metalPhraseGapSeconds = 0.35;
+constexpr double metalTailSeconds = 0.80;
+constexpr float metalAccentVelocity = 0.95f;
+constexpr float metalSecondaryVelocity = 0.82f;
+
+constexpr int metalFrames(double seconds)
+{
+    return static_cast<int>(seconds * sampleRate);
+}
+
+constexpr int metalHitCount = 40;
+constexpr int metalExpectedFrames = metalFrames(metalLeadInSeconds)
+                                  + metalFrames(metalPreScoreWaitSeconds)
+                                  + metalHitCount
+                                      * (metalFrames(metalHitHoldSeconds)
+                                         + metalFrames(metalHitGapSeconds))
+                                  + 3 * metalFrames(metalPhraseGapSeconds)
+                                  + metalFrames(metalTailSeconds);
+
+struct MetalPhrase
+{
+    PlayStyle style;
+    int hits;
+    bool mixedStrings;
+};
+
+constexpr std::array<MetalPhrase, 4> metalPhrases {{
+    { PlayStyle::PalmMute, 12, false },
+    { PlayStyle::Dead, 12, false },
+    { PlayStyle::PalmMute, 8, true },
+    { PlayStyle::Dead, 8, true },
+}};
+
+const char* playStyleName(PlayStyle style)
+{
+    return style == PlayStyle::PalmMute ? "palm_mute" : "dead";
+}
+
+const char* ampModelName(AmpModel model)
+{
+    switch (model)
+    {
+        case AmpModel::AmericanClean: return "american_clean";
+        case AmpModel::BritishCrunch: return "british_crunch";
+        case AmpModel::ModernHighGain: return "modern_high_gain";
+    }
+    return "unknown";
+}
+
+EngineParameters metalBenchmarkParameters()
+{
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.outputMode = OutputMode::Mono;
+    parameters.pickupType = 0.32f;
+    parameters.toneKnob = 1.0f;
+    applyGuitarBuild(parameters, electry::defaultGuitarBuild);
+    parameters.stringAge = 0.10f;
+    parameters.pickHardness = 0.85f;
+    parameters.pickPosition = 0.18f;
+    parameters.velocityAmount = 0.7f;
+    parameters.sympatheticAmount = 0.25f;
+    parameters.muteDamping = 0.85f;
+    parameters.outputGain = 2.0f;
+    parameters.fingerNoise = 0.55f;
+    parameters.artifactAmount = 0.15f;
+    return parameters;
+}
+
+FxParameters metalBenchmarkFxParameters()
+{
+    FxParameters parameters;
+    parameters.distortion = 0.45f;
+    parameters.amp = 0.95f;
+    parameters.ampModel = AmpModel::ModernHighGain;
+    parameters.compressor = 0.60f;
+    return parameters;
+}
+
+class MetalBenchmarkTake
+{
+public:
+    MetalBenchmarkTake(const EngineParameters& engineParameters,
+                       const FxParameters& fxParameters)
+    {
+        dry_.reserve(static_cast<std::size_t>(metalExpectedFrames));
+        wet_.reserve(static_cast<std::size_t>(metalExpectedFrames));
+
+        engine_.prepare(sampleRate, blockSize);
+        engine_.setVariationSeed(metalVariationSeed);
+        engine_.setParameters(engineParameters);
+        engine_.setPitchBend(0.0f);
+        engine_.setResonance(0.0f);
+        engine_.setPalmMutePressure(0.0f);
+        engine_.setVibrato(0.0f);
+        engine_.setSustainPedal(false);
+        engine_.reset();
+        effects_.prepare(sampleRate);
+        effects_.setParameters(fxParameters);
+        acousticReturnLevel_ = std::min(
+            1.0f, fxParameters.amp + 0.6f * fxParameters.distortion);
+        engine_.setAcousticReturnLevel(acousticReturnLevel_);
+        effects_.reset();
+        feedbackDelaySamples_ = engine_.getAcousticReturnDelaySamples();
+        wait(metalLeadInSeconds);
+    }
+
+    void pick(PickStyle style)
+    {
+        engine_.noteOn(keyswitchFor(style), 1.0f);
+    }
+
+    void style(PlayStyle style)
+    {
+        engine_.noteOn(keyswitchFor(style), 1.0f);
+    }
+
+    void pluck(int midiNote, float velocity)
+    {
+        const std::array<ElectryEngine::NoteOnEvent, 1> event {{
+            { midiNote, velocity }
+        }};
+        engine_.noteOnChord(event);
+        wait(metalHitHoldSeconds);
+        engine_.noteOff(midiNote);
+        wait(metalHitGapSeconds);
+    }
+
+    void wait(double seconds)
+    {
+        int remaining = metalFrames(seconds);
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        while (remaining > 0)
+        {
+            const int currentBlock = std::min(
+                { blockSize, feedbackDelaySamples_ > 0
+                                   ? feedbackDelaySamples_
+                                   : blockSize,
+                  remaining });
+            engine_.process(left.data(), right.data(), currentBlock);
+            for (int frame = 0; frame < currentBlock; ++frame)
+            {
+                const float sample = left[static_cast<std::size_t>(frame)];
+                const float other = right[static_cast<std::size_t>(frame)];
+                finite_ = finite_ && std::isfinite(sample)
+                         && std::isfinite(other);
+                dryDualMono_ = dryDualMono_
+                            && std::bit_cast<std::uint32_t>(sample)
+                                == std::bit_cast<std::uint32_t>(other);
+                dryPeak_ = std::max(
+                    dryPeak_, std::max(std::fabs(sample), std::fabs(other)));
+                dry_.push_back(sample);
+            }
+
+            effects_.process(left.data(), right.data(), currentBlock);
+            for (int frame = 0; frame < currentBlock; ++frame)
+            {
+                const float sample = left[static_cast<std::size_t>(frame)];
+                const float other = right[static_cast<std::size_t>(frame)];
+                finite_ = finite_ && std::isfinite(sample)
+                         && std::isfinite(other);
+                wetDualMono_ = wetDualMono_
+                            && std::bit_cast<std::uint32_t>(sample)
+                                == std::bit_cast<std::uint32_t>(other);
+                wetPeak_ = std::max(
+                    wetPeak_, std::max(std::fabs(sample), std::fabs(other)));
+                wet_.push_back(sample);
+            }
+
+            engine_.pushAcousticReturn(left.data(), right.data(), currentBlock);
+            remaining -= currentBlock;
+        }
+    }
+
+    [[nodiscard]] const std::vector<float>& dry() const noexcept { return dry_; }
+    [[nodiscard]] const std::vector<float>& wet() const noexcept { return wet_; }
+    [[nodiscard]] float dryPeak() const noexcept { return dryPeak_; }
+    [[nodiscard]] float wetPeak() const noexcept { return wetPeak_; }
+    [[nodiscard]] float acousticReturnLevel() const noexcept
+    {
+        return acousticReturnLevel_;
+    }
+    [[nodiscard]] int feedbackDelaySamples() const noexcept
+    {
+        return feedbackDelaySamples_;
+    }
+    [[nodiscard]] bool finite() const noexcept { return finite_; }
+    [[nodiscard]] bool dualMono() const noexcept
+    {
+        return dryDualMono_ && wetDualMono_;
+    }
+
+private:
+    ElectryEngine engine_;
+    ElectryFx effects_;
+    std::vector<float> dry_;
+    std::vector<float> wet_;
+    float dryPeak_ { 0.0f };
+    float wetPeak_ { 0.0f };
+    float acousticReturnLevel_ { 0.0f };
+    int feedbackDelaySamples_ { blockSize };
+    bool finite_ { true };
+    bool dryDualMono_ { true };
+    bool wetDualMono_ { true };
+};
+
+void playMetalBenchmarkScore(MetalBenchmarkTake& take)
+{
+    take.wait(metalPreScoreWaitSeconds);
+    for (std::size_t phraseIndex = 0;
+         phraseIndex < metalPhrases.size(); ++phraseIndex)
+    {
+        const auto phrase = metalPhrases[phraseIndex];
+        // Relatch Alternate so each comparison starts on a downstroke.
+        take.pick(PickStyle::Alternate);
+        take.style(phrase.style);
+        for (int hit = 0; hit < phrase.hits; ++hit)
+        {
+            const int midiNote = phrase.mixedStrings && hit % 4 == 3
+                               ? e2MidiNote : e1MidiNote;
+            take.pluck(midiNote, hit % 2 == 0
+                               ? metalAccentVelocity
+                               : metalSecondaryVelocity);
+        }
+        if (phraseIndex + 1u != metalPhrases.size())
+            take.wait(metalPhraseGapSeconds);
+    }
+    take.wait(metalTailSeconds);
+}
+
+std::string metalBenchmarkFailure(const MetalBenchmarkTake& take)
+{
+    if (take.dry().size() != static_cast<std::size_t>(metalExpectedFrames)
+        || take.wet().size() != static_cast<std::size_t>(metalExpectedFrames))
+        return "metal benchmark has the wrong sample count";
+    if (! take.finite())
+        return "metal benchmark rendered non-finite audio";
+    if (! take.dualMono())
+        return "metal benchmark is not exact dual mono";
+    if (take.dryPeak() < 1.0e-4f || take.wetPeak() < 1.0e-4f)
+        return "metal benchmark rendered silence";
+    if (take.dry() == take.wet())
+        return "metal benchmark pre-FX and post-FX taps are identical";
+    return {};
+}
+
+bool writeMetalManifest(const std::filesystem::path& path,
+                        const EngineParameters& p,
+                        const FxParameters& fx,
+                        const MetalBenchmarkTake& take)
+{
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << std::fixed << std::setprecision(8);
+    output
+        << "{\n"
+        << "  \"schema\": \"electry-metal-benchmark/v1\",\n"
+        << "  \"generator\": {\"name\": \"ElectryRenderEvaluation\", "
+           "\"project_version\": \"" ELECTRY_EVALUATION_PROJECT_VERSION
+           "\", \"build_mode\": \"" << buildMode()
+        << "\", \"determinism_scope\": \"same executable and CPU architecture\"},\n"
+        << "  \"build_features\": {"
+           "\"analytic_release_ic\": "
+        << (ELECTRY_ANALYTIC_RELEASE_IC ? "true" : "false")
+        << ", \"decoupled_pick_release\": "
+        << (ELECTRY_DECOUPLED_PICK_RELEASE ? "true" : "false")
+        << ", \"measured_body_response\": "
+        << (ELECTRY_MEASURED_BODY_RESPONSE ? "true" : "false")
+        << ", \"low_string_loss_correction_order2\": "
+        << (ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2 ? "true" : "false")
+        << ", \"energy_attack_pitch\": "
+        << (ELECTRY_ENERGY_ATTACK_PITCH ? "true" : "false")
+        << ", \"positioned_fret_collision\": "
+        << (ELECTRY_POSITIONED_FRET_COLLISION ? "true" : "false")
+        << ", \"measured_pickup_flux\": "
+        << (ELECTRY_MEASURED_PICKUP_FLUX ? "true" : "false")
+        << ", \"passive_repick_spring\": "
+        << (ELECTRY_PASSIVE_REPICK_SPRING ? "true" : "false")
+        << ", \"measured_modern_cabinet\": "
+        << (ELECTRY_MEASURED_MODERN_CABINET ? "true" : "false")
+        << "},\n"
+        << "  \"audio_format\": {\"container\": \"WAVE\", "
+           "\"encoding\": \"IEEE_FLOAT\", \"bits_per_sample\": 32, "
+           "\"channels\": 1, \"sample_rate_hz\": " << sampleRate
+        << ", \"normalization_applied\": false, \"post_render_gain\": 1.00000000},\n"
+        << "  \"signal_chain\": {\n"
+        << "    \"path\": \"ElectryEngine -> pre-FX tap -> ElectryFx -> post-FX tap -> ElectryEngine acoustic return\",\n"
+        << "    \"outer_block_size\": " << blockSize
+        << ", \"feedback_chunk_limit_samples\": "
+        << take.feedbackDelaySamples() << ",\n"
+        << "    \"feedback_transport_active\": true, "
+           "\"acoustic_feedback_injection_active\": false,\n"
+        << "    \"acoustic_return_level\": " << take.acousticReturnLevel()
+        << ", \"mod_wheel_resonance\": 0.00000000,\n"
+        << "    \"amplitude_reference\": \"arbitrary digital model full scale; not volts and not level matched\"\n"
+        << "  },\n"
+        << "  \"protocol\": {\n"
+        << "    \"score_id\": \"mute-and-dead-metal/e1-e2/v1\", "
+           "\"score_randomization\": false, \"variation_seed\": "
+        << metalVariationSeed << ",\n"
+        << "    \"instrument\": \"eight-string guitar\", "
+           "\"tuning_low_to_high\": [\"E1\", \"B1\", \"E2\", \"A2\", "
+           "\"D3\", \"G3\", \"B3\", \"E4\"],\n"
+        << "    \"targets\": [{\"id\": \"e1\", \"string\": 8, \"fret\": 0, "
+           "\"midi_note\": " << e1MidiNote
+        << "}, {\"id\": \"e2\", \"string\": 6, \"fret\": 0, "
+           "\"midi_note\": " << e2MidiNote << "}],\n"
+        << "    \"lead_in_frames\": " << metalFrames(metalLeadInSeconds)
+        << ", \"pre_score_wait_frames\": "
+        << metalFrames(metalPreScoreWaitSeconds)
+        << ", \"hit_hold_frames\": " << metalFrames(metalHitHoldSeconds)
+        << ", \"hit_gap_frames\": " << metalFrames(metalHitGapSeconds)
+        << ",\n"
+        << "    \"inter_phrase_gap_frames\": "
+        << metalFrames(metalPhraseGapSeconds)
+        << ", \"tail_frames\": " << metalFrames(metalTailSeconds)
+        << ", \"hit_count\": " << metalHitCount
+        << ", \"total_frames\": " << metalExpectedFrames << ",\n"
+        << "    \"pick_style\": \"alternate_relatched_per_phrase\", "
+           "\"pick_keyswitch_midi_note\": "
+        << keyswitchFor(PickStyle::Alternate)
+        << ", \"keyswitch_velocity\": 1.00000000,\n"
+        << "    \"velocity_pattern\": [" << metalAccentVelocity << ", "
+        << metalSecondaryVelocity << "],\n"
+        << "    \"phrases\": [\n";
+
+    for (std::size_t index = 0; index < metalPhrases.size(); ++index)
+    {
+        const auto phrase = metalPhrases[index];
+        output << "      {\"play_style\": \"" << playStyleName(phrase.style)
+               << "\", \"hits\": " << phrase.hits
+               << ", \"play_style_keyswitch_midi_note\": "
+               << keyswitchFor(phrase.style) << ", \"midi_note_pattern\": [";
+        const int patternLength = phrase.mixedStrings ? 4 : 1;
+        for (int patternIndex = 0; patternIndex < patternLength; ++patternIndex)
+        {
+            if (patternIndex != 0)
+                output << ", ";
+            output << (patternIndex == 3 ? e2MidiNote : e1MidiNote);
+        }
+        output << "]}"
+               << (index + 1u == metalPhrases.size() ? "\n" : ",\n");
+    }
+
+    output
+        << "    ]\n"
+        << "  },\n"
+        << "  \"engine_parameters\": {\n"
+        << "    \"guitar_build\": " << electry::defaultGuitarBuild
+        << ", \"pickup_selector\": \"" << pickupSelectorName(p.pickupSelector)
+        << "\", \"output_mode\": \"mono\",\n"
+        << "    \"body_wood\": " << p.bodyWood
+        << ", \"body_size\": " << p.bodySize
+        << ", \"body_shape\": " << p.bodyShape
+        << ", \"construction\": " << p.construction << ",\n"
+        << "    \"scale_length\": " << p.scaleLength
+        << ", \"pickup_type\": " << p.pickupType
+        << ", \"tone_knob\": " << p.toneKnob
+        << ", \"body_resonance\": " << p.bodyResonance << ",\n"
+        << "    \"string_gauge\": " << p.stringGauge
+        << ", \"string_age\": " << p.stringAge
+        << ", \"pick_position\": " << p.pickPosition
+        << ", \"pick_hardness\": " << p.pickHardness << ",\n"
+        << "    \"pick_noise\": " << p.pickNoise
+        << ", \"finger_noise\": " << p.fingerNoise
+        << ", \"release_noise\": " << p.releaseNoise
+        << ", \"mute_damping\": " << p.muteDamping << ",\n"
+        << "    \"bend_time_seconds\": " << p.bendTimeSeconds
+        << ", \"velocity_amount\": " << p.velocityAmount
+        << ", \"output_gain\": " << p.outputGain
+        << ", \"artifact_amount\": " << p.artifactAmount << ",\n"
+        << "    \"sympathetic_amount\": " << p.sympatheticAmount
+        << ", \"palm_mute\": " << p.palmMute
+        << ", \"strum_spread_seconds\": " << p.strumSpreadSeconds
+        << ", \"tremolo_rate_hz\": " << p.tremoloRateHz << ",\n"
+        << "    \"resonance_depth\": " << p.resonanceDepth
+        << ", \"vibrato_depth\": " << p.vibratoDepth << "\n"
+        << "  },\n"
+        << "  \"fx_parameters\": {\"distortion\": " << fx.distortion
+        << ", \"amp\": " << fx.amp << ", \"amp_model\": \""
+        << ampModelName(fx.ampModel) << "\", \"compressor\": "
+        << fx.compressor << ", \"delay\": " << fx.delay
+        << ", \"room\": " << fx.room << "},\n"
+        << "  \"performance_controls\": {\"pitch_bend\": 0.00000000, "
+           "\"mod_wheel_resonance\": 0.00000000, "
+           "\"palm_mute_pressure\": 0.00000000, "
+           "\"fretting_vibrato\": 0.00000000, \"tremolo_picking\": false, "
+           "\"sustain_pedal\": false},\n"
+        << "  \"outputs\": [\n"
+        << "    {\"id\": \"pre_fx_dry_di\", "
+           "\"file\": \"metal-e1-e2-pre-fx-dry-di.wav\", \"frames\": "
+        << take.dry().size() << ", \"raw_peak\": " << take.dryPeak() << "},\n"
+        << "    {\"id\": \"post_fx_high_gain\", "
+           "\"file\": \"metal-e1-e2-post-fx-high-gain.wav\", \"frames\": "
+        << take.wet().size() << ", \"raw_peak\": " << take.wetPeak() << "}\n"
+        << "  ]\n"
+        << "}\n";
+    output.close();
+    return output.good();
+}
+
+int renderMetalBenchmark(const std::filesystem::path& outputDirectory)
+{
+    std::error_code error;
+    std::filesystem::create_directories(outputDirectory, error);
+    if (error)
+    {
+        std::fprintf(stderr, "Could not create %s: %s\n",
+                     outputDirectory.string().c_str(), error.message().c_str());
+        return 1;
+    }
+
+    const auto engineParameters = metalBenchmarkParameters();
+    const auto fxParameters = metalBenchmarkFxParameters();
+    MetalBenchmarkTake take(engineParameters, fxParameters);
+    playMetalBenchmarkScore(take);
+    const auto failure = metalBenchmarkFailure(take);
+    if (! failure.empty())
+    {
+        std::fprintf(stderr, "Metal benchmark failed: %s\n", failure.c_str());
+        return 1;
+    }
+
+    constexpr const char* dryFile = "metal-e1-e2-pre-fx-dry-di.wav";
+    constexpr const char* wetFile = "metal-e1-e2-post-fx-high-gain.wav";
+    if (! writeFloatWav(outputDirectory / dryFile, take.dry())
+        || ! writeFloatWav(outputDirectory / wetFile, take.wet()))
+    {
+        std::fprintf(stderr, "Could not write metal benchmark WAVs\n");
+        return 1;
+    }
+
+    std::vector<float> serializedDry;
+    std::vector<float> serializedWet;
+    if (! readFloatWavPayload(outputDirectory / dryFile, take.dry().size(),
+                              serializedDry)
+        || ! readFloatWavPayload(outputDirectory / wetFile, take.wet().size(),
+                                 serializedWet)
+        || serializedDry != take.dry() || serializedWet != take.wet()
+        || serializedDry == serializedWet)
+    {
+        std::fprintf(stderr, "Metal benchmark WAV payload validation failed\n");
+        return 1;
+    }
+
+    if (! writeMetalManifest(outputDirectory / "manifest.json",
+                             engineParameters, fxParameters, take))
+    {
+        std::fprintf(stderr, "Could not write metal benchmark manifest.json\n");
+        return 1;
+    }
+
+    std::printf("Rendered paired unnormalized E1/E2 metal benchmark taps to %s "
+                "(mono IEEE-float WAV, pre-FX dry DI and post-FX high gain).\n",
+                outputDirectory.string().c_str());
+    return 0;
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
+    if (argc >= 2 && std::string(argv[1]) == "--metal-benchmark")
+    {
+        if (argc > 3)
+        {
+            std::printf("Usage: ElectryRenderEvaluation --metal-benchmark "
+                        "[output-directory]\n");
+            return 1;
+        }
+        const auto outputDirectory = argc == 3
+            ? std::filesystem::path(argv[2])
+            : std::filesystem::path(ELECTRY_EVALUATION_OUTPUT_DIR) / "metal";
+        return renderMetalBenchmark(outputDirectory);
+    }
+
     const bool runSelfTests = argc >= 2
                            && std::string(argv[1]) == "--self-test";
     const int outputArgument = runSelfTests ? 2 : 1;
@@ -528,6 +1018,8 @@ int main(int argc, char** argv)
         || (argc == 2 && std::string(argv[1]) == "--help"))
     {
         std::printf("Usage: ElectryRenderEvaluation [--self-test] "
+                    "[output-directory]\n"
+                    "       ElectryRenderEvaluation --metal-benchmark "
                     "[output-directory]\n"
                     "Default: %s\n", ELECTRY_EVALUATION_OUTPUT_DIR);
         return argc > outputArgument + 1 ? 1 : 0;

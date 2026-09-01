@@ -42,7 +42,11 @@ option(ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2
 option(ELECTRY_ENERGY_ATTACK_PITCH
     "Build the default-off energy-derived common attack-pitch experiment" OFF)
 option(ELECTRY_POSITIONED_FRET_COLLISION
-    "Build the default-off following-fret collision-position experiment" OFF)
+    "Build the default-off unilateral following-fret scatter experiment" OFF)
+option(ELECTRY_MEASURED_PICKUP_FLUX
+    "Build the default-off measurement-fitted pickup flux-linkage candidate" OFF)
+option(ELECTRY_PASSIVE_REPICK_SPRING
+    "Build the default-off passive dynamic repick-contact candidate" OFF)
 set(ELECTRY_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -81,6 +85,16 @@ endif()
 if(ELECTRY_POSITIONED_FRET_COLLISION)
     target_compile_definitions(ElectryDSP PUBLIC
         ELECTRY_POSITIONED_FRET_COLLISION=1)
+endif()
+
+if(ELECTRY_MEASURED_PICKUP_FLUX)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_MEASURED_PICKUP_FLUX=1)
+endif()
+
+if(ELECTRY_PASSIVE_REPICK_SPRING)
+    target_compile_definitions(ElectryDSP PUBLIC
+        ELECTRY_PASSIVE_REPICK_SPRING=1)
 endif()
 
 if(ELECTRY_MEASURED_MODERN_CABINET)
@@ -278,6 +292,15 @@ if(BUILD_TESTING)
                  COMMAND ${CMAKE_COMMAND}
                          -DELECTRY_EVALUATION_RENDERER=$<TARGET_FILE:ElectryRenderEvaluation>
                          -DELECTRY_EVALUATION_DIR=${CMAKE_CURRENT_BINARY_DIR}/evaluation-test
+                         -DELECTRY_EXPECT_ANALYTIC_RELEASE_IC=OFF
+                         -DELECTRY_EXPECT_DECOUPLED_PICK_RELEASE=${ELECTRY_DECOUPLED_PICK_RELEASE}
+                         -DELECTRY_EXPECT_MEASURED_BODY_RESPONSE=${ELECTRY_MEASURED_BODY_RESPONSE}
+                         -DELECTRY_EXPECT_LOW_STRING_LOSS_CORRECTION_ORDER2=${ELECTRY_LOW_STRING_LOSS_CORRECTION_ORDER2}
+                         -DELECTRY_EXPECT_ENERGY_ATTACK_PITCH=${ELECTRY_ENERGY_ATTACK_PITCH}
+                         -DELECTRY_EXPECT_POSITIONED_FRET_COLLISION=${ELECTRY_POSITIONED_FRET_COLLISION}
+                         -DELECTRY_EXPECT_MEASURED_PICKUP_FLUX=${ELECTRY_MEASURED_PICKUP_FLUX}
+                         -DELECTRY_EXPECT_PASSIVE_REPICK_SPRING=${ELECTRY_PASSIVE_REPICK_SPRING}
+                         -DELECTRY_EXPECT_MEASURED_MODERN_CABINET=${ELECTRY_MEASURED_MODERN_CABINET}
                          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateEvaluation.cmake)
         set_tests_properties(Electry.RenderEvaluation PROPERTIES TIMEOUT 60)
     endif()

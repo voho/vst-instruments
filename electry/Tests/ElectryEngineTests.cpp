@@ -64,82 +64,73 @@ struct ElectryEngineTestAccess
     }
 
 #if ELECTRY_POSITIONED_FRET_COLLISION
-    static constexpr float followingFretDelayScale() noexcept
+    static constexpr float followingFretRailFraction() noexcept
     {
-        return ElectryEngine::followingFretDelayScale;
+        return ElectryEngine::followingFretRailFraction;
     }
 
-    static float applyPositionedFretCollision(
-        float bridgeSample, float followingFretSample, float clearance,
-        float contact, float& excess) noexcept
+    static constexpr float fretboardNormalSign() noexcept
     {
-        return ElectryEngine::applyPositionedFretCollision(
-            bridgeSample, followingFretSample, clearance, contact, excess);
+        return ElectryEngine::fretboardNormalSign;
     }
 
-    static std::array<float, 2> followingFretLinearWeights(
-        float delaySamples) noexcept
+    static std::array<int, 2> followingFretContactCells(
+        float loopDelay) noexcept
     {
-        ElectryEngine::DelayTap tap;
-        tap.setDelay(delaySamples);
-        return { tap.linear0, tap.linear1 };
+        return ElectryEngine::followingFretContactCells(loopDelay);
     }
 
-    static float followingFretLinearReadSentinel(
-        float delaySamples) noexcept
+    static float scatterUnilateralFretCollision(
+        float& towardNut, float& storedTowardBridge,
+        float clearance, float barrierSign) noexcept
     {
-        ElectryEngine::PolarisationLoop loop;
-        loop.clear();
-        loop.writeIndex = 3;
-        ElectryEngine::DelayTap tap;
-        tap.setDelay(delaySamples);
-        constexpr int mask = ElectryEngine::delayLineSize - 1;
-        const int index = loop.writeIndex - tap.offset;
-        loop.line[static_cast<std::size_t>(index & mask)] = 2.0f;
-        loop.line[static_cast<std::size_t>((index + 1) & mask)] = 10.0f;
-        return loop.readLinearTap(tap);
+        return ElectryEngine::scatterUnilateralFretCollision(
+            towardNut, storedTowardBridge, clearance, barrierSign);
     }
 
-    static float followingFretCachedDelay(
+    static std::array<int, 2> followingFretCachedCells(
         const ElectryEngine& engine, int stringIndex) noexcept
     {
         if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
-            return 0.0f;
-        const auto& tap = engine.voices_[static_cast<std::size_t>(stringIndex)]
-                              .artifactFollowingFretTap;
-        return static_cast<float>(tap.offset) - tap.linear1;
+            return {};
+        const auto& voice =
+            engine.voices_[static_cast<std::size_t>(stringIndex)];
+        return { voice.artifactFollowingFretNear,
+                 voice.artifactFollowingFretFar };
     }
 
     static double positionedFretHarmonicGain(int harmonic) noexcept
     {
         constexpr int period = 4096;
         constexpr double twoPi = 6.28318530717958647692;
-        ElectryEngine::PolarisationLoop loop;
-        loop.clear();
-        loop.currentDelay = static_cast<float>(period);
-        for (std::size_t index = 0; index < loop.line.size(); ++index)
+        std::array<float, period> ring {};
+        for (std::size_t index = 0; index < ring.size(); ++index)
         {
-            loop.line[index] = static_cast<float>(std::sin(
+            ring[index] = static_cast<float>(std::sin(
                 twoPi * static_cast<double>(harmonic)
                 * static_cast<double>(index) / static_cast<double>(period)));
         }
 
-        ElectryEngine::DelayTap tap;
-        tap.setDelay(loop.currentDelay
-                     * ElectryEngine::followingFretDelayScale);
+        const auto cells = ElectryEngine::followingFretContactCells(
+            static_cast<float>(period));
         double inputEnergy = 0.0;
-        double outputEnergy = 0.0;
-        for (int index = 0; index < period; ++index)
+        for (const float sample : ring)
+            inputEnergy += static_cast<double>(sample) * sample;
+
+        constexpr int mask = period - 1;
+        for (int step = 0; step < period; ++step)
         {
-            loop.writeIndex = index;
-            const float bridge = loop.readFractional(loop.currentDelay);
-            const float following = loop.readLinearTap(tap);
-            float excess = 0.0f;
-            const float output = ElectryEngine::applyPositionedFretCollision(
-                bridge, following, 0.0f, 1.0f, excess);
-            inputEnergy += static_cast<double>(bridge) * bridge;
-            outputEnergy += static_cast<double>(output) * output;
+            float& towardNut = ring[static_cast<std::size_t>(
+                (step - cells[0]) & mask)];
+            float& storedTowardBridge = ring[static_cast<std::size_t>(
+                (step - cells[1]) & mask)];
+            (void) ElectryEngine::scatterUnilateralFretCollision(
+                towardNut, storedTowardBridge, 0.0f,
+                ElectryEngine::fretboardNormalSign);
         }
+        double outputEnergy = 0.0;
+        for (const float sample : ring)
+            outputEnergy += static_cast<double>(sample) * sample;
         return std::sqrt(outputEnergy / inputEnergy);
     }
 #endif
@@ -262,6 +253,15 @@ struct ElectryEngineTestAccess
         bool excitationInContact { false };
         bool excitationInRelease { false };
         float contactFeedbackGain { 1.0f };
+#if ELECTRY_PASSIVE_REPICK_SPRING
+        bool passiveRepickSpringActive { false };
+        int passiveRepickVerticalNear { 0 };
+        int passiveRepickVerticalFar { 0 };
+        float passiveRepickB0 { 0.0f };
+        float passiveRepickB1 { 0.0f };
+        float passiveRepickPole { 0.0f };
+        float passiveRepickState { 0.0f };
+#endif
         std::uint32_t artifactNoiseState { 0u };
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
@@ -359,6 +359,18 @@ struct ElectryEngineTestAccess
         result.excitationInRelease =
             voice.excitationPhase == ElectryEngine::ExcitationPhase::Release;
         result.contactFeedbackGain = voice.contactFeedbackGain;
+#if ELECTRY_PASSIVE_REPICK_SPRING
+        result.passiveRepickSpringActive =
+            voice.passiveRepickSpringActive;
+        result.passiveRepickVerticalNear =
+            voice.passiveRepickVerticalNear;
+        result.passiveRepickVerticalFar =
+            voice.passiveRepickVerticalFar;
+        result.passiveRepickB0 = voice.passiveRepickB0;
+        result.passiveRepickB1 = voice.passiveRepickB1;
+        result.passiveRepickPole = voice.passiveRepickPole;
+        result.passiveRepickState = voice.passiveRepickState;
+#endif
         result.artifactNoiseState = voice.artifactNoiseState;
         result.artifactCollisionRemaining = voice.artifactCollisionRemaining;
         result.artifactCollisionLength = voice.artifactCollisionLength;
@@ -653,6 +665,23 @@ struct ElectryEngineTestAccess
     {
         return neck ? engine.neckPathActive_ : engine.bridgePathActive_;
     }
+
+#if ELECTRY_MEASURED_PICKUP_FLUX
+    static float measuredPickupFlux(float displacement,
+                                    float pickupType) noexcept
+    {
+        return ElectryEngine::measuredPickupFlux(displacement, pickupType);
+    }
+
+    static float measuredPickupTransfer(float displacement,
+                                        float drive,
+                                        float inverseDrive,
+                                        float pickupType) noexcept
+    {
+        return ElectryEngine::measuredPickupTransfer(
+            displacement, drive, inverseDrive, pickupType);
+    }
+#endif
 
     // Is the humbucker's second coil running on this string's selected pickup?
     static bool coilPairActive(const ElectryEngine& engine,
@@ -2117,6 +2146,219 @@ void testPassiveContactFoldedRingReference()
               << maximumContactDifference
               << '\n';
 }
+
+#if ELECTRY_PASSIVE_REPICK_SPRING
+void testPassiveRepickSpringCandidate()
+{
+    // For the fixed edge, the differential scattering mode is identity and
+    // the common mode is Q(z)=1-2 rho(z). The bilinear damped-spring solve must
+    // therefore have |Q|<=1 at every frequency, unity DC reflectance and the
+    // chosen impedance match (rho=1/2) at Nyquist at every sample rate. Read
+    // the production coefficients after a first-round-trip repick so this also
+    // covers the lifecycle gate that the output-energy follower cannot see yet.
+    TestAccess::VoiceSnapshot representative;
+    for (const double sampleRate : { 44100.0, 96000.0, 384000.0 })
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        engine.noteOn(28, 0.90f);
+        const int stringIndex = TestAccess::stringForNote(engine, 28);
+        expect(stringIndex == 0,
+               "repick spring fixture did not allocate E1");
+        expect(stringIndex >= 0
+                   && ! TestAccess::snapshot(engine, stringIndex)
+                           .passiveRepickSpringActive,
+               "repick spring changed a fresh isolated attack");
+
+        StereoBuffer firstRoundTrip(static_cast<int>(0.001 * sampleRate));
+        renderInto(engine, firstRoundTrip);
+        engine.noteOn(28, 0.90f);
+        const auto contact = TestAccess::snapshot(engine, stringIndex);
+        expect(contact.passiveRepickSpringActive
+                   && contact.excitationInContact,
+               "first-round-trip repick did not enter dynamic contact");
+        expect(contact.passiveRepickVerticalNear >= 1
+                   && contact.passiveRepickVerticalFar >= 1
+                   && contact.passiveRepickVerticalNear
+                        != contact.passiveRepickVerticalFar,
+               "repick spring did not address two committed history cells");
+
+        const double b0 = contact.passiveRepickB0;
+        const double b1 = contact.passiveRepickB1;
+        const double pole = contact.passiveRepickPole;
+        expect(pole > -1.0 && pole < 1.0,
+               "repick spring bilinear pole was unstable");
+        expect(std::abs((b0 + b1) / (1.0 - pole) - 1.0) < 2.0e-5,
+               "repick spring lost its unit DC reflectance");
+        expect(std::abs((b0 - b1) / (1.0 + pole) - 0.5) < 2.0e-5,
+               "repick spring lost its matched Nyquist reflectance");
+
+        const double q0 = 1.0 - 2.0 * b0;
+        const double q1 = -pole - 2.0 * b1;
+        for (int bin = 0; bin <= 2048; ++bin)
+        {
+            const double cosine = std::cos(
+                3.14159265358979323846 * static_cast<double>(bin) / 2048.0);
+            const double numerator = q0 * q0 + q1 * q1
+                                   + 2.0 * q0 * q1 * cosine;
+            const double denominatorMagnitude = 1.0 + pole * pole
+                                              - 2.0 * pole * cosine;
+            expect(numerator <= denominatorMagnitude
+                                   + 1.0e-6
+                                       * std::max(1.0, denominatorMagnitude),
+                   "repick spring common mode was not contractive");
+        }
+
+        StereoBuffer releasedBuffer(static_cast<int>(0.020 * sampleRate));
+        renderInto(engine, releasedBuffer);
+        const auto released = TestAccess::snapshot(engine, stringIndex);
+        expect(! released.passiveRepickSpringActive
+                   && released.passiveRepickState == 0.0f,
+               "repick spring retained contact state after release");
+        if (representative.passiveRepickB0 == 0.0f)
+            representative = contact;
+    }
+
+    // `active` begins at scheduling, not at physical contact. A same-note
+    // reservation made inside a fresh strum's silent pre-roll must retain the
+    // original false preservation bit when the pending contact finally fires.
+    ElectryEngine freshPreRoll;
+    freshPreRoll.prepare(48000.0, 512);
+    EngineParameters preRollParameters;
+    preRollParameters.artifactAmount = 0.0f;
+    preRollParameters.sympatheticAmount = 0.0f;
+    freshPreRoll.setParameters(preRollParameters);
+    freshPreRoll.reset();
+    TestAccess::retriggerVoice(
+        freshPreRoll, 0, 28, 0.90f, PlayStyle::Sustain, 256);
+    TestAccess::retriggerVoice(
+        freshPreRoll, 0, 28, 0.90f, PlayStyle::Sustain, 128);
+    const auto reservedFresh = TestAccess::snapshot(freshPreRoll, 0);
+    expect(reservedFresh.pendingRepickActive
+               && ! reservedFresh.pendingContactPreservesRing,
+           "fresh pre-roll repick acquired nonexistent ringing state");
+    while (TestAccess::snapshot(freshPreRoll, 0).startDelaySamples > 0)
+        TestAccess::renderOneInternalSample(freshPreRoll);
+    const auto contactedFresh = TestAccess::snapshot(freshPreRoll, 0);
+    expect(contactedFresh.excitationInContact
+               && ! contactedFresh.passiveRepickSpringActive,
+           "fresh pre-roll reservation armed the repick spring at contact");
+
+    // Compare the production in-place history offsets, signs and transposed
+    // filter update with an explicit two-rail spring. This catches the one-cell
+    // distinction between logical cell zero (writeIndex-1) and the write head.
+    struct Spring
+    {
+        double b0 { 0.0 };
+        double b1 { 0.0 };
+        double pole { 0.0 };
+        double state { 0.0 };
+
+        double process(double relativeDisplacement) noexcept
+        {
+            const double correction = b0 * relativeDisplacement + state;
+            state = b1 * relativeDisplacement + pole * correction;
+            return correction;
+        }
+    };
+
+    constexpr std::size_t railLength = 7;
+    constexpr std::size_t ringLength = 2 * railLength;
+    constexpr std::size_t junction = 3;
+    std::array<double, railLength> towardNut {};
+    std::array<double, railLength> towardBridge {};
+    for (std::size_t x = 0; x < railLength; ++x)
+    {
+        towardNut[x] = 0.07 * static_cast<double>(x + 1);
+        towardBridge[x] = -0.05
+                        * static_cast<double>(railLength - x);
+    }
+
+    std::array<double, ringLength> ring {};
+    std::size_t writeIndex = 5;
+    const auto ringIndex = [&] (std::size_t historyOffset)
+    {
+        return (writeIndex + ringLength
+                - historyOffset % ringLength) % ringLength;
+    };
+    for (std::size_t x = 0; x < railLength; ++x)
+    {
+        ring[ringIndex(x + 1)] = towardNut[x];
+        ring[ringIndex(2 * railLength - x)] = -towardBridge[x];
+    }
+
+    const Spring initial {
+        representative.passiveRepickB0,
+        representative.passiveRepickB1,
+        representative.passiveRepickPole,
+        0.0
+    };
+    Spring railSpring = initial;
+    Spring ringSpring = initial;
+    double maximumDynamicDifference = 0.0;
+    for (std::size_t step = 0; step < 4 * railLength; ++step)
+    {
+        std::array<double, railLength> nextTowardNut {};
+        std::array<double, railLength> nextTowardBridge {};
+        for (std::size_t x = 0; x + 1 < railLength; ++x)
+            nextTowardNut[x + 1] = towardNut[x];
+        for (std::size_t x = 1; x < railLength; ++x)
+            nextTowardBridge[x - 1] = towardBridge[x];
+        nextTowardNut[0] = -towardBridge[0];
+        nextTowardBridge[railLength - 1] = -towardNut[railLength - 1];
+
+        const double towardNutIncident = towardNut[junction - 1];
+        const double towardBridgeIncident = towardBridge[junction];
+        const double railCorrection = railSpring.process(
+            -(towardNutIncident + towardBridgeIncident));
+        nextTowardNut[junction] = towardNutIncident + railCorrection;
+        nextTowardBridge[junction - 1] =
+            towardBridgeIncident + railCorrection;
+        towardNut = nextTowardNut;
+        towardBridge = nextTowardBridge;
+
+        const std::size_t nearOffset = junction;
+        const std::size_t farOffset = 2 * railLength - junction;
+        const std::size_t nearIndex = ringIndex(nearOffset);
+        const std::size_t farIndex = ringIndex(farOffset);
+        const double ringCommon = ring[nearIndex] - ring[farIndex];
+        const double ringCorrection = ringSpring.process(-ringCommon);
+        ring[nearIndex] += ringCorrection;
+        ring[farIndex] -= ringCorrection;
+        writeIndex = (writeIndex + 1) % ringLength;
+
+        for (std::size_t x = 0; x < railLength; ++x)
+        {
+            maximumDynamicDifference = std::max(
+                maximumDynamicDifference,
+                std::abs(ring[ringIndex(x + 1)] - towardNut[x]));
+            maximumDynamicDifference = std::max(
+                maximumDynamicDifference,
+                std::abs(ring[ringIndex(2 * railLength - x)]
+                         + towardBridge[x]));
+        }
+        maximumDynamicDifference = std::max(
+            maximumDynamicDifference,
+            std::abs(ringSpring.state - railSpring.state));
+    }
+    expect(maximumDynamicDifference < 1.0e-12,
+           "in-place dynamic folded-ring spring diverged from two rails");
+
+    std::cout << "PROBE passive repick spring: b0/b1/p "
+              << representative.passiveRepickB0 << '/'
+              << representative.passiveRepickB1 << '/'
+              << representative.passiveRepickPole << ", folded offsets "
+              << representative.passiveRepickVerticalNear << '/'
+              << representative.passiveRepickVerticalFar
+              << ", dynamic max delta " << maximumDynamicDifference << '\n';
+}
+#endif
 
 #if ELECTRY_ANALYTIC_RELEASE_IC
 void testAnalyticReleasePickupSpatialHistory()
@@ -7858,6 +8100,151 @@ void testAttackStateTransitions()
     }
 }
 
+#if ELECTRY_MEASURED_PICKUP_FLUX
+void testMeasuredPickupFluxLaw()
+{
+    struct Parameters
+    {
+        double length;
+        double radius;
+    };
+    constexpr std::array<Parameters, 2> pickups {{
+        { 0.00986, 0.00134 }, // SH-2N humbucker
+        { 0.01298, 0.00277 }  // SSL-5 single coil
+    }};
+    constexpr double restGap = 0.003;
+    constexpr double maximumDisplacement = 0.999 * restGap;
+    constexpr double metresPerWaveguideUnit = 0.040;
+
+    const auto boundedDisplacement = [] (double displacement)
+    {
+        if (! std::isfinite(displacement))
+            return 0.0;
+        const double ratio = displacement * metresPerWaveguideUnit
+                           / maximumDisplacement;
+        const double magnitude = std::abs(ratio);
+        if (magnitude <= 1.0)
+        {
+            const double squared = ratio * ratio;
+            return maximumDisplacement * ratio
+                 / std::sqrt(std::sqrt(1.0 + squared * squared));
+        }
+        const double inverse = 1.0 / magnitude;
+        const double squared = inverse * inverse;
+        return std::copysign(
+            maximumDisplacement
+                / std::sqrt(std::sqrt(1.0 + squared * squared)), ratio);
+    };
+    const auto reference = [&] (double displacement,
+                                const Parameters& pickup)
+    {
+        const auto eq6 = [&] (double distance)
+        {
+            const auto term = [&] (double x)
+            {
+                return x / std::cbrt(pickup.radius * pickup.radius + x * x);
+            };
+            return term(distance + pickup.length) - term(distance);
+        };
+        const auto slopeTerm = [&] (double x)
+        {
+            const double base = pickup.radius * pickup.radius + x * x;
+            return (x * x + 3.0 * pickup.radius * pickup.radius)
+                 / (3.0 * base * std::cbrt(base));
+        };
+        const double restSlope = slopeTerm(restGap + pickup.length)
+                               - slopeTerm(restGap);
+        return (eq6(restGap - boundedDisplacement(displacement))
+                - eq6(restGap))
+             / (-restSlope * metresPerWaveguideUnit);
+    };
+
+    for (float pickupType : { 0.0f, 0.5f, 1.0f })
+        expect(TestAccess::measuredPickupFlux(0.0f, pickupType) == 0.0f,
+               "measured pickup flux did not subtract its rest flux");
+
+    constexpr float slopeStep = 1.0e-4f;
+    for (float pickupType : { 0.0f, 1.0f })
+    {
+        const float slope =
+            (TestAccess::measuredPickupFlux(slopeStep, pickupType)
+             - TestAccess::measuredPickupFlux(-slopeStep, pickupType))
+            / (2.0f * slopeStep);
+        expect(std::abs(slope - 1.0f) < 0.002f,
+               "measured pickup flux lost its unity small-signal slope");
+    }
+
+    const auto calibratedFlux = [] (float displacement,
+                                    float pickupType,
+                                    float drive)
+    {
+        return TestAccess::measuredPickupTransfer(
+            displacement, drive, 1.0f / drive, pickupType);
+    };
+    struct PickupCalibration
+    {
+        float pickupType;
+        float drive;
+    };
+    for (const auto calibration : {
+             PickupCalibration { 0.0f, 0.62f },
+             PickupCalibration { 0.0f, 0.68f },
+             PickupCalibration { 1.0f, 0.24f },
+             PickupCalibration { 1.0f, 0.27f } })
+    {
+        const float slope =
+            (calibratedFlux(slopeStep, calibration.pickupType,
+                            calibration.drive)
+             - calibratedFlux(-slopeStep, calibration.pickupType,
+                              calibration.drive))
+            / (2.0f * slopeStep);
+        expect(std::abs(slope - 1.0f) < 0.002f,
+               "pickup calibration wrapper changed small-signal gain");
+    }
+    const float neckTransfer = calibratedFlux(0.07f, 0.0f, 0.62f);
+    const float bridgeTransfer = calibratedFlux(0.07f, 0.0f, 0.68f);
+    expect(bridgeTransfer > neckTransfer + 0.004f,
+           "pickup calibration wrapper discarded nonlinear position drive");
+
+    const float humbucker = TestAccess::measuredPickupFlux(0.05f, 0.0f);
+    const float singleCoil = TestAccess::measuredPickupFlux(0.05f, 1.0f);
+    const float midpoint = TestAccess::measuredPickupFlux(0.05f, 0.5f);
+    expect(std::abs(humbucker - singleCoil) > 0.01f,
+           "measured pickup endpoints collapsed to one flux law");
+    expect(std::abs(midpoint - 0.5f * (humbucker + singleCoil)) < 1.0e-7f,
+           "Pickup Type did not interpolate the measured endpoint laws");
+
+    for (float displacement : {
+             -std::numeric_limits<float>::max(), -1.0e6f, -1.0f, 1.0f,
+             1.0e6f, std::numeric_limits<float>::max(),
+             -std::numeric_limits<float>::infinity(),
+             std::numeric_limits<float>::infinity(),
+             std::numeric_limits<float>::quiet_NaN() })
+    {
+        for (float pickupType : { 0.0f, 0.5f, 1.0f })
+        {
+            const float flux =
+                TestAccess::measuredPickupFlux(displacement, pickupType);
+            expect(std::isfinite(flux) && std::abs(flux) < 0.22f,
+                   "measured pickup flux was not finite and bounded");
+        }
+    }
+
+    for (float displacement : { -0.05f, -0.021f, 0.017f, 0.049f })
+    {
+        for (std::size_t index = 0; index < pickups.size(); ++index)
+        {
+            const float actual = TestAccess::measuredPickupFlux(
+                displacement, static_cast<float>(index));
+            const double expected = reference(displacement, pickups[index]);
+            expect(std::abs(static_cast<double>(actual) - expected) < 1.0e-5,
+                   "pickup flux LUT disagreed with DAFx-18 Equation 6 after "
+                   "its soft displacement bound");
+        }
+    }
+}
+#endif
+
 void testPickupsToneAndBuildMorph()
 {
     constexpr double sampleRate = 48000.0;
@@ -8018,7 +8405,10 @@ void testArtifactsControl()
     // The PRNG stream is seeded before this snapshot and advances only when
     // the string exceeds the configured fret clearance, so this catches a
     // collision window that expires while the travelling wave is still zero.
-    for (const auto style : { PlayStyle::PalmMute, PlayStyle::Dead })
+    constexpr std::array collisionStyles {
+        PlayStyle::PalmMute, PlayStyle::Dead
+    };
+    for (const auto style : collisionStyles)
     {
         for (const int note : { 28, 40 })
         {
@@ -8063,16 +8453,85 @@ void testArtifactsControl()
 #if ELECTRY_POSITIONED_FRET_COLLISION
 void testPositionedFretCollision()
 {
-    const double delayScale = TestAccess::followingFretDelayScale();
-    expect(std::abs(delayScale - std::exp2(-1.0 / 12.0)) < 1.0e-7,
-           "following-fret collision tap does not follow equal temperament");
-    const auto linearWeights =
-        TestAccess::followingFretLinearWeights(123.25f);
-    expect(std::abs(linearWeights[0] - 0.25f) < 1.0e-7f
-               && std::abs(linearWeights[1] - 0.75f) < 1.0e-7f,
-           "following-fret cached linear interpolation weights are wrong");
-    expect(TestAccess::followingFretLinearReadSentinel(123.25f) == 8.0f,
-           "following-fret production linear read reversed its tap geometry");
+    const double railFraction = TestAccess::followingFretRailFraction();
+    expect(std::abs(railFraction - std::exp2(-1.0 / 12.0)) < 1.0e-7,
+           "following-fret collision junction does not follow equal temperament");
+    const auto referenceCells =
+        TestAccess::followingFretContactCells(4096.0f);
+    expect(referenceCells[0] >= 1
+               && referenceCells[1] >= 1
+               && referenceCells[0] != referenceCells[1]
+               && referenceCells[0] + referenceCells[1] == 4096
+               && std::abs(referenceCells[0] / 2048.0
+                           - railFraction) < 1.0 / 2048.0,
+           "following-fret junction did not address the paired folded-ring cells");
+
+    expect(TestAccess::fretboardNormalSign() == -1.0f,
+           "the production fretboard side changed coordinate sign");
+
+    // The rigid obstacle is unilateral: the inactive side and every approach
+    // below the clearance are exact identity. A real hit lands exactly on its
+    // signed barrier, preserves the differential wave, is reciprocal under
+    // port exchange and cannot increase squared-wave energy.
+    float belowNut = 0.20f;
+    float belowStoredBridge = -0.40f;
+    const float belowExcess = TestAccess::scatterUnilateralFretCollision(
+        belowNut, belowStoredBridge, 0.61f, 1.0f);
+    expect(belowNut == 0.20f && belowStoredBridge == -0.40f
+               && belowExcess == 0.0f,
+           "following-fret collision changed a displacement below clearance");
+
+    float wrongSideNut = -0.80f;
+    float wrongSideStoredBridge = 0.40f;
+    const float wrongSideExcess = TestAccess::scatterUnilateralFretCollision(
+        wrongSideNut, wrongSideStoredBridge, 0.10f, 1.0f);
+    expect(wrongSideNut == -0.80f && wrongSideStoredBridge == 0.40f
+               && wrongSideExcess == 0.0f,
+           "following-fret collision retained the old bilateral barrier");
+
+    const auto scatter = [] (float towardNut, float towardBridge,
+                             float clearance, float barrierSign)
+    {
+        float storedTowardBridge = -towardBridge;
+        const float inputEnergy = towardNut * towardNut
+                                + towardBridge * towardBridge;
+        const float excess = TestAccess::scatterUnilateralFretCollision(
+            towardNut, storedTowardBridge, clearance, barrierSign);
+        const float outgoingBridge = -storedTowardBridge;
+        return std::array<float, 5> {
+            towardNut, outgoingBridge, excess, inputEnergy,
+            towardNut * towardNut + outgoingBridge * outgoingBridge
+        };
+    };
+    const auto hit = scatter(0.75f, 0.25f, 0.10f, 1.0f);
+    expect(std::abs((hit[0] + hit[1]) - 0.10f) < 1.0e-7f
+               && std::abs((hit[0] - hit[1]) - 0.50f) < 1.0e-7f
+               && std::abs(hit[2] - 0.90f) < 1.0e-7f
+               && hit[4] <= hit[3],
+           "following-fret scatter missed its barrier or created energy");
+    const auto reversed = scatter(0.25f, 0.75f, 0.10f, 1.0f);
+    expect(std::abs(hit[0] - reversed[1]) < 1.0e-7f
+               && std::abs(hit[1] - reversed[0]) < 1.0e-7f,
+           "following-fret scatter was not reciprocal");
+    const auto mirrored = scatter(-0.75f, -0.25f, 0.10f, -1.0f);
+    expect(std::abs((mirrored[0] + mirrored[1]) + 0.10f) < 1.0e-7f
+               && std::abs(mirrored[2] - 0.90f) < 1.0e-7f
+               && mirrored[4] <= mirrored[3],
+           "following-fret scatter did not mirror onto the negative barrier");
+    for (const auto incident : {
+             std::array<float, 2> { 1.0f, 0.0f },
+             std::array<float, 2> { 0.7f, 0.6f },
+             std::array<float, 2> { -0.4f, 1.2f },
+             std::array<float, 2> { -1.0f, -0.2f } })
+    {
+        for (const float sign : { -1.0f, 1.0f })
+        {
+            const auto result = scatter(
+                incident[0], incident[1], 0.15f, sign);
+            expect(result[4] <= result[3] + 1.0e-6f,
+                   "following-fret scatter increased squared-wave energy");
+        }
+    }
 
     // Exercise the production collision law with pure harmonic phases. At the
     // following-fret fraction, harmonic 9 is almost an antinode while harmonic
@@ -8080,8 +8539,8 @@ void testPositionedFretCollision()
     // seeing the old seam-wide limiter.
     const double harmonic9Gain = TestAccess::positionedFretHarmonicGain(9);
     const double harmonic18Gain = TestAccess::positionedFretHarmonicGain(18);
-    expect(harmonic9Gain < 0.25 && harmonic18Gain > 0.99
-               && harmonic9Gain < harmonic18Gain * 0.30,
+    expect(harmonic9Gain < 0.90 && harmonic18Gain > 0.99
+               && harmonic9Gain < harmonic18Gain * 0.91,
            "following-fret law did not preserve the node/antinode contrast (H9 "
                + std::to_string(harmonic9Gain) + ", H18 "
                + std::to_string(harmonic18Gain) + ")");
@@ -8090,36 +8549,8 @@ void testPositionedFretCollision()
                "following-fret law amplified harmonic "
                    + std::to_string(harmonic));
 
-    float excess = -1.0f;
-    const float belowClearance =
-        TestAccess::applyPositionedFretCollision(
-            0.20f, -0.40f, 0.61f, 1.0f, excess);
-    expect(belowClearance == 0.20f && excess == 0.0f,
-           "following-fret collision changed a sample below clearance");
-
-    const float zeroContact = TestAccess::applyPositionedFretCollision(
-        0.50f, -0.50f, 0.10f, 0.0f, excess);
-    expect(zeroContact == 0.50f,
-           "following-fret loss was not identity at zero contact");
-
-    const auto kneeCorrection = [&] (float amount)
-    {
-        constexpr float clearance = 0.10f;
-        const float bridge = clearance + amount;
-        float kneeExcess = 0.0f;
-        const float output = TestAccess::applyPositionedFretCollision(
-            bridge, 0.0f, clearance, 1.0f, kneeExcess);
-        return bridge - output;
-    };
-    const float correction1 = kneeCorrection(0.001f);
-    const float correction2 = kneeCorrection(0.002f);
-    expect(correction1 > 0.0f
-               && correction2 / correction1 > 3.8f
-               && correction2 / correction1 < 4.1f,
-           "following-fret loss no longer has a zero-slope quadratic knee");
-
-    // The moving tap remains in the fractional delay's valid range at every
-    // supported production rate, including the non-round 96.001 kHz seam.
+    // The moving integer junction remains in the folded ring's valid range at
+    // every supported production rate, including the non-round 96.001 kHz seam.
     for (const double sampleRate : { 44100.0, 48000.0, 88200.0, 96000.0,
                                      96001.0, 192000.0, 384000.0 })
     {
@@ -8132,11 +8563,12 @@ void testPositionedFretCollision()
         engine.noteOn(28, 1.0f);
         const int stringIndex = TestAccess::stringForNote(engine, 28);
         const auto snapshot = TestAccess::snapshot(engine, stringIndex);
-        const float tapDelay = snapshot.verticalDelayCurrent
-                             * TestAccess::followingFretDelayScale();
-        expect(tapDelay >= 4.0f
-                   && tapDelay <= TestAccess::delayLineCapacity() - 8.0f,
-               "following-fret tap escaped its delay line at "
+        const auto cells = TestAccess::followingFretContactCells(
+            snapshot.verticalDelayCurrent);
+        expect(cells[0] >= 1 && cells[1] >= 1
+                   && cells[0] != cells[1]
+                   && cells[1] < TestAccess::delayLineCapacity(),
+               "following-fret junction escaped its delay line at "
                    + std::to_string(sampleRate) + " Hz");
         StereoBuffer contact(static_cast<int>(0.150 * sampleRate));
         renderInto(engine, contact);
@@ -8172,22 +8604,25 @@ void testPositionedFretCollision()
     StereoBuffer establishTap(1024);
     renderInto(engine, establishTap);
     const auto beforeBend = TestAccess::snapshot(engine, movingString);
-    const float cachedBeforeBend =
-        TestAccess::followingFretCachedDelay(engine, movingString);
+    const auto cachedBeforeBend =
+        TestAccess::followingFretCachedCells(engine, movingString);
     engine.setPitchBend(1.0f);
     StereoBuffer moveTap(512);
     renderInto(engine, moveTap);
     const auto afterBend = TestAccess::snapshot(engine, movingString);
-    const float cachedAfterBend =
-        TestAccess::followingFretCachedDelay(engine, movingString);
+    const auto cachedAfterBend =
+        TestAccess::followingFretCachedCells(engine, movingString);
     expect(beforeBend.artifactCollisionRemaining > 0
                && afterBend.artifactCollisionRemaining > 0
-               && cachedAfterBend < cachedBeforeBend,
-           "following-fret tap did not track an in-window upward pitch bend ("
+               && cachedAfterBend[0] < cachedBeforeBend[0]
+               && cachedAfterBend[1] < cachedBeforeBend[1],
+           "following-fret junction did not track an in-window upward pitch bend ("
                + std::to_string(beforeBend.artifactCollisionRemaining) + " -> "
                + std::to_string(afterBend.artifactCollisionRemaining) + ", "
-               + std::to_string(cachedBeforeBend) + " -> "
-               + std::to_string(cachedAfterBend) + ")");
+               + std::to_string(cachedBeforeBend[0]) + "/"
+               + std::to_string(cachedBeforeBend[1]) + " -> "
+               + std::to_string(cachedAfterBend[0]) + "/"
+               + std::to_string(cachedAfterBend[1]) + ")");
 
     engine.reset();
     engine.noteOn(86, 1.0f);
@@ -20627,6 +21062,9 @@ void testCpuGuardrail()
 int main()
 {
     testPassiveContactFoldedRingReference();
+#if ELECTRY_PASSIVE_REPICK_SPRING
+    testPassiveRepickSpringCandidate();
+#endif
 #if ELECTRY_ANALYTIC_RELEASE_IC
     testAnalyticReleasePickupSpatialHistory();
     testAnalyticReleasedStringInitialCondition();
@@ -20679,6 +21117,9 @@ int main()
     testEnergyAttackPitchExperiment();
 #endif
     testAttackStateTransitions();
+#if ELECTRY_MEASURED_PICKUP_FLUX
+    testMeasuredPickupFluxLaw();
+#endif
     testPickupsToneAndBuildMorph();
     testPickupGeometryFollowsLiveWaveSpeed();
     testHumbuckerTwoCoilNotch();

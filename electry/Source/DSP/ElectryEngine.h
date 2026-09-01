@@ -140,6 +140,14 @@
 #define ELECTRY_POSITIONED_FRET_COLLISION 0
 #endif
 
+#ifndef ELECTRY_MEASURED_PICKUP_FLUX
+#define ELECTRY_MEASURED_PICKUP_FLUX 0
+#endif
+
+#ifndef ELECTRY_PASSIVE_REPICK_SPRING
+#define ELECTRY_PASSIVE_REPICK_SPRING 0
+#endif
+
 namespace electry
 {
 
@@ -504,34 +512,47 @@ private:
     static constexpr double maximumSupportedSampleRate = 384000.0;
 
 #if ELECTRY_POSITIONED_FRET_COLLISION
-    // An equal-tempered following fret is p = 1 - 2^(-1/12) of the speaking
-    // length from the stopped end. Reading at D * (1 - p) gives the folded
-    // ring's phase-equivalent surrogate for that longitudinal point.
-    static constexpr float followingFretDelayScale = 0.9438743126816935f;
+    // The following fret is 2^(-1/12) of the speaking length from the bridge.
+    // The candidate snaps that point to the integer grid where a single-delay
+    // loop is exactly a folded pair of travelling-wave rails.
+    static constexpr float followingFretRailFraction = 0.9438743126816935f;
+    // The vertical attack coordinate's negative side points toward the
+    // fretboard. This is a sign convention, not a contact coefficient.
+    static constexpr float fretboardNormalSign = -1.0f;
 
-    [[nodiscard]] static float applyPositionedFretCollision(
-        float bridgeSample, float followingFretSample, float clearance,
-        float contact, float& excess) noexcept
+    [[nodiscard]] static std::array<int, 2> followingFretContactCells(
+        float loopDelay) noexcept
     {
-        const float displacement = bridgeSample - followingFretSample;
-        const float magnitude = displacement < 0.0f
-            ? -displacement : displacement;
-        excess = magnitude > clearance ? magnitude - clearance : 0.0f;
-        if (excess <= 0.0f)
-            return bridgeSample;
+        const int railLength = std::max(
+            2, static_cast<int>(std::lround(0.5f * loopDelay)));
+        const int junction = std::clamp(
+            static_cast<int>(std::lround(
+                followingFretRailFraction * static_cast<float>(railLength))),
+            1, railLength - 1);
+        return { junction, 2 * railLength - junction };
+    }
 
-        // Preserve the established zero-slope soft-contact knee. A reciprocal
-        // two-rail junction would apply the opposite half-correction to the
-        // other outgoing rail too; this default-off, one-read surrogate cannot,
-        // so it is deliberately described as positioned loss, not as a passive
-        // local collision. With d held fixed, its ideal two-tap modal energy
-        // multiplier is 1 - d(2-d)sin^2(n*pi*p): nodes survive and antinodes
-        // take the loss.
-        const float contactDepth = contact * 6.0f * excess * excess
-            / ((1.0f + 6.0f * excess) * magnitude);
-        const float blend = 0.5f * contactDepth;
-        return bridgeSample
-             + blend * (followingFretSample - bridgeSample);
+    [[nodiscard]] static float scatterUnilateralFretCollision(
+        float& towardNut, float& storedTowardBridge,
+        float clearance, float barrierSign) noexcept
+    {
+        // Folding stores the bridge-bound physical wave with opposite sign,
+        // so u=a+b is `towardNut-storedTowardBridge`. An inelastic hit projects
+        // u exactly onto the one fixed barrier while leaving the differential
+        // wave unchanged.
+        barrierSign = barrierSign < 0.0f ? -1.0f : 1.0f;
+        const float displacement = towardNut - storedTowardBridge;
+        const float signedDisplacement = barrierSign * displacement;
+        const float excess = signedDisplacement > clearance
+            ? signedDisplacement - clearance : 0.0f;
+        if (excess <= 0.0f)
+            return 0.0f;
+
+        const float correction = 0.5f
+            * (barrierSign * clearance - displacement);
+        towardNut += correction;
+        storedTowardBridge -= correction;
+        return excess;
     }
 #endif
 
@@ -802,9 +823,6 @@ private:
     {
         int offset { 4 };
         float c0 { 0.0f }, c1 { 1.0f }, c2 { 0.0f }, c3 { 0.0f };
-#if ELECTRY_POSITIONED_FRET_COLLISION
-        float linear0 { 1.0f }, linear1 { 0.0f };
-#endif
 
         void setDelay(float delaySamples) noexcept;
     };
@@ -928,23 +946,6 @@ private:
                  + tap.c2 * line[static_cast<std::size_t>((index + 1) & mask)]
                  + tap.c3 * line[static_cast<std::size_t>((index + 2) & mask)];
         }
-
-#if ELECTRY_POSITIONED_FRET_COLLISION
-        // The short-lived fret-loss experiment needs one additional spatial
-        // read. Linear interpolation halves its buffer traffic and multiply
-        // count versus the pickup-quality cubic tap while remaining a bounded
-        // fractional delay. Its extra high-frequency droop is an explicit
-        // CPU/accuracy tradeoff in this default-off audition candidate.
-        [[nodiscard]] float readLinearTap(const DelayTap& tap) const noexcept
-        {
-            constexpr int mask = delayLineSize - 1;
-            const int index = writeIndex - tap.offset;
-            return tap.linear0
-                     * line[static_cast<std::size_t>(index & mask)]
-                 + tap.linear1
-                     * line[static_cast<std::size_t>((index + 1) & mask)];
-        }
-#endif
 
         void writeAdd(float offsetSamples, float value) noexcept;
     };
@@ -1126,6 +1127,11 @@ private:
 #if ELECTRY_ANALYTIC_RELEASE_IC || ELECTRY_ENERGY_ATTACK_PITCH
         float stringTensionNewtons { 80.0f };
 #endif
+#if ELECTRY_PASSIVE_REPICK_SPRING
+        // Characteristic transverse impedance sqrt(T mu), frozen into the
+        // repick contact when the plectrum arrives.
+        float stringWaveImpedance { 1.0f };
+#endif
 #if ELECTRY_ENERGY_ATTACK_PITCH
         // Candidate-only normalised tension increment q = dT/T. Physical
         // transverse-string energy and the Bank elastic scale derive its seed
@@ -1171,6 +1177,25 @@ private:
         float excitationImageCoefficient { 0.9f };
         int excitationTailLength { 0 };
         float contactFeedbackGain { 1.0f };
+#if ELECTRY_PASSIVE_REPICK_SPRING
+        // Default-off Evangelista-Smith damped spring. It acts only on the
+        // already-ringing part of a repick, leaving the isolated-stroke
+        // release path as the controlled baseline. The point is snapped to
+        // integer folded-ring cells, where the two-rail scattering proof is
+        // exact; one state is shared by the plectrum-normal projection of the
+        // two transverse polarisations.
+        bool passiveRepickSpringActive { false };
+        int passiveRepickVerticalNear { 0 };
+        int passiveRepickVerticalFar { 0 };
+        int passiveRepickHorizontalNear { 0 };
+        int passiveRepickHorizontalFar { 0 };
+        float passiveRepickNormalVertical { 1.0f };
+        float passiveRepickNormalHorizontal { 0.0f };
+        float passiveRepickB0 { 0.0f };
+        float passiveRepickB1 { 0.0f };
+        float passiveRepickPole { 0.0f };
+        float passiveRepickState { 0.0f };
+#endif
         float noiseAmplitude { 0.0f };
         float noiseBandCoefficient { 0.5f };
         int noiseRemaining { 0 };
@@ -1210,9 +1235,11 @@ private:
         float artifactCollisionLengthDenominator { 1.0f };
         float artifactClearance { 1.0f };
 #if ELECTRY_POSITIONED_FRET_COLLISION
-        // Cached linear coefficients make the extra longitudinal read two
-        // multiplies instead of rebuilding a fractional delay every sample.
-        DelayTap artifactFollowingFretTap {};
+        // Incident cells at the following fret in the vertical folded ring.
+        // They move only on the existing control cadence while a bend changes
+        // the sounding period.
+        int artifactFollowingFretNear { 1 };
+        int artifactFollowingFretFar { 3 };
 #endif
         ModalResonator saddleRattle {};
 
@@ -1453,6 +1480,14 @@ private:
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;
+#if ELECTRY_MEASURED_PICKUP_FLUX
+    static float measuredPickupFlux(float displacement,
+                                    float pickupType) noexcept;
+    static float measuredPickupTransfer(float displacement,
+                                        float drive,
+                                        float inverseDrive,
+                                        float pickupType) noexcept;
+#endif
     [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
@@ -1474,7 +1509,8 @@ private:
     void configureBody() noexcept;
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
-    void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
+    void startExcitation(Voice& voice, float velocity, bool legato,
+                         bool preservesExistingStringState) noexcept;
 #if ELECTRY_ANALYTIC_RELEASE_IC
     struct ReleasedRail
     {
