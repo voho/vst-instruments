@@ -54,7 +54,7 @@ jobs:
             "drumalor:DrumalorRenderDemos:7"
             "electry:ElectryRenderDemos:23"
             "taikor:TaikorRenderDemos:27"
-            "acustra:AcustraRenderDemos:6"
+            "acustra:AcustraRenderDemos:7"
             "youknow106:YouKnow106RenderDemos:10"
             "septum:SeptumRenderDemos:11"
             "ghostar:GhostarRenderDemos:12"

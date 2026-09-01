@@ -82,7 +82,13 @@ public:
     void setPhysicalCalibration(const PhysicalCalibration&) noexcept;
 
     void noteOn(int midiNote, float velocity, int midiChannel = 1) noexcept;
-    void noteOff(int midiNote, int midiChannel = 1) noexcept;
+    // fingerLift is MIDI release velocity as the fretting finger leaving a
+    // stopped string: the lift carries the string energy a pluck at that
+    // velocity would, so a pull-off at a velocity is as loud as a pluck at
+    // it. Zero is the finger staying on the string, which is what every
+    // note-off did before and is still exact.
+    void noteOff(int midiNote, int midiChannel = 1,
+                 float fingerLift = 0.0f) noexcept;
     void setSustainPedal(bool down, int midiChannel = 1) noexcept;
     // Continuous bridge-hand damping, 0 open to 1 fully muted. Exposed as a
     // controller rather than a panel control: it is a playing pressure, and
@@ -199,6 +205,13 @@ private:
         FixedDerivative bridgeDerivative {};
         bool derivativeNeedsPriming { true };
         bool derivativeCrossesRelease { false };
+        // A hand's loss is a gain per round trip, and a contact settles over
+        // one. Slewing the applied gain toward the requested one across a
+        // round trip, in either direction, is what keeps the wave the
+        // junction reads from stepping when a key is lifted.
+        float appliedReleaseGain { 1.0f };
+        float requestedReleaseGain { 1.0f };
+        float releaseGainStep { 0.0f };
 
         void reset() noexcept;
         [[nodiscard]] float readDelay(float samples) const noexcept;
@@ -346,6 +359,11 @@ private:
         float dispersionPoleRatio { 4.0f };
         float level { 0.0f };
         float releaseDamping { 1.0f };
+        float fingerLift { 0.0f };
+        // The lifting finger still touches the string until it has risen
+        // clear of it; that contact is the hand loss for this many samples.
+        float touchDamping { 1.0f };
+        int touchSamples { 0 };
         int quietSamples { 0 };
     };
 
@@ -381,8 +399,22 @@ private:
     float effectiveTouch(const Voice& voice) const noexcept;
     void initialisePluck(Voice& voice, int stringIndex, float velocity) noexcept;
     void returnToOpenString(Voice& voice, int stringIndex) noexcept;
-    void beginRelease(Voice& voice) noexcept;
+    void beginRelease(Voice& voice, int stringIndex) noexcept;
     void captureTail(Voice& voice) noexcept;
+    [[nodiscard]] float actionHeight(int stringIndex,
+                                     float nutDistance) const noexcept;
+    [[nodiscard]] float handContactGain(float frequency) const noexcept;
+    [[nodiscard]] float pluckEnergy(float velocity, float soundingLength,
+                                    float tension) const noexcept;
+    void addReleasedTriangle(StringLoop& loop, float height,
+                             float apexFraction, float sign) noexcept;
+    void addUniformVelocity(StringLoop& loop, float plateau,
+                            float extentFraction, float sign) noexcept;
+    void addTriangleVelocity(StringLoop& loop, float scale,
+                             float apexFraction, float sign) noexcept;
+    void liftFinger(Voice& voice, int stringIndex, int targetMidi) noexcept;
+    void hammerString(Voice& voice, int stringIndex, int previousMidi,
+                      float velocity) noexcept;
     void resetSoundState() noexcept;
     void freezeMemberPitchBend(Voice& voice) noexcept;
     [[nodiscard]] bool isLowerZoneMaster(int midiChannel) const noexcept;
@@ -392,7 +424,8 @@ private:
     [[nodiscard]] bool sustainIsDown(const Voice& voice) const noexcept;
     [[nodiscard]] int chooseLegatoString(int midiNote,
                                         int midiChannel) const noexcept;
-    bool releaseLegatoNote(int midiNote, int midiChannel) noexcept;
+    bool releaseLegatoNote(int midiNote, int midiChannel,
+                           float fingerLift) noexcept;
     int chooseString(int midiNote) const noexcept;
     struct HarmonicChoice
     {

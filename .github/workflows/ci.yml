@@ -41,7 +41,7 @@ jobs:
             directory: acustra
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
             target_demo: AcustraRenderDemos
-            expected_demos: 6
+            expected_demos: 7
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN

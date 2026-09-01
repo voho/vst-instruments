@@ -359,8 +359,9 @@ void testBridgeHandControllerReachesTheEngine()
 void testLegatoControllerReachesTheEngine()
 {
     // CC68 is MIDI's Legato Footswitch. With it down, a second note a
-    // sounding string can reach must be hammered on rather than replucked,
-    // so it arrives without a pluck's attack.
+    // sounding string can reach is hammered on rather than replucked: the
+    // string it was on is the string it stays on, so one voice sounds where
+    // a repluck would have taken a second string.
     const auto arrivalRise = [] (bool legato)
     {
         AcustraAudioProcessor processor;
@@ -392,19 +393,98 @@ void testLegatoControllerReachesTheEngine()
         juce::MidiBuffer second;
         second.addEvent (juce::MidiMessage::noteOn (1, 57, 0.85f), 0);
         const double after = sweep (0.2, second);
-        return after / std::max (before, 1.0e-9);
+        return std::pair { after / std::max (before, 1.0e-9),
+                           processor.getActiveVoiceCount() };
     };
-    const double plucked = arrivalRise (false);
-    const double hammered = arrivalRise (true);
+    const auto [plucked, pluckedVoices] = arrivalRise (false);
+    const auto [hammered, hammeredVoices] = arrivalRise (true);
     expect (plucked > 2.0, "the replucked reference arrival did not rise");
+    expect (hammered > 1.5, "the hammered arrival did not rise");
     std::cout << "Acustra legato wrapper rise: plucked=" << plucked
               << " hammered=" << hammered << "\n";
-    // The engine suite measures the mechanism itself, with the idle strings
-    // muted and below the safety limiter. This one only has to prove the
-    // controller arrives, through a default output gain that compresses both
-    // arrivals and over a first note that is still ringing under them.
-    expect (hammered < 0.7 * plucked,
+    // The engine suite measures the mechanism itself. This one only has to
+    // prove the controller arrives: hammered on, the second note stays on
+    // the first note's string instead of taking another.
+    expect (pluckedVoices == 2 && hammeredVoices == 1,
             "CC68 did not reach the engine as legato");
+}
+
+void testReleaseVelocityReachesTheEngineAsAFingerLift()
+{
+    // Note-off velocity is how fast the fretting finger leaves the string.
+    // MIDI's default when unsensed is 64, so 64 and a plain Note On at
+    // velocity zero are exactly the release every host sent before; 127 lifts
+    // the finger clear and the open string rings.
+    const auto phrase = [] (const juce::MidiMessage& off)
+    {
+        AcustraAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        std::vector<float> mono;
+        const auto sweep = [&] (double seconds, juce::MidiBuffer& first)
+        {
+            const int blocks = std::max (1,
+                static_cast<int> (seconds * sampleRate / blockSize));
+            for (int block = 0; block < blocks; ++block)
+            {
+                juce::MidiBuffer empty;
+                processor.processBlock (audio, block == 0 ? first : empty);
+                for (int sample = 0; sample < blockSize; ++sample)
+                    mono.push_back (0.5f * (audio.getSample (0, sample)
+                                            + audio.getSample (1, sample)));
+            }
+        };
+        juce::MidiBuffer start;
+        start.addEvent (juce::MidiMessage::noteOn (1, 43, 0.8f), 0);
+        sweep (0.8, start);
+        juce::MidiBuffer release;
+        release.addEvent (off, 0);
+        const auto releasedAt = mono.size();
+        sweep (1.0, release);
+        return std::pair { mono, releasedAt };
+    };
+    const auto tailEnergy = [] (const std::vector<float>& mono,
+                                std::size_t from)
+    {
+        double energy = 0.0;
+        for (std::size_t index = from + static_cast<std::size_t> (0.3 * sampleRate);
+             index < mono.size(); ++index)
+            energy += static_cast<double> (mono[index]) * mono[index];
+        return energy;
+    };
+    const auto [plain, plainAt] = phrase (juce::MidiMessage::noteOff (1, 43));
+    const auto [sixtyFour, sixtyFourAt]
+        = phrase (juce::MidiMessage::noteOff (1, 43, static_cast<juce::uint8> (64)));
+    const auto [zeroOn, zeroOnAt]
+        = phrase (juce::MidiMessage::noteOn (1, 43, static_cast<juce::uint8> (0)));
+    const auto [lifted, liftedAt]
+        = phrase (juce::MidiMessage::noteOff (1, 43, static_cast<juce::uint8> (127)));
+    expect (plain == sixtyFour && plain == zeroOn,
+            "a release velocity of 64 or an unsensed release changed the note-off");
+    expect (tailEnergy (lifted, liftedAt) > 10.0 * tailEnergy (plain, plainAt),
+            "a release velocity of 127 did not lift the finger");
+    // What rings afterwards is the open string, not the fretted note.
+    const auto bandAt = [&] (const std::vector<float>& mono, std::size_t from,
+                             double frequency)
+    {
+        double real = 0.0;
+        double imaginary = 0.0;
+        const auto begin = from + static_cast<std::size_t> (0.3 * sampleRate);
+        const auto end = std::min (mono.size(),
+                                   from + static_cast<std::size_t> (0.9 * sampleRate));
+        for (std::size_t index = begin; index < end; ++index)
+        {
+            const double angle = 2.0 * juce::MathConstants<double>::pi
+                * frequency * static_cast<double> (index) / sampleRate;
+            real += mono[index] * std::cos (angle);
+            imaginary += mono[index] * std::sin (angle);
+        }
+        return std::hypot (real, imaginary);
+    };
+    const double openHz = 440.0 * std::exp2 ((40.0 - 69.0) / 12.0);
+    const double frettedHz = 440.0 * std::exp2 ((43.0 - 69.0) / 12.0);
+    expect (bandAt (lifted, liftedAt, openHz) > 3.0 * bandAt (lifted, liftedAt, frettedHz),
+            "the lifted string did not ring at its open pitch");
 }
 
 void testResetAllControllersReleasesSustain()
@@ -1075,6 +1155,7 @@ int main()
     testSameSampleNoteOnOffDoesNotStick();
     testBridgeHandControllerReachesTheEngine();
     testLegatoControllerReachesTheEngine();
+    testReleaseVelocityReachesTheEngineAsAFingerLift();
     testResetAllControllersReleasesSustain();
     testMemberChannelOwnershipAndControllers();
     testMemberPitchBendDoesNotLeakChannels();

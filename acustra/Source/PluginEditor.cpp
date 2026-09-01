@@ -290,7 +290,8 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     // arrives on CC2 and would otherwise be undiscoverable from the plug-in.
     // Naming it here costs no control and keeps the surface as it was.
     subtitleLabel.setText (
-        "PHYSICAL ACOUSTIC GUITAR  /  CC2 BRIDGE HAND  /  CC68 LEGATO",
+        "PHYSICAL ACOUSTIC GUITAR  /  CC2 BRIDGE HAND  /  CC68 LEGATO  /  "
+        "NOTE-OFF VELOCITY LIFTS THE FINGER",
         juce::dontSendNotification);
     subtitleLabel.setFont (displayFont (15.5f, juce::Font::bold));
     subtitleLabel.setColour (juce::Label::textColourId, brass);

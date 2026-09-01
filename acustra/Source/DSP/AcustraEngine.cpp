@@ -695,6 +695,9 @@ void AcustraEngine::StringLoop::reset() noexcept
     dispersion.reset();
     bridgeDerivative.reset();
     derivativeNeedsPriming = true;
+    appliedReleaseGain = 1.0f;
+    requestedReleaseGain = 1.0f;
+    releaseGainStep = 0.0f;
 }
 
 float AcustraEngine::StringLoop::bridgeVelocity(
@@ -791,7 +794,19 @@ float AcustraEngine::StringLoop::advance(float delaySmoothing,
     const float low = lossFilter.process(reflected, lowpassCoefficient);
     reflected += highLossMix * (low - reflected);
     reflected = dispersion.process(reflected, dispersionA1, dispersionA2);
-    return reflected * loopGain * releaseGain;
+    if (releaseGain != requestedReleaseGain)
+    {
+        requestedReleaseGain = releaseGain;
+        releaseGainStep = std::abs(releaseGain - appliedReleaseGain)
+                        / std::max(currentDelay, 1.0f);
+    }
+    if (appliedReleaseGain < requestedReleaseGain)
+        appliedReleaseGain = std::min(requestedReleaseGain,
+                                      appliedReleaseGain + releaseGainStep);
+    else if (appliedReleaseGain > requestedReleaseGain)
+        appliedReleaseGain = std::max(requestedReleaseGain,
+                                      appliedReleaseGain - releaseGainStep);
+    return reflected * loopGain * appliedReleaseGain;
 }
 
 void AcustraEngine::StringLoop::write(float value) noexcept
@@ -1626,31 +1641,12 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     // independent of material, string choice and host sample rate.
     const float apertureReferenceDelay = 48000.0f / midiFrequency(61);
 
-    // A finger or plectrum that lands on a sounding string to repluck it holds
-    // it at the contact point, and a held point leaves exactly the modes that
-    // have a node there. Averaging the stored shape with itself shifted by the
-    // contact position is that projection: a mode with a node at the contact
-    // passes at unit gain, one with an antinode cancels, and nothing in between
-    // is invented. Discarding the shape instead stepped the wave the bridge
-    // reads, and since a step strikes every bridge and body mode at once it
-    // arrived about 24 dB above the note. A silent string projects to silence,
-    // so a first pluck is unchanged to the bit. The scratch is the tail loop,
-    // which by construction holds nothing when a string is replucked rather
-    // than taken.
-    const bool keepContactResidual = voice.level > 2.0e-7f && !voice.tailActive;
-    auto& scratch = voice.tailLoop.delay;
-
+    // A string that was still sounding has already been taken into the tail
+    // by the caller: the hand landing on it is the same contact a taken
+    // string goes through, so the pluck itself is always released from rest.
     for (int polarisation = 0; polarisation < 2; ++polarisation)
     {
         auto& loop = voice.loops[static_cast<std::size_t>(polarisation)];
-        const int storedLength = std::clamp(
-            static_cast<int>(std::round(loop.targetDelay)), 8,
-            maximumDelaySamples - 3);
-        if (keepContactResidual)
-            for (int sample = 1; sample <= storedLength; ++sample)
-                scratch[static_cast<std::size_t>(sample - 1)]
-                    = loop.delay[static_cast<std::size_t>(wrapDelayIndex(
-                        loop.writeIndex - sample))];
         loop.reset();
         loop.currentDelay = loop.targetDelay;
         const int length = std::clamp(
@@ -1709,26 +1705,15 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
             return sum / static_cast<float>(modes);
         };
         const float endpoint = releasedAt(0.0f);
-        const int contactShift = std::clamp(
-            static_cast<int>(std::lround(localPosition
-                                         * static_cast<float>(length))),
-            1, std::max(1, length - 1));
         for (int sample = 1; sample <= length; ++sample)
         {
             const float phase = static_cast<float>(sample - 1)
                               / static_cast<float>(length);
             const float triangle = std::max(
                 releasedAt(phase) - endpoint, 0.0f);
-            float residual = 0.0f;
-            if (keepContactResidual)
-            {
-                const int shifted = (sample - 1 + contactShift) % length;
-                residual = 0.5f * (scratch[static_cast<std::size_t>(sample - 1)]
-                    + scratch[static_cast<std::size_t>(shifted)]);
-            }
             loop.delay[static_cast<std::size_t>(wrapDelayIndex(
-                loop.writeIndex - sample))] = residual
-                    + amplitude * polarisationGain * triangle;
+                loop.writeIndex - sample))]
+                = amplitude * polarisationGain * triangle;
         }
     }
 
@@ -1813,6 +1798,9 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.longitudinalY2.fill(0.0f);
     voice.harmonic = 1;
     voice.releaseDamping = 1.0f;
+    voice.fingerLift = 0.0f;
+    voice.touchDamping = 1.0f;
+    voice.touchSamples = 0;
     voice.quietSamples = 0;
     voice.tailActive = false;
     voice.tailLevel = 0.0f;
@@ -1823,18 +1811,17 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
 
 void AcustraEngine::captureTail(Voice& voice) noexcept
 {
-    // A string is only taken while it is being replucked, so the plucking hand
-    // is on it whatever the outgoing note's fret was. That is the contact
-    // beginRelease already models for a stopped fretted note, so the same
-    // 0.16 s damping applies here; the open-string 1.25 s case is a lifted
-    // fretting finger on a string nobody is touching, which this is not.
+    // A string is only taken or replucked while the plucking hand is on it,
+    // whatever the outgoing note's fret was. That is the contact beginRelease
+    // already models for a stopped fretted note, so the same 0.16 s damping
+    // applies here; the open-string 1.25 s case is a lifted fretting finger on
+    // a string nobody is touching, which this is not.
     if (!(voice.level > 2.0e-7f))
     {
         voice.tailActive = false;
         return;
     }
     voice.tailLoop = voice.loops[0];
-    voice.tailLoop.derivativeCrossesRelease = true;
     constexpr float contactSeconds = 0.16f;
     voice.tailDamping = std::pow(0.001f,
         1.0f / std::max(contactSeconds * midiFrequency(voice.midiNote), 1.0f));
@@ -1843,18 +1830,289 @@ void AcustraEngine::captureTail(Voice& voice) noexcept
     voice.tailActive = true;
 }
 
-void AcustraEngine::beginRelease(Voice& voice) noexcept
+void AcustraEngine::beginRelease(Voice& voice, int stringIndex) noexcept
 {
     voice.pedalHeld = false;
+    if (voice.fingerLift > 0.0f && voice.fret > 0 && voice.harmonic == 1)
+    {
+        liftFinger(voice, stringIndex, voice.openMidi);
+        return;
+    }
     const float releaseSeconds = voice.fret == 0 ? 1.25f : 0.16f;
     voice.releaseDamping = std::pow(0.001f,
         1.0f / std::max(releaseSeconds * midiFrequency(voice.midiNote), 1.0f));
-    // The release gain steps the wave this string presents to the junction,
-    // and the junction's own wave variables step with it. Neither is motion:
-    // the hand damps the string, it does not displace the bridge.
-    for (auto& loop : voice.loops)
-        loop.derivativeCrossesRelease = true;
-    bridgeDerivativesCrossRelease_ = true;
+}
+
+float AcustraEngine::handContactGain(float frequency) const noexcept
+{
+    // The 0.16 s the model already gives a hand stopping a fretted string.
+    return std::pow(0.001f, 1.0f / std::max(0.16f * frequency, 1.0f));
+}
+
+// Factory set-up heights of the string over the fret crown: 3/32" bass and
+// 1/16" treble at the twelfth fret for a steel-string (Martin's and Taylor's
+// published specifications), 4 and 3 mm for a classical, with 0.5 and 0.7 mm
+// of clearance over the first fret. A straight neck puts the height at any
+// distance from the nut on the line between those two points, so this is a
+// dimension of the instrument, not a fitted value.
+float AcustraEngine::actionHeight(int stringIndex,
+                                  float nutDistance) const noexcept
+{
+    const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
+    const float scaleLength = steel ? 0.648f : 0.650f;
+    const float mix = static_cast<float>(stringIndex)
+                    / static_cast<float>(stringCount - 1);
+    const float twelfth = steel ? 2.4e-3f + (1.6e-3f - 2.4e-3f) * mix
+                                : 4.0e-3f + (3.0e-3f - 4.0e-3f) * mix;
+    const float nut = steel ? 0.5e-3f : 0.7e-3f;
+    return nut + (twelfth - nut) * nutDistance / (0.5f * scaleLength);
+}
+
+// The pluck's own velocity law, as the string energy it injects, so that
+// velocity means the same thing to the fretting hand as to the picking hand:
+// a hammer-on or a lift at a MIDI velocity carries the energy a pluck at that
+// velocity would, bounded by what the mechanism can physically release.
+float AcustraEngine::pluckEnergy(float velocity, float soundingLength,
+                                 float tension) const noexcept
+{
+    const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
+    const auto& physical = steel ? physicalCalibration_.steel
+                                 : physicalCalibration_.nylon;
+    const float v = clamp(velocity, 0.0f, 1.0f);
+    const float touch = clamp(parameters_.touch
+        + physical.velocityBrightnessDepth * (v - 0.5f), 0.0f, 1.0f);
+    const float velocityExponent = 1.32f
+        - 0.50f * physical.velocityBrightnessDepth;
+    const float amplitude = (steel ? 0.24f : 0.29f)
+        * std::pow(v, velocityExponent) * (0.92f + 0.08f * touch);
+    const float distanceFromBridge = (0.045f
+        + 0.135f * parameters_.pluckPosition) * physical.pluckDistanceScale;
+    const float position = clamp(distanceFromBridge / soundingLength,
+                                 0.05f, 0.46f);
+    const float metres = amplitude
+        * std::max(physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
+    return 0.5f * tension * metres * metres
+         * (1.0f / position + 1.0f / (1.0f - position)) / soundingLength;
+}
+
+// The loop holds one period of the wave the bridge reads. A shape released
+// from rest is one hump of its own height; a velocity profile v(x) is the
+// integral of v, mirrored about the half period, at half height over c. All
+// three add to what the loop already holds: the string was vibrating and
+// goes on doing so.
+void AcustraEngine::addReleasedTriangle(StringLoop& loop, float height,
+                                        float apexFraction,
+                                        float sign) noexcept
+{
+    // The loop may be slewing to a new length. Only samples younger than the
+    // current read age are ever read again, so the shape spans the current
+    // delay, with its zero at the sample about to be read.
+    const int length = std::clamp(
+        static_cast<int>(std::round(loop.currentDelay)), 8,
+        maximumDelaySamples - 3);
+    const float p = clamp(apexFraction, 0.002f, 0.98f);
+    for (int sample = 1; sample <= length; ++sample)
+    {
+        const float phase = static_cast<float>(sample - 1)
+                          / static_cast<float>(length);
+        const float value = phase < p ? phase / p : (1.0f - phase) / (1.0f - p);
+        loop.delay[static_cast<std::size_t>(wrapDelayIndex(
+            loop.writeIndex - sample))] += sign * height * value;
+    }
+}
+
+void AcustraEngine::addUniformVelocity(StringLoop& loop, float plateau,
+                                       float extentFraction,
+                                       float sign) noexcept
+{
+    const int length = std::clamp(
+        static_cast<int>(std::round(loop.currentDelay)), 8,
+        maximumDelaySamples - 3);
+    const float w = clamp(extentFraction, 0.002f, 1.0f);
+    for (int sample = 1; sample <= length; ++sample)
+    {
+        const float x = 2.0f * static_cast<float>(sample - 1)
+                      / static_cast<float>(length);
+        const float mirrored = x < 1.0f ? x : 2.0f - x;
+        loop.delay[static_cast<std::size_t>(wrapDelayIndex(
+            loop.writeIndex - sample))]
+            += -sign * plateau * std::min(mirrored, w) / w;
+    }
+}
+
+void AcustraEngine::addTriangleVelocity(StringLoop& loop, float scale,
+                                        float apexFraction,
+                                        float sign) noexcept
+{
+    const int length = std::clamp(
+        static_cast<int>(std::round(loop.currentDelay)), 8,
+        maximumDelaySamples - 3);
+    const float p = clamp(apexFraction, 0.002f, 0.98f);
+    for (int sample = 1; sample <= length; ++sample)
+    {
+        const float x = 2.0f * static_cast<float>(sample - 1)
+                      / static_cast<float>(length);
+        const float mirrored = x < 1.0f ? x : 2.0f - x;
+        float integral = 0.0f;
+        if (mirrored < p)
+            integral = 0.5f * mirrored * mirrored / p;
+        else
+        {
+            const float remaining = (1.0f - mirrored) / (1.0f - p);
+            integral = 0.5f * p
+                     + 0.5f * (1.0f - p) * (1.0f - remaining * remaining);
+        }
+        loop.delay[static_cast<std::size_t>(wrapDelayIndex(
+            loop.writeIndex - sample))] += -sign * scale * integral;
+    }
+}
+
+// The finger leaves a stopped string. The string was pressed to the fret by
+// the action height there, a triangle over the segment it now belongs to.
+// If the energy the lift carries is at least that triangle's elastic energy
+// the finger is gone before the string moves and the shape is released
+// whole, which is a pull-off; below it the string keeps up with the finger
+// through the same triangle and leaves it at the rest line with the finger's
+// velocity over that shape. The vibration the stopped segment held goes on
+// over the new length, and the finger, still touching until it has risen
+// clear, damps it for h / v with the hand's own loss. A lift to the open
+// string leaves the string to nobody: it rings on in the junction with no
+// key and no hand on it until it has died away.
+void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
+                               int targetMidi) noexcept
+{
+    const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
+    const float scaleLength = steel ? 0.648f : 0.650f;
+    const float lift = clamp(voice.fingerLift, 0.0f, 1.0f);
+    const int liftedFret = std::max(voice.fret, 0);
+    const int targetFret = std::max(targetMidi - voice.openMidi, 0);
+    if (lift <= 0.0f || liftedFret <= targetFret)
+        return;
+    const float liftedDistance = scaleLength
+        * (1.0f - std::exp2(-static_cast<float>(liftedFret) / 12.0f));
+    const float targetDistance = scaleLength
+        * (1.0f - std::exp2(-static_cast<float>(targetFret) / 12.0f));
+    const float targetLength = std::max(scaleLength - targetDistance, 1.0e-3f);
+    // Height of the string over the lifted fret while stopped at the target:
+    // the stopped string runs from that fret crown to the saddle.
+    const float height = std::max(actionHeight(stringIndex, liftedDistance)
+        - actionHeight(stringIndex, targetDistance)
+            * (scaleLength - liftedDistance) / targetLength, 0.0f);
+    const float apex = clamp((liftedDistance - targetDistance) / targetLength,
+                             0.002f, 0.98f);
+    const float displacementScale = std::max(
+        physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
+    const float waveSpeed = 2.0f * scaleLength * midiFrequency(voice.openMidi);
+    const float tension = voice.characteristicImpedance * waveSpeed;
+
+    voice.fingerLift = 0.0f;
+    voice.releaseDamping = 1.0f;
+    if (targetMidi == voice.openMidi)
+    {
+        // Nobody holds the string now, but it is still on the bridge and still
+        // ringing, so it stays a played voice in the junction with no key and
+        // no hand loss until it has died away and returns to rest like any
+        // other released note. The allocator takes a free string first, and
+        // takes this one through the tail a taken string already uses.
+        voice.keyDown = false;
+        voice.pedalHeld = false;
+        voice.mpeMember = false;
+        voice.memberPitchBendFrozen = false;
+        voice.ownerCount = 0;
+        voice.legatoHeldCount = 0;
+        voice.midiChannel = 1;
+        voice.attackPitchCents = 0.0f;
+        voice.attackPitchDecay = 1.0f;
+        voice.frozenMemberPitchBendSemitones = 0.0f;
+        voice.harmonic = 1;
+        voice.quietSamples = 0;
+    }
+    configureVoice(voice, stringIndex, targetMidi, false);
+
+    const float energy = pluckEnergy(lift, targetLength, tension);
+    const float elastic = 0.5f * tension * height * height
+        * (1.0f / apex + 1.0f / (1.0f - apex)) / targetLength;
+    voice.touchDamping = handContactGain(midiFrequency(targetMidi));
+    if (energy >= elastic)
+    {
+        addReleasedTriangle(voice.loops[0], height / displacementScale, apex,
+                            1.0f);
+        voice.touchSamples = 0;
+    }
+    else
+    {
+        // Kinetic energy of v*tri over the segment is mu v^2 L/6.
+        const float speed = waveSpeed
+            * std::sqrt(6.0f * energy / std::max(tension * targetLength, 1.0e-9f));
+        addTriangleVelocity(voice.loops[0],
+            0.5f * speed / waveSpeed * targetLength / displacementScale, apex,
+            1.0f);
+        const float clearSeconds = height / std::max(speed, 1.0e-3f);
+        voice.touchSamples = static_cast<int>(std::min(clearSeconds, 1.0f)
+            * static_cast<float>(sampleRate_));
+    }
+    voice.level = std::max(voice.level, 1.0e-6f);
+}
+
+// A finger hammers a sounding string down onto a fret. A point driven across
+// an ideal string at speed v drags a V-shaped dent whose flanks have slope
+// v/c and which moves down with it, so when the string meets the fret crown,
+// its clearance h below the old line, the dent is a triangle of half-width
+// w = c*h/v carrying velocity v throughout. Relative to the new segment's own
+// rest line, the crown-to-saddle line, that leaves a released triangle with
+// its apex at w and height h(1 - w/L), plus the uniform velocity over [0, w].
+// A finger slower than c*h/L has the dent's front reach the saddle first,
+// and then the whole segment moves down with it. The speed comes from the
+// energy the pluck's velocity law assigns to the same MIDI velocity, so a
+// hammer-on at a velocity is as loud as a pluck at it and gets brighter as
+// it gets faster, the way a real one does.
+void AcustraEngine::hammerString(Voice& voice, int stringIndex,
+                                 int previousMidi, float velocity) noexcept
+{
+    const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
+    const float scaleLength = steel ? 0.648f : 0.650f;
+    const int previousFret = std::max(previousMidi - voice.openMidi, 0);
+    const int newFret = std::max(voice.fret, 0);
+    if (newFret <= previousFret)
+        return;
+    const float previousDistance = scaleLength
+        * (1.0f - std::exp2(-static_cast<float>(previousFret) / 12.0f));
+    const float newDistance = scaleLength
+        * (1.0f - std::exp2(-static_cast<float>(newFret) / 12.0f));
+    const float soundingLength = std::max(scaleLength - newDistance, 1.0e-3f);
+    const float height = std::max(actionHeight(stringIndex, newDistance)
+        - actionHeight(stringIndex, previousDistance) * soundingLength
+            / std::max(scaleLength - previousDistance, 1.0e-3f), 1.0e-5f);
+    const float displacementScale = std::max(
+        physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
+    const float waveSpeed = 2.0f * scaleLength * midiFrequency(voice.openMidi);
+    const float tension = voice.characteristicImpedance * waveSpeed;
+    const float energy = pluckEnergy(clamp(velocity, 0.0f, 1.0f),
+                                     soundingLength, tension);
+    // Energy of the dent at the speed where its front just reaches the
+    // saddle, which is also the whole segment moving at that speed.
+    const float threshold = 0.5f * tension * height * height / soundingLength;
+    float speed = 0.0f;
+    float width = soundingLength;
+    if (energy <= threshold)
+        speed = waveSpeed * std::sqrt(2.0f * energy
+            / std::max(tension * soundingLength, 1.0e-9f));
+    else
+    {
+        speed = (energy + threshold) * waveSpeed / (tension * height);
+        width = waveSpeed * height / speed;
+    }
+    const float extent = width / soundingLength;
+    addUniformVelocity(voice.loops[0],
+        0.5f * speed * width / waveSpeed / displacementScale, extent, -1.0f);
+    // The string is still above the crown-to-saddle line while it moves down
+    // toward it, so the released triangle and the velocity have opposite
+    // signs.
+    if (extent < 1.0f)
+        addReleasedTriangle(voice.loops[0],
+            height * (1.0f - extent) / displacementScale, extent, 1.0f);
+    voice.level = std::max(voice.level, 0.02f * clamp(velocity, 0.0f, 1.0f));
+    voice.touchSamples = 0;
 }
 
 void AcustraEngine::freezeMemberPitchBend(Voice& voice) noexcept
@@ -1896,6 +2154,16 @@ bool AcustraEngine::sustainIsDown(const Voice& voice) const noexcept
 
 int AcustraEngine::chooseString(int midiNote) const noexcept
 {
+    // A note repeated after its key came up is replucked on the string still
+    // sounding it, as a guitarist does, rather than hopping to whichever free
+    // string can also reach it and leaving the first one ringing.
+    for (int string = stringCount - 1; string >= 0; --string)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(string)];
+        if (voice.played && !voice.keyDown && voice.harmonic == 1
+            && voice.midiNote == midiNote && voice.level > 2.0e-7f)
+            return string;
+    }
     int best = -1;
     int bestFret = fretCount + 1;
     for (int string = stringCount - 1; string >= 0; --string)
@@ -2014,8 +2282,18 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
                     -static_cast<float>(controlPeriod)
                     / (0.075f * static_cast<float>(sampleRate_)));
             }
-            configureVoice(voice, string, midiNote, false);
+            // The picking hand lands on a sounding string before it plucks it
+            // again, which is the contact a taken string already goes through:
+            // its vibration carries on in the tail under the hand while the
+            // new pluck is released from rest. Projecting the stored shape onto
+            // the modes with a node at the contact instead, in one sample,
+            // clicked into the limiter and let the near-node modes pile up
+            // pluck after pluck.
+            if (voice.level > 2.0e-7f)
+                captureTail(voice);
+            configureVoice(voice, string, midiNote, true);
             initialisePluck(voice, string, velocity);
+            bridgeDerivativesCrossRelease_ = true;
             configureVoice(voice, string, midiNote, false);
             return;
         }
@@ -2029,9 +2307,8 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
             auto& voice = voices_[static_cast<std::size_t>(hammered)];
             // The fretting finger stops the string; it does not release it
             // from rest. So the loop keeps what it holds and only its length
-            // changes, on the same slew a slide already uses. The finger's own
-            // strike on the fretboard is not modelled, and neither is the
-            // velocity of the hammer.
+            // changes, on the same slew a slide already uses, and the finger's
+            // own strike on the string is added to it below.
             if (voice.legatoHeldCount == 0)
                 voice.legatoHeld[0] = voice.midiNote;
             voice.legatoHeldCount = std::max(voice.legatoHeldCount, 1);
@@ -2040,7 +2317,10 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
             ++voice.legatoHeldCount;
             voice.ownerCount = voice.legatoHeldCount;
             voice.startOrder = ++noteOrder_;
+            const int previousMidi = voice.midiNote;
             configureVoice(voice, hammered, midiNote, false);
+            hammerString(voice, hammered, previousMidi,
+                         clamp(velocity, 0.001f, 1.0f));
             return;
         }
     }
@@ -2058,11 +2338,10 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
         harmonic = choice.harmonic;
     }
     auto& voice = voices_[static_cast<std::size_t>(string)];
-    // Taking a string that is still sounding for a different note is a refret
-    // and a repluck, not a cut. Keep what it still holds. A repluck of the same
-    // note keeps the previous behaviour: a tail at the identical delay length
-    // would comb against the new pluck rather than model the superposition.
-    if (voice.played && voice.midiNote != midiNote)
+    // Taking a string that is still sounding, for any note, is a refret and a
+    // repluck, not a cut: what it still holds carries on under the hand while
+    // the new pluck is released from rest.
+    if (voice.played && voice.level > 2.0e-7f)
         captureTail(voice);
     voice.harmonic = harmonic;
     voice.played = true;
@@ -2096,11 +2375,14 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
     configureVoice(voice, string, midiNote, false);
 }
 
-void AcustraEngine::noteOff(int midiNote, int midiChannel) noexcept
+void AcustraEngine::noteOff(int midiNote, int midiChannel,
+                            float fingerLift) noexcept
 {
     if (midiChannel < 1 || midiChannel > midiChannelCount)
         return;
-    if (releaseLegatoNote(midiNote, midiChannel))
+    const float lift = std::isfinite(fingerLift)
+        ? clamp(fingerLift, 0.0f, 1.0f) : 0.0f;
+    if (releaseLegatoNote(midiNote, midiChannel, lift))
         return;
     int candidateIndex = -1;
     for (int string = 0; string < stringCount; ++string)
@@ -2120,9 +2402,10 @@ void AcustraEngine::noteOff(int midiNote, int midiChannel) noexcept
     candidate.ownerCount = 0;
     freezeMemberPitchBend(candidate);
     candidate.keyDown = false;
+    candidate.fingerLift = lift;
     candidate.pedalHeld = sustainIsDown(candidate);
     if (!candidate.pedalHeld)
-        beginRelease(candidate);
+        beginRelease(candidate, candidateIndex);
 }
 
 void AcustraEngine::setSustainPedal(bool down, int midiChannel) noexcept
@@ -2142,7 +2425,7 @@ void AcustraEngine::setSustainPedal(bool down, int midiChannel) noexcept
             || !channelControlsVoice(midiChannel, voice)
             || sustainIsDown(voice))
             continue;
-        beginRelease(voice);
+        beginRelease(voice, string);
     }
 }
 
@@ -2197,7 +2480,8 @@ int AcustraEngine::chooseLegatoString(int midiNote,
 // Releasing one of the notes a string is holding. If it was the sounding one,
 // the string falls back to the newest note still held on it, which is the
 // pull-off; if it was underneath, nothing sounds different.
-bool AcustraEngine::releaseLegatoNote(int midiNote, int midiChannel) noexcept
+bool AcustraEngine::releaseLegatoNote(int midiNote, int midiChannel,
+                                      float fingerLift) noexcept
 {
     for (int string = 0; string < stringCount; ++string)
     {
@@ -2224,17 +2508,25 @@ bool AcustraEngine::releaseLegatoNote(int midiNote, int midiChannel) noexcept
             voice.ownerCount = 0;
             freezeMemberPitchBend(voice);
             voice.keyDown = false;
+            voice.fingerLift = fingerLift;
             voice.pedalHeld = sustainIsDown(voice);
             if (!voice.pedalHeld)
-                beginRelease(voice);
+                beginRelease(voice, string);
             return true;
         }
         if (wasSounding)
         {
+            // A pull-off: the finger leaves the top note and the string falls
+            // to the one under it, plucked by the leaving finger as fast as
+            // it left.
+            const int target = voice.legatoHeld[static_cast<std::size_t>(
+                voice.legatoHeldCount - 1)];
             voice.startOrder = ++noteOrder_;
-            configureVoice(voice, string,
-                voice.legatoHeld[static_cast<std::size_t>(
-                    voice.legatoHeldCount - 1)], false);
+            voice.fingerLift = fingerLift;
+            if (fingerLift > 0.0f)
+                liftFinger(voice, string, target);
+            else
+                configureVoice(voice, string, target, false);
         }
         return true;
     }
@@ -2292,9 +2584,10 @@ void AcustraEngine::allNotesOff(int midiChannel) noexcept
         voice.legatoHeldCount = 0;
         freezeMemberPitchBend(voice);
         voice.keyDown = false;
+        voice.fingerLift = 0.0f;
         voice.pedalHeld = sustainIsDown(voice);
         if (!voice.pedalHeld)
-            beginRelease(voice);
+            beginRelease(voice, string);
     }
 }
 
@@ -2576,9 +2869,14 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         for (int string = 0; string < stringCount; ++string)
         {
             auto& voice = voices_[static_cast<std::size_t>(string)];
-            const float releaseGain = (voice.keyDown || voice.pedalHeld
-                                       || !voice.played)
+            float releaseGain = (voice.keyDown || voice.pedalHeld
+                                 || !voice.played)
                 ? 1.0f : voice.releaseDamping;
+            if (voice.touchSamples > 0)
+            {
+                releaseGain = std::min(releaseGain, voice.touchDamping);
+                --voice.touchSamples;
+            }
             excitation[static_cast<std::size_t>(string)]
                 = renderExcitation(voice);
             verticalIncident[static_cast<std::size_t>(string)]

@@ -116,7 +116,20 @@ struct PendingNoteOff
 {
     int note { 0 };
     int channel { 1 };
+    float lift { 0.0f };
 };
+
+// Note-off velocity is how fast the key was released, and on this instrument
+// how fast the fretting finger leaves the string. MIDI's own default when a
+// keyboard does not sense it is 64, so 64 and below is the finger staying on
+// the string - exactly the note-off every host sent before - and the lift
+// grows from there to the full pull-off at 127. A Note On at velocity zero
+// carries no release velocity at all and is the same as 64.
+float fingerLiftFromReleaseVelocity (unsigned velocity) noexcept
+{
+    return velocity <= 64u ? 0.0f
+                           : static_cast<float> (velocity - 64u) / 63.0f;
+}
 } // namespace
 
 AcustraAudioProcessor::AcustraAudioProcessor()
@@ -298,7 +311,7 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         for (int index = 0; index < pendingNoteOffCount; ++index)
         {
             const auto& note = pendingNoteOffs[static_cast<std::size_t> (index)];
-            engine.noteOff (note.note, note.channel);
+            engine.noteOff (note.note, note.channel, note.lift);
         }
         pendingNoteOffCount = 0;
     };
@@ -344,8 +357,11 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         else if (noteOff
                  && pendingNoteOffCount < static_cast<int> (pendingNoteOffs.size()))
         {
+            const unsigned releaseVelocity = status == 0x80u && metadata.numBytes >= 3
+                ? static_cast<unsigned> (metadata.data[2] & 0x7fu) : 64u;
             pendingNoteOffs[static_cast<std::size_t> (pendingNoteOffCount++)] = {
-                static_cast<int> (metadata.data[1] & 0x7fu), midiChannel
+                static_cast<int> (metadata.data[1] & 0x7fu), midiChannel,
+                fingerLiftFromReleaseVelocity (releaseVelocity)
             };
         }
         else
@@ -411,7 +427,10 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
     }
     else if (kind == 0x80u && numBytes >= 2)
     {
-        engine.noteOff (static_cast<int> (data[1] & 0x7fu), midiChannel);
+        engine.noteOff (static_cast<int> (data[1] & 0x7fu), midiChannel,
+                        fingerLiftFromReleaseVelocity (
+                            numBytes >= 3 ? static_cast<unsigned> (data[2] & 0x7fu)
+                                          : 64u));
     }
     else if (kind == 0xe0u && numBytes >= 3)
     {

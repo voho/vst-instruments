@@ -2542,3 +2542,181 @@ are CI's rendering rather than a checksum anyone can reproduce. A local render
 that differs is not evidence of a defect, and the way to compare two builds
 remains what it has been: score them over identical rows with identical
 settings.
+
+## 2026-09-01 — every note-off was a thump, and the hand's loss now settles over a round trip
+
+A single low fretted note, released, peaked above what it had at the moment
+the key came up: a steel G2 by 6.5 dB and a nylon G2 by 4.6 dB, the peak
+arriving one period after the note-off. The chord measurements that had
+closed this family of transients — a six-string release at 0.83 of the chord's
+own level — hid it, because a chord's release is six small steps against a
+large background and a single note's is one large step against a small one.
+The cause was the same one already recorded: the release loss is a gain per
+round trip, and `advance()` applied the whole of it to the first sample it
+handed out, so the wave the junction reads stepped by a third on G2 (0.644
+per period for a 0.16 s T60) and the bridge and body rang on the step.
+
+Two fixes were measured, one derivation each. Applying the loss to what the
+loop stores, which this file records as tried twice before, was measured a
+third time and was worse again (+10.6 and +11.2 dB on steel G2 and C3): it
+does not remove the step, it delays it by one round trip, and the derivative
+re-referencing that had been absorbing the read-side step no longer lines up
+with it. Slewing the applied gain toward the requested one across one round
+trip - the unit the loss is defined in, so nothing is chosen - removes it: the
+release peaks below the held note on every case measured, single notes at
+G2, C3 and E3, a six-string chord release, the pedal coming up, in both
+materials at 44.1, 48 and 96 kHz, and the difference from a note simply left
+to ring is negative everywhere, so a release only takes energy out. The tail a
+taken string carries gets the same slew, in both directions, so the derivative
+flags that had been set across a release are no longer needed there. The
+corpus never releases a note and is bit-identical; every committed demo
+releases notes and changed.
+
+A regression now plays the same material with and without the note-off and
+asserts that the lifted key peaks no higher than the held note and adds
+nothing above it, at three rates and in both materials. It fails on the
+previous engine at every one of its 18 cases.
+
+## 2026-09-01 — the fretting hand's own sounds, from the MIDI a player already sends
+
+This file records twice that a hammer-on and a pull-off were "the refret they
+are and nothing else", because how far a finger pulls a string is a player's
+choice and inventing an amplitude for it is what this file exists to refuse.
+The player's choice is exactly what MIDI velocity carries, and the instrument
+already has a law for what a velocity means: the pluck's. So the fretting hand
+now sounds, with the same rule for every articulation - **a hammer-on or a
+lift at a MIDI velocity carries the string energy a pluck at that velocity
+would**, bounded by what the mechanism can physically release - and the only
+new numbers are published set-up dimensions.
+
+**Hammer-on.** A point driven across an ideal string at speed v drags a
+V-shaped dent whose flanks have slope v/c and which moves down with it. When
+the string meets the fret crown, the action height h below the old line, the
+dent is a triangle of half-width w = c·h/v carrying velocity v throughout;
+relative to the new segment's own rest line, the crown-to-saddle line, that
+is a released triangle with its apex at w and height h(1 − w/L) plus a uniform
+velocity over [0, w], both written into the loop on top of the vibration it
+already holds. A finger slower than c·h/L has the dent's front reach the
+saddle first, and then the whole segment moves down with it. Solving the
+dent's energy for v from the pluck's energy at the note-on velocity makes a
+hammered note land at the loudness of a pluck at that velocity and get
+brighter as it gets faster: measured against a pluck at the same velocity on
+the same note, hammer-ons at 0.2 to 1.0 sit within +7 and −2 dB of it in
+1 s energy on steel and within +6 and 0 dB on nylon, monotone throughout,
+where the build before arrived at 1 to 6% of the pluck's peak.
+
+**Lift and pull-off.** The string was pressed to the fret by the action
+height there, a triangle over the segment it now belongs to - the open string,
+or the segment stopped at the next note the hand still holds. If the lift
+carries at least that triangle's elastic energy the finger is gone before the
+string moves and the shape is released whole, a pull-off; below it the string
+keeps up with the finger through the same triangle and leaves it at the rest
+line with the finger's velocity over that shape, the quasi-static release,
+which is the velocity initial condition whose loop content is the integral of
+the triangle mirrored about the half period at half height (verified against
+the modal series to the decibel). The vibration the stopped segment held goes
+on over the new length - the loop keeps its content and only its length
+changes, as a slide does - and the finger, still touching until it has risen
+h/v clear, damps it with the hand's 0.16 s contact for that long. A string
+lifted to open rings on in the junction with no key and no hand on it until it
+dies away; a note-off velocity of 0.3 to 1.0 releases the open string within
+±4 dB of a pluck at that velocity and leaves it sounding its open pitch.
+
+**What is a convention, and what is not.** The action heights are Martin's
+and Taylor's published 3/32" and 1/16" at the twelfth fret, 4 and 3 mm for a
+classical, with 0.5 and 0.7 mm at the first fret, on the line a straight neck
+puts between them; the speeds come from the energy law the pluck already
+obeys; the only convention is where the finger stops staying on the string,
+and it is MIDI's own: note-off velocity 64 is what a keyboard sends when it
+does not sense the release, so 64 and below is the finger staying - exactly
+the note-off every host sent before, bit for bit - and the lift grows from
+there to the full pull-off at 127. A DAW's default note-off therefore changes
+nothing. This is recorded as a convention, like CC68 being legato, not as a
+measurement.
+
+Two things were got wrong on the way and are worth keeping. The first
+hammer-on used a pure ramp from the fret as its released shape; its corner at
+the clamp has unbounded elastic energy, so the speed that "matched" it was
+meaningless and the level jumped 17 dB between velocity 0.6 and 1.0. The dent
+is what a fast finger actually makes, and it is finite. And the first lift
+wrote its shape over the loop's target length while the delay was still
+slewing from the fretted length, so the read point sat in the middle of the
+new shape and stepped, 18 dB above the note; only samples younger than the
+current read age are ever read again, so the shape spans the current delay
+with its zero at the sample about to be read, and nothing steps.
+
+The corpus never releases a note or hammers on, so it is bit-identical. The
+engine suite asserts the pluck-law tracking, the monotone velocity law, the
+open pitch after a lift, the held pitch after a pull-off, the absence of a
+first-sample step, and lift zero's exactness, in both materials at three
+rates; the wrapper suite asserts that release velocity 64, an unsensed
+release and a Note On at velocity zero are the plain note-off and that 127
+leaves the open string ringing.
+
+## 2026-09-01 — a repluck lands the hand on the string, and a repeated note stays on it
+
+Two defects in the commonest gestures a guitarist makes, both found by the
+performance lens of this session's audit and both invisible to a corpus of
+single notes on fresh engines.
+
+A held note replucked went through the contact projection this file records
+as "half the problem": the stored shape averaged with its copy shifted by the
+contact position, in one sample. Six G2 replucks at 250 ms peaked −17.5,
+−11.1, −2.7, −3.1, −1.6 and −2.6 dBFS, each peak on its first four samples and
+the last five into the safety limiter, because the projection keeps every
+mode with a node at the contact at unit gain and no loss, so the near-node
+partials pile up pluck after pluck - H7 and H8 stood 20 and 36 dB above the
+first pluck by the third. The picking hand landing on a sounding string is
+the contact a taken string already goes through, so a repluck now takes the
+vibration into the tail under the hand and releases the new pluck from rest:
+the same six replucks peak −17.5, −16.6, −15.7, −15.0, −14.6 and −14.2 dBFS
+with their first samples 25 to 30 dB down. The projection path is removed
+rather than left unreachable.
+
+A note repeated after its key came up hopped: `chooseString` took a free
+string first, so E4 played and released six times landed on strings 5, 4, 3,
+2, 1 and 5, five voices alive and the peak climbing 7 dB as they stacked, and
+where no other string could reach the note the retake wiped the ringing loop.
+A guitarist replucks the string still sounding the note. The allocator now
+does the same first, and the retake goes through the hand like any other
+repluck: six repeats stay on one string at −22 to −24 dBFS.
+
+Both are gated by regressions that play the gestures, at three rates, and by
+the corpus staying bit-identical.
+
+## 2026-09-01 — audio-rate tension modulation is inert at this displacement, by a number
+
+The excitation lens measured the largest tone deficit in the corpus: from the
+archtop's softest to its loudest layer the recordings' attack centroid rises
+by about 1,900 cents and the model's by 96, and at the loudest layer H4-H12
+are 12 to 21 dB short. The decision log's public nonlinear oracle attributes
+that kind of enrichment to the string's tension modulation, and the engine
+already computes that tension every sample for its pitch glide, using only
+its slow part. The audio-rate remainder was prototyped as a per-sample
+modulation of the loop delay (Tolonen, Valimaki and Karjalainen, IEEE TSAP
+2000), with a running slope-energy sum kept as samples are written and no
+constant beyond the displacement scale the pitch surrogate already carries.
+
+It does nothing audible, and the arithmetic says why. The displacement scale
+was fitted against the pitch rise the recordings show, a few cents, which is
+a tension ripple of about 0.4% at full velocity; that is one sample of delay
+modulation on a low E and sidebands more than 20 dB down on the twelfth
+partial. Measured on open E2 at five velocities, neither the attack centroid
+nor the H5-H12 balance moved by more than 0.3 dB in either material. A number
+settles it: at the nonlinearity level the recordings themselves exhibit, the
+string's tension modulation is not where their velocity brightness comes
+from, and the mechanism is not shipped. The same lens's reading of the
+archtop's attack - a plectrum's release and click, which Touch cannot reach -
+is the direction that remains.
+
+## 2026-09-01 — the benchmark record was a build behind
+
+The committed fit report and the README summary quoted 6.7679, 6.7683 and
+5.6139, which are the scores of the longitudinal path at gain 0.025. That
+gain was set to zero when the drip was removed, and the numbers were not
+re-taken. Rendered and scored here, the shipping engine reads 6.8353, 6.8238
+and 5.6547 - the pre-longitudinal build to four places, as it should - and
+the report, its summary and the README now say so. Every engine change in
+this session was checked against that baseline by byte comparison of the 79
+model renders, and all of them are identical: nothing in this session touched
+a single note on a fresh engine.

@@ -73,11 +73,12 @@ drive a passive measured bridge, sympathetic idle strings and a 96-mode stereo
 body-radiation model. A plate conductance floor restores the damping a finite
 modal fit loses above the soundboard's modal overlap, a string taken for a new
 note rings on under the hand rather than being cut, and CC2 is continuous
-bridge-hand damping. A fret/tuning allocator enforces guitar playability while
-bounded Shape, Material, String Age, Touch and Position controls keep the
-surface simple.
+bridge-hand damping, CC68 legato hammers on with a strike sized by velocity,
+and note-off velocity lifts the fretting finger off the string. A fret/tuning
+allocator enforces guitar playability while bounded Shape, Material, String
+Age, Touch and Position controls keep the surface simple.
 
-[Six audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
+[Seven audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
 
 ---
 

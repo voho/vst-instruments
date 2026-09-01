@@ -78,7 +78,8 @@ def summarize(report: dict[str, Any]) -> str:
         ("plate_conductance_floor", "high-frequency plate conductance"),
         ("constant_saddle_anchor", "constant six-string saddle anchor"),
         ("junction_transient_corrections", "release/junction transient correction"),
-        ("longitudinal_modes", "longitudinal string modes"),
+        ("longitudinal_modes",
+         "longitudinal string modes (calibrated, shipping gain zero)"),
     )
     for key, label in paths:
         if key not in report:

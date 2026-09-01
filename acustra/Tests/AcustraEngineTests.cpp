@@ -240,10 +240,12 @@ struct AcustraEngineTestAccess
         const double afterMaster = selected->loops[0].targetDelay;
 
         engine.noteOn(52, 0.7f, 2);
+        // The same note is replucked on the string still sounding it, so the
+        // reused finger may well be the same voice.
         auto reused = std::find_if(engine.voices_.begin(),
-            engine.voices_.end(), [selected] (const auto& voice)
+            engine.voices_.end(), [] (const auto& voice)
             {
-                return &voice != &*selected && voice.played && voice.keyDown
+                return voice.played && voice.keyDown
                     && voice.midiChannel == 2;
             });
         double reusedDelay = 0.0;
@@ -444,7 +446,7 @@ struct AcustraEngineTestAccess
         double keptInTail;           // stored energy carried into the tail
         double tailEnergyAfterDecay; // the same tail 0.5 s later
         bool tailActive;
-        bool tailActiveAfterRepluck; // a repluck of the same note starts none
+        bool tailActiveAfterRepluck; // a repluck of the same note lands the hand
     };
 
     static double loopEnergy(const AcustraEngine::StringLoop& loop)
@@ -2358,8 +2360,11 @@ void testStolenStringKeepsRingingUnderHandDamping()
     // the tail must be far down but the mechanism must not be instantaneous.
     expect(snapshot.tailEnergyAfterDecay < 0.01 * snapshot.keptInTail,
            "the stolen tail did not decay under the hand damping");
-    expect(!snapshot.tailActiveAfterRepluck,
-           "replucking the same note started a tail at its own delay length");
+    // Replucking the same note is the hand landing on the string too: what
+    // it held goes on in the tail under the hand while the pluck is released
+    // from rest.
+    expect(snapshot.tailActiveAfterRepluck,
+           "replucking a sounding note did not carry it into the tail");
 
     // Repeated chord changes restart a tail on a string whose previous tail is
     // still sounding, which discards the older one. Run that hard: forty
@@ -2810,7 +2815,7 @@ void testLegatoHammersOnAndPullsOff()
 {
     // A hammer-on stops the string with the fretting finger; it does not
     // release it from rest. So the loop keeps what it holds and only its
-    // length changes, and the arrival must not sound like a pluck. The
+    // length changes, with the finger's own strike added to it. The
     // footswitch is what separates a hammer-on from a strum, which the model
     // alone cannot do: one note arriving over a held string is a hammer-on,
     // six arriving together are a chord.
@@ -2906,8 +2911,9 @@ void testLegatoHammersOnAndPullsOff()
                    > 4.0 * band(upper, pull + quarter, pull + half),
                "a pull-off did not return the string to the held note");
 
-        // No pluck happened: the arrival stays far below the same note
-        // struck from rest, and below what the string already had.
+        // The finger's strike is on the string now: the arrival is louder
+        // than what the string had, but it is not a step - nothing on the
+        // first sample is above the note under it.
         const auto peakOver = [&] (std::size_t begin, std::size_t end)
         {
             double maximum = 0.0;
@@ -2919,10 +2925,10 @@ void testLegatoHammersOnAndPullsOff()
             return maximum;
         };
         const double sounding = peakOver(hammer - half, hammer);
-        const double arrival = peakOver(hammer, hammer + half);
+        const double firstSample = peakOver(hammer, hammer + 1);
         expect(sounding > 1.0e-6, "the note under the hammer-on was silent");
-        expect(arrival < 2.0 * sounding,
-               "a hammer-on arrived like a pluck rather than a refret");
+        expect(firstSample <= 1.2 * sounding,
+               "a hammer-on stepped the wave on its first sample");
     }
 }
 
@@ -3201,67 +3207,117 @@ void testNoteAfterSilenceDoesNotClick()
     }
 }
 
-void testRepluckKeepsTheContactResidual()
+void testRepluckLandsTheHandOnTheString()
 {
-    // Replucking a sounding string holds it at the contact point, which leaves
-    // the modes with a node there. Discarding the shape instead stepped the
-    // wave the bridge reads, and a step strikes every mode at once.
-    const auto peakAndBackground = [] (bool replayWhileSounding)
+    // The picking hand lands on a sounding string before it plucks it again,
+    // so what the string held goes on under the hand while the new pluck is
+    // released from rest - the contact a taken string already goes through.
+    // Projecting the stored shape onto the modes with a node at the contact,
+    // in one sample, clicked into the limiter and let the near-node modes
+    // pile up pluck after pluck; and a note repeated after its key came up
+    // hopped to another string that could reach it.
+    const auto repeated = [] (int note, bool releaseBetween, double rate)
     {
         acustra::AcustraEngine engine;
         acustra::EngineParameters parameters;
         parameters.stringMaterial = acustra::StringMaterial::Steel;
         engine.setParameters(parameters);
-        engine.prepare(sampleRate, blockSize);
-        std::vector<float> left(static_cast<std::size_t>(blockSize));
-        std::vector<float> right(static_cast<std::size_t>(blockSize));
-        const auto run = [&] (double seconds, std::vector<float>* into)
+        engine.prepare(rate, blockSize);
+        engine.setParameters(parameters);
+        engine.setSympatheticStringsEnabled(false);
+        std::vector<float> l(static_cast<std::size_t>(blockSize));
+        std::vector<float> r(static_cast<std::size_t>(blockSize));
+        std::vector<double> peaks;
+        std::vector<double> firstSamples;
+        std::vector<double> levels;
+        std::vector<int> voices;
+        double before = 0.0;
+        for (int repeat = 0; repeat < 6; ++repeat)
         {
-            for (int i = 0; i < static_cast<int>(seconds * sampleRate);
-                 i += blockSize)
+            engine.noteOn(note, 0.62f);
+            voices.push_back(engine.getActiveVoiceCount());
+            double peakValue = 0.0;
+            double firstSample = 0.0;
+            double energy = 0.0;
+            int counted = 0;
+            const int span = static_cast<int>(0.25 * rate);
+            for (int i = 0; i < span; i += blockSize)
             {
-                engine.process(left.data(), right.data(), blockSize);
-                if (into == nullptr)
-                    continue;
-                for (int k = 0; k < blockSize; ++k)
-                    into->push_back(std::max(
-                        std::abs(left[static_cast<std::size_t>(k)]),
-                        std::abs(right[static_cast<std::size_t>(k)])));
+                const int count = std::min(blockSize, span - i);
+                engine.process(l.data(), r.data(), count);
+                for (int k = 0; k < count; ++k)
+                {
+                    const double value = std::max(
+                        std::abs(l[static_cast<std::size_t>(k)]),
+                        std::abs(r[static_cast<std::size_t>(k)]));
+                    if (i == 0 && k < 4)
+                        firstSample = std::max(firstSample, value);
+                    peakValue = std::max(peakValue, value);
+                    if (i + k >= static_cast<int>(0.03 * rate)
+                        && i + k < static_cast<int>(0.10 * rate))
+                    {
+                        energy += value * value;
+                        ++counted;
+                    }
+                    if (i + k >= span - static_cast<int>(0.01 * rate))
+                        before = std::max(before, value);
+                }
             }
-        };
-        engine.noteOn(43, 0.62f);
-        run(0.6, nullptr);
-        if (replayWhileSounding)
-            engine.noteOn(43, 0.62f);   // the key is still down: a repluck
-        std::vector<float> envelope;
-        run(0.4, &envelope);
-        std::vector<float> sorted = envelope;
-        std::sort(sorted.begin(), sorted.end());
-        return std::pair {
-            static_cast<double>(*std::max_element(envelope.begin(),
-                                                  envelope.end())),
-            static_cast<double>(
-                sorted[static_cast<std::size_t>(sorted.size() * 0.99)]) };
+            peaks.push_back(peakValue);
+            firstSamples.push_back(firstSample);
+            levels.push_back(std::sqrt(energy / std::max(counted, 1)));
+            if (releaseBetween)
+            {
+                engine.noteOff(note);
+                const int gap = static_cast<int>(0.05 * rate);
+                for (int i = 0; i < gap; i += blockSize)
+                    engine.process(l.data(), r.data(),
+                                   std::min(blockSize, gap - i));
+            }
+        }
+        return std::tuple { peaks, firstSamples, levels, voices, before };
     };
 
-    const auto held = peakAndBackground(false);
-    const auto replucked = peakAndBackground(true);
-    expect(held.second > 1.0e-4, "the held reference note was silent");
-    // The repluck must be audible as a new note, and must not arrive as an
-    // impulse many times the note it belongs to.
-    expect(replucked.first > held.first,
-           "replucking a sounding string did not restart the note");
-    // The contact is applied in one sample, so half the step it used to make
-    // survives: the projection changes the stored shape at the read point by
-    // half the difference between it and its shifted copy. What must hold is
-    // that the repluck stays bounded and well inside headroom rather than
-    // arriving as the near-full-scale impulse a discarded shape produced.
-    expect(replucked.first < 0.9,
-           "a repluck approached full scale");
-    expect(replucked.first < 12.0 * replucked.second,
-           "a repluck arrived as an impulse far above its own note");
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const std::string at = " at " + std::to_string(static_cast<int>(rate));
+        // Held key, replucked six times at 250 ms: the level neither climbs
+        // nor clicks.
+        const auto [peaks, firsts, levels, voices, before]
+            = repeated(43, false, rate);
+        expect(peaks[0] > 1.0e-4, "the first pluck was silent" + at);
+        for (std::size_t index = 1; index < peaks.size(); ++index)
+        {
+            expect(peaks[index] < 1.5 * peaks[0],
+                   "repluck " + std::to_string(index) + " peaked "
+                   + std::to_string(peaks[index] / peaks[0])
+                   + " times the first" + at);
+            expect(levels[index] < 1.6 * levels[0],
+                   "repluck " + std::to_string(index) + " piled up energy" + at);
+            expect(firsts[index] < 0.5 * peaks[index],
+                   "repluck " + std::to_string(index)
+                   + " clicked on its first samples" + at);
+        }
+        expect(peaks.back() < 0.9, "a repluck approached full scale" + at);
 
-    // Projecting a silent string leaves silence, so a first pluck is untouched.
+        // Released between repeats, a note three strings can reach stays on
+        // the string that was sounding it, and one voice is enough.
+        const auto [hopPeaks, hopFirsts, hopLevels, hopVoices, hopBefore]
+            = repeated(64, true, rate);
+        for (const int count : hopVoices)
+            expect(count == 1, "a repeated E4 hopped to another string" + at);
+        for (std::size_t index = 1; index < hopPeaks.size(); ++index)
+        {
+            expect(hopPeaks[index] < 1.5 * hopPeaks[0]
+                       && hopPeaks[index] > 0.5 * hopPeaks[0],
+                   "a repeated E4 changed level on repeat" + at);
+            expect(hopFirsts[index] < 0.5 * hopPeaks[index],
+                   "a repeated E4 clicked on its first samples" + at);
+        }
+    }
+
+    // A first pluck is untouched: a fresh engine and one that has only ever
+    // been silent render the same bits.
     acustra::EngineParameters parameters;
     parameters.stringMaterial = acustra::StringMaterial::Steel;
     const auto plain = renderWithInitialParameters(parameters, 43, 0.62f, 0.5);
@@ -3276,7 +3332,7 @@ void testRepluckKeepsTheContactResidual()
         engine.process(again.left.data() + offset, again.right.data() + offset,
                        std::min(blockSize, samples - offset));
     expect(plain.left == again.left && plain.right == again.right,
-           "the contact projection changed a first pluck");
+           "a first pluck is not what a fresh engine renders");
 }
 
 void testSteelFretT60SlopeRaisesOnlyFrettedSteelSustain()
@@ -3404,6 +3460,298 @@ void testOrdinaryOutputIsLinearAndPathologicalOutputIsBounded()
            "safety limiter exceeded unit headroom");
 }
 
+// A lifted key must only take energy out of the string. The release loss is
+// a per-round-trip gain, and applying its full value to the first sample
+// after note-off stepped the wave the junction reads by up to a third on a low
+// fretted note, which the bridge and body rang on as a thump 4.6 to 8.6 dB
+// above the note's own level at that moment. Ramping the loss in over one
+// round trip, the unit it is defined in, leaves nothing above the held note.
+void testNoteOffOnlyRemovesEnergy()
+{
+    const auto renderNote = [] (acustra::StringMaterial material,
+                                std::initializer_list<int> notes,
+                                bool release, double rate)
+    {
+        acustra::AcustraEngine engine;
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = material;
+        engine.setParameters(parameters);
+        engine.prepare(rate, blockSize);
+        engine.setParameters(parameters);
+        const int total = static_cast<int>(2.0 * rate);
+        const int onAt = static_cast<int>(0.2 * rate);
+        const int offAt = static_cast<int>(1.0 * rate);
+        Audio result { std::vector<float>(static_cast<std::size_t>(total)),
+                       std::vector<float>(static_cast<std::size_t>(total)) };
+        int rendered = 0;
+        const auto renderTo = [&] (int target)
+        {
+            while (rendered < target)
+            {
+                const int count = std::min(blockSize, target - rendered);
+                engine.process(result.left.data() + rendered,
+                               result.right.data() + rendered, count);
+                rendered += count;
+            }
+        };
+        renderTo(onAt);
+        int index = 0;
+        for (const int note : notes)
+        {
+            engine.noteOn(note, 0.7f);
+            renderTo(onAt + static_cast<int>(0.028 * rate) * ++index);
+        }
+        renderTo(offAt);
+        if (release)
+            for (const int note : notes)
+                engine.noteOff(note);
+        renderTo(total);
+        return result;
+    };
+
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+        for (const auto material : { acustra::StringMaterial::Steel,
+                                     acustra::StringMaterial::Nylon })
+            for (const auto& notes : std::vector<std::vector<int>> {
+                     { 43 }, { 48 }, { 40, 47, 52, 56, 59, 64 } })
+            {
+                std::initializer_list<int> list {};
+                std::vector<int> copy = notes;
+                const auto released = [&]
+                {
+                    acustra::AcustraEngine dummy; (void) dummy; (void) list;
+                    return Audio {};
+                };
+                (void) released;
+                Audio held;
+                Audio lifted;
+                if (copy.size() == 1)
+                {
+                    held = renderNote(material, { copy[0] }, false, rate);
+                    lifted = renderNote(material, { copy[0] }, true, rate);
+                }
+                else
+                {
+                    held = renderNote(material,
+                        { copy[0], copy[1], copy[2], copy[3], copy[4], copy[5] },
+                        false, rate);
+                    lifted = renderNote(material,
+                        { copy[0], copy[1], copy[2], copy[3], copy[4], copy[5] },
+                        true, rate);
+                }
+                const int offAt = static_cast<int>(1.0 * rate);
+                const int window = static_cast<int>(0.05 * rate);
+                const double before = peak(held, offAt - window, offAt);
+                const double after = peak(lifted, offAt, offAt + window);
+                double removed = 0.0;
+                for (int sample = offAt; sample < offAt + window; ++sample)
+                {
+                    const auto i = static_cast<std::size_t>(sample);
+                    removed = std::max(removed, static_cast<double>(std::abs(
+                        0.5 * ((lifted.left[i] - held.left[i])
+                             + (lifted.right[i] - held.right[i])))));
+                }
+                const std::string label = std::string(
+                    material == acustra::StringMaterial::Steel ? "steel" : "nylon")
+                    + (copy.size() == 1 ? " note " + std::to_string(copy[0])
+                                        : " chord")
+                    + " at " + std::to_string(static_cast<int>(rate));
+                expect(before > 1.0e-4,
+                       label + ": the held note is audible before the release");
+                expect(after <= before,
+                       label + ": note-off peaks " + std::to_string(after)
+                       + " over a held " + std::to_string(before));
+                expect(removed <= before,
+                       label + ": the release adds " + std::to_string(removed)
+                       + " against a held " + std::to_string(before));
+            }
+}
+
+// The fretting hand's own excitations. A hammer-on is a finger driving a
+// dent down onto the fret; a lift is the pressed string following the
+// finger back to its rest line, or a pull-off when the finger is faster than
+// the string; either carries the energy the pluck's velocity law assigns to
+// the same MIDI velocity, so the hand's articulations sit at the loudness a
+// player expects of that velocity. Lift zero is the hand staying on the
+// string and must be exactly the note-off it always was.
+void testFrettingHandFollowsThePluckLaw()
+{
+    struct Phrase
+    {
+        Audio audio;
+        std::size_t event;
+    };
+    const auto render = [] (acustra::StringMaterial material, double rate,
+                            bool legato, int first, int second, float velocity,
+                            int release, float lift, double eventAt)
+    {
+        acustra::AcustraEngine engine;
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = material;
+        parameters.outputGain = 0.06f;
+        engine.setParameters(parameters);
+        engine.prepare(rate, blockSize);
+        engine.setParameters(parameters);
+        engine.setLegato(legato);
+        engine.setSympatheticStringsEnabled(false);
+        const int total = static_cast<int>(3.0 * rate);
+        Audio audio { std::vector<float>(static_cast<std::size_t>(total)),
+                      std::vector<float>(static_cast<std::size_t>(total)) };
+        int rendered = 0;
+        const auto renderTo = [&] (int target)
+        {
+            while (rendered < target)
+            {
+                const int count = std::min(blockSize, target - rendered);
+                engine.process(audio.left.data() + rendered,
+                               audio.right.data() + rendered, count);
+                rendered += count;
+            }
+        };
+        renderTo(static_cast<int>(0.2 * rate));
+        if (first > 0)
+            engine.noteOn(first, 0.8f);
+        renderTo(static_cast<int>(eventAt * rate));
+        const auto event = static_cast<std::size_t>(rendered);
+        if (second > 0)
+            engine.noteOn(second, velocity);
+        if (release > 0)
+            engine.noteOff(release, 1, lift);
+        renderTo(total);
+        return Phrase { audio, event };
+    };
+    const auto peakAfter = [] (const Phrase& phrase, double rate,
+                               double begin, double end)
+    {
+        const auto from = phrase.event + static_cast<std::size_t>(begin * rate);
+        const auto to = phrase.event + static_cast<std::size_t>(end * rate);
+        return peak(phrase.audio, static_cast<int>(from), static_cast<int>(to));
+    };
+    const auto energyAfter = [] (const Phrase& phrase, double rate,
+                                 double begin, double end)
+    {
+        const auto from = phrase.event + static_cast<std::size_t>(begin * rate);
+        const auto to = phrase.event + static_cast<std::size_t>(end * rate);
+        const double r = rms(phrase.audio, static_cast<int>(from),
+                             static_cast<int>(to));
+        return r * r * static_cast<double>(to - from);
+    };
+    const auto bandAfter = [] (const Phrase& phrase, double rate,
+                               double frequency, double begin, double end)
+    {
+        return spectralPeakFrequency(phrase.audio, frequency, 60.0,
+            static_cast<double>(phrase.event) / rate + begin,
+            static_cast<double>(phrase.event) / rate + end, rate);
+    };
+    // Energies, so decibels are 10 log.
+    const auto within = [] (double a, double b, double dB)
+    {
+        return a > 0.0 && b > 0.0
+            && std::abs(10.0 * std::log10(a / b)) <= dB;
+    };
+
+    for (const auto material : { acustra::StringMaterial::Steel,
+                                 acustra::StringMaterial::Nylon })
+        for (const double rate : { 44100.0, 48000.0, 96000.0 })
+        {
+            const std::string label = std::string(
+                material == acustra::StringMaterial::Steel ? "steel" : "nylon")
+                + " at " + std::to_string(static_cast<int>(rate));
+            // Lift zero is exactly the note-off it always was.
+            const auto plain = render(material, rate, false, 43, 0, 0.0f, 43,
+                                      0.0f, 1.0);
+            const auto zero = render(material, rate, false, 43, 0, 0.0f, 43,
+                                     0.0f, 1.0);
+            expect(plain.audio.left == zero.audio.left
+                       && plain.audio.right == zero.audio.right,
+                   label + ": a zero lift is not the plain note-off");
+
+            // Lifted, the string sounds its open pitch, not the fretted one,
+            // and carries about the energy a pluck at that velocity would.
+            double previousEnergy = 0.0;
+            for (const float lift : { 0.3f, 0.6f, 1.0f })
+            {
+                const auto lifted = render(material, rate, false, 43, 0, 0.0f,
+                                           43, lift, 1.0);
+                const auto plucked = render(material, rate, false, 40, 0, 0.0f,
+                                            0, 0.0f, 1.0);
+                // The pluck lands at 0.2 s; its own attack window.
+                Phrase pluckedAt { plucked.audio,
+                                   static_cast<std::size_t>(0.2 * rate) };
+                const auto openPluck = render(material, rate, false, 0, 40,
+                                              lift, 0, 0.0f, 1.0);
+                const double openHz = 440.0 * std::exp2((40.0 - 69.0) / 12.0);
+                const double found = bandAfter(lifted, rate, openHz, 0.25, 0.75);
+                expect(std::abs(1200.0 * std::log2(found / openHz)) < 30.0,
+                       label + ": a lift of " + std::to_string(lift)
+                       + " did not leave the open string sounding");
+                const double liftEnergy = energyAfter(lifted, rate, 0.0, 1.0);
+                const double pluckEnergy = energyAfter(openPluck, rate, 0.0, 1.0);
+                expect(within(liftEnergy, pluckEnergy, 6.0),
+                       label + ": lift " + std::to_string(lift) + " carries "
+                       + std::to_string(10.0 * std::log10(liftEnergy / pluckEnergy))
+                       + " dB against a pluck at that velocity");
+                // Once the finger outruns the string the release is the
+                // pressed shape whole, so faster is no louder.
+                expect(liftEnergy >= 0.999 * previousEnergy,
+                       label + ": lift energy falls with velocity");
+                previousEnergy = liftEnergy;
+                // Nothing clicks at the event sample: the first millisecond
+                // stays under what the string already had.
+                expect(peakAfter(lifted, rate, 0.0, 0.001)
+                           <= 1.2 * peakAfter(plain, rate, -0.05, 0.0),
+                       label + ": a lift clicked on its first sample");
+                (void) pluckedAt;
+            }
+
+            // A hammer-on lands at the loudness of a pluck at its velocity
+            // and gets louder with velocity.
+            double previousHammer = 0.0;
+            for (const float velocity : { 0.3f, 0.6f, 1.0f })
+            {
+                const auto hammered = render(material, rate, true, 43, 45,
+                                             velocity, 0, 0.0f, 1.0);
+                const auto plucked = render(material, rate, false, 0, 45,
+                                            velocity, 0, 0.0f, 1.0);
+                const double hammerEnergy = energyAfter(hammered, rate, 0.0, 1.0);
+                const double pluckEnergy = energyAfter(plucked, rate, 0.0, 1.0);
+                expect(within(hammerEnergy, pluckEnergy, 8.0),
+                       label + ": hammer-on at " + std::to_string(velocity)
+                       + " carries " + std::to_string(
+                           10.0 * std::log10(hammerEnergy / pluckEnergy))
+                       + " dB against a pluck at that velocity");
+                expect(hammerEnergy >= 0.999 * previousHammer,
+                       label + ": hammer-on energy falls with velocity");
+                previousHammer = hammerEnergy;
+                const double newHz = 440.0 * std::exp2((45.0 - 69.0) / 12.0);
+                const double found = bandAfter(hammered, rate, newHz, 0.25, 0.75);
+                expect(std::abs(1200.0 * std::log2(found / newHz)) < 30.0,
+                       label + ": a hammer-on did not sound the new note");
+                for (std::size_t index = 0; index < hammered.audio.left.size();
+                     ++index)
+                    expect(std::isfinite(hammered.audio.left[index])
+                               && std::abs(hammered.audio.left[index]) <= 1.0f,
+                           label + ": a hammer-on left headroom or finiteness");
+            }
+
+            // A pull-off falls to the held note and is plucked by the finger
+            // that left, as loud as the lift was fast.
+            {
+                const auto pulled = render(material, rate, true, 43, 47, 0.8f,
+                                           47, 0.8f, 1.0);
+                const double heldHz = 440.0 * std::exp2((43.0 - 69.0) / 12.0);
+                const double found = bandAfter(pulled, rate, heldHz, 0.25, 0.75);
+                expect(std::abs(1200.0 * std::log2(found / heldHz)) < 30.0,
+                       label + ": a pull-off did not fall to the held note");
+                const auto plucked = render(material, rate, false, 0, 43, 0.8f,
+                                            0, 0.0f, 1.0);
+                expect(within(energyAfter(pulled, rate, 0.0, 1.0),
+                              energyAfter(plucked, rate, 0.0, 1.0), 8.0),
+                       label + ": a pull-off at 0.8 is not at a pluck's energy");
+            }
+        }
+}
+
 void testPerformance()
 {
     acustra::AcustraEngine engine;
@@ -3467,10 +3815,12 @@ int main()
     testLongitudinalModesGrowWithVelocity();
     testTodaysMechanismsSurviveEachOther();
     testNoteAfterSilenceDoesNotClick();
-    testRepluckKeepsTheContactResidual();
+    testRepluckLandsTheHandOnTheString();
     testSteelFretT60SlopeRaisesOnlyFrettedSteelSustain();
     testApertureRegisterExponentChangesOnlyRegisterGeometry();
     testOrdinaryOutputIsLinearAndPathologicalOutputIsBounded();
+    testNoteOffOnlyRemovesEnergy();
+    testFrettingHandFollowsThePluckLaw();
     testPerformance();
     if (failures == 0)
         std::cout << "All Acustra engine tests passed\n";
