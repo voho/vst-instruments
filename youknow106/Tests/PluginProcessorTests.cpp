@@ -180,6 +180,36 @@ float bufferPeak (const juce::AudioBuffer<float>& buffer)
     return peak;
 }
 
+// The output summer's resistors and the volume wiper carry Johnson-Nyquist
+// noise for as long as the unit is powered, so an instrument with nothing
+// sounding is silent to its own noise floor rather than to digital zero.
+// Checks that used to read `== 0.0f` therefore have to bound the output by
+// that floor. It is measured here from a second processor prepared and set up
+// exactly like the one under test, so the bound is this instrument idling
+// rather than a level chosen in this file, and it tracks whatever the model
+// does to the floor later. Measure over at least as many blocks as the check
+// spans: the peak of a random process grows with the window.
+template <typename SetUp>
+float idleNoiseFloor (SetUp&& setUp, int blocks)
+{
+    YouKnow106AudioProcessor reference;
+    reference.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    reference.prepareToPlay (sampleRate, blockSize);
+    setUp (reference);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer empty;
+    float peak = 0.0f;
+    for (int block = 0; block < blocks; ++block)
+    {
+        buffer.clear();
+        reference.processBlock (buffer, empty);
+        peak = std::max (peak, bufferPeak (buffer));
+    }
+    reference.releaseResources();
+    return peak;
+}
+
 juce::Image renderEditorSnapshot (juce::AudioProcessorEditor& editor)
 {
     juce::Image snapshot (juce::Image::ARGB, editor.getWidth(), editor.getHeight(), true);
@@ -1029,10 +1059,17 @@ void testShortNoteInsideOneBlockIsHeard()
     processor.prepareToPlay (sampleRate, blockSize);
     processor.processBlock (late, lateMidi);
 
+    const float timingFloor = idleNoiseFloor ([] (YouKnow106AudioProcessor& reference)
+    {
+        setParameterValue (reference, parameters::attack, 0.0f);
+        setParameterValue (reference, parameters::sustain, 1.0f);
+        setParameterValue (reference, parameters::release, 0.0f);
+    }, 4);
+
     float earlyPeak = 0.0f;
     for (int index = 0; index < blockSize / 2; ++index)
         earlyPeak = std::max (earlyPeak, std::abs (late.getSample (0, index)));
-    expect (earlyPeak == 0.0f,
+    expect (earlyPeak <= timingFloor,
             "an event timed at the end of a block was applied at its start");
 
     processor.releaseResources();
@@ -2391,10 +2428,18 @@ void testHostResetClearsRuntimeStateWithoutUnpreparing()
     expect (processor.getActiveVoiceCount() == 0,
             "host reset left an active voice behind");
 
+    const float resetFloor = idleNoiseFloor ([] (YouKnow106AudioProcessor& reference)
+    {
+        setParameterValue (reference, parameters::sustain, 1.0f);
+        setParameterValue (reference, parameters::release, 1.0f);
+        setParameterValue (reference, parameters::chorusI, 0.0f);
+        setParameterValue (reference, parameters::chorusII, 0.0f);
+    }, 4);
+
     juce::MidiBuffer empty;
     buffer.clear();
     processor.processBlock (buffer, empty);
-    expect (bufferPeak (buffer) == 0.0f,
+    expect (bufferPeak (buffer) <= resetFloor,
             "old voice or delay state resumed after host reset");
 
     juce::MidiBuffer nextNote;
@@ -2441,10 +2486,16 @@ void testHostResetKeepsTheModelledChassisWarm()
     expect (processor.getActiveVoiceCount() == 0,
             "the host reset left an active voice behind");
 
-    // It still has to be a reset: the note is gone and the output is silent.
+    // It still has to be a reset: the note is gone and the output is back to
+    // the instrument's own noise floor.
+    const float warmFloor = idleNoiseFloor ([] (YouKnow106AudioProcessor& reference)
+    {
+        setParameterValue (reference, parameters::sustain, 1.0f);
+    }, 4);
+
     buffer.clear();
     processor.processBlock (buffer, empty);
-    expect (bufferPeak (buffer) == 0.0f,
+    expect (bufferPeak (buffer) <= warmFloor,
             "a voice survived the host reset that kept the chassis warm");
     // And it keeps advancing from where it was rather than from zero.
     for (int block = 0; block < 8; ++block)

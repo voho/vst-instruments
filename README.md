@@ -3,7 +3,7 @@
 [![CI](https://github.com/voho/vst-instruments/actions/workflows/ci.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/ci.yml)
 [![Nightly](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml)
 
-Nine original virtual instruments built with C++20 and JUCE 8: VST3 and
+Seven original virtual instruments built with C++20 and JUCE 8: VST3 and
 Standalone for macOS, Linux and Windows, plus Audio Unit for macOS.
 
 Each instrument has one README covering how it works block by block, what it
@@ -14,20 +14,6 @@ it cannot drift from the code.
 **Nightly builds:** download the 14-day `vst-instruments-nightly-all-platforms`
 artifact from the latest successful main-branch
 [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
-
----
-
-## [Vocalor](vocalor/README.md)
-
-[![Vocalor](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md)
-
-Source-filter vocal and choir synthesizer with an LF-style glottal source, a
-continuous morphable vowel space, formant shifting independent of pitch, and
-legato phrasing across solo, ensemble and chord modes. Vowel transitions run on
-articulator timescales, F1 tracks the fundamental once pitch climbs past it, the
-singer's formant is a resonance cluster, and a nasal branch allows humming.
-
-[Ten audio demos](vocalor/README.md#audio-demos) · [How it works](vocalor/README.md#how-it-works)
 
 ---
 
@@ -47,21 +33,6 @@ machine.
 
 ---
 
-## [Neuramar](neuramar/README.md)
-
-[![Neuramar](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md)
-
-Drop in a monophonic sound, infer its root, and fit a compact local
-DDSP-inspired neural synthesis model — with fitted stiff-string inharmonicity,
-formant shifting and velocity-driven timbre — whose harmonic Core, noisy Air and
-resonant Bone stay playable across pitches. Harmonic analysis is solved jointly
-over a 40 ms aperture; the body carries 16 Air bands and 12 Bone modes across
-16 voices. No pretrained weights, no dataset, no GPU.
-
-[Eight audio demos](neuramar/README.md#audio-demos) · [How it works](neuramar/README.md#how-it-works)
-
----
-
 ## [Electry](electry/README.md)
 
 [![Electry](electry/Docs/screenshots/electry-standalone.png)](electry/README.md)
@@ -74,7 +45,7 @@ bends every string like a vibrato bar, a resonance wheel that reaches
 self-sustaining feedback, and a 4×-oversampled amplifier with supply sag, output
 transformer and modeled cabinet.
 
-[Twenty-two audio demos](electry/README.md#audio-demos) · [How it works](electry/README.md#how-it-works)
+[Twenty-three audio demos](electry/README.md#audio-demos) · [How it works](electry/README.md#how-it-works)
 
 ---
 
