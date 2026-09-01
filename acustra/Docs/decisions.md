@@ -2709,6 +2709,51 @@ from, and the mechanism is not shipped. The same lens's reading of the
 archtop's attack - a plectrum's release and click, which Touch cannot reach -
 is the direction that remains.
 
+## 2026-09-01 — the plectrum's dent produces the velocity law and trades the flat-top for it
+
+The tension-modulation entry above left one direction open for the archtop's
+missing velocity brightness: the plectrum's own release. The prototype is the
+hammer-on's dent turned round. A pick moving at speed proportional to MIDI
+velocity drags a V-shaped dent whose flanks have slope v/c, so the released
+shape is the triangle with that dent clipped into it at the pluck point, plus
+the velocity the dent carries; the pick speed is the one new quantity, set
+to velocity times Touch times a scale, and the rest is the string's own
+geometry. It does part of what the recordings ask. On the six steel notes
+rendered at both the softest and the loudest layer, the loudest layer's
+H5-H12 balance over the softest rises by a median 4.7 dB against the shipping
+engine's 2.2 and the recordings' 8; the attack centroid's 1,900-cent rise it
+does not touch, and the audit's verifier of the same mechanism in its
+release-duration form found why the rest is out of the excitation's reach:
+the 80-250 ms H5-H12 bins are filled by the idle strings' partials and the
+loop's own upper-partial loss, so no initial condition owns that descriptor
+until the junction and the loss are fixed.
+
+Scored, it is a trade rather than an improvement. At the shipping
+calibration the three splits move from 6.8353, 6.8238 and 5.6547 to 6.7833,
+6.7377 and 6.4592: training and development validation 0.8% and 1.3% better,
+the eight flat-top rows 14.2% worse. A full 29-value refit around the dent,
+through the fitter's four stages, reaches 6.7237, 6.8111 and 6.7407: training
+1.6% better, validation back to within 0.2% of shipping, the flat-top 19.2%
+worse. The refit's gain is on the rows it was fitted to and nowhere else,
+which is the signature the 2026-08-31 bracket rule exists to catch, and the
+rows that worsen are the finger-played flat-top, the instrument the
+Dreadnought shape is meant to be.
+
+The reason is in what the dent needs to know. A plectrum's edge makes a dent;
+a fingertip's pad does not, or makes a far wider and shallower one, and the
+flat-top rows are finger-played at the same velocities the archtop is picked
+at. Scaling the dent by Touch does not separate them, because Touch is a
+pressure the user sets by ear, not a statement of which is on the string,
+and choosing the Touch value at which a dent becomes a finger is a number
+nobody measured. The audit's excitation lens proposed the same mechanism in
+its derivable form, a release duration equal to a clearance width over the
+string's release speed, and it needs the same two endpoints, a fingertip's
+and a plectrum edge's width, which the corpus cannot supply for nylon at all
+and only by fitting for steel. Not shipped. What would license it is a
+measurement that separates the two releases on one instrument, or a
+finger/plectrum switch the player sends, at which point the dent is geometry
+again and the flat-top rows stop paying for the archtop's brightness.
+
 ## 2026-09-01 — the benchmark record was a build behind
 
 The committed fit report and the README summary quoted 6.7679, 6.7683 and

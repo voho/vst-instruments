@@ -207,8 +207,10 @@ per-note pressure and CC74 timbre are not implemented.
 
 Each audible string path is a full-round-trip stiff-string waveguide. A note
 begins as a triangular string displacement released from rest. A finite spatial
-aperture rounds that shape, while a short deterministic noise burst and
-bridge-contact transient add the release detail. Pluck Position moves the
+aperture rounds that shape, and a short deterministic noise burst adds the
+release detail. The two-pole bridge-contact transient in the code reaches the
+output only through the direct body-force path, whose fitted gain is zero, so
+it is inert on the shipping calibration. Pluck Position moves the
 displacement point; Touch and MIDI velocity alter its aperture, level and
 brightness. A fitted register law broadens the effective low-note contact and
 narrows it in the upper register, correcting a repeatable corpus-wide spectral
@@ -590,9 +592,14 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   rises by about 1,900 cents and the model's by 96, and at the loudest layer
   H4--H12 sit 12 to 21 dB short; audio-rate tension modulation was built and
   is inert at the fitted displacement (the decision log says by how much),
-  and a plectrum's dent whose width its speed sets does produce the
-  recordings' velocity law but wants a refit and a Touch semantic before it
-  can be gated, so it is not shipped. The attack noise has the recordings'
+  and a plectrum's dent whose width its speed sets doubles the model's
+  velocity-to-brightness rise, to about half the recordings', but trades the
+  flat-top for it: at the shipping
+  calibration and after a full refit around it the picked corpus improves by
+  under 2% while the eight finger-played flat-top rows worsen by 14 to 19%,
+  because nothing the player sends says whether a finger or a plectrum is
+  releasing the string, so it is not shipped (the decision log has the
+  scores and what would license it). The attack noise has the recordings'
   level (percussive-to-harmonic −15 dB against −14) but not their spectrum
   (its centroid 380 Hz against the archtop's 1,090 and its share above 3 kHz
   0.2% against 2.6%), and Touch is inert on it: the plectrum's click is
