@@ -46,7 +46,7 @@ constexpr Placement placements[controlCount] = {
     { parameters::benderLfo, "LFO",
       "Sets vibrato depth when the lever is pushed forward or MIDI CC 1 is received, up to just under plus or minus 4 semitones.",
       ControlKind::Slider, 0, 2, 0, 1, -1, 0 },
-    { parameters::portamento, "PORTAMENTO",
+    { parameters::portamento, "PORTA",
       "Sets glide time between assigned pitches; fully down disables portamento.",
       ControlKind::Knob, 0, 1, 0, 1, -1, 0 },
 
@@ -195,28 +195,36 @@ Layout buildLayout() noexcept
     // The seven sound sections retain the original order. The controller is
     // the separate left cheek and MODE begins the programmer tier under the
     // sound strip; widths reserve air for the integrated extension controls.
+    constexpr float lfoX = instrumentLeft;
+    constexpr float dcoX = lfoX + 100.0f + soundSectionGap;
+    constexpr float hpfX = dcoX + 322.0f + soundSectionGap;
+    constexpr float vcfX = hpfX + 64.0f + soundSectionGap;
+    constexpr float vcaX = vcfX + 266.0f + soundSectionGap;
+    constexpr float envX = vcaX + 128.0f + soundSectionGap;
+    constexpr float chorusX = envX + 166.0f + soundSectionGap;
+    static_assert (chorusX + 116.0f == instrumentRight);
     constexpr SectionSpec specs[sectionCount] = {
         { "CONTROLLER", "CONTROLLER", "", 4, controllerX, performanceDeckTop,
                                             controllerWidth, performanceDeckHeight },
         { "MODE", "VOICE MODE", "", 3, instrumentLeft, performanceDeckTop,
                                             242.0f, programmerHeight },
-        { "LFO", "LFO", "", 2, instrumentLeft, soundRowTop,
+        { "LFO", "LFO", "", 2, lfoX, soundRowTop,
                                             100.0f, soundRowHeight },
         // The range and waveform selectors each share one vertical column.
         // A common 21-unit section gutter and compact stacked keys leave clear
         // air between every DCO sub-group.
-        { "DCO", "DCO", "", 7, 339.0f, soundRowTop,
+        { "DCO", "DCO", "", 7, dcoX, soundRowTop,
                                             322.0f, soundRowHeight },
-        { "HPF", "HPF", "", 1, 682.0f, soundRowTop,
+        { "HPF", "HPF", "", 1, hpfX, soundRowTop,
                                              64.0f, soundRowHeight },
-        { "VCF", "VCF", "", 6, 767.0f, soundRowTop,
+        { "VCF", "VCF", "", 6, vcfX, soundRowTop,
                                             266.0f, soundRowHeight },
-        { "VCA", "VCA", "", 3, 1054.0f, soundRowTop,
+        { "VCA", "VCA", "", 3, vcaX, soundRowTop,
                                             128.0f, soundRowHeight },
-        { "ENV", "ENV", "", 4, 1203.0f, soundRowTop,
+        { "ENV", "ENV", "", 4, envX, soundRowTop,
                                             166.0f, soundRowHeight },
         // HISS uses the second column beside the vertical OFF/I/II stack.
-        { "CHORUS", "CHORUS", "", 2, 1390.0f, soundRowTop,
+        { "CHORUS", "CHORUS", "", 2, chorusX, soundRowTop,
                                             116.0f, soundRowHeight },
     };
 
@@ -254,9 +262,9 @@ Layout buildLayout() noexcept
                 y = section.y + 38.0f;
                 width = 64.0f;
                 height = 64.0f;
-                labelX = section.x + (isVolume ? 2.0f : 94.0f);
+                labelX = x - 10.0f;
                 labelY = section.y + 12.0f;
-                labelWidth = isVolume ? 84.0f : 94.0f;
+                labelWidth = 84.0f;
             }
             else
             {
@@ -282,10 +290,22 @@ Layout buildLayout() noexcept
             continue;
         }
 
-        const float innerX = section.x + sectionPadding * 0.5f;
-        const float cellWidth = (section.width - sectionPadding)
+        // The VCF reads as three related pairs. Ten units of unmarked space
+        // separate FREQ/RES, polarity/ENV and LFO/KYBD; the void replaces the
+        // diagram-like rules that used to crowd those legends.
+        constexpr float vcfGroupGap = 10.0f;
+        const bool isVcf = placement.section == 5;
+        const float innerX = isVcf ? section.x
+                                   : section.x + sectionPadding * 0.5f;
+        const float cellWidth = (section.width
+                                 - (isVcf ? 2.0f * vcfGroupGap
+                                          : sectionPadding))
                               / static_cast<float>(section.slots);
-        const float x = innerX + static_cast<float>(placement.slot) * cellWidth;
+        const float x = innerX
+                      + static_cast<float>(placement.slot) * cellWidth
+                      + (isVcf ? static_cast<float>(placement.slot / 2)
+                                     * vcfGroupGap
+                               : 0.0f);
 
         const bool isMode = placement.section == 1;
         const float labelY = section.y + headerHeight + (isMode ? 1.0f : 7.0f);
@@ -476,20 +496,28 @@ namespace
 {
 const char* overflowingLabel() noexcept
 {
+    const auto engravedWidth = [] (const char* text, float size) noexcept {
+        const auto characters = std::strlen (text);
+        const float kerning = characters > 1
+            ? static_cast<float> (characters - 1) * size * 0.045f
+            : 0.0f;
+        return textWidth (text, size, true) / typefaceHorizontalScale + kerning;
+    };
+
     for (const auto& section : sections())
     {
-        // Match the engraved title area, including the reserved hardware code
-        // at its right edge. The conservative JUCE-free width model is paired
-        // with a real-font check in the editor suite.
-        float available = section.width - 8.0f;
-        if (section.displayCode[0] != '\0')
-            available -= std::min (40.0f, available * 0.28f) + 4.0f;
-        float size = std::max (11.0f, headerPointSize);
-        const float natural = textWidth (section.displayTitle, size, true);
+        // Match the centred title and leave room for both rounded flanking
+        // rules. The conservative JUCE-free model is paired with a real-font
+        // check in the editor suite.
+        const float available = section.width - 4.0f;
+        float size = std::max (11.0f, sectionHeadingPointSize);
+        const float natural = engravedWidth (section.displayTitle, size);
         if (natural > available && natural > 0.0f)
             size *= available / natural;
         size = std::max (9.5f, size);
-        if (textWidth (section.displayTitle, size, true) > available + 0.1f)
+        const float titleWidth = engravedWidth (section.displayTitle, size);
+        if (titleWidth > available + 0.1f
+            || titleWidth + 18.0f >= section.width)
             return section.displayTitle;
     }
 
@@ -565,6 +593,13 @@ bool layoutIsConsistent() noexcept
 {
     const auto& sectionList = sections();
     const auto& controlList = controls();
+
+    for (const auto& section : sectionList)
+        if (section.width <= 0.0f || section.height <= 0.0f
+            || section.x < 0.0f || section.y < 0.0f
+            || section.x + section.width > panelWidth() + 0.001f
+            || section.y + section.height > editorHeight + 0.001f)
+            return false;
 
     for (const auto& control : controlList)
     {

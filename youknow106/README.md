@@ -279,9 +279,10 @@ it alone.
 
 The interface keeps the reference instrument's control inventory **and its
 reading order** in a 1360×718 opening window. The synthesis strip is LFO,
-DCO, HPF, VCF, VCA, ENV and CHORUS; VOLUME and PORTAMENTO live in the left
-performance cheek with the bender-depth faders, portamento switch and
-spring lever; the 61-key keyboard begins beside that cheek. Below the strip
+DCO, HPF, VCF, VCA, ENV and CHORUS; VOLUME and PORTA live in the left
+performance cheek with the bender-depth faders and spring lever. Fully down
+is off; any non-zero PORTA setting enables glide. The 61-key keyboard begins
+beside that cheek. Below the strip
 is the hardware programmer tier: POLY 1/2 plus UNISON, A/B group, BANK and
 PATCH keys, the recessed red display, MANUAL, WRITE and tape
 SAVE/VERIFY/LOAD — the immutable factory bank makes WRITE and VERIFY

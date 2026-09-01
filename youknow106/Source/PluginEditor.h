@@ -47,10 +47,10 @@ private:
     float editorScale { youknow106::panel::defaultEditorScale };
 };
 
-// The moulded plastic of the faceplate: a maintained-but-used ABS material scan
-// with a deterministic procedural fallback. It is decoded once and tiled, so
-// repainting cannot make the wear crawl under the controls.
-class PlasticTexture
+// The satin faceplate finish: a restrained real material scan with a
+// deterministic procedural fallback. It is decoded once and mirrored as it
+// tiles, so neither repainting nor a large editor reveals a repeating seam.
+class PanelTexture
 {
 public:
     void ensureBuilt (int tileSize);
@@ -100,6 +100,14 @@ public:
               state, juce::MidiKeyboardComponent::horizontalKeyboard)
     {
     }
+
+    void drawWhiteNote (int midiNoteNumber, juce::Graphics&,
+                        juce::Rectangle<float> area, bool isDown, bool isOver,
+                        juce::Colour lineColour,
+                        juce::Colour textColour) override;
+    void drawBlackNote (int midiNoteNumber, juce::Graphics&,
+                        juce::Rectangle<float> area, bool isDown, bool isOver,
+                        juce::Colour noteFillColour) override;
 };
 
 // A deliberately non-literal take on the reference lever: an illuminated
@@ -186,7 +194,6 @@ public:
         juce::Rectangle<float> value;
         juce::Rectangle<float> title;
         juce::Rectangle<int> body;
-        float dividerX { 0.0f };
         float headingPointSize { 13.0f };
         // How many lines the body may take. JUCE fits a body by stepping the
         // type down and the line count up until the text fits, so this is the
@@ -294,7 +301,6 @@ private:
     // contacts remain the complete four-state representation.
     void attachChorusBothButton (juce::Button&);
     void refreshChorusButtons();
-    void attachPortamentoToggle (juce::Button&);
     void attachKeyTransposeButton (juce::Button&);
     void attachExclusiveButton (juce::Button&, const char* parameterId,
                                 const char* otherParameterId);
@@ -308,7 +314,7 @@ private:
 
     YouKnow106AudioProcessor& audioProcessor;
     YouKnow106LookAndFeel lookAndFeel;
-    PlasticTexture texture;
+    PanelTexture texture;
 
     // One entry per panel table row, in the same order.
     struct PanelControl
@@ -339,7 +345,6 @@ private:
     juce::TextButton resetButton { "INIT" };
     juce::TextButton unisonButton { "UNISON" };
     juce::TextButton chorusBothButton { "I+II" };
-    juce::TextButton portamentoToggleButton { "ON" };
     // The tape section's own pairing: LOAD and SAVE move one patch between
     // the panel and a .syx file.
     juce::TextButton syxLoadButton { "LOAD" };
@@ -371,7 +376,6 @@ private:
     int selectedHardwareGroup = 0;
     int selectedHardwareBank = 0;
     int selectedHardwarePatch = 0;
-    float lastPortamentoTime = 0.25f;
 
     // The patch bar. The programs live on the processor -- the host addresses
     // them too -- so this only names them and asks it to switch.
@@ -383,7 +387,6 @@ private:
     // Lit while the panel no longer matches the patch that was loaded, which is
     // the only way to tell a recalled patch from an edited one.
     juce::Label presetEditedLabel;
-    juce::Label customPatchLabel;
     juce::TextButton customPatchLoadButton { "LOAD .SYX" };
     juce::TextButton customPatchSaveButton { "SAVE .SYX" };
     int shownProgram = -1;

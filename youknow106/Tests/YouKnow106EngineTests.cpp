@@ -13166,6 +13166,19 @@ void testNoLabelIsTruncated()
     // the check above would pass by being blind rather than by the panel
     // fitting. "PORTAMENTO" is what this section would print if it had room.
     const auto& controls = panel::controls();
+    for (const auto& control : controls)
+    {
+        if (control.section == 0 && control.kind == panel::ControlKind::Knob)
+            expect(std::abs((control.x + control.width * 0.5f)
+                                - (control.labelX
+                                   + control.labelWidth * 0.5f))
+                       < 0.001f,
+                   std::string(control.label)
+                       + " is not centred over its controller knob");
+        if (std::strcmp(control.parameterId, parameters::portamento) == 0)
+            expect(std::strcmp(control.label, "PORTA") == 0,
+                   "the glide-time control is not labelled PORTA");
+    }
     const auto& narrow = controls[1];
     expect(panel::textWidth("PORTAMENTO", panel::labelPointSize, true)
                > narrow.labelWidth,
@@ -13354,8 +13367,9 @@ void testPanelLayout()
                    >= 20.0f,
                "adjacent synthesis sections lost their readable padding");
     }
-    expect(panel::headerPointSize >= 21.0f,
-           "the abbreviated synthesis headers lost their enlarged hierarchy");
+    expect(panel::sectionHeadingPointSize >= 16.0f
+               && panel::sectionHeadingPointSize > panel::minorHeadingPointSize,
+           "the synthesis headings lost their restrained primary hierarchy");
     expect(sections[3].slots == 7 && sections[3].width >= 294.0f,
            "the compact DCO grid lost a full-width control column");
     expect(sections[8].slots == 2 && sections[8].width >= 110.0f,
@@ -13400,6 +13414,29 @@ void testPanelLayout()
     if (pwmSource != nullptr && pulse != nullptr)
         expect(pulse->x - (pwmSource->x + pwmSource->width) >= 10.0f,
                "the PWM-source and waveform stacks are crowded again");
+
+    const auto findControl = [&controls] (const char* parameterId) {
+        for (const auto& control : controls)
+            if (std::strcmp(control.parameterId, parameterId) == 0)
+                return &control;
+        return static_cast<const panel::Control*>(nullptr);
+    };
+    const auto* resonance = findControl(parameters::resonance);
+    const auto* polarity = findControl(parameters::envPolarity);
+    const auto* filterEnvelope = findControl(parameters::vcfEnv);
+    const auto* filterLfo = findControl(parameters::vcfLfo);
+    expect(resonance != nullptr && polarity != nullptr
+               && filterEnvelope != nullptr && filterLfo != nullptr,
+           "the VCF grouping is incomplete");
+    if (resonance != nullptr && polarity != nullptr
+        && filterEnvelope != nullptr && filterLfo != nullptr)
+    {
+        expect(polarity->x - (resonance->x + resonance->width) >= 12.0f,
+               "RES and envelope polarity lost their whitespace gutter");
+        expect(filterLfo->x
+                   - (filterEnvelope->x + filterEnvelope->width) >= 12.0f,
+               "VCF ENV and LFO lost their whitespace gutter");
+    }
 
     const panel::Control* chorusOff = nullptr;
     const panel::Control* chorusI = nullptr;

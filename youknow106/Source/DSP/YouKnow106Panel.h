@@ -97,24 +97,26 @@ namespace panel
 // Panel palette, 0xRRGGBB.
 namespace colour
 {
-inline constexpr std::uint32_t faceplate     = 0x2d2d2bu; // warm charcoal painted metal
-inline constexpr std::uint32_t faceplateHigh = 0x3b3a36u; // raised/moulded surface
-inline constexpr std::uint32_t faceplateLow  = 0x1c1d1cu; // routed recess
-inline constexpr std::uint32_t magenta       = 0xa8443cu; // oxblood enamel signal rail
-inline constexpr std::uint32_t cyan          = 0x4d929du; // desaturated programmer teal
-inline constexpr std::uint32_t control       = 0xd0c9bcu; // warm nickel/ivory control caps
-inline constexpr std::uint32_t controlShadow = 0x6f6b63u;
-inline constexpr std::uint32_t led           = 0xff573bu; // warm red panel lamps
-inline constexpr std::uint32_t ledDim        = 0x491b16u;
-inline constexpr std::uint32_t text          = 0xf2ede4u;
-inline constexpr std::uint32_t textDim       = 0xaaa79fu;
-inline constexpr std::uint32_t slot          = 0x101110u; // slider cut-out
-inline constexpr std::uint32_t scope         = slot; // shared recess/scope glass
+inline constexpr std::uint32_t faceplate     = 0x272621u; // satin charcoal-bronze metal
+inline constexpr std::uint32_t faceplateHigh = 0x3b3931u; // raised/moulded surface
+inline constexpr std::uint32_t faceplateLow  = 0x171815u; // routed recess
+inline constexpr std::uint32_t magenta       = 0x913f36u; // deep oxblood enamel signal rail
+inline constexpr std::uint32_t cyan          = 0x55979du; // desaturated programmer teal
+inline constexpr std::uint32_t control       = 0xd8d0beu; // warm nickel/ivory control caps
+inline constexpr std::uint32_t controlShadow = 0x746f62u;
+inline constexpr std::uint32_t led           = 0xff6045u; // warm red panel lamps
+inline constexpr std::uint32_t ledDim        = 0x451712u;
+inline constexpr std::uint32_t text          = 0xf4eee2u;
+inline constexpr std::uint32_t textDim       = 0xb8b3a8u;
+inline constexpr std::uint32_t slot          = 0x0c0e0cu; // slider cut-out
+inline constexpr std::uint32_t scope         = slot; // dark monitor/group fill
 
-// Semantic material roles reuse the two accent families and neutral metals;
-// they must not introduce extra decorative hues.
-inline constexpr std::uint32_t brass         = textDim;
-inline constexpr std::uint32_t brassHigh     = control;
+// Champagne-brass is used only for fine hardware edges and witness details;
+// it is the quiet warm counterpoint to the oxblood enamel, never a broad fill.
+inline constexpr std::uint32_t brass         = 0x988267u;
+inline constexpr std::uint32_t brassHigh     = 0xcbb99au;
+inline constexpr std::uint32_t walnut        = 0x2c231eu;
+inline constexpr std::uint32_t walnutHigh    = 0x49382fu;
 } // namespace colour
 
 // Geometry, in abstract panel units. The editor scales the whole description to
@@ -127,6 +129,7 @@ inline constexpr float controlLabelHeight = 20.0f;
 // cap into a paddle. The cell owns the label and tick field; the mechanical
 // fader itself stays within this convincingly physical width.
 inline constexpr float maximumSliderWidth = 38.0f;
+inline constexpr float soundSectionGap = 21.0f;
 
 // The hardware surface and keybed occupy the top 596 units. The sound strip begins to
 // the right of the identity/controller cheek, the programmer tier sits below
@@ -158,20 +161,25 @@ inline constexpr float vectorPadWidth = 170.0f;
 // below VOICE MODE, and pitch controls below the DCO.
 inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 10.0f;
 inline constexpr float extensionDeckHeight = 128.0f;
-// MODEL holds four controls (Character, Aging, and the stacked Quality and
-// VCF Solver selectors); VOICE lends it the width its two knobs never used.
+// MODEL holds four controls on one calm row. Stacking the two SESSION actions
+// and three VARIATION amounts gives it the width those controls need.
 inline constexpr float modelZoneX = 14.0f;
-inline constexpr float modelZoneWidth = 244.0f;
-inline constexpr float voiceZoneX = 268.0f;
-inline constexpr float voiceZoneWidth = 150.0f;
-inline constexpr float pitchZoneX = 420.0f;
+inline constexpr float extensionZoneGap = 12.0f;
+inline constexpr float modelZoneWidth = 360.0f;
+inline constexpr float voiceZoneX = modelZoneX + modelZoneWidth + extensionZoneGap;
+inline constexpr float voiceZoneWidth = 140.0f;
+inline constexpr float pitchZoneX = voiceZoneX + voiceZoneWidth + extensionZoneGap;
 inline constexpr float pitchZoneWidth = 232.0f;
-inline constexpr float monitorZoneX = 664.0f;
-inline constexpr float monitorZoneWidth = 390.0f;
-inline constexpr float operationsBarX = 1066.0f;
-inline constexpr float operationsBarWidth = 440.0f;
+inline constexpr float monitorZoneX = pitchZoneX + pitchZoneWidth + extensionZoneGap;
+inline constexpr float monitorZoneWidth = 380.0f;
+inline constexpr float operationsBarX = monitorZoneX + monitorZoneWidth
+                                      + extensionZoneGap;
+inline constexpr float operationsBarWidth = instrumentRight - operationsBarX;
 inline constexpr float extensionControlPadding = 8.0f;
-inline constexpr float operationsGroupSplitX = 1250.0f;
+inline constexpr float operationsGroupSplitX = 1306.0f;
+static_assert (operationsBarX + operationsBarWidth >= instrumentRight - 0.001f
+               && operationsBarX + operationsBarWidth
+                      <= instrumentRight + 0.001f);
 
 inline constexpr float helpStripGap = 10.0f;
 inline constexpr float helpStripHeight = 48.0f;
@@ -251,9 +259,10 @@ struct Control
 inline constexpr int sectionCount = 9;
 inline constexpr int controlCount = 38;
 
-// Type sizes the editor draws with, in panel units. They live here rather than
-// in the editor so the fit checks below and the drawing code cannot disagree.
-inline constexpr float headerPointSize = 21.0f;
+// Type sizes the editor draws with, in panel units. Primary and secondary
+// headings share one engraved, centred motif while retaining a quiet hierarchy.
+inline constexpr float sectionHeadingPointSize = 16.0f;
+inline constexpr float minorHeadingPointSize = 13.0f;
 inline constexpr float labelPointSize = 13.5f;
 inline constexpr float buttonPointSizeMax = 14.0f;
 // The original compact selector keys carry unusually small legends. Keep a
@@ -339,8 +348,8 @@ inline constexpr float defaultEditorScale =
 // rather than trusting the table by eye.
 [[nodiscard]] bool layoutIsConsistent() noexcept;
 
-// True when every legend on the panel is drawn in full: each section header
-// inside its header bar, each slider legend inside its label box, and each
+// True when every legend on the panel is drawn in full: each section heading
+// inside its reserved band, each slider legend inside its label box, and each
 // button legend inside the button at a readable size. A layout that would
 // ellipsize or clip any of them fails here rather than shipping.
 [[nodiscard]] bool labelsFitTheirControls() noexcept;

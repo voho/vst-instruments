@@ -4543,30 +4543,32 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
         return;
 
     auto* chorusOff = findDescendantButtonWithText (*editor, "OFF");
-    auto* portamento = dynamic_cast<juce::Button*> (
-        findDescendantNamed (*editor, "Portamento switch"));
+    auto* portamento = dynamic_cast<juce::Slider*> (
+        findDescendantNamed (*editor, "PORTA"));
+    auto* portamentoSwitch = findDescendantNamed (*editor, "Portamento switch");
     auto* keyTranspose = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "Key transpose"));
     expect (chorusOff != nullptr && portamento != nullptr && keyTranspose != nullptr,
-            "an original derived switch is missing from the editor");
+            "an original panel control is missing from the editor");
+    expect (portamentoSwitch == nullptr,
+            "the redundant PORTA enable switch is still in the editor");
     if (chorusOff == nullptr || portamento == nullptr || keyTranspose == nullptr)
         return;
 
     expect (keyTranspose->getButtonText() == "TRANSPOSE",
             "the transpose key still carries the redundant KEY prefix");
-
     chorusOff->onClick();
     expect (parameterValue (processor, parameters::chorusI) < 0.5f
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
             "CHORUS OFF did not release both chorus contacts");
 
-    portamento->onClick();
+    portamento->setValue (0.0, juce::sendNotificationSync);
     expect (parameterValue (processor, parameters::portamento) < 1.0e-5f,
-            "PORTAMENTO OFF did not disable glide");
-    portamento->onClick();
+            "zero PORTA did not disable glide");
+    portamento->setValue (0.46, juce::sendNotificationSync);
     expect (std::abs (parameterValue (processor, parameters::portamento) - 0.46f)
                 < 1.0e-4f,
-            "PORTAMENTO ON did not restore its time control");
+            "non-zero PORTA did not enable glide at the selected time");
 
     keyTranspose->onClick();
     expect (std::abs (parameterValue (processor, parameters::transpose)) < 0.5f,
@@ -4682,8 +4684,10 @@ void testEveryPanelLegendFitsInTheRealFont()
         font.setHorizontalScale (panel::typefaceHorizontalScale);
         return font;
     };
-    const auto clearBoldFont = [] (float height) {
-        return juce::Font (juce::FontOptions (height, juce::Font::bold));
+    const auto engravedFont = [] (float height) {
+        auto font = juce::Font (juce::FontOptions (height, juce::Font::bold));
+        font.setExtraKerningFactor (0.045f);
+        return font;
     };
     // expect() takes a std::string; every message here is built as a
     // juce::String, so it is converted at the point of use.
@@ -4696,43 +4700,31 @@ void testEveryPanelLegendFitsInTheRealFont()
         if (section.y >= panel::performanceDeckTop)
             return;
 
-        float available = (section.width - 10.0f) * scale;
-        float codeWidth = 0.0f;
-        if (section.displayCode[0] != '\0')
-        {
-            codeWidth = juce::jmin (40.0f * scale, available * 0.28f);
-            available -= codeWidth + 4.0f * scale;
-        }
+        const float available = (section.width - 4.0f) * scale;
 
         float titleSize = juce::jmax (11.0f,
-                                       panel::headerPointSize * scale);
+                                       panel::sectionHeadingPointSize * scale);
         const float natural = juce::GlyphArrangement::getStringWidth (
-            boldFont (titleSize), section.displayTitle);
+            engravedFont (titleSize), section.displayTitle);
         if (natural > available && natural > 0.0f)
             titleSize *= available / natural;
         titleSize = juce::jmax (9.5f, titleSize);
 
         const float drawn = juce::GlyphArrangement::getStringWidth (
-            boldFont (titleSize), section.displayTitle);
+            engravedFont (titleSize), section.displayTitle);
         expect (drawn <= available + 0.1f,
-                say (juce::String (sizeName) + " section header is truncated: "
+                say (juce::String (sizeName) + " section heading is truncated: "
                      + section.displayTitle + " needs "
                       + juce::String (drawn, 1) + " in "
                       + juce::String (available, 1)));
+        expect (drawn + 18.0f * scale < section.width * scale,
+                say (juce::String (sizeName)
+                     + " section heading has no room for both spans: "
+                     + section.displayTitle));
         expect (titleSize <= panel::headerHeight * scale + 0.1f,
                 say (juce::String (sizeName)
-                     + " section header is vertically clipped: "
+                     + " section heading is vertically clipped: "
                      + section.displayTitle));
-
-        if (section.displayCode[0] != '\0')
-        {
-            const float codeSize = juce::jmax (7.5f, 9.0f * scale);
-            const float codeDrawn = juce::GlyphArrangement::getStringWidth (
-                clearBoldFont (codeSize), section.displayCode);
-            expect (codeDrawn <= codeWidth,
-                    say (juce::String (sizeName) + " section code is truncated: "
-                         + section.displayCode));
-        }
     };
 
     const float defaultScale = juce::jmin (
@@ -4741,10 +4733,14 @@ void testEveryPanelLegendFitsInTheRealFont()
     const float minimumScale = juce::jmin (
         static_cast<float> (panel::minimumEditorWidth) / panel::panelWidth(),
         static_cast<float> (panel::minimumEditorHeight) / panel::editorHeight);
+    const float maximumScale = juce::jmin (
+        static_cast<float> (panel::maximumEditorWidth) / panel::panelWidth(),
+        static_cast<float> (panel::maximumEditorHeight) / panel::editorHeight);
     for (const auto& section : panel::sections())
     {
         expectHeaderFits (section, defaultScale, "default-size");
         expectHeaderFits (section, minimumScale, "minimum-size");
+        expectHeaderFits (section, maximumScale, "maximum-size");
     }
 
     for (const auto& control : panel::controls())
@@ -4938,13 +4934,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Seven extension knobs, eleven utility buttons plus the QUALITY and VCF
+    // Seven extension knobs, ten utility buttons plus the QUALITY and VCF
     // SOLVER selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 7 + 13 + 6 + 21 + 1 + 1;
+        panel::controlCount + 7 + 12 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -5335,11 +5331,17 @@ void testEditorContrastAndFocusContract()
     const auto text = paletteColour (panel::colour::text);
     const auto textDim = paletteColour (panel::colour::textDim);
     const auto scope = paletteColour (panel::colour::scope);
-    const auto red = paletteColour (panel::colour::magenta);
-    expect (contrastRatio (text, red.darker (0.20f)) >= minimumTextContrast
-                && contrastRatio (text, red.darker (0.38f))
+    const auto headingInk = paletteColour (panel::colour::brassHigh)
+                                .withAlpha (0.90f);
+    const auto plateHigh = paletteColour (panel::colour::faceplateHigh)
+                               .darker (0.16f);
+    const auto plateLow = paletteColour (panel::colour::faceplateLow)
+                              .brighter (0.06f);
+    expect (contrastRatio (compositeOver (headingInk, plateHigh), plateHigh)
+                    >= minimumTextContrast
+                && contrastRatio (compositeOver (headingInk, plateLow), plateLow)
                        >= minimumTextContrast,
-            "section-header text falls below 4.5:1 on its gradient");
+            "section-heading text falls below 4.5:1 on the sound plate");
 
     YouKnow106LookAndFeel lookAndFeel;
     const auto popupBackground = lookAndFeel.findColour (
@@ -5920,10 +5922,9 @@ void testChorusButtonTransitionsAreAtomicForReentrantStateSaves()
     }
 }
 
-// The programmer row is one row of keys sharing one cell top and one cell
-// height. The drawn key face is placed at a fraction of that cell, so the whole
-// row has to carry one fraction: reading it from the cell height alone left
-// POLY 1, POLY 2 and UNISON drawing six pixels above the rest of the row.
+// The programmer row is one row of equal hardware cells. The shared renderer
+// derives label, lamp and key geometry from those bounds, so matching cells
+// guarantee one aligned key-face row.
 void testProgrammerRowKeysShareOneKeyFace()
 {
     YouKnow106AudioProcessor processor;
@@ -5942,7 +5943,6 @@ void testProgrammerRowKeysShareOneKeyFace()
     };
 
     juce::Rectangle<int> rowArea;
-    double rowKeyCentre = -1.0;
     for (const char* name : rowKeys)
     {
         auto* key = dynamic_cast<juce::Button*> (
@@ -5961,28 +5961,6 @@ void testProgrammerRowKeysShareOneKeyFace()
                     std::string (name)
                         + " does not share the programmer row's cell");
 
-        const auto centre = static_cast<double> (
-            key->getProperties().getWithDefault ("hardwareKeyCentre", -1.0));
-        expect (centre > 0.0,
-                std::string (name) + " has no key-face position");
-        if (rowKeyCentre < 0.0)
-            rowKeyCentre = centre;
-        else
-            expect (std::abs (centre - rowKeyCentre) < 1.0e-9,
-                    std::string (name)
-                        + " draws its key face at a different height from the "
-                          "rest of the programmer row");
-    }
-
-    // The sound row's stacked pairs are a different shape and keep their own
-    // lifted face, or the guard above would pass by making every key the same.
-    if (auto* stacked = dynamic_cast<juce::Button*> (
-            findDescendantNamed (*editor, "GATE")))
-    {
-        const auto centre = static_cast<double> (
-            stacked->getProperties().getWithDefault ("hardwareKeyCentre", -1.0));
-        expect (centre > 0.0 && std::abs (centre - rowKeyCentre) > 1.0e-9,
-                "the stacked sound-row keys lost their own key-face position");
     }
 }
 
@@ -6102,9 +6080,8 @@ void testPolyButtonsKeepAValidFirmwareLatch()
 }
 
 // The two processing-cost selectors are the only ComboBoxes on the deck, so
-// the utility-knob sweep below never reaches them. They stack in one column
-// inside the MODEL zone, beside the Unit Character knob and under the painted
-// MODEL heading, and nothing in that zone may run into anything else.
+// the utility-knob sweep below never reaches them. They share one aligned row
+// with Unit Character and Aging inside MODEL, and none may crowd another.
 void checkProcessingSelectorLayout (juce::AudioProcessorEditor& editor,
                                     bool atSupportedMinimum)
 {
@@ -6120,6 +6097,10 @@ void checkProcessingSelectorLayout (juce::AudioProcessorEditor& editor,
     auto* character = findDescendantNamed (editor, "Unit Character");
     const auto characterArea = character != nullptr
         ? editor.getLocalArea (character, character->getLocalBounds())
+        : juce::Rectangle<int>();
+    auto* aging = findDescendantNamed (editor, "Aging");
+    const auto agingArea = aging != nullptr
+        ? editor.getLocalArea (aging, aging->getLocalBounds())
         : juce::Rectangle<int>();
 
     std::array<juce::Rectangle<int>, selectors.size()> cells {};
@@ -6151,6 +6132,14 @@ void checkProcessingSelectorLayout (juce::AudioProcessorEditor& editor,
                         && ! captionArea.intersects (characterArea),
                     context + selector.boxName
                         + " overlaps the Unit Character knob");
+        if (! agingArea.isEmpty())
+            expect (! boxArea.intersects (agingArea)
+                        && ! captionArea.intersects (agingArea),
+                    context + selector.boxName + " overlaps the Aging knob");
+        if (! characterArea.isEmpty())
+            expect (std::abs (boxArea.getY() - characterArea.getY()) <= 1,
+                    context + selector.boxName
+                        + " is not aligned to the MODEL control row");
 
         cells[index] = boxArea.getUnion (captionArea);
         for (std::size_t previous = 0; previous < index; ++previous)
@@ -6238,6 +6227,8 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                 context + " caption extends outside the editor");
         expect (! sliderArea.intersects (captionArea),
                 context + " knob overlaps its caption");
+        expect (std::abs (sliderArea.getCentreX() - captionArea.getCentreX()) <= 1,
+                context + " caption is not centred over its knob");
 
         occupiedAreas[index] = sliderArea.getUnion (captionArea);
         for (std::size_t previous = 0; previous < index; ++previous)
@@ -6316,6 +6307,10 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Quality label", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
+    checkInsideZone ("VCF Solver", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("VCF Solver label", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
     checkInsideZone ("Polyphony", panel::voiceZoneX,
                      panel::voiceZoneWidth, "Voice");
     checkInsideZone ("Polyphony label", panel::voiceZoneX,
@@ -6379,28 +6374,45 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                     + legend.componentName + " compact legend is clipped");
     };
 
+    const auto expectVerticalStack = [&] (const auto& legends,
+                                           const char* groupName)
+    {
+        juce::Rectangle<int> previousAction;
+        for (const auto& legend : legends)
+        {
+            auto* button = dynamic_cast<juce::TextButton*> (
+                findDescendantNamed (editor, legend.componentName));
+            if (button == nullptr)
+                continue;
+
+            const auto area = editor.getLocalArea (button,
+                                                   button->getLocalBounds());
+            if (! previousAction.isEmpty())
+            {
+                expect (area.getY() - previousAction.getBottom()
+                            >= extensionPadding,
+                        std::string (legend.componentName)
+                            + " is too close to the preceding action");
+                expect (std::abs (area.getX() - previousAction.getX()) <= 1
+                            && std::abs (area.getRight()
+                                         - previousAction.getRight()) <= 1,
+                        std::string (groupName)
+                            + " actions no longer share one vertical axis");
+            }
+            previousAction = area;
+
+            expectCompactLegendFits (*button, legend);
+        }
+    };
     constexpr auto sessionLegends = std::to_array<CompactLegend> ({
         { "PANIC", "PANIC" }, { "INIT", "INIT" },
+    });
+    constexpr auto variationLegends = std::to_array<CompactLegend> ({
         { "DRIFT 1%", "1%" }, { "VARY 10%", "10%" },
         { "MORPH 50%", "50%" },
     });
-    juce::Rectangle<int> previousAction;
-    for (const auto& legend : sessionLegends)
-    {
-        auto* button = dynamic_cast<juce::TextButton*> (
-            findDescendantNamed (editor, legend.componentName));
-        if (button == nullptr)
-            continue;
-
-        const auto area = editor.getLocalArea (button, button->getLocalBounds());
-        if (! previousAction.isEmpty())
-            expect (area.getX() - previousAction.getRight() >= extensionPadding,
-                    std::string (legend.componentName)
-                        + " is too close to the preceding action");
-        previousAction = area;
-
-        expectCompactLegendFits (*button, legend);
-    }
+    expectVerticalStack (sessionLegends, "Session");
+    expectVerticalStack (variationLegends, "Variation");
 
     constexpr auto presetLegends = std::to_array<CompactLegend> ({
         { "Reload patch", "RELOAD" },
@@ -6605,13 +6617,13 @@ void testEditorBuildsAndRenders()
         findDescendantNamed (*editor, "Unit Character"));
     auto* patchSelector = dynamic_cast<juce::ComboBox*> (
         findDescendantNamed (*editor, "Patch selector"));
-    auto* customPatchLabel = findDescendantNamed (*editor, "Custom patch label");
     auto* customPatchLoad = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "Load custom patch"));
     auto* customPatchSave = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "Save custom patch"));
     auto* firstBankKey = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "Bank 1"));
+    auto* logoLabel = findDescendantLabelWithText (*editor, "YouKnow;)");
     auto* makerLabel = findDescendantLabelWithText (*editor, "by Protocodus");
     expect (playableKeyboard != nullptr,
             "the editor has no playable keyboard to range-check");
@@ -6621,11 +6633,12 @@ void testEditorBuildsAndRenders()
             "the editor has no fixed help display");
     expect (patchSelector != nullptr && firstBankKey != nullptr,
             "the host preset rail cannot align to the bank keys");
-    expect (customPatchLabel != nullptr && customPatchLoad != nullptr
-                && customPatchSave != nullptr,
+    expect (customPatchLoad != nullptr && customPatchSave != nullptr,
             "the preset rail does not expose custom patch load/save actions");
     expect (makerLabel != nullptr,
             "the independent maker credit is missing from the identity field");
+    expect (logoLabel != nullptr,
+            "the product wordmark is missing from the identity field");
     if (playableKeyboard != nullptr)
     {
         expect (playableKeyboard->getRangeStart()
@@ -6662,6 +6675,9 @@ void testEditorBuildsAndRenders()
     checkUtilityKnobLayout (*editor, false);
     checkProcessingSelectorLayout (*editor, false);
     checkSynthesisSectionsDominateUtilities (*editor);
+    if (logoLabel != nullptr)
+        expect (labelTextFitsAtItsDeclaredSize (*logoLabel),
+                "the YouKnow;) wordmark clips at the default editor size");
     if (makerLabel != nullptr)
         expect (makerLabel->getFont().getHeight() >= 16.0f,
                 "the maker credit is too small at the default size");
@@ -6682,6 +6698,11 @@ void testEditorBuildsAndRenders()
     {
         editor->setSize (size.x, size.y);
         editor->resized();
+        if (logoLabel != nullptr)
+            expect (labelTextFitsAtItsDeclaredSize (*logoLabel),
+                    "the YouKnow;) wordmark clips at "
+                        + std::to_string (size.x) + "x"
+                        + std::to_string (size.y));
         if (size == supportedMinimum)
         {
             checkUtilityKnobLayout (*editor, true);
@@ -6768,21 +6789,16 @@ void testEditorBuildsAndRenders()
                         "the host preset navigator is not between BANK and the keybed");
                 expect (std::abs (presetArea.getX() - bankArea.getX()) <= 2,
                         "the host preset navigator is not aligned to BANK 1");
-                if (customPatchLabel != nullptr && customPatchLoad != nullptr
-                    && customPatchSave != nullptr)
+                if (customPatchLoad != nullptr && customPatchSave != nullptr)
                 {
-                    const auto customLabelArea = editor->getLocalArea (
-                        customPatchLabel, customPatchLabel->getLocalBounds());
                     const auto customLoadArea = editor->getLocalArea (
                         customPatchLoad, customPatchLoad->getLocalBounds());
                     const auto customSaveArea = editor->getLocalArea (
                         customPatchSave, customPatchSave->getLocalBounds());
-                    expect (customLabelArea.getY() == presetArea.getY()
-                                && customLoadArea.getY() == presetArea.getY()
+                    expect (customLoadArea.getY() == presetArea.getY()
                                 && customSaveArea.getY() == presetArea.getY(),
                             "factory and custom patch controls no longer share one rail");
-                    expect (presetArea.getRight() < customLabelArea.getX()
-                                && customLabelArea.getRight() < customLoadArea.getX()
+                    expect (presetArea.getRight() < customLoadArea.getX()
                                 && customLoadArea.getRight() < customSaveArea.getX(),
                             "factory and custom patch controls overlap or lost their order");
                 }
