@@ -555,7 +555,21 @@ The JUCE-free suites cover:
 - audible construction controls, bounded fitted calibration, finite hostile
   inputs and a final limiter that leaves ordinary output linear;
 - finite output across 44.1--384 kHz and a measured six-string runtime ratio of
-  0.0326× realtime against a 0.25× gate.
+  0.0326× realtime against a 0.25× gate;
+- a lifted key only removes energy: with and without the note-off, the same
+  low fretted notes and a six-string chord in both materials at three rates
+  peak no higher after the release than the held note, and add nothing above
+  it, where the previous engine failed all eighteen cases;
+- the fretting hand: hammer-ons and lifts at 0.3 to 1.0 carry the energy of a
+  pluck at the same velocity within 6 to 8 dB and never fall as velocity
+  rises, a lift leaves the open pitch sounding and a pull-off the held one,
+  neither steps on its first sample, lift zero is bit-identical to the plain
+  note-off, and the wrapper maps release velocity 64, an unsensed release and
+  a Note On at velocity zero to that plain note-off while 127 lifts;
+- replucks: a held note replucked six times at 250 ms neither climbs above
+  1.5 times its first peak nor clicks on its first samples, and a note three
+  strings can reach, repeated after its key came up, stays on one string at
+  one level.
 
 The physical-fit scorer has a synthetic closeness self-test. Its C++ renderer
 also smoke-tests manifest/file consistency and verifies that model-only updates
@@ -569,6 +583,32 @@ panic/controller-reset behavior, state migration and editor rendering.
 VST3, Audio Unit and Standalone targets are built from the same engine.
 
 ## Known gaps
+
+- What this session's audit measured, on the shipping build against the
+  corpus, and did not close. Velocity barely reaches the attack: from the
+  archtop's softest to its loudest layer the recordings' attack centroid
+  rises by about 1,900 cents and the model's by 96, and at the loudest layer
+  H4--H12 sit 12 to 21 dB short; audio-rate tension modulation was built and
+  is inert at the fitted displacement (the decision log says by how much),
+  and a plectrum's dent whose width its speed sets does produce the
+  recordings' velocity law but wants a refit and a Touch semantic before it
+  can be gated, so it is not shipped. The attack noise has the recordings'
+  level (percussive-to-harmonic −15 dB against −14) but not their spectrum
+  (its centroid 380 Hz against the archtop's 1,090 and its share above 3 kHz
+  0.2% against 2.6%), and Touch is inert on it: the plectrum's click is
+  missing. Sustained radiation above 5 kHz is 6 to 13 dB weak on steel and
+  15 to 34 dB weak on nylon. Nylon's inharmonicity is 0.41 of the classical
+  reference's, systematically. The body's fitted Q scale of 0.098 puts 29 of
+  the 96 measured modes on the Q=4 floor, every mode below 500 Hz among them,
+  so the fine modal structure the measurement has above 300 Hz (4.6 dB of
+  standard deviation after octave smoothing) the model does not (0.8 dB); the
+  Catmull-Rom fractional delay adds a fraction-dependent upper-partial loss
+  the calibration absorbs. Real nylon and flat-top fundamentals beat at about
+  1 Hz and 5 dB, a doublet 5 to 9 cents wide, which the single radiating axis
+  cannot make; the model's 2 to 3 dB modulation is idle-string beating. And
+  the nylon and flat-top targets carry 11 to 12 ms of pre-roll that the
+  scorer charges to every such row's attack term as a constant the model
+  cannot remove.
 
 - Apart from bridge-hand damping, legato, natural harmonics and the fretting
   hand's strike and lift, version 0.1 is sustain-only. Fret and finger noise,
