@@ -22,21 +22,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Vocalor
-            directory: vocalor
-            build_plugin_option: VOCALOR_BUILD_PLUGIN
-            target_demo: VocalorRenderDemos
-            expected_demos: 10
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
             target_demo: DrumalorRenderDemos
             expected_demos: 7
-          - name: Neuramar
-            directory: neuramar
-            build_plugin_option: NEURAMAR_BUILD_PLUGIN
-            target_demo: NeuramarRenderDemos
-            expected_demos: 8
           - name: Electry
             directory: electry
             build_plugin_option: ELECTRY_BUILD_PLUGIN
@@ -165,15 +155,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Vocalor
-            directory: vocalor
-            snapshot_variable: VOCALOR_EDITOR_SNAPSHOT
           - name: Drumalor
             directory: drumalor
             snapshot_variable: DRUMALOR_EDITOR_SNAPSHOT
-          - name: Neuramar
-            directory: neuramar
-            snapshot_variable: NEURAMAR_EDITOR_SNAPSHOT
           - name: Electry
             directory: electry
             snapshot_variable: ELECTRY_EDITOR_SNAPSHOT
@@ -237,15 +221,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Vocalor
-            directory: vocalor
-            build_plugin_option: VOCALOR_BUILD_PLUGIN
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
-          - name: Neuramar
-            directory: neuramar
-            build_plugin_option: NEURAMAR_BUILD_PLUGIN
           - name: Electry
             directory: electry
             build_plugin_option: ELECTRY_BUILD_PLUGIN
