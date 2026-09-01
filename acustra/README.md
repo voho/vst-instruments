@@ -311,7 +311,13 @@ into the bridge.
 
 Bridge force then excites 96 measured body modes. Their independent complex
 residues reproduce the two microphone paths of one measured guitar, so stereo
-comes from body radiation rather than artificial delay or reverb. The fit found
+comes from body radiation rather than artificial delay or reverb. Those two
+microphones are close ones: the archive placed them in the near field, 10 cm
+above the top plate and 20 cm apart, one each side of the bridge, with a floor
+absorber under the guitar and the room's first reflections 12 ms or more away,
+so the stereo image is a spaced pair of close microphones on a real guitar.
+Its third microphone, 20 cm toward the neck, is the bridge/twelfth-fret
+placement; the decision log records that pair as a listening question. The fit found
 no held-out benefit from the optional bridge-local direct branch, so the
 shipping calibration disables it. A shared calibration broadens the measured
 modal poles and restores the two existing 85--145 Hz body/air modes; both

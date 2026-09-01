@@ -2720,3 +2720,56 @@ the report, its summary and the README now say so. Every engine change in
 this session was checked against that baseline by byte comparison of the 79
 model renders, and all of them are identical: nothing in this session touched
 a single note on a fresh engine.
+
+## 2026-09-01 — close stereo microphones: what the body already is, and a pair to choose by ear
+
+The user asked for stereo microphones simulated close to the guitar. The
+archive the body is fitted from answers most of that: its method notes place
+three quarter-inch pressure microphones in the near field, 10 cm above the
+top plate - one each side of the bridge, 20 cm apart, and a third 20 cm
+toward the neck from the treble one, "where flamenco guitarists usually place
+their stage microphone". The shipping stereo is the first pair, so the two
+channels already are a spaced pair of close microphones on a real guitar, at
+a spacing and height a recording engineer would recognise. That is now said
+in the README where the body is described.
+
+What the two channels lack was measured. The session's signal lens found the
+model's channels coherent to 0.99 in every band where close-miked flat-top
+recordings sit at 0.35 to 0.77 at 1 kHz and under 0.2 at 8 kHz, because the
+96 modes share poles and only their weights differ per channel. Three things
+were then tried against the raw archive data, downloaded and verified by MD5,
+from which `GenerateMeasuredBody.py` reproduces the committed header exactly.
+
+First, the coherence target itself. With the same estimator on a note that
+decays, the recordings read 0.89, 0.61, 0.32 and 0.22 at 1, 2, 4 and 8 kHz,
+while the raw measured pair - no fit at all, the two microphones' own
+responses - reads 0.79, 0.84, 0.86 and 0.96. A single-source model driven
+through two fixed responses cannot reach the recordings' upper-band figures
+because those are the noise floor of a decaying note, not the guitar; the
+target is an artefact of the estimator and was dropped.
+
+Second, a side bank: keep the calibrated mid bit-identical and add the
+measured inter-microphone ratio as its own modal bank, which is the raw
+pair's arrival-time and phase structure that the per-channel minimum-phase
+conversion discards. It does not fit. With the generator's own machinery the
+raw side response reaches a relative complex error of 0.76 to 0.86 at 48,
+96 and 144 modes, a 90th-percentile channel-ratio error of 10 to 13 dB and a
+median inter-channel phase error of 22 to 37 degrees, for either pair - the
+same class of failure this file records for a raw-phase modal replacement of
+the mid. A 3000-tap side FIR would be exact but must sit against a mid whose
+Q the calibration broadened tenfold, and where the side then exceeds the mid,
+as it does by 9 to 13 dB above 300 Hz, the channels invert. Not shipped.
+
+Third, the other measured pair. The generator run with the treble-bridge and
+upper-bout microphones passes its own fit gates and gives the classic
+bridge/twelfth-fret placement from the same impact on the same guitar. Its
+mid changes with it, so it is a tone change as well as an image change: on
+the shipping calibration, unrefitted, training moves 6.8353 to 7.0032 and
+development validation 6.8238 to 7.0661, 2.5% and 3.6% worse, while the eight
+flat-top rows move 5.6547 to 5.4132, 4.3% better - the disagreement between
+the corpus and the flat-top that this file has recorded five times. Both
+placements are measurements of one guitar under one calibration, so which is
+the more realistic pair is the ear's question. A is the shipping pair, B the
+upper-bout pair, steel and nylon, level-matched on whole-file RMS with Stereo
+Width at 1.0; the set is with the user and its key is unread by design.
+Nothing is promoted until it is heard.
