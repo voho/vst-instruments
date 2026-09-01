@@ -49,6 +49,29 @@ def summarize(report: dict[str, Any]) -> str:
             f"{change:+.1f}% |"
         )
 
+    sample_baseline = report.get("sample_v1_baseline")
+    if not isinstance(sample_baseline, dict):
+        raise ValueError("report has no sample_v1_baseline evidence")
+    lines.extend([
+        "",
+        "Historical sample-player control (same source captures):",
+        "| Split | Sample v1 score |",
+        "| --- | ---: |",
+    ])
+    for key, label in (
+        ("training", "Training"),
+        ("held_out", "Development validation"),
+        ("flat_top", "Independent flat-top"),
+    ):
+        lines.append(
+            f"| {label} | "
+            f"{_number(sample_baseline.get(key), f'sample_v1_baseline.{key}'):.4f} |"
+        )
+    lines.append(
+        "Control only: v1 plays the benchmark recordings themselves, so its "
+        "score is not an out-of-sample realism result."
+    )
+
     lines.extend(["", "Promoted realism paths retained in the shipping engine:"])
     paths = (
         ("bridge_modal_extension", "50-mode measured passive bridge"),

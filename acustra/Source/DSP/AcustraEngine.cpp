@@ -1459,15 +1459,25 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         const float longitudinal = clamp(
             longitudinalSpeed / (2.0f * soundingLength), 100.0f,
             0.45f * static_cast<float>(sampleRate_));
-        const float omegaLong = twoPi * longitudinal * inverseSampleRate_;
-        const float radius = std::exp(-omegaLong
-            / (2.0f * std::max(physicalCalibration_.longitudinalQ, 1.0f)));
-        voice.longitudinalA1 = 2.0f * radius * std::cos(omegaLong);
-        voice.longitudinalA2 = -radius * radius;
-        // Constant peak gain. Without the sin(omega) the resonator's gain at
-        // its own frequency grows with the host rate, and a note rendered at
-        // 192 kHz came out three times the same note at 48.
-        voice.longitudinalB0 = (1.0f - radius * radius) * std::sin(omegaLong);
+        for (int mode = 0; mode < Voice::longitudinalModeCount; ++mode)
+        {
+            const int harmonic = 2 * mode + 1;
+            const float modeFrequency = std::min(
+                longitudinal * static_cast<float>(harmonic),
+                0.45f * static_cast<float>(sampleRate_));
+            const float omegaLong = twoPi * modeFrequency * inverseSampleRate_;
+            const float radius = std::exp(-omegaLong
+                / (2.0f * std::max(physicalCalibration_.longitudinalQ, 1.0f)));
+            voice.longitudinalA1[mode]
+                = 2.0f * radius * std::cos(omegaLong);
+            voice.longitudinalA2[mode] = -radius * radius;
+            // Constant peak gain. Projecting the integrated extension drive
+            // onto sin(n*pi*x/L) gives L*(1-(-1)^n)/(n*pi): even modes cancel
+            // and the observable odd modes carry the fixed-fixed string's
+            // 1/n participation. No modal weighting is fitted here.
+            voice.longitudinalB0[mode] = (1.0f - radius * radius)
+                * std::sin(omegaLong) / static_cast<float>(harmonic);
+        }
         // DAFx-26's tension increase, in newtons, from the same displacement
         // scale the attack-pitch surrogate is calibrated with.
         const float displacement
@@ -1799,8 +1809,8 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.frozenMemberPitchBendSemitones = 0.0f;
     voice.attackSlopeEnergy = 0.0f;
     voice.observedSlopeEnergy = 0.0f;
-    voice.longitudinalY1 = 0.0f;
-    voice.longitudinalY2 = 0.0f;
+    voice.longitudinalY1.fill(0.0f);
+    voice.longitudinalY2.fill(0.0f);
     voice.harmonic = 1;
     voice.releaseDamping = 1.0f;
     voice.quietSamples = 0;
@@ -2404,15 +2414,19 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
         // is a square, so it carries the products of transverse partials: what
         // comes out are the sum and difference phantom partials rather than an
         // added tone.
-        const float excitation = voice.longitudinalB0
-            * voice.longitudinalDrive * slopeEnergy;
-        const float output = excitation
-            + voice.longitudinalA1 * voice.longitudinalY1
-            + voice.longitudinalA2 * voice.longitudinalY2;
-        voice.longitudinalY2 = voice.longitudinalY1;
-        voice.longitudinalY1 = std::isfinite(output) ? output : 0.0f;
-        longitudinalForce += physicalCalibration_.longitudinalGain
-            * voice.longitudinalY1;
+        for (int mode = 0; mode < Voice::longitudinalModeCount; ++mode)
+        {
+            const float excitation = voice.longitudinalB0[mode]
+                * voice.longitudinalDrive * slopeEnergy;
+            const float output = excitation
+                + voice.longitudinalA1[mode] * voice.longitudinalY1[mode]
+                + voice.longitudinalA2[mode] * voice.longitudinalY2[mode];
+            voice.longitudinalY2[mode] = voice.longitudinalY1[mode];
+            voice.longitudinalY1[mode]
+                = std::isfinite(output) ? output : 0.0f;
+            longitudinalForce += physicalCalibration_.longitudinalGain
+                * voice.longitudinalY1[mode];
+        }
     }
     if (voice.played
         && parameters_.stringMaterial == StringMaterial::Steel)

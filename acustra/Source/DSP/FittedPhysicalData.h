@@ -48,11 +48,11 @@ struct PhysicalCalibration
     float bridgeTailLengthMetres { 0.020f };
     // Transverse motion stretches the string; DAFx-26's tension increase
     // EA/(2L) times the mean square slope is a force at the saddle, and it
-    // resonates at the string's own longitudinal modes, c_long/(2L) with
+    // resonates at the string's own longitudinal modes, n*c_long/(2L) with
     // c_long = sqrt(EA/mu). For this steel set that is 1.5 to 3.9 kHz and for
     // plain nylon 1.18 kHz, both from the construction data the transverse
     // model already uses. Because the drive is a squared slope it carries the
-    // products of transverse partials, so what the resonator passes are the
+    // products of transverse partials, so what the resonators pass are the
     // sum and difference phantom partials rather than an added tone. Zero is
     // an exact no-op.
     float longitudinalGain { 0.0f };
@@ -66,7 +66,7 @@ inline constexpr PhysicalCalibration fittedPhysicalCalibration {
     { 1.48177734f, 1.53f, 0.52f, 0.65992123f,
       0.523383307f, 1.03116387f, 0.948115221f },
     -0.0706290118f, 7.5f, 0.00617327847f, -0.0301260746f, 2.16964938f,
-    0.011f, 2804.94773f, 0.0171860529f, 0.03f, 35.0f
+    0.011f, 2804.94773f, 0.0171860529f, 0.025f, 35.0f
 };
 
 } // namespace acustra

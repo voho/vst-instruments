@@ -69,6 +69,24 @@ struct AcustraEngineTestAccess
         double decay;
     };
 
+    static std::array<double, 2> longitudinalFrequencies(int midiNote)
+    {
+        AcustraEngine engine;
+        engine.prepare(48000.0, 64);
+        const int stringIndex = engine.chooseString(midiNote);
+        auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        engine.configureVoice(voice, stringIndex, midiNote, true);
+        std::array<double, 2> result {};
+        for (std::size_t mode = 0; mode < result.size(); ++mode)
+        {
+            const double radius = std::sqrt(-voice.longitudinalA2[mode]);
+            result[mode] = std::acos(std::clamp(static_cast<double>(
+                voice.longitudinalA1[mode]) / (2.0 * radius), -1.0, 1.0))
+                * 48000.0 / (2.0 * std::numbers::pi);
+        }
+        return result;
+    }
+
     struct BendLifecycleSnapshot
     {
         double heldDelay;
@@ -2924,6 +2942,10 @@ void testLongitudinalModesGrowWithVelocity()
     const auto& sounding = acustra::fittedPhysicalCalibration;
     expect(sounding.longitudinalGain > 0.0f,
            "the shipping build has no longitudinal path to test");
+    const auto axial = acustra::AcustraEngineTestAccess::
+        longitudinalFrequencies(40);
+    expect(std::abs(axial[1] / axial[0] - 3.0) < 1.0e-4,
+           "the next odd longitudinal mode is not three times the first");
 
     acustra::EngineParameters steel;
     steel.stringMaterial = acustra::StringMaterial::Steel;

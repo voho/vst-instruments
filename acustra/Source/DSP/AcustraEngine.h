@@ -325,14 +325,17 @@ private:
         float frozenMemberPitchBendSemitones { 0.0f };
         float attackSlopeEnergy { 0.0f };
         // Transverse motion stretches the string, and the tension it adds is
-        // carried by the string's own longitudinal modes. One resonator at
-        // c_long/(2L) per voice, driven by the same slope energy the pitch
-        // surrogate uses.
-        float longitudinalY1 { 0.0f };
-        float longitudinalY2 { 0.0f };
-        float longitudinalA1 { 0.0f };
-        float longitudinalA2 { 0.0f };
-        float longitudinalB0 { 0.0f };
+        // carried by the string's own longitudinal modes. Fixed-fixed axial
+        // modes lie at integer multiples of c_long/(2L); the first two modes
+        // with nonzero projection under an integrated extension drive retain
+        // the measured-band cost of a compact real-time model while avoiding
+        // the unphysical single-pole truncation.
+        static constexpr int longitudinalModeCount = 2;
+        std::array<float, longitudinalModeCount> longitudinalY1 {};
+        std::array<float, longitudinalModeCount> longitudinalY2 {};
+        std::array<float, longitudinalModeCount> longitudinalA1 {};
+        std::array<float, longitudinalModeCount> longitudinalA2 {};
+        std::array<float, longitudinalModeCount> longitudinalB0 {};
         float longitudinalDrive { 0.0f };
         float observedSlopeEnergy { 0.0f };
         float dispersionDesignFrequency { 0.0f };

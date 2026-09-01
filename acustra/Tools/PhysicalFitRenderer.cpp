@@ -33,6 +33,7 @@ using acustra::StringMaterial;
 using acustra::fittedPhysicalCalibration;
 using acustra::dense::Bank;
 using acustra::dense::Library;
+using acustra::dense::Sampler;
 using acustra::dense::ZoneView;
 
 constexpr int modelSampleRate = 48000;
@@ -81,10 +82,12 @@ struct ManifestRow
     std::string dynamicGroup;
     AudioFile target;
     AudioFile model;
+    AudioFile sampleModel;
 };
 
 using CalibrationValues = std::array<float, calibrationValueCount>;
 using ModelKey = std::tuple<Material, int, int>;
+using SampleModelKey = std::tuple<Material, int, int, int>;
 
 // Reject rather than silently clamp so the caller's CLI vector is the
 // calibration that was actually rendered. These mirror AcustraEngine's bounds.
@@ -383,8 +386,63 @@ std::vector<float> renderModel(Material material, int midi, int velocity,
     return output;
 }
 
+std::vector<float> renderSampleModel(const Library& library,
+                                     const Example& example)
+{
+    Sampler sampler(library);
+    sampler.setOutputSampleRate(modelSampleRate);
+    const auto bank = targetBank(example.material);
+
+    // A fresh historical sampler starts at round robin zero. Advance its
+    // deterministic selector to the captured take named by this benchmark row;
+    // discarded voices never enter the measured render.
+    for (int roundRobin = 0; roundRobin < example.roundRobin; ++roundRobin)
+    {
+        if (!sampler.noteOn(0, bank, example.midi,
+                            static_cast<float>(example.velocity) / 127.0f,
+                            0.0f, 0.0f))
+            throw std::runtime_error("legacy sampler could not select "
+                + exampleId(example));
+        sampler.noteOff(0, 1.0f);
+        // Let both the selected and retrigger-retirement slots reach silence
+        // without resetting the sampler's round-robin counters.
+        std::array<float, 1024> discardedLeft {};
+        std::array<float, 1024> discardedRight {};
+        sampler.process(discardedLeft.data(), discardedRight.data(),
+                        discardedLeft.size());
+    }
+    if (!sampler.noteOn(0, bank, example.midi,
+                        static_cast<float>(example.velocity) / 127.0f,
+                        0.0f, 0.0f))
+        throw std::runtime_error("legacy sampler could not render "
+            + exampleId(example));
+    const auto* selected = sampler.activeZone(0);
+    if (selected == nullptr || selected->rootMidi != example.midi
+        || selected->roundRobin != example.roundRobin)
+        throw std::runtime_error("legacy sampler selected the wrong zone for "
+            + exampleId(example));
+
+    const auto frames = durationFrames(modelSampleRate);
+    std::vector<float> output(frames * 2);
+    std::array<float, renderBlockSize> left {};
+    std::array<float, renderBlockSize> right {};
+    for (std::size_t offset = 0; offset < frames; offset += renderBlockSize)
+    {
+        const auto count = std::min<std::size_t>(renderBlockSize,
+                                                frames - offset);
+        sampler.process(left.data(), right.data(), count);
+        for (std::size_t frame = 0; frame < count; ++frame)
+        {
+            output[2 * (offset + frame)] = left[frame];
+            output[2 * (offset + frame) + 1] = right[frame];
+        }
+    }
+    return output;
+}
+
 void writeManifest(const std::filesystem::path& path,
-                   const std::vector<ManifestRow>& rows)
+                   const std::vector<ManifestRow>& rows,
+                   bool sampleBaseline = false)
 {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output)
@@ -412,7 +470,11 @@ void writeManifest(const std::filesystem::path& path,
         << "    \"target_gain\": \"dense::Sampler calibrated playback gain: layer/peak normalisation times (velocity/127)^0.82\",\n"
         << "    \"target_processing\": \"calibrated gain only; no age, tone, or pan processing\",\n"
         << "    \"calibration_source\": \"29 positional CLI values in calibration_order\",\n"
-        << "    \"model_render\": \"fresh AcustraEngine per material/MIDI/velocity; 48000 Hz; 127-sample blocks; default controls; outputGain excluded from calibration\"\n"
+        << "    \"model_render\": \""
+        << (sampleBaseline
+            ? "frozen version-1 dense::Sampler; exact captured MIDI, velocity and round robin; 48000 Hz; 127-sample blocks"
+            : "fresh AcustraEngine per material/MIDI/velocity; 48000 Hz; 127-sample blocks; default controls; outputGain excluded from calibration")
+        << "\"\n"
         << "  },\n"
         << "  \"examples\": [\n";
 
@@ -432,9 +494,12 @@ void writeManifest(const std::filesystem::path& path,
             << "\", \"sample_rate\": " << row.target.sampleRate
             << ", \"channels\": " << static_cast<int>(row.target.channels)
             << "},\n"
-            << "      \"model\": {\"path\": \"" << row.model.path
-            << "\", \"sample_rate\": " << row.model.sampleRate
-            << ", \"channels\": " << static_cast<int>(row.model.channels)
+            << "      \"model\": {\"path\": \""
+            << (sampleBaseline ? row.sampleModel.path : row.model.path)
+            << "\", \"sample_rate\": "
+            << (sampleBaseline ? row.sampleModel.sampleRate : row.model.sampleRate)
+            << ", \"channels\": " << static_cast<int>(
+                sampleBaseline ? row.sampleModel.channels : row.model.channels)
             << "}\n"
             << "    }" << (index + 1 == rows.size() ? "\n" : ",\n");
     }
@@ -449,6 +514,7 @@ std::vector<ManifestRow> renderExamples(
     const PhysicalCalibration& calibration,
     const std::filesystem::path& directory,
     std::map<ModelKey, AudioFile>& models,
+    std::map<SampleModelKey, AudioFile>& sampleModels,
     std::vector<std::filesystem::path>& writtenFiles,
     bool& determinismChecked)
 {
@@ -489,8 +555,25 @@ std::vector<ManifestRow> renderExamples(
                 modelName, modelSampleRate, 2 }).first;
         }
 
+        const SampleModelKey sampleKey { example.material, example.midi,
+                                         example.velocity, example.roundRobin };
+        auto sampleModel = sampleModels.find(sampleKey);
+        if (sampleModel == sampleModels.end())
+        {
+            const std::string sampleName = "sample-v1-" + id + ".f32";
+            const auto audio = renderSampleModel(library, example);
+            if (!finite(audio))
+                throw std::runtime_error(id
+                    + " produced non-finite legacy sample audio");
+            writeF32(directory / sampleName, audio);
+            writtenFiles.push_back(directory / sampleName);
+            sampleModel = sampleModels.emplace(sampleKey, AudioFile {
+                sampleName, modelSampleRate, 2 }).first;
+        }
+
         rows.push_back({ example, id, dynamicGroup(example),
-            { targetName, zone.sampleRate, zone.channels }, model->second });
+            { targetName, zone.sampleRate, zone.channels }, model->second,
+            sampleModel->second });
     }
     return rows;
 }
@@ -721,16 +804,17 @@ void renderCorpus(const std::filesystem::path& directory,
     const Schedule schedule = makeSchedule(smoke);
     const auto calibration = makeCalibration(values);
     std::map<ModelKey, AudioFile> models;
+    std::map<SampleModelKey, AudioFile> sampleModels;
     std::vector<std::filesystem::path> writtenFiles;
     bool determinismChecked = !smoke;
     const auto train = renderExamples(
-        schedule.train, library, calibration, directory, models,
+        schedule.train, library, calibration, directory, models, sampleModels,
         writtenFiles, determinismChecked);
     const auto validation = renderExamples(
-        schedule.validation, library, calibration, directory, models,
+        schedule.validation, library, calibration, directory, models, sampleModels,
         writtenFiles, determinismChecked);
     const auto flatTop = renderExamples(
-        schedule.flatTop, library, calibration, directory, models,
+        schedule.flatTop, library, calibration, directory, models, sampleModels,
         writtenFiles, determinismChecked);
 
     writeManifest(directory / "train.json", train);
@@ -741,6 +825,15 @@ void renderCorpus(const std::filesystem::path& directory,
     {
         writeManifest(directory / "flattop.json", flatTop);
         writtenFiles.push_back(directory / "flattop.json");
+    }
+    writeManifest(directory / "train-sample-v1.json", train, true);
+    writtenFiles.push_back(directory / "train-sample-v1.json");
+    writeManifest(directory / "validation-sample-v1.json", validation, true);
+    writtenFiles.push_back(directory / "validation-sample-v1.json");
+    if (!flatTop.empty())
+    {
+        writeManifest(directory / "flattop-sample-v1.json", flatTop, true);
+        writtenFiles.push_back(directory / "flattop-sample-v1.json");
     }
 
     if (smoke)
