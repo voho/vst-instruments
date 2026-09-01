@@ -5,6 +5,37 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-01 — Loaded MN3009 reconstruction network
+
+Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
+keeps both MN3009 outputs connected through separate 3.3 kOhm legs to the
+shared 47 kOhm / 2.2 nF tap. Panasonic's
+[MN3009 documentation](https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf)
+shows two continuously present output followers, separately loaded ahead of a
+balance pot, and its typical Gi-RL slope around the installed 50--100 kOhm
+region supports a local Thevenin estimate of about 3.7 kOhm per follower. This
+is a graph-derived typical nominal, not a specified or guaranteed Rout.
+
+The former solve treated one output as an ideal source and factorised the tap
+from the following reconstruction filter. The nominal model now combines both
+finite-source legs, C45/C48, R117/R110, and the first 22 kOhm / 22 kOhm
+Sallen-Key section in one continuous nodal system. Tr15--Tr18 remain ideal
+followers, matching the existing no-extra-parameter filter model; finite beta,
+gm, junction capacitance and bias-dependent output impedance need installed
+device data and are not guessed. The prepared transition still has six states
+and the realtime path does no additional matrix work.
+
+Compared directly with the former ideal-source, separable implementation, the
+loaded network is about 0.36 dB darker at 5 kHz, 0.87 dB at 10 kHz and 1.04 dB
+at 15 kHz. DC is normalised to the existing loaded wet coordinate because
+Panasonic's insertion-gain row already uses a 100 kOhm load and no original-unit
+capture fixes absolute wet level. The HISS-100 recovered-line policy was
+therefore remeasured, not ear-tuned: its
+fixed-seed A-weighted transfer is 0.38948--0.38953 at 176.4 kHz and
+0.38937--0.38941 at 192 kHz, represented by 0.3894. OQ-04 remains open for the
+installed spread, follower loading, absolute gain and a wet-only hardware
+sweep.
+
 ## 2026-08-31 — I+II preserves the wet mid, not the stereo side
 
 The first I+II product implementation reused the normal two-line anti-phase

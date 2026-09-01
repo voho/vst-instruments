@@ -228,6 +228,14 @@ forty-year-old unit will null against the plug-in.
   point and approximately 2%/2 Vrms curve while retaining its 2.5% input-swing
   guarantee and saturation rail; explicit zero-order hold plus residual
   charge-transfer loss at the datasheet anchor; and full support-filter chains.
+  The two continuously connected MN3009 output followers now use the
+  [Panasonic Gi–RL curve's](https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf)
+  local ≈3.7 kΩ typical source estimate, each through Roland's 3.3 kΩ leg.
+  C45/C48 and the first 22 kΩ/22 kΩ reconstruction section are solved as one
+  coupled nodal system from the [JUNO-106 jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15),
+  not an isolated pole followed by an ideal biquad. This documented loading is
+  about −0.87 dB relative at 10 kHz (−1.04 dB at 15 kHz), subtly darkening the
+  wet upper harmonics without changing the unresolved absolute wet level.
   HISS 100% uses an explicit 0.2 mVrms recovered-wet-line product
   normalization beside Panasonic's conservative 0.2 mVrms part-output
   maximum; those measurement points are tested separately. The shipped 29.86%
@@ -498,7 +506,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. Roland establishes that about −0.8 V holds the comparator high and the module drawing keeps that output on the fixed WAVE node ahead of C56/C50. The model now retains the high state and lets its existing coupling node reject the settled DC, replacing the contradicted hard-zero mixer gate; the transient therefore follows actual comparator crossings. Absolute WAVE level is still an OQ-15 coordinate, while installed residual bleed, loading and switching-waveform detail remain unmeasured | P1 |
 | OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled, supporting the shipped quasi-linear compatibility law; the transfer law itself awaits measurement | P1 |
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
-| OQ-04 | Loaded post-BBD support-chain transfer. Topology is anchored at designator level on both sides of the BBD and the charge-transfer coefficient to the datasheet's 40 kHz/12 kHz row; the loaded tap-summing pole is open | P2 |
+| OQ-04 | Loaded post-BBD support-chain transfer. Roland's designators and Panasonic's typical Gi–RL curve now anchor the nominal ideal-follower MNA: both finite-source MN3009 outputs, the shared 47 kΩ/2.2 nF tap, both 22 kΩ Sallen-Key sections and loaded output coupling are one continuous solve. The ≈3.7 kΩ per-output source value is a local typical-curve estimate, not a guaranteed parameter; installed-part spread, finite Tr15–Tr18 impedance, absolute wet gain and an original-unit wet-only sweep remain open | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
 | OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly. Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) has no minimum-stop resistor on LFO RATE, and the A-5 assigner's [exact ADC conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296) maps raw codes 0–5 to stored byte 0; the physical control path therefore does not force byte 1. Its coincidental 0.109 Hz rate cannot replace the reachable byte-0 rate without a unit measurement. The [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bounds PWM's loaded full-travel duty while raw SysEx retains its overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
@@ -609,6 +617,11 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   noise terms are deterministic, quality-invariant and remain around the
   analogue circuit's roughly -120 dBFS floor rather than becoming a sound-
   design hiss control.
+- Replaced the chorus output's ideal-source, separable tap approximation with
+  the documented loaded MN3009 network. Both BBD followers, their 3.3 kΩ legs,
+  the 47 kΩ/2.2 nF tap and first reconstruction section now advance as one
+  exact six-state nodal system; the relative change reaches −0.87 dB at 10 kHz
+  and the HISS product normalization was remeasured on both HQ rate families.
 - Replaced instantaneous DCO timer programming with explicit M82C53 Mode-3
   OUT/count staging, the recovered µPD7810 control/LSB/MSB timing relative to
   each pitch-converter poll, and the synchronous IC35 range handoff. PIT count,

@@ -5561,6 +5561,58 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     using Matrix = std::array<std::array<double, 6>, 6>;
     using State = std::array<double, 6>;
 
+    // Independent component solve for the loaded tap node. Panasonic's
+    // Gi-RL curve gives about 3.7 kOhm per output follower near the JUNO's
+    // approximately 100 kOhm per-pin load. Roland then gives each follower a
+    // 3.3 kOhm leg into the shared 47 kOhm / 2.2 nF node.
+    constexpr float mn3009OutputSourceEstimate = 3700.0f;
+    constexpr float tapSeries = 3300.0f;
+    constexpr float tapReturn = 47000.0f;
+    constexpr float tapShunt = 2.2e-9f;
+    constexpr float parallelDrive =
+        0.5f * (mn3009OutputSourceEstimate + tapSeries);
+    constexpr float tapNodeResistance =
+        parallelDrive * tapReturn / (parallelDrive + tapReturn);
+    constexpr float isolatedTapCornerHzFloat = 1.0f
+        / (2.0f * static_cast<float>(pi) * tapNodeResistance * tapShunt);
+    constexpr double isolatedTapCornerHz =
+        static_cast<double>(isolatedTapCornerHzFloat);
+    expectNear(isolatedTapCornerHz, 22208.689, 0.01,
+               "isolated MN3009 tap-corner component solve changed");
+
+    // The tap capacitance is loaded by the first 22 kOhm resistor, so its
+    // response is not the separable tap-pole times Sallen-Key approximation.
+    // Check one closed-form phasor independently of the state rows/RK4 below.
+    {
+        constexpr double frequency = 10000.0;
+        constexpr double series = 22000.0;
+        constexpr double feedback = 820.0e-12;
+        constexpr double shunt = 680.0e-12;
+        const std::complex<double> s(0.0, 2.0 * pi * frequency);
+        const double source = 0.5 * (3700.0 + 3300.0);
+        const double sourceConductance = 1.0 / source + 1.0 / 47000.0;
+        const double seriesConductance = 1.0 / series;
+        const auto denominator = 1.0
+            + s * shunt * (2.0 * series)
+            + s * s * series * series * feedback * shunt;
+        const auto numeratorShape = 1.0 + s * series * shunt;
+        const auto loaded = sourceConductance
+            / ((s * 2.2e-9 + sourceConductance + seriesConductance)
+                   * denominator
+               - seriesConductance * numeratorShape);
+        const double tapResistance = source * 47000.0
+                                   / (source + 47000.0);
+        const auto separable = 1.0
+            / ((1.0 + s * tapResistance * 2.2e-9) * denominator);
+        const auto relative = loaded / separable;
+        expectNear(20.0 * std::log10(std::abs(relative)),
+                   -0.7883156, 1.0e-5,
+                   "loaded tap/first-section magnitude left its MNA result");
+        expectNear(std::arg(relative) * 180.0 / pi,
+                   -2.0290835, 1.0e-5,
+                   "loaded tap/first-section phase left its MNA result");
+    }
+
     const auto transitionFinite = [](const Transition& transition) {
         for (const auto& column : transition.stateByColumn)
             for (double value : column)
@@ -5681,23 +5733,35 @@ void testCombinedBbdSupportTransitionAndStateSafety()
         return matrix;
     };
     const auto outputMatrix = [](bool connected) {
-        const double wt = 2.0 * pi * static_cast<double>(23461.38f);
-        const double w1 = 2.0 * pi * static_cast<double>(9688.0f);
-        const double w2 = 2.0 * pi * static_cast<double>(10377.0f);
+        const double source = 0.5 * (
+            static_cast<double>(3300.0f) + static_cast<double>(3700.0f));
+        const double tapReturn = static_cast<double>(47000.0f);
+        const double tapCap = static_cast<double>(2.2e-9f);
+        const double series = static_cast<double>(22000.0f);
+        const double firstFeedback = static_cast<double>(820.0e-12f);
+        const double firstShunt = static_cast<double>(680.0e-12f);
+        const double secondFeedback = static_cast<double>(1.8e-9f);
+        const double secondShunt = static_cast<double>(270.0e-12f);
         const double wc = 2.0 * pi * static_cast<double>(
             Chorus::wetOutputCouplingCornerHz(connected));
-        const double q1 = Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f);
-        const double q2 = Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f);
         Matrix matrix {};
-        matrix[0][0] = -wt;
-        matrix[1][0] = w1;
-        matrix[1][1] = -w1 / q1;
-        matrix[1][2] = -w1;
-        matrix[2][1] = w1;
-        matrix[3][2] = w2;
-        matrix[3][3] = -w2 / q2;
-        matrix[3][4] = -w2;
-        matrix[4][3] = w2;
+        matrix[0][0] = -(1.0 / source + 1.0 / tapReturn + 1.0 / series)
+                     / tapCap;
+        matrix[0][1] = 1.0 / (series * tapCap);
+        matrix[1][0] = 1.0 / (series * firstFeedback);
+        matrix[1][1] = 1.0 / (series * firstShunt)
+                     - 2.0 / (series * firstFeedback);
+        matrix[1][2] = -1.0 / (series * firstShunt)
+                     + 1.0 / (series * firstFeedback);
+        matrix[2][1] = 1.0 / (series * firstShunt);
+        matrix[2][2] = -1.0 / (series * firstShunt);
+        matrix[3][2] = 1.0 / (series * secondFeedback);
+        matrix[3][3] = 1.0 / (series * secondShunt)
+                     - 2.0 / (series * secondFeedback);
+        matrix[3][4] = -1.0 / (series * secondShunt)
+                     + 1.0 / (series * secondFeedback);
+        matrix[4][3] = 1.0 / (series * secondShunt);
+        matrix[4][4] = -1.0 / (series * secondShunt);
         matrix[5][4] = wc;
         matrix[5][5] = -wc;
         return matrix;
@@ -5706,9 +5770,13 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     State inputDrive {};
     inputDrive[0] = 2.0 * pi * static_cast<double>(9688.0f);
     State outputDrive {};
-    outputDrive[0] = 2.0 * pi * static_cast<double>(23461.38f);
+    constexpr double outputSource = 0.5 * (
+        static_cast<double>(3300.0f) + static_cast<double>(3700.0f));
+    constexpr double outputReturn = static_cast<double>(47000.0f);
+    constexpr double outputCap = static_cast<double>(2.2e-9f);
+    outputDrive[0] = (1.0 / outputSource + 1.0 / outputReturn) / outputCap;
     constexpr State inputEquilibrium { 0.0, 1.0, 0.0, 1.0, 1.0, 0.0 };
-    constexpr State outputEquilibrium { 1.0, 0.0, 1.0, 0.0, 1.0, 1.0 };
+    constexpr State outputEquilibrium { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
     constexpr State initial { 0.03, -0.07, 0.11, -0.13, 0.17, -0.19 };
     constexpr std::array<double, 4> samples { 0.2, -0.1, 0.05, -0.03 };
 

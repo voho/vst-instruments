@@ -172,14 +172,26 @@ constexpr float wetOutputCouplingCapacitanceF = 1.0e-6f; // C28 / C25
 constexpr float wetOutputBleedOhms = 22000.0f;           // R103 / R81
 constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 
-// The output's fifth pole is the BBD tap-summing node: either active output
-// reaches C45/C48 2.2 nF through 3.3 kOhm, and R117/R110 47 kOhm returns the
-// node to ground. Treating the active BBD output as an ideal source gives
-// (3.3 kOhm || 47 kOhm) against 2.2 nF, or 23.46138 kHz. The datasheet's
-// Gi-RL panel now bounds the summed-output source impedance near 3.7 kOhm,
-// which would put the loaded pole at 11.9-22.2 kHz depending on how the two
-// follower legs share the node -- recorded against OQ-04, whose declared MNA
-// or wet-only sweep route decides it rather than a silent retune here.
+// The output's fifth low-pass reactive element is at the BBD tap-summing node:
+// both complementary held outputs reach C45/C48 (2.2 nF) through R118/R119
+// or R111/R112 (3.3 kOhm), while R117/R110 (47 kOhm) returns the node to
+// ground. The former
+// ideal-source, one-leg solve put this at 23.461 kHz. Panasonic's MN3009
+// Gi-RL typical curve instead supports a finite local Thevenin estimate:
+// reading its slope around the installed 50--100 kOhm region gives about
+// 3.7 kOhm per follower. The datasheet application circuit supports reading
+// RL as separate loads on OUT1 and OUT2 before their 10 kOhm balance pot.
+// Both follower outputs remain
+// electrically present, so the two (3.3 + 3.7) kOhm paths are in parallel.
+// In parallel with 47 kOhm, they give the isolated tap node a 22.209 kHz
+// Thevenin corner. R98/R107 then loads that node, so the realised circuit below
+// solves the coupled modes rather than treating 22.209 kHz as a separate pole.
+// The Roland common-mode load is about 97.3 kOhm per pin, almost Panasonic's
+// 100 kOhm fixture, so no separate insertion-gain guess is added. Curve-read
+// uncertainty and a wet-only original-unit sweep remain OQ-04.
+//
+// Panasonic BBD book, MN3009 pp. 37-39 (circuit, Gi-RL, application):
+// https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf
 //
 // The reconstruction corners below equal the anti-alias corners because the
 // 106's own p. 15 scan reads them so at designator level (2026-08-07):
@@ -189,9 +201,13 @@ constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 // C52/C56), both 3.3k tap pairs into 47k/2.2n, and 100n/100k branch
 // coupling -- agreeing with the sister board's clone netlist that first
 // corroborated the family. OQ-04 keeps only the loaded transfer.
-constexpr float idealSourceTapPoleHz = 23461.38f;
-constexpr float reconstructionFirstHz = 9688.0f;
-constexpr float reconstructionSecondHz = 10377.0f;
+constexpr float mn3009TypicalOutputSourceEstimateOhms = 3700.0f;
+constexpr float outputTapSeriesOhms = 3300.0f;
+constexpr float outputTapReturnOhms = 47000.0f;
+constexpr float outputTapShuntFarads = 2.2e-9f;
+constexpr float outputTapParallelDriveOhms =
+    0.5f * (mn3009TypicalOutputSourceEstimateOhms + outputTapSeriesOhms);
+constexpr float reconstructionSeriesOhms = 22000.0f;
 
 // The wet-mute glide is expressed relative to dry. The final IC6 summer's
 // absolute 100/47 dry gain is applied after the BBDs in process(); putting it
@@ -442,27 +458,44 @@ AnalogDrive inputSupportDrive() noexcept
 
 AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
 {
-    const double wt = 2.0 * pi * idealSourceTapPoleHz;
-    const double w1 = 2.0 * pi * reconstructionFirstHz;
-    const double w2 = 2.0 * pi * reconstructionSecondHz;
+    const double source = outputTapParallelDriveOhms;
+    const double tapReturn = outputTapReturnOhms;
+    const double tapCap = outputTapShuntFarads;
+    const double series = reconstructionSeriesOhms;
+    const double firstFeedback = antiAliasFirstFeedbackF;
+    const double firstShunt = antiAliasFirstShuntF;
+    const double secondFeedback = antiAliasSecondFeedbackF;
+    const double secondShunt = antiAliasSecondShuntF;
     const double wc = 2.0 * pi
         * Chorus::wetOutputCouplingCornerHz(wetConnected);
-    const double k1 = 1.0 / Chorus::sallenKeyQ(
-        antiAliasFirstFeedbackF, antiAliasFirstShuntF);
-    const double k2 = 1.0 / Chorus::sallenKeyQ(
-        antiAliasSecondFeedbackF, antiAliasSecondShuntF);
     AnalogMatrix matrix {};
-    // Tap LP, then BP1/LP1, BP2/LP2, and the output-coupling lowpass
-    // capacitor voltage.  Every coordinate remains meaningful when wc swaps.
-    matrix[0][0] = -wt;
-    matrix[1][0] = w1;
-    matrix[1][1] = -k1 * w1;
-    matrix[1][2] = -w1;
-    matrix[2][1] = w1;
-    matrix[3][2] = w2;
-    matrix[3][3] = -k2 * w2;
-    matrix[3][4] = -w2;
-    matrix[4][3] = w2;
+    // Physical node coordinates: tap, first R-R junction/follower, second
+    // R-R junction/follower, then the C28/C25 coupling-capacitor lowpass
+    // voltage. C45/C48 is loaded by R98/R107, so the tap and first Sallen-Key
+    // section are one coupled network rather than two independent filters.
+    // Tr15/Tr16 (Tr17/Tr18 on the other line) remain ideal unity-gain,
+    // zero-output-impedance followers: the service notes do not provide the
+    // installed hFE, gm or parasitics needed for a defensible refinement.
+    matrix[0][0] = -(1.0 / source + 1.0 / tapReturn + 1.0 / series)
+                 / tapCap;
+    matrix[0][1] = 1.0 / (series * tapCap);
+
+    matrix[1][0] = 1.0 / (series * firstFeedback);
+    matrix[1][1] = 1.0 / (series * firstShunt)
+                 - 2.0 / (series * firstFeedback);
+    matrix[1][2] = -1.0 / (series * firstShunt)
+                 + 1.0 / (series * firstFeedback);
+    matrix[2][1] = 1.0 / (series * firstShunt);
+    matrix[2][2] = -1.0 / (series * firstShunt);
+
+    matrix[3][2] = 1.0 / (series * secondFeedback);
+    matrix[3][3] = 1.0 / (series * secondShunt)
+                 - 2.0 / (series * secondFeedback);
+    matrix[3][4] = -1.0 / (series * secondShunt)
+                 + 1.0 / (series * secondFeedback);
+    matrix[4][3] = 1.0 / (series * secondShunt);
+    matrix[4][4] = -1.0 / (series * secondShunt);
+
     matrix[5][4] = wc;
     matrix[5][5] = -wc;
     return matrix;
@@ -471,7 +504,15 @@ AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
 AnalogDrive outputSupportDrive() noexcept
 {
     AnalogDrive drive {};
-    drive[0] = 2.0 * pi * idealSourceTapPoleHz;
+    // Preserve the established loaded wet-level coordinate. The MN3009 table
+    // already states insertion gain under a 100 kOhm load, while its typical
+    // Gi-RL curve only resolves the local source resistance used for the
+    // frequency-dependent loading above. Absolute installed wet level remains
+    // OQ-04, so do not turn the curve read into a second gain calibration.
+    const double source = outputTapParallelDriveOhms;
+    const double tapReturn = outputTapReturnOhms;
+    const double tapCap = outputTapShuntFarads;
+    drive[0] = (1.0 / source + 1.0 / tapReturn) / tapCap;
     return drive;
 }
 
@@ -808,7 +849,7 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
         0.0, 1.0, 0.0, 1.0, 1.0, 0.0
     };
     constexpr std::array<double, 6> outputEquilibrium {
-        1.0, 0.0, 1.0, 0.0, 1.0, 1.0
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0
     };
     chain.exactInput = exactTransition(
         inputSupportMatrix(), inputSupportDrive(), inputEquilibrium, sampleRate);
