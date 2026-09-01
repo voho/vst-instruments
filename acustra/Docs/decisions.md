@@ -2754,6 +2754,82 @@ measurement that separates the two releases on one instrument, or a
 finger/plectrum switch the player sends, at which point the dent is geometry
 again and the flat-top rows stop paying for the archtop's brightness.
 
+## 2026-09-01 — the body's low-mode damping is the measurement window's, and a set to choose by ear
+
+The audit's string-bridge-body lens and its verifier found the same thing
+from two directions, and it was then reproduced here with the generator's
+own code on the raw archive record. `GenerateMeasuredBody.py` keeps the
+first 3000 samples of the g21 impact response, 62.5 ms, before it takes the
+magnitude and fits the 96 modes; that window's own bandwidth is 16 Hz, and
+for every mode below about 1 kHz the header's f/Q sits at 12 to 23 Hz, so
+what the header calls a mode's Q below 300 Hz is the window, not the guitar.
+Re-running the same extraction with the window at 250, 500 and 1000 ms, the
+low modes converge from 250 ms on and stay put: 91 Hz Q 7 → 19 → 21 → 21,
+178 Hz 10 → 18 → 18 → 18, 209 Hz 15 → 39 → 40 → 40, 229 Hz 10 → 15 → 15 →
+15, 409 Hz 28 → 36 → 36 → 36, with the worst 250 ms against 1000 ms
+disagreement below 700 Hz at 7.8%. The peak frequencies move with them, 97 →
+91 Hz and 211 → 209 Hz, which is the truncation's smearing coming off. These
+are the guitar's modes: on six other guitars in the same archive the peaks
+sit elsewhere, so they are not the room. On top of that the calibration then
+fitted bodyQScale to 0.098 against the benchmark corpus, a different guitar,
+which puts 29 of the 96 modes on the engine's Q = 4 floor and every mode
+below 500 Hz among them. Shipping is five to ten times more damped below 300
+Hz than the record resolves.
+
+The window length is not a chosen number. The shortest window at which every
+mode below 700 Hz has its Q within 10% of the 1 s value is 250 ms (12000
+samples, the same 10% raised-cosine fade), and that fit passes the
+generator's four regression limits as they stand; the 500 ms fit does not
+(channel 1 p90 3.85 dB against the 3.75 dB limit), so 250 ms is what the
+generator's own gates select. Regenerated at 250 ms the header has a median
+Q of 59 against 55, five modes on the Q = 80 clip against ten, and one mode
+in the 85-145 Hz band (90.8 Hz) where the truncated fit had two.
+
+Two candidates are each defensible on their own physics - the header as
+generated with its Q un-broadened, and the resolved header - and the corpus
+says the opposite of the measurement, so this is a listening decision. The
+set is with the user, steel and nylon judged separately, letters only, key
+unread by design: a chromatic run E2 to B4 in 0.15 s notes, whose partials
+land on and between the 91/178/209/229/409 Hz modes, then an E chord held
+0.9 s and released so the body's ring is what remains; 48 kHz, identical MIDI
+and seed, whole-file RMS matched to A with the trims in the key. A is the
+shipping engine. B keeps the shipping header and sets bodyQScale to 1.0, a
+calibration value and no code change. C is the resolved header at
+bodyQScale 1.0 with lowBodyModeGain 7.5 as shipped. D is the resolved header
+with the low-mode gain at 1.0 as well, because that +17.5 dB was pinned by
+ear on top of a window that had taken most of the 91 Hz mode's ring, and the
+resolved mode carries about four times the truncated one's steady-state
+gain, so the two must be heard apart.
+
+Scored on the reproduced baseline (6.8353, 6.8238, 5.6547), all three cost
+the corpus: B 7.1107, 7.0448, 6.0883 (4.0%, 3.2% and 7.7% worse); C 7.1345,
+7.0373, 6.1412 (4.4%, 3.1%, 8.6%); D 6.9581, 6.8231, 6.7668 (1.8% worse,
+level on validation, and 19.7% worse on the flat-top, which is the eight
+finger-played rows once more asking for the low-mode gain). Against the
+recordings themselves the direction is the other way: the standard deviation
+of the H1-H12 partial levels about a quadratic trend over 80-400 ms, a
+measure of how much the body colours one note, is 9.5 dB on the archtop
+rows, 11.4 on the classical and 7.3 on the flat-top; A renders 5.1, 3.7 and
+5.3, and B, C and D all render 6.1 to 6.2, 4.9 and 6.1. The benchmark's
+40-band body term reads that colour as error because its reference is a
+different guitar; the recordings' own fine structure says every letter but A
+is closer to a real one. That is the same disagreement the 2026-08-31
+bracket rule was written for, and the rule stands: a tie goes to the corpus,
+adoption needs a clear preference by ear.
+
+Each letter was also built into the engine test suite on a copy of HEAD. B
+passes it whole. C fails one regression by a hair, the resonant open-string
+tail share at 0.975 against the 0.97 ceiling a listening verdict pinned,
+which is the one-way idle-string path (the audit's largest open defect)
+radiating the sharper low modes; D passes that and fails the repluck peak
+regression at 1.51 times the first pluck against the 1.5 pinned this
+session, the resolved 91 Hz mode's ring adding under the second pluck.
+Neither is a defect of the header; both are thresholds pinned on the
+shipping body, and whichever letter the ear chooses, if any, re-pins its own
+threshold with the reason written beside it. Until the user has heard the
+set nothing changes: the header, bodyQScale and lowBodyModeGain ship as
+they were.
+
 ## 2026-09-01 — the benchmark record was a build behind
 
 The committed fit report and the README summary quoted 6.7679, 6.7683 and

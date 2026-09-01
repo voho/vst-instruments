@@ -323,7 +323,11 @@ placement; the decision log records that pair as a listening question. The fit f
 no held-out benefit from the optional bridge-local direct branch, so the
 shipping calibration disables it. A shared calibration broadens the measured
 modal poles and restores the two existing 85--145 Hz body/air modes; both
-corrections independently improved training and held-out recordings. Body
+corrections independently improved training and held-out recordings. The
+measured Q values are what a 62.5 ms window of the impact record resolves,
+which for the modes below 300 Hz is the window's bandwidth rather than the
+guitar's damping; whether the body should carry its resolved damping is an
+open listening question recorded in the decision log. Body
 Amount scales measured radiation,
 Stereo Width moves its two channels toward mono, Output applies final gain, and
 a headroom-only limiter remains linear through -1 dBFS.
@@ -608,7 +612,13 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   reference's, systematically. The body's fitted Q scale of 0.098 puts 29 of
   the 96 measured modes on the Q=4 floor, every mode below 500 Hz among them,
   so the fine modal structure the measurement has above 300 Hz (4.6 dB of
-  standard deviation after octave smoothing) the model does not (0.8 dB); the
+  standard deviation after octave smoothing) the model does not (0.8 dB); and
+  the measured Q values themselves are the generator's 62.5 ms window, not
+  the guitar's: resolved from the same record with a 250 ms window the low
+  modes are two to four times sharper (91 Hz Q 7 to 19, 209 Hz 15 to 39),
+  every candidate that keeps them scores worse on the corpus but moves the
+  partial-level fine structure toward all three real guitars, and the choice
+  is a listening set with the user (the decision log has the letters); the
   Catmull-Rom fractional delay adds a fraction-dependent upper-partial loss
   the calibration absorbs. Real nylon and flat-top fundamentals beat at about
   1 Hz and 5 dB, a doublet 5 to 9 cents wide, which the single radiating axis
