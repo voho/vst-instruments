@@ -286,19 +286,23 @@ void testSameSampleChordOrderIsCanonical()
 
 void testSameSampleChordsAreStrummedAndAlternate()
 {
-    // A chord on one sample is swept like a strum: the low strings sound
-    // first on the downstroke, the high ones first on the return, and the
-    // first strum after a rest is a downstroke again.
+    // A chord on one sample is swept like a strum and consecutive strums
+    // alternate: on a downstroke the top string sounds last, on the return
+    // it sounds first, and a rest longer than two seconds restarts with a
+    // downstroke. A legato group is hammered, not strummed. The chord is
+    // the six strings at the first fret, whose top string's fundamental
+    // (370 Hz) is not a low partial of any lower string.
     AcustraAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
     juce::AudioBuffer<float> audio { 2, blockSize };
-    const auto centroidOfFirstMilliseconds = [&] (double restSeconds)
+    const auto topStringDelay = [&] (bool legato, double restSeconds)
     {
         juce::MidiBuffer chord;
-        for (const int note : { 40, 47, 52, 56, 59, 64 })
+        chord.addEvent (juce::MidiMessage::controllerEvent (1, 68, legato ? 127 : 0), 0);
+        for (const int note : { 41, 46, 51, 56, 61, 66 })
             chord.addEvent (juce::MidiMessage::noteOn (1, note, 0.8f), 0);
         std::vector<float> mono;
-        const int blocks = std::max (1, static_cast<int> (0.06 * sampleRate / blockSize));
+        const int blocks = std::max (1, static_cast<int> (0.10 * sampleRate / blockSize));
         for (int block = 0; block < blocks; ++block)
         {
             juce::MidiBuffer empty;
@@ -308,50 +312,62 @@ void testSameSampleChordsAreStrummedAndAlternate()
                                         + audio.getSample (1, sample)));
         }
         juce::MidiBuffer off;
-        for (const int note : { 40, 47, 52, 56, 59, 64 })
+        for (const int note : { 41, 46, 51, 56, 61, 66 })
             off.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+        off.addEvent (juce::MidiMessage::controllerEvent (1, 68, 0), 0);
         const int restBlocks = static_cast<int> (restSeconds * sampleRate / blockSize);
         for (int block = 0; block < restBlocks; ++block)
         {
             juce::MidiBuffer empty;
             processor.processBlock (audio, block == 0 ? off : empty);
         }
-        // Spectral centroid of the first 6 ms after the chord's onset.
-        std::size_t onset = 0;
-        while (onset < mono.size() && std::abs (mono[onset]) < 1.0e-5f)
-            ++onset;
-        const std::size_t length = static_cast<std::size_t> (0.006 * sampleRate);
-        double weighted = 0.0;
-        double total = 0.0;
-        for (double frequency = 60.0; frequency < 1200.0; frequency += 10.0)
+        // Seconds from the first sound to the top string's fundamental
+        // reaching a fifth of its maximum over the first 80 ms, from 5 ms
+        // heterodyne windows every millisecond.
+        std::size_t first = 0;
+        while (first < mono.size() && std::abs (mono[first]) < 1.0e-5f)
+            ++first;
+        const double frequency = 440.0 * std::exp2 ((66.0 - 69.0) / 12.0);
+        const std::size_t window = static_cast<std::size_t> (0.005 * sampleRate);
+        const std::size_t hop = static_cast<std::size_t> (0.001 * sampleRate);
+        std::vector<double> level;
+        for (std::size_t start = first; start + window <= mono.size()
+                                        && start - first < 0.08 * sampleRate; start += hop)
         {
             double real = 0.0;
             double imaginary = 0.0;
-            for (std::size_t index = 0; index < length && onset + index < mono.size(); ++index)
+            for (std::size_t index = 0; index < window; ++index)
             {
                 const double angle = 2.0 * juce::MathConstants<double>::pi
                     * frequency * static_cast<double> (index) / sampleRate;
-                real += mono[onset + index] * std::cos (angle);
-                imaginary += mono[onset + index] * std::sin (angle);
+                real += mono[start + index] * std::cos (angle);
+                imaginary += mono[start + index] * std::sin (angle);
             }
-            const double power = real * real + imaginary * imaginary;
-            weighted += power * frequency;
-            total += power;
+            level.push_back (std::hypot (real, imaginary));
         }
-        return weighted / std::max (total, 1.0e-30);
+        const double top = *std::max_element (level.begin(), level.end());
+        for (std::size_t index = 0; index < level.size(); ++index)
+            if (level[index] > 0.2 * top)
+                return static_cast<double> (index) * 0.001;
+        return 1.0;
     };
-    const double down = centroidOfFirstMilliseconds (0.5);
-    const double up = centroidOfFirstMilliseconds (0.5);
-    const double downAgain = centroidOfFirstMilliseconds (2.5);
-    const double afterRest = centroidOfFirstMilliseconds (0.5);
-    // Down, up, down; then the rest, after which the alternation would have
-    // made the fourth an upstroke and the restart makes it a downstroke.
-    expect (up > 1.25 * down,
-            "the second of two strums did not start from the high strings");
-    expect (downAgain < 0.8 * up,
+    const double down = topStringDelay (false, 0.5);
+    const double up = topStringDelay (false, 0.5);
+    const double downAgain = topStringDelay (false, 2.5);
+    const double afterRest = topStringDelay (false, 0.5);
+    const double hammered = topStringDelay (true, 0.5);
+    // The heterodyne needs a couple of cycles to register a string that
+    // sounds at once, so the comparisons are against the downstroke's own
+    // delay rather than against zero.
+    // Measured: down 13 ms, up 4 ms, down again 13 ms, after the rest 12 ms,
+    // legato 7 ms (six strings at once, the band's maximum raised by the
+    // others' partials).
+    expect (down > 0.010, "a same-sample chord was not swept across its strings");
+    expect (up < 0.5 * down, "the second of two strums did not start from the top string");
+    expect (downAgain > 0.8 * down,
             "the third strum in a row did not alternate back to a downstroke");
-    expect (afterRest < 0.8 * up,
-            "the first strum after a rest was not a downstroke");
+    expect (afterRest > 0.8 * down, "the first strum after a rest was not a downstroke");
+    expect (hammered < 0.7 * down, "a legato group was swept like a strum");
 }
 
 void testSameSampleNoteOnOffDoesNotStick()
@@ -531,7 +547,10 @@ void testReleaseVelocityReachesTheEngineAsAFingerLift()
         = phrase (juce::MidiMessage::noteOff (1, 43, static_cast<juce::uint8> (127)));
     expect (plain == sixtyFour && plain == zeroOn,
             "a release velocity of 64 or an unsensed release changed the note-off");
-    expect (tailEnergy (lifted, liftedAt) > 10.0 * tailEnergy (plain, plainAt),
+    // A plain note-off no longer leaves near silence: the two-way junction
+    // lets the strings the note drove ring on, so the lifted string's tail
+    // exceeds the damped one's by a few times rather than the ten it did.
+    expect (tailEnergy (lifted, liftedAt) > 2.0 * tailEnergy (plain, plainAt),
             "a release velocity of 127 did not lift the finger");
     // What rings afterwards is the open string, not the fretted note.
     const auto bandAt = [&] (const std::vector<float>& mono, std::size_t from,

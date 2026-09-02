@@ -3193,3 +3193,76 @@ and +0.9%, a random pluck point's worth either way, with the calibrated
 pluck distance now the mean of the spread. All seven demos are re-rendered
 and an eighth, strummed chords, added.
 
+## 2026-09-02 — the guitar was out of tune in chords: the anchor spring, measured and replaced
+
+The user heard the guitar out of tune. Measured with a heterodyne tracker on
+the fundamental (a ±7% band, instantaneous frequency averaged over each
+window), single notes on the shipping engine settle within a cent, but not
+chords: in an E chord the B string reads +23 cents for its first half second
+and −6 at one second, the high E +9 and +9; over E, G, Am, D and C chords the
+worst note sits 23 cents off equal temperament early and 10 late on steel,
+23 and 28 on nylon. With the bridge coupling switched off every note reads
+within 2 cents, so the pulls are bridge coupling, and the audit's finding of
+the day before says where: the fitted 17 mm anchor spring resonating with
+the body's mass-like reactance between its modes, 78 times the bridge's own
+conductance at 233 Hz, a semitone under the B string. Two further pulls come
+from the idle strings: a note drifts sharp as its halo takes over (E5 +4.9
+cents at one second, the low strings' inharmonic partials at 659 Hz
+outlasting the played fundamental), and the coupled pairs at exact
+coincidences.
+
+The termination was then swept rather than argued over, on both junction
+topologies: the spring at 17.2, 12, 8, 6, 5, 4 and 3.25 mm and no spring at
+all, with the bridge mobility scale at its shipping value and lower (the
+scale is already on its floor of 0.25). Worst chord pull early/late in
+cents, and the low E's fundamental decay in dB/s (recordings 4.5 to 8.6):
+17.2 mm 22.6/10.0 and 10.1; 12 mm 14.2/13.2 and 9.0; 8 mm 24.8/27.6 and 8.3
+(the artefact sits on B3 there); 6 mm 11.6/12.7; 5 mm 9.5/8.6; 4 mm
+9.6/6.2; 3.25 mm 9.1/4.1 and 7.9; no spring 28.7/46.3 and 48 (the flamenco
+body's 83 and 91 Hz modes exposed, G#3 pulled 50 to 76 cents by its 209 Hz
+mode). The shorter the stub the better, monotonically, to DAFx-26's own
+attachment, ξ_b = 0.995 on a 650 mm scale, 3.25 mm - a published dimension,
+now the bound's floor and the shipping value. It is not free of the
+artefact; the series resonance moves to 306, 602 and 668 Hz, where it
+couples E4 and E5 to their coincident partials (E4 +6 to +16 cents through
+the first second of an E chord, E5 +5.4 at one second alone). A matched
+bridge mobility, measured strung on a steel-string and a classical body,
+would remove it rather than move it; nothing here can.
+
+Promoted together with the stub: the two-way six-string junction of the
+entry above, whose gates it had already passed, because chord tuning and
+the halo are one question - the coupled strings' energy has to be bounded
+for the sympathetic drift and the pumping to stop, and the anchor has to
+stop amplifying the coupling for chords to sit. Every pluck also draws its
+own point (the strum entry). Measured on the promoted engine against the
+shipping one, five chords, 26 notes each material: worst note 22.7 → 9.1
+cents early and 10.1 → 5.0 late on steel, 22.9 → 7.0 and 28.1 → 6.8 on
+nylon; mean pull 4.0 → 2.1 and 2.9 → 0.9 (steel), 4.2 → 1.9 and 3.4 → 1.7
+(nylon); single notes at one second within 1.5 cents where the halo drift
+was +2 to +5, except E5 (+5.4, the 668 Hz artefact) and the nylon A3 and B3
+coupled pairs (−3.5 and −3.0); the low E's fundamental decays at 7.9 dB/s.
+Ten hand-damped repeats leave the idle string 44 dB under the note.
+
+What it costs, said plainly. The benchmark reads 6.6067, 6.5215 and 8.1202
+against 6.8353, 6.8238 and 5.6547: 3.3% and 4.4% better on the picked
+splits, 44% worse on the eight finger-played flat-top rows, whose body and
+attack terms carry the stub's stiffer low-frequency termination and whose
+decay term carries the played strings' own over-damping, which the halo
+used to fill in (their fundamentals decay at 15 dB/s against the
+recordings' 6). The calibration was fitted around the spring's shield and
+the one-way halo, and the fitter freezes the by-ear string values, so a
+refit around the new termination is a separate job; a common-start refit
+at the default budget already favoured the two-way topology on both picked
+splits. Four regressions were re-pinned to what the mechanism does, with
+the numbers in the tests: a hand-damped G2 leaves the idle D string's second
+partial ringing through the 306 Hz resonance, peaking 35 ms after the
+note-off at 1.4 times the held peak with nothing at the release sample
+itself, so the release test bounds the first 5 ms at the held peak and the
+50 ms at 1.5 times it; a full finger lift renders 8 dB under a pluck where
+it rendered within 6, because the lifted open string now shares with the
+strings it is coupled to; the hammer-on's first sample returns 1.29 times
+the sounding peak where the softer spring returned 1.1; the parlor/jumbo
+difference falls to 0.070 because the stub drives the low body modes less.
+The two listening sets those mechanisms were sent as are overtaken: a
+measurement decided them.
+

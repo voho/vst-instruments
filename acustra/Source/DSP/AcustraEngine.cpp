@@ -604,7 +604,7 @@ PhysicalCalibration AcustraEngine::sanitise(
                 fittedPhysicalCalibration.bridgeConductanceFloor),
         bounded(source.bridgeConductanceCornerHz, 100.0f, 8000.0f,
                 fittedPhysicalCalibration.bridgeConductanceCornerHz),
-        bounded(source.bridgeTailLengthMetres, 0.008f, 0.060f,
+        bounded(source.bridgeTailLengthMetres, 0.00325f, 0.060f,
                 fittedPhysicalCalibration.bridgeTailLengthMetres),
         bounded(source.longitudinalGain, 0.0f, 0.5f,
                 fittedPhysicalCalibration.longitudinalGain),
@@ -944,8 +944,8 @@ void AcustraEngine::reset() noexcept
         voice.keyDown = false;
         voice.pedalHeld = false;
         voice.level = 0.0f;
-        voice.quietSamples = 0;
-        returnToOpenString(voice, string);
+        voice.returnSamples = 0;
+        returnToOpenString(voice, string, true);
     }
     // Initialise every open-string loop. Unplayed strings are driven one-way
     // by the shared bridge and therefore add no return-impedance phase here;
@@ -1030,7 +1030,7 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
             voice.observedSlopeEnergy = 0.0f;
         }
         if (!voice.played && tuningChanged)
-            returnToOpenString(voice, string);
+            returnToOpenString(voice, string, true);
         else if (constructionChanged || ageChanged || stringChanged)
             configureVoice(voice, string, voice.midiNote, false);
     }
@@ -1224,8 +1224,7 @@ void AcustraEngine::configureBridge() noexcept
 float AcustraEngine::bridgePhaseDelay(float frequency,
                                       int stringIndex) const noexcept
 {
-    if (!bridgeCouplingEnabled_ || !(frequency > 0.0f)
-        || !voices_[static_cast<std::size_t>(stringIndex)].played)
+    if (!bridgeCouplingEnabled_ || !(frequency > 0.0f))
         return 0.0f;
 
     const float rate = static_cast<float>(sampleRate_);
@@ -1351,10 +1350,7 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     const float age = parameters_.stringAge;
     // Preserve the material/age law while allowing one shared fitted cutoff
     // scale to reduce excess upper-partial damping without changing the
-    // fundamental T60 target below. The fitted scale puts the steel corner
-    // near 22.5 kHz at the default age, above the 0.44 fs clamp at 44.1 and
-    // 48 kHz, so at those rates it sits on the clamp and the shelf is not a
-    // free control there; nylon's 15.8 kHz corner never reaches it.
+    // fundamental T60 target below.
     const float cutoff = (steel
         ? 12500.0f * std::exp(-1.25f * age)
         :  8200.0f * std::exp(-0.78f * age))
@@ -1665,11 +1661,6 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
         const float apertureSamples
             = ACUSTRA_ANALYSIS_APERTURE_MILLISECONDS * 48.0f;
 #else
-        // An authored map, not a contact width: with the fitted register
-        // law the smoother spans about +/-89 mm of a nylon low E's period
-        // and +/-48 mm of a soft-plucked steel one (H12 at -45 and -9 dB),
-        // against +/-21 mm on a hard steel pluck, and nylon's velocity depth
-        // is fitted to zero, so nylon's release does not move with velocity.
         const float apertureSamples = 0.70f + 3.60f * (1.0f - touch)
             + (stringIndex < 3 ? 1.0f : 0.0f)
             + (voice.fret >= 17 ? 1.5f : 0.0f);
@@ -1770,10 +1761,11 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     voice.excitationLowpass = 0.0f;
     voice.level = std::max(voice.level, 0.02f * v);
     voice.releaseDamping = 1.0f;
-    voice.quietSamples = 0;
+    voice.returnSamples = 0;
 }
 
-void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
+void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
+                                       bool clearDelay) noexcept
 {
     voice.played = false;
     voice.keyDown = false;
@@ -1799,13 +1791,13 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.fingerLift = 0.0f;
     voice.touchDamping = 1.0f;
     voice.touchSamples = 0;
-    voice.quietSamples = 0;
+    voice.returnSamples = 0;
     voice.pluckDelay = 0;
     voice.tailActive = false;
     voice.tailLevel = 0.0f;
     voice.tailQuietSamples = 0;
     voice.tailLoop.reset();
-    configureVoice(voice, stringIndex, voice.openMidi, true);
+    configureVoice(voice, stringIndex, voice.openMidi, clearDelay);
 }
 
 void AcustraEngine::captureTail(Voice& voice) noexcept
@@ -1840,6 +1832,8 @@ void AcustraEngine::beginRelease(Voice& voice, int stringIndex) noexcept
     const float releaseSeconds = voice.fret == 0 ? 1.25f : 0.16f;
     voice.releaseDamping = std::pow(0.001f,
         1.0f / std::max(releaseSeconds * midiFrequency(voice.midiNote), 1.0f));
+    voice.returnSamples = static_cast<int>(
+        (releaseSeconds + 0.08f) * static_cast<float>(sampleRate_));
 }
 
 float AcustraEngine::handContactGain(float frequency) const noexcept
@@ -2024,7 +2018,7 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
         voice.attackPitchDecay = 1.0f;
         voice.frozenMemberPitchBendSemitones = 0.0f;
         voice.harmonic = 1;
-        voice.quietSamples = 0;
+        voice.returnSamples = static_cast<int>(1.33f * static_cast<float>(sampleRate_));
     }
     configureVoice(voice, stringIndex, targetMidi, false);
 
@@ -2340,7 +2334,7 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
     // Taking a string that is still sounding, for any note, is a refret and a
     // repluck, not a cut: what it still holds carries on under the hand while
     // the new pluck is released from rest.
-    if (voice.played && voice.level > 2.0e-7f)
+    if (voice.level > 2.0e-7f)
         captureTail(voice);
     voice.harmonic = harmonic;
     voice.played = true;
@@ -2586,7 +2580,7 @@ void AcustraEngine::setLowerZoneMemberCount(int memberCount) noexcept
     {
         auto& voice = voices_[static_cast<std::size_t>(string)];
         if (voice.played && voice.midiChannel <= lastAffectedChannel)
-            returnToOpenString(voice, string);
+            returnToOpenString(voice, string, true);
     }
     for (int midiChannel = 1; midiChannel <= lastAffectedChannel; ++midiChannel)
     {
@@ -2597,7 +2591,7 @@ void AcustraEngine::setLowerZoneMemberCount(int memberCount) noexcept
     if (getActiveVoiceCount() == 0)
     {
         for (int string = 0; string < stringCount; ++string)
-            returnToOpenString(voices_[static_cast<std::size_t>(string)], string);
+            returnToOpenString(voices_[static_cast<std::size_t>(string)], string, true);
         resetSoundState();
     }
 }
@@ -2630,12 +2624,12 @@ void AcustraEngine::allSoundOff(int midiChannel) noexcept
     {
         auto& voice = voices_[static_cast<std::size_t>(string)];
         if (voice.played && channelControlsVoice(midiChannel, voice))
-            returnToOpenString(voice, string);
+            returnToOpenString(voice, string, true);
     }
     if (getActiveVoiceCount() == 0)
     {
         for (int string = 0; string < stringCount; ++string)
-            returnToOpenString(voices_[static_cast<std::size_t>(string)], string);
+            returnToOpenString(voices_[static_cast<std::size_t>(string)], string, true);
         resetSoundState();
     }
 }
@@ -2776,15 +2770,14 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
     const float impedance = voice.characteristicImpedance;
     if (voice.tailActive)
     {
-        // The same one-way coupling the idle open strings use: the taken
-        // string keeps radiating while the hand damps it, but it does not
-        // load the junction a second time.
+        // The taken string keeps sounding while the hand damps it; its wave
+        // is in the junction with the new note's, so its force reaches the
+        // body through the bridge like any other string's.
         voice.tailLoop.write(tailIncident - bridgeDisplacement);
         const float tailVelocity = voice.tailLoop.bridgeVelocity(
             tailIncident, sampleRateRatio);
         const float tailForce = impedance
             * (2.0f * tailVelocity - bridgeVelocity);
-        sympatheticForce += tailForce;
         voice.tailLevel += levelSmoothing_
             * (std::abs(tailForce) - voice.tailLevel);
         if (voice.tailLevel < 2.0e-7f)
@@ -2801,8 +2794,6 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
     }
     const float localReactionForce = impedance
         * (2.0f * verticalVelocity - bridgeVelocity);
-    if (!voice.played && sympatheticStringsEnabled_)
-        sympatheticForce += localReactionForce;
     const float directForce = localReactionForce * voice.polarisationMix
         + 0.44f * impedance * horizontalVelocity
             * (1.0f - voice.polarisationMix);
@@ -2817,15 +2808,13 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
 
     const float magnitude = std::abs(localReactionForce);
     voice.level += levelSmoothing_ * (magnitude - voice.level);
-    if (voice.played && !voice.keyDown && !voice.pedalHeld)
-    {
-        if (voice.level < 2.0e-7f)
-            ++voice.quietSamples;
-        else
-            voice.quietSamples = 0;
-        if (voice.quietSamples > static_cast<int>(0.08 * sampleRate_))
-            returnToOpenString(voice, stringIndex);
-    }
+    // A released string is handed back once its release damping has had its
+    // T60 and the hand's 80 ms; waiting for it to fall silent would wait for
+    // ever, because the bridge keeps driving it while anything else sounds.
+    // What it still carries goes on as an idle string's wave.
+    if (voice.played && !voice.keyDown && !voice.pedalHeld
+        && voice.returnSamples > 0 && --voice.returnSamples == 0)
+        returnToOpenString(voice, stringIndex, false);
 
 }
 
@@ -2912,11 +2901,21 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             // Summing only the played ones made it stiffen with each voice
             // held, which more than doubled a note's sustain inside a chord.
             tailStiffnessSum += voice.bridgeTailStiffness;
-            if (voice.played)
+            // Every string on the bridge is a member of the junction, played
+            // or not: an idle string on a moving bridge carries a wave, and
+            // at its resonance it presents thousands of times its
+            // characteristic impedance, which is what pins a real bridge
+            // there and bounds the sympathetic energy. Driving idle strings
+            // from the bridge while leaving them out of the sum let their
+            // reaction grow without limit. A taken string's tail is a second
+            // wave on the same string, so it adds to the incident with the
+            // string's impedance counted once.
+            if (voice.played || sympatheticStringsEnabled_)
             {
                 impedanceSum += voice.characteristicImpedance;
                 weightedIncident += voice.characteristicImpedance
-                    * verticalIncident[static_cast<std::size_t>(string)];
+                    * (verticalIncident[static_cast<std::size_t>(string)]
+                       + tailIncident[static_cast<std::size_t>(string)]);
             }
         }
 

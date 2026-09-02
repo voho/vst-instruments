@@ -71,7 +71,7 @@ inline constexpr PhysicalCalibration fittedPhysicalCalibration {
     // transient rather than part of the pluck. Keep the calibrated mechanism
     // available for measurement work, but do not add that synthetic ping to
     // the shipping voice.
-    0.011f, 2804.94773f, 0.0171860529f, 0.0f, 35.0f
+    0.011f, 2804.94773f, 0.00325f, 0.0f, 35.0f
 };
 
 } // namespace acustra

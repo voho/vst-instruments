@@ -367,7 +367,8 @@ private:
         // clear of it; that contact is the hand loss for this many samples.
         float touchDamping { 1.0f };
         int touchSamples { 0 };
-        int quietSamples { 0 };
+        // Samples until a released string is handed back to the allocator.
+        int returnSamples { 0 };
         // Samples until a scheduled pluck is released; zero when none waits.
         int pluckDelay { 0 };
         // Where this pluck landed, as a fraction of the sounding length.
@@ -405,7 +406,8 @@ private:
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
     float effectiveTouch(const Voice& voice) const noexcept;
     void initialisePluck(Voice& voice, int stringIndex, float velocity) noexcept;
-    void returnToOpenString(Voice& voice, int stringIndex) noexcept;
+    void returnToOpenString(Voice& voice, int stringIndex,
+                            bool clearDelay) noexcept;
     void firePluck(Voice& voice, int stringIndex) noexcept;
     void beginRelease(Voice& voice, int stringIndex) noexcept;
     void captureTail(Voice& voice) noexcept;

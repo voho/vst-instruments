@@ -1,5 +1,5 @@
 {
-  "date": "2026-09-01",
+  "date": "2026-09-02",
   "runtime_source": "AcustraEngine physical model with a 50-mode passive bridge, one positive-real plate conductance floor, and a constant six-string saddle anchor at a fitted saddle-to-anchor length",
   "analysis_sample_rate": 48000,
   "render_seconds": 4.2,
@@ -130,7 +130,7 @@
     "training": {
       "examples": 83,
       "unique_model_renders": 47,
-      "fitted_score": 6.835322790154296,
+      "fitted_score": 6.606652,
       "terms": {
         "attack": {
           "neutral": 9.309916832505955,
@@ -162,12 +162,12 @@
         }
       },
       "neutral_score": 8.768534755725106,
-      "change_percent": -22.047149488785312
+      "change_percent": -24.655005835650947
     },
     "held_out": {
       "examples": 24,
       "unique_model_renders": 24,
-      "fitted_score": 6.823750638244407,
+      "fitted_score": 6.521525,
       "terms": {
         "attack": {
           "neutral": 9.155575861766145,
@@ -199,12 +199,12 @@
         }
       },
       "neutral_score": 8.145301055652865,
-      "change_percent": -16.224697017077084
+      "change_percent": -19.93512633306488
     },
     "flat_top": {
       "examples": 8,
       "unique_model_renders": 8,
-      "fitted_score": 5.654679028375743,
+      "fitted_score": 8.120169,
       "terms": {
         "attack": {
           "neutral": 9.036944038636934,
@@ -236,7 +236,7 @@
         }
       },
       "neutral_score": 9.309314823108725,
-      "change_percent": -39.257838672089974,
+      "change_percent": -12.773720147017487,
       "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
     }
   },
@@ -1136,5 +1136,20 @@
     "verdict": "training 1.42% better, development validation 0.86% worse, flat-top 11.1% worse; rejected on the development-validation gate",
     "what_moved": "longitudinalGain 0.03 to 0.075 and highLossCutoffScale 2.170 to 2.503 - the settings that buy the archtop corpus attack brightness and move the flat-top rows away",
     "reading": "the freezing kept the verdict and did not stop the free parameters walking the same way by other routes; on this corpus a refit has to be gated on development validation every time"
+  },
+  "two_way_junction_and_stub_anchor": {
+    "change": "every string is a junction member (idle strings load and inject at the bridge); the saddle-to-anchor length is DAFx-26 xi_b=0.995 (3.25 mm) instead of the fitted 17.2 mm spring; every pluck draws its point within +/-0.02 of the length",
+    "decided_by": "chord tuning against equal temperament (worst note 23 -> 9 cents steel, 23 -> 7 nylon) and idle-string pumping (+7 dB -> -44 dB), not the corpus",
+    "scores_before": [
+      6.835323,
+      6.823751,
+      5.654679
+    ],
+    "scores_after": [
+      6.606652,
+      6.521525,
+      8.120169
+    ],
+    "flat_top_note": "the halo masked the played strings over-damping; string losses and bridge mobility want a refit around the new termination"
   }
 }
