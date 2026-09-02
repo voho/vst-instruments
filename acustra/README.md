@@ -129,9 +129,15 @@ triangle of half-width c·h/v moving down at the finger's speed; relative to
 the new segment's own rest line that is a released triangle with its apex at
 that half-width plus a uniform velocity across it. Note-on velocity sets the
 finger's speed through the pluck's own velocity law: a hammer-on at a velocity
-carries the string energy a pluck at that velocity would, so it lands at the
-loudness a player expects and gets brighter as it gets faster, as a real one
-does. Releasing that note pulls off to whatever else the hand is still holding
+carries the string energy a pluck at that velocity would. Equal energy is not
+equal loudness, because the dent narrows as the finger speeds up and the
+loop's upper-partial loss discards that brightness within the second: over
+one second a hammered note sits within +7 and −2 dB of the pluck and spans
+only 1 to 3 dB of its own from velocity 0.3 to 1.0 on ordinary intervals,
+getting brighter rather than louder, as a real one does. (The equality asks
+for finger speeds of 2 to 5 m/s at the top of the range, faster than a hand
+moves; the bound is an open item in Known gaps.) Releasing that note pulls
+off to whatever else the hand is still holding
 on the string, up to eight notes deep, plucked by the leaving finger as fast as
 note-off velocity says it left. A hammer-on only goes up, because the way down
 on a guitar is a pull-off, which is a note-off here for the same reason. The switch exists because the model alone cannot tell a
@@ -172,8 +178,17 @@ are the published set-up dimensions - 3/32" bass and 1/16" treble over the
 twelfth fret for a steel-string, 4 and 3 mm for a classical, with 0.5 and
 0.7 mm over the first fret, on the line a straight neck puts between them - and
 the lift's speed comes from the same velocity law as the pluck's, so the only
-convention is where the finger stops staying: at MIDI's own unsensed value. A
-string lifted to open is nobody's: it rings on in the junction with no key and
+convention is where the finger stops staying: at MIDI's own unsensed value.
+Because a pressed treble string at a low fret stores little elastic energy,
+release velocity is a two-region control: on a steel high E at the second
+fret the finger follows the string only from release velocity 65 to about 77
+and every faster release lets the whole shape go identically, while the
+switch sits near 92 on the low E at the third fret and near 90 on a nylon
+high E. A gentle sensed release at about 70 leaves the open string ringing
+12.5 dB (steel) or 16.5 dB (nylon) under the note's own first second, and
+above the switch on steel about 6 dB under it, so a keyboard that senses
+release will ghost open strings unless the player holds the key to the end
+or damps with CC2. A string lifted to open is nobody's: it rings on in the junction with no key and
 no hand on it until it has died away, and the next note on it lands the hand
 on it first.
 
@@ -590,6 +605,17 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
 
 ## Known gaps
 
+- The fretting hand's energy law implies finger speeds of 2 to 5 m/s at the
+  top of the hammer-on velocity range, above what a hand does, so the top
+  third of that map is louder than the mechanism it claims; bounding it needs
+  a published maximum fingertip speed read and cited beside the code
+  (Kinoshita, Furuya, Aoki and Altenmüller 2007, JASA 121:2959, is the
+  candidate source), and until one is, the convention stands. Nylon's action
+  heights are converted to wave units with the steel displacement scale
+  because nylon has no fitted scale of its own; the conversion cancels in the
+  energy equality but not between a true height in metres and nylon's pluck
+  amplitude, so nylon pull-off levels and both switch thresholds carry that
+  error.
 - What this session's audit measured, on the shipping build against the
   corpus, and did not close. Velocity barely reaches the attack: from the
   archtop's softest to its loudest layer the recordings' attack centroid
@@ -903,11 +929,12 @@ git history rather than here.
 - **Gave the fretting hand its own sounds, from the MIDI a player already
   sends.** A hammer-on under CC68 now strikes: the finger drives a dent down
   onto the fret whose width the finger's speed sets, and note-on velocity sets
-  that speed through the pluck's own velocity law, so a hammered note lands at
-  the loudness of a pluck at the same velocity where it arrived at 1 to 6% of
-  it before. Note-off velocity lifts the finger: above MIDI's unsensed 64 the
-  pressed string follows the rising finger and rings on at its new length,
-  louder and brighter the faster the lift, to a full pull-off to open at 127;
+  that speed through the pluck's own velocity law, so a hammered note lands
+  within +7 and −2 dB of a pluck at the same velocity where it arrived at 1 to
+  6% of it before. Note-off velocity lifts the finger: above MIDI's unsensed
+  64 the pressed string follows the rising finger and rings on at its new
+  length, louder and brighter the faster the lift, to a full pull-off to open,
+  reached on most strings well below 127;
   64 and below is the finger staying on the string, exactly as every note-off
   was. Pull-offs under CC68 are plucked by the leaving finger the same way.
   The heights are the published set-up dimensions and the speeds come from
