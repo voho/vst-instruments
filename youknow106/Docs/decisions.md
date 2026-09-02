@@ -111,6 +111,23 @@ This is an evidence-priority decision, not a listening verdict: nothing here
 is audible, and no letters were rendered. The old floor remains available
 behind the internal `enableCommonVcaNoise` comparison switch.
 
+## 2026-09-01 — Sub half-wave mean on the WAVE node
+
+Module p. 13 at 1200 dpi confirms R102 (R99 on CH2) as Tr19's (Tr16's)
+collector load to the SUB LEVEL rail and D6 (D5) as the single series diode
+from the R101 (R97) 27 kΩ leg into the WAVE line: the rail's current enters
+the node on one half-cycle only, so the sub carries a mean equal to its own AC
+amplitude. The model now adopts that unipolar shape and leaves the mean for
+C56/C50 to remove; the level law stays linear in the held rail, and the node's
+DC-to-AC impedance ratio is voiced at 1, the floor of its ≤ 2 bracket, inside
+the already-voiced sub coordinate. Steady state is unchanged; only a SUB level
+step now produces the C56/C59-shaped bump the DC-coupled leg makes. This is
+explicitly distinct from the removed sub-driver amplitude asymmetry (a
+fabricated 0.3 % level inequality). It is an evidence-priority decision, not
+a listening verdict, and does not close OQ-15: a sub-level-versus-byte capture
+at TP8 would fix the diode onset and the node loading. The former zero-mean
+square remains behind the internal `enableSubHalfWaveNodeCoupling` switch.
+
 ## 2026-09-01 — Loaded MN3009 reconstruction network
 
 Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
@@ -180,23 +197,6 @@ native Apple M1 Max Release benchmark at 48 kHz/4×
 (256-frame blocks, 1024 timed blocks, 13 alternating repetitions,
 Poly/Cubic/RK4) changed median thread CPU by less than 1% in both the idle and
 six-noise-voice cases, negligible against the standing CPU budget.
-
-## 2026-09-01 — Sub half-wave mean on the WAVE node
-
-Module p. 13 at 1200 dpi confirms R102 (R99 on CH2) as Tr19's (Tr16's)
-collector load to the SUB LEVEL rail and D6 (D5) as the single series diode
-from the R101 (R97) 27 kΩ leg into the WAVE line: the rail's current enters
-the node on one half-cycle only, so the sub carries a mean equal to its own AC
-amplitude. The model now adopts that unipolar shape and leaves the mean for
-C56/C50 to remove; the level law stays linear in the held rail, and the node's
-DC-to-AC impedance ratio is voiced at 1, the floor of its ≤ 2 bracket, inside
-the already-voiced sub coordinate. Steady state is unchanged; only a SUB level
-step now produces the C56/C59-shaped bump the DC-coupled leg makes. This is
-explicitly distinct from the removed sub-driver amplitude asymmetry (a
-fabricated 0.3 % level inequality). It is an evidence-priority decision, not
-a listening verdict, and does not close OQ-15: a sub-level-versus-byte capture
-at TP8 would fix the diode onset and the node loading. The former zero-mean
-square remains behind the internal `enableSubHalfWaveNodeCoupling` switch.
 
 ## 2026-08-31 — Pulse-Off WAVE node and evidence boundaries
 
