@@ -216,6 +216,12 @@ struct EngineParameters
     // retains the former zero-mean bipolar square solely for controlled A/B
     // renders.
     bool enableSubHalfWaveNodeCoupling { true };
+    // On by default: the voice VCA is a bare BA662 differential pair, so its
+    // output follows I_tail * tanh(V_d / 2 V_t) rather than a linear multiply,
+    // driven as hard as Roland's own trims say through the sibling JUNO-6/60
+    // drawing's 47 kOhm load (see VoiceVcaSignalLaw). False retains the former
+    // linear multiply, bit for bit, solely for controlled A/B renders.
+    bool enableVoiceVcaSignalSaturation { true };
     // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
     // loaded by C41/R79. Putting the scanned NOISE control before that output
     // pole lets C41 discharge while muted and recharge when the level returns.
@@ -1066,6 +1072,91 @@ public:
         [[nodiscard]] static float softplusGain(float control) noexcept;
         [[nodiscard]] static const std::array<float, tableSteps + 1>&
         exactGainTable();
+    };
+    // The same amplifier's signal law. The BA662's input is an undegenerated
+    // bipolar pair with no linearising diodes (Open Music Labs' reverse-
+    // engineered BA662 schematic). The Rohm BA6110 DIP sibling *does* carry
+    // "distortion reduction" diodes, so its datasheet corroborates only the
+    // family law -- p. 4 prints Av = gm*Ro = Icontrol(mA)/52 mV * Ro, and
+    // 0.2 % THD typ at Icontrol = 200 uA, VI = 5 mVrms, which a bare pair's
+    // HD3 = u^2/12 reproduces -- not the absence of diodes. A bare pair has
+    // the fixed shape I_out = I_tail * tanh(V_d / (2 V_t)), so the only thing
+    // left to fix is how hard the service trim drives it, and that follows
+    // from the output side alone:
+    //
+    //   I_tail(full control) = (V_cv,max - V_be) / (R106 + R105)
+    //     V_cv,max = 9.921875 V (code 4064 on the 0..+10 V IC27b branch,
+    //     p. 8) plus the +0.26 V VR34 standoff that branch already stands at
+    //     (p. 18 s. 3; the coordinate VoiceVcaControlLaw::turnOn is in);
+    //     R106 10k + R105 22k into grounded-base Tr20 (p. 13); nominal
+    //     2SA1015-class V_be 0.62 V at about 0.3 mA; the BA662's pin-1
+    //     control current mirrored 1:1 onto the tail (Open Music Labs
+    //     measured about 500 ohm on the mirror's emitters; that both sides
+    //     are equal is the assumption).
+    //   ADJUSTMENT s. 6 VCA GAIN (p. 19; bank 3, hold C4, full sustain) sets
+    //     VR27 for 6 Vp-p at TP8 = pin 10 VCA OUT, i.e. 3.0 V peak across
+    //     the load, while the filter output at TP19 carries s. 5's 4.8 Vp-p
+    //     = 2.4 V peak self-oscillation sine of the same bank and key.
+    //   I_out,peak = 3.0 V / R_load;  tanh(u_trim) = I_out,peak / I_tail.
+    //
+    // R_load is the R||C the 80017A module drawing (p. 9) shows on the VCA
+    // BA662's output with no value printed. Roland's JUNO-6 and JUNO-60
+    // Service Notes (CPU BOARD, p. 9 in both) draw the same discrete
+    // IR3109 + BA662 voice circuit the module integrates: BA662 pin 6 ->
+    // R42 47K to GND (no capacitor) -> pin 7 buffer in -> pin 8 out (TP4);
+    // input IR3109 output -> C8 1 uF NP -> R38 56K -> VR4 20K GAIN -> pin 2,
+    // R40 470 and R39 470 to GND on pins 2 and 3; control ENV -> R44 27K ->
+    // R43 10K -> grounded-base PNP TR6 -> pin 1. The Open80017a
+    // reconstruction agrees at 47k; the 80017A's own printed resistor is
+    // unread (OQ-19). Evidence class: derived from a sibling Roland drawing
+    // of the same discrete circuit, never measured on a 106.
+    //
+    // Because VR27 fixes the output side, the pin-9 divider (VR27, R108 and
+    // the module's internal 4.7k/560) cancels and u_trim refers straight to
+    // the engine's vcaInput node: H = 2.4 V / u_trim. The shape is odd, so
+    // C59/C14/C12 see no new DC; I_tail scales with the envelope while V_d
+    // does not, so the compression is the same at every envelope level; and
+    // u_trim contains no V_t, so the warm-up does not enter it. Predicted
+    // HD3 = u^2/12: -48.1 dBc at the trim level, -36.1 dBc at twice it and
+    // about -30 dBc with -0.9 dB of compression on a full saw+pulse+sub
+    // open-filter voice (6.8 V peak in the voiced mixer coordinate, OQ-15).
+    // With the filter open its own stage tanh is nearly linear, so on bright
+    // patches this pair is the dominant odd-order nonlinearity; on resonant
+    // material the cascade's 6.37 V stages lead.
+    struct VoiceVcaSignalLaw
+    {
+        static constexpr float controlFullScaleVolts =
+            CircuitDerivedResonanceProfile::controlFullScaleVolts;
+        // VR34's +0.25...+0.27 V at TP7 (p. 18 s. 3).
+        static constexpr float holdStandoffVolts = 0.26f;
+        // R106 10k + R105 22k (p. 13).
+        static constexpr float controlSeriesOhms = 32000.0f;
+        // Tr20's nominal emitter-junction drop at about 0.3 mA.
+        static constexpr float controlJunctionVolts = 0.62f;
+        // R42 on the JUNO-6/60 CPU BOARD drawings (p. 9); the Open80017a
+        // reconstruction agrees; the 80017A's printed value is unread.
+        static constexpr float loadOhms = 47000.0f;
+        // 6 Vp-p at TP8 (p. 19 s. 6) and 4.8 Vp-p at TP19 (p. 19 s. 5).
+        static constexpr float trimOutputPeakVolts = 3.0f;
+        static constexpr float trimFilterPeakVolts = 2.4f;
+        // 298.8 uA.
+        static constexpr float fullControlTailAmps =
+            (controlFullScaleVolts + holdStandoffVolts - controlJunctionVolts)
+            / controlSeriesOhms;
+        // atanh(trimOutputPeakVolts / loadOhms / fullControlTailAmps)
+        // = atanh(63.83 uA / 298.8 uA) = atanh(0.21361). atanh is not
+        // constexpr, so the value is stored here and pinned by the circuit
+        // suite to 1e-6.
+        static constexpr float trimDrive = 0.21695541f;
+        // 11.06 V at the vcaInput node.
+        static constexpr float headroomVolts = trimFilterPeakVolts / trimDrive;
+
+        // headroomVolts * tanh(volts / headroomVolts), through the engine's
+        // PolyZoned kernel: |x*Q(x^2) - tanh(x)| <= 4.31e-7 over |x| < 1
+        // (|volts| < 11.06 V, which covers every modelled source; the pinned
+        // bound including float rounding is 1e-6), the zoned Hermite tables
+        // beyond it.
+        [[nodiscard]] static float shape(float volts) noexcept;
     };
     // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
     // voice sum. Roland's converter chart and jack-board drawing establish the

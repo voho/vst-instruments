@@ -66,15 +66,19 @@ and Intel 8254/8253, NEC µPD7810/7811, TI TL072/TL082, Rohm BA6110 and Alfa
 AS3109/AS662; and [Nippon Chemi-Con's aluminum-electrolytic voltage-bias guidance](https://www.chemi-con.co.jp/en/faq/detail.php?id=alBiasVoltageChara).
 A1QH80017A VCF/VCA module teardown photographs, the
 Open80017a/dksynth module reconstruction, and published DCO charge-circuit
-analysis.
+analysis. The Roland JUNO-6 and JUNO-60 Service Notes' CPU-board voice
+drawings (p. 9 in both), which print the discrete IR3109 + BA662 voice circuit
+the 80017A integrates, are read for one value the 106's own drawings leave
+blank: the voice VCA's 47 kΩ output load (R42).
 
 **Measurements and archives.** KR-106 (click-timing chorus series, measured
 code-to-frequency and sustain tables, archival tone transcription); ModWiggler
 and Gearspace measurement threads read at post level; the Alpes Machines
 One-O-Six kit guide; the atosynth reconstruction; Cornutt workbench pages;
-Analogue Renaissance service notes. Sibling JUNO-60 Service Notes and chorus
-measurements are labelled comparison only — the JUNO-60's 1.682 mode-rate
-ratio must not return; this instrument's own is 1.6234799.
+Analogue Renaissance service notes. For the chorus, the sibling JUNO-60
+Service Notes and chorus measurements are labelled comparison only — the
+JUNO-60's 1.682 mode-rate ratio must not return; this instrument's own is
+1.6234799 — while their voice drawing serves the VCA load above.
 
 **Literature.** Zavalishin (TPT, `1/(4−k)`); Stilson & Smith; Huovilainen;
 D'Angelo & Välimäki; Välimäki, Pekonen & Nam (BLEP residuals); Holters &
@@ -201,8 +205,21 @@ forty-year-old unit will null against the plug-in.
   solved exactly (y + ln y = v) and tabulated; the single knee point remains
   the reconstruction's voiced 150 mV reading, pinned so the law's sub-knee
   tail coincides with the former softplus (anchored topology and resistors;
-  knee voiced; the BA662's low-current gm still OQ-19). The signal path stays
-  linear.
+  knee voiced; the BA662's low-current gm still OQ-19). Its signal path is
+  the bare differential pair's `tanh`, driven as hard as Roland's own trims
+  say: the 6 Vp-p VCA GAIN and 4.8 Vp-p RESONANCE adjustments on the same
+  bank and key fix the pair's drive from the output side alone — 3.0 V
+  across the load against a 299 µA full-control tail — so the unread pin-9
+  input divider cancels, and the sibling JUNO-6/60 CPU-board drawing of the
+  same discrete circuit supplies the 47 kΩ output load (R42). That puts
+  11.06 V of headroom at the filter-output node and predicts a −48 dBc third
+  harmonic at the trim level, −36 dBc at twice it and about −30 dBc with
+  −0.9 dB of compression on a full open-filter voice, where the open
+  cascade's own stages are nearly linear and the pair is the dominant
+  odd-order term; the shape is the same at every envelope level because the
+  tail current scales with control and the input drive does not (derived
+  from a sibling Roland drawing; the 80017A's own printed values are unread,
+  OQ-19).
 
 **Bus and output**
 
@@ -542,7 +559,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741), [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) and [converter-output](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the nominal no-interrupt relationship to the existing pitch-converter timestamp `T`. Treating `T` as the start of `ANI PA,$EF`, running LSB instruction start is `T-334` states (83.50 us), both paths' MSB instruction start is `T-323` (80.75 us), and reset-control instruction start is `T-389` (97.25 us); reset control-to-LSB remains 55 states and LSB-to-MSB 11. The engine captures the paired count, reset decision and DCO-CV target at `T-389`, applies the modelled control/LSB/MSB events at those instruction anchors, and commits only that captured CV when the converter cursor reaches `T`, so later host edits cannot splice two scans together. The matching [OKI MSM82C53-2 mode timing](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=186) anchors PIT OUT polarity, odd-count split and delayed CE transfer; its same-part Mode 2/3 timing diagram places CE changes and PIT OUT transitions on the TP5 falling/count edge. Roland maps only positive-going PIT OUT to C54 discharge and the sub clock. IC29's 12 MHz resonator and IC35's separate 8 MHz resonator prove there is no fixed CPU-to-PIT phase to recover. Exact coincidences therefore use two separate deterministic compatibility policies, not hardware claims: **Policy A** compares the PIT `/WR` trailing/latch edge with TP5 falling/count; **Policy B** compares the PF6/PF7 update with IC35 parallel reload, whose corresponding TP5 rise appears later after propagation. Neither coincidence outcome is manufacturer-specified; no metastability behaviour is asserted or modelled. IC35's [installed-part truth table](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17) and the firmware's [`$C0/$40/$00` range writes](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L246-L273) establish DCBA presets 14/12/8 and ÷2/÷4/÷8. The model separates TP5 falling/count from IC35 reload by one nominal raw-8 MHz tick, 125 ns, and leaves propagation refinements unmodelled. At exact equality, Policy A is TP5-count-first, so the tied count edge sees the pre-write state; Policy B is IC35-reload-first, so the stable old preset is captured. Both orderings are deterministic compatibility policy, not hardware claims. Preset 10/÷6 remains a structural bit-skew hypothesis and is neither implemented nor synthesised in tests. ADC service cannot reach the DCO transaction; semantic Voice On/Off instead discard their interrupt return and restart the voice-board loop. The engine reproduces that restart at its logical command boundary, preserving protected PIT writes and completed port stores while cancelling abandoned CPU/CV work. What remains open is each physical converter/mux timestamp; serial wire phase and installed-NMOS automatic-entry timing; installed resonator frequencies and drift; `/WR`-to-TP5-falling and PF-to-reload phase statistics; measured, rather than nominal, PIT-count-to-reload separation and TP5 pulse-width distortion; C54 reset waveform; and installed MC5534A output swing, saturation onset and shape, recovery, and the magnitude—not the existence—of ramp-to-comparator coupling. Roland's [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9) give an approximately 12 Vpp Miller ramp and identify C54 as 0.001 µF with 390/200/100 kΩ range resistors, but the custom IC's internal amplifier/discharge-transistor values are unpublished; the renderer therefore retains its finite-linear discharge and scale-aware +15 V ideal-supply bound as compatibility policy rather than a measurement claim | P1 |
 | OQ-09 | Resonance byte-to-loop-gain law. Topology and mechanism are settled, including the Roland-printed input-side compensation from the p. 9 module drawing; the drawing prints no component values, so the 0.2296 coefficient stays voiced. The onset coordinate now includes the anchored +0.26 V VR34/TP7 standoff (p. 18 section 3) that the p. 8 IC27b branch carries into the RES CV hold; the 0.6 V junction drop above it is still a nominal prior awaiting the measured response family | P1 |
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. Roland establishes that about −0.8 V holds the comparator high and the module drawing keeps that output on the fixed WAVE node ahead of C56/C50. The model now retains the high state and lets its existing coupling node reject the settled DC, replacing the contradicted hard-zero mixer gate; the transient therefore follows actual comparator crossings. Absolute WAVE level is still an OQ-15 coordinate, while installed residual bleed, loading and switching-waveform detail remain unmeasured | P1 |
-| OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled and the control law now follows the traced stage's ideal-junction physics with one voiced knee; the measured gain sweep would fix that knee (and the implied Is, currently 1.2e-13 A) and the BA662's low-current gm, not the law's shape | P1 |
+| OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled and the control law now follows the traced stage's ideal-junction physics with one voiced knee; the measured gain sweep would fix that knee (and the implied Is, currently 1.2e-13 A) and the BA662's low-current gm, not the law's shape. The signal-path saturation now ships from the sibling JUNO-6/60 drawing's 47 kΩ load (R42) through the p. 19 trims, with the 80017A's own printed load and input network unread; a level-swept THD capture TP19 against TP8 at bank-3 full sustain would confirm the headroom directly — the pair predicts HD3 = −48 dBc at the 4.8 Vp-p trim, rising 12 dB per doubling, and one reading gives H = 2.4 V / √(12·HD3) | P1 |
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
 | OQ-04 | Loaded post-BBD support-chain transfer. Roland's designators and Panasonic's typical Gi–RL curve now anchor the nominal ideal-follower MNA: both finite-source MN3009 outputs, the shared 47 kΩ/2.2 nF tap, both 22 kΩ Sallen-Key sections and loaded output coupling are one continuous solve. The ≈3.7 kΩ per-output source value is a local typical-curve estimate, not a guaranteed parameter; installed-part spread, finite Tr15–Tr18 impedance, absolute wet gain and an original-unit wet-only sweep remain open | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
@@ -691,6 +708,14 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   the 47 kΩ/2.2 nF tap and first reconstruction section now advance as one
   exact six-state nodal system; the relative change reaches −0.87 dB at 10 kHz
   and the HISS product normalization was remeasured on both HQ rate families.
+- The voice VCA now carries the BA662 differential pair's saturation instead
+  of a linear multiply. Its drive is derived from Roland's own p. 19 trims
+  through the 47 kΩ output load the JUNO-6/60 CPU-board drawings print for
+  the same discrete circuit, giving 11.06 V of headroom at the filter output:
+  −0.75 dB of compression with harmonics at −29 dBc on a full open-filter
+  voice, −0.07 dB and −49 dBc on a filtered saw, and −0.10 dB at the
+  self-oscillation trim. The former linear multiply remains bit-exact behind
+  an internal comparison switch.
 - Replaced instantaneous DCO timer programming with explicit M82C53 Mode-3
   OUT/count staging, the recovered µPD7810 control/LSB/MSB timing relative to
   each pitch-converter poll, and the synchronous IC35 range handoff. PIT count,

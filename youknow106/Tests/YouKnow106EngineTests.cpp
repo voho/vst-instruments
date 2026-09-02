@@ -9254,8 +9254,16 @@ void testFixedOutputBoundaryCorpus()
         // fixed depth 0.37 now means stored byte 47 / code 0x0a20 rather than
         // a continuous 0..1 interpolation. The waveform-free resonance row
         // below remains bit-identical as the negative control.
-        Baseline { 0.0945856, 0.201924, 0.203618, 0, 0 },
-        Baseline { 0.254439, 0.731238, 0.741002, 0, 0 },
+        // Re-pinned after the voice VCA gained the BA662 pair's saturation
+        // (VoiceVcaSignalLaw): every row now sits under the pair's own
+        // compression -- about -0.5 dB on the hot mixer rows and -0.10 dB on
+        // the waveform-free self-oscillation row, its predicted value at the
+        // trim level, which makes that row the positive control this time --
+        // and the Unison headroom probe moved from C2 to C1 to keep crossing
+        // full scale. Fixtures, gain, window and guards are otherwise
+        // unchanged.
+        Baseline { 0.088797, 0.182904, 0.18435, 0, 0 },
+        Baseline { 0.239833, 0.686837, 0.694453, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
         // physical C54/comparator event walk. Only this six-card Unison
@@ -9265,13 +9273,13 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.484028, 1.02109, 1.02229, 100, 398 },
+        Baseline { 0.466639, 1.03322, 1.03936, 132, 526 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.0454893, 0.0645766, 0.0645766, 0, 0 },
-        Baseline { 0.165877, 0.377675, 0.382499, 0, 0 },
-        Baseline { 0.11491, 0.254241, 0.254243, 0, 0 },
+        Baseline { 0.0449632, 0.0635818, 0.0635818, 0, 0 },
+        Baseline { 0.156117, 0.350031, 0.354098, 0, 0 },
+        Baseline { 0.107449, 0.239127, 0.240848, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -9304,6 +9312,9 @@ void testFixedOutputBoundaryCorpus()
             parameters.keyMode = KeyMode::Unison;
             // This low-register, unnormalised six-card stack is the deliberate
             // headroom probe: it must cross full scale without a hidden rail.
+            // It sat on C2 until the voice VCA gained the BA662 pair's
+            // compression, which left that stack at 0.984 peak; C1 keeps the
+            // probe crossing full scale with every other setting unchanged.
         }
         else if (fixture.playing == Playing::SelfOscillation)
         {
@@ -9319,7 +9330,7 @@ void testFixedOutputBoundaryCorpus()
             for (const int note : { 36, 43, 48, 52, 55, 60 })
                 engine.noteOn(note, 1.0f);
         else
-            engine.noteOn(fixture.playing == Playing::SoloUnison ? 36 : 60, 1.0f);
+            engine.noteOn(fixture.playing == Playing::SoloUnison ? 24 : 60, 1.0f);
 
         const int warmupSamples = fixture.playing == Playing::SelfOscillation
                                 ? 96000 : 24000;
@@ -12736,6 +12747,80 @@ void testSelfOscillationMatchesTheServiceTrim()
                + " octaves across two octaves of keyboard, not 2.00");
 }
 
+void testVoiceVcaSaturationFollowsTheBa662Pair()
+{
+    // The voice VCA is a bare BA662 pair (VoiceVcaSignalLaw), on by default.
+    // What it adds on real material is bounded by the pair's own prediction:
+    // under a decibel of compression plus odd harmonics around -30 dBc on a
+    // full open-filter mixer, and nothing worth hearing on a filtered saw.
+    // The two are separated here because the whole-file on-minus-off is
+    // dominated by the correlated gain term (-0.75 dB of gain is -21 dBc by
+    // itself); the residual after the least-squares gain between the takes
+    // is removed is the harmonic part. The switch retains the former linear
+    // multiply bit for bit for A/Bs.
+    const EngineParameters defaults;
+    expect(defaults.enableVoiceVcaSignalSaturation,
+           "the BA662 pair's saturation is no longer the shipping default");
+
+    struct Comparison
+    {
+        double gainDb;
+        double residualDbc;
+    };
+    const auto compare = [](bool fullMixer) {
+        auto parameters = plainPatch();
+        parameters.pulseEnabled = fullMixer;
+        parameters.subLevel = fullMixer ? 1.0f : 0.0f;
+        parameters.cutoff = fullMixer ? 1.0f : 0.62f;
+        const auto take = [&](bool saturate) {
+            YouKnow106Engine engine;
+            engine.prepare(48000.0, blockSize, true);
+            parameters.enableVoiceVcaSignalSaturation = saturate;
+            engine.setParameters(parameters);
+            engine.noteOn(48, 1.0f);
+            return render(engine, 48000);
+        };
+        const auto on = take(true);
+        const auto off = take(false);
+        double cross = 0.0;
+        double reference = 0.0;
+        for (std::size_t index = 0; index < off.left.size(); ++index)
+        {
+            cross += static_cast<double>(on.left[index])
+                   * static_cast<double>(off.left[index]);
+            reference += static_cast<double>(off.left[index])
+                       * static_cast<double>(off.left[index]);
+        }
+        expect(reference > 0.0, "the VCA saturation fixture rendered silence");
+        const double gain = cross / reference;
+        double residual = 0.0;
+        for (std::size_t index = 0; index < off.left.size(); ++index)
+        {
+            const double delta = static_cast<double>(on.left[index])
+                               - gain * static_cast<double>(off.left[index]);
+            residual += delta * delta;
+        }
+        return Comparison { 20.0 * std::log10(gain),
+                            10.0 * std::log10(residual / reference) };
+    };
+
+    const auto fullMixer = compare(true);
+    expect(fullMixer.gainDb > -1.2 && fullMixer.gainDb < -0.4,
+           "the BA662 pair compresses a full open-filter mixer by "
+               + std::to_string(fullMixer.gainDb) + " dB, outside -1.2..-0.4");
+    expect(fullMixer.residualDbc > -35.0 && fullMixer.residualDbc < -25.0,
+           "the BA662 pair's harmonics on a full open-filter mixer sit at "
+               + std::to_string(fullMixer.residualDbc)
+               + " dBc, outside -35..-25");
+    const auto quiet = compare(false);
+    expect(quiet.gainDb > -0.2,
+           "the BA662 pair compresses a filtered saw by "
+               + std::to_string(quiet.gainDb) + " dB, below -0.2");
+    expect(quiet.residualDbc < -45.0,
+           "the BA662 pair's harmonics on a filtered saw sit at "
+               + std::to_string(quiet.residualDbc) + " dBc, above -45");
+}
+
 void testVcfStageOffsetsBelongToUnitCharacter()
 {
     // A resonant sweep is where four asymmetric stages show up most, so drive
@@ -14444,6 +14529,7 @@ int main()
     testResonanceDoesNotMoveTheRenderedCorner();
     testVelocityScalesTheEnvelopeIntoTheFilter();
     testSelfOscillationMatchesTheServiceTrim();
+    testVoiceVcaSaturationFollowsTheBa662Pair();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
     testVcfEarlyEffectBelongsToUnitCharacter();

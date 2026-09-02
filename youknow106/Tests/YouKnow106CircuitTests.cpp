@@ -1945,6 +1945,70 @@ void testEnvelopeAndAmplifierLaws()
                    + std::to_string(control));
     }
 
+    // The same amplifier's signal law: a bare BA662 pair driven as hard as
+    // Roland's own trims say through the sibling JUNO-6/60 drawing's 47 kOhm
+    // load. The two stored constants are re-derived from their inputs, the
+    // kernel is held to libm, and the shape is checked against the pair's
+    // predicted third harmonic rather than against a chosen curve.
+    {
+        using SignalLaw = YouKnow106Engine::VoiceVcaSignalLaw;
+        const double tail = (9.921875 + 0.26 - 0.62) / 32000.0;
+        const double drive = std::atanh(3.0 / 47000.0 / tail);
+        expectNear(SignalLaw::trimDrive, drive, 1.0e-6,
+                   "the stored VCA trim drive is not atanh(I_out / I_tail)");
+        expectNear(SignalLaw::headroomVolts, 2.4 / drive, 1.0e-3,
+                   "the VCA headroom is not the trim level over the trim drive");
+
+        // Unity at the origin, odd, monotone and bounded by the tail current.
+        expectNear(SignalLaw::shape(0.01f) / 0.01f, 1.0, 1.0e-4,
+                   "the VCA pair does not have unity small-signal gain");
+        float previous = -1.0e30f;
+        for (int step = -400; step <= 400; ++step)
+        {
+            const float volts = 0.1f * static_cast<float>(step);
+            const float shaped = SignalLaw::shape(volts);
+            expect(shaped == -SignalLaw::shape(-volts),
+                   "the VCA pair's transfer is not odd");
+            expect(shaped > previous, "the VCA pair's transfer is not monotone");
+            expect(std::abs(shaped) < SignalLaw::headroomVolts,
+                   "the VCA pair puts out more than its tail current");
+            previous = shaped;
+        }
+
+        // The kernel against libm over the whole |x| <= 1 working span.
+        double worst = 0.0;
+        for (int step = -2000; step <= 2000; ++step)
+        {
+            const double x = 0.0005 * static_cast<double>(step);
+            const double kernel = SignalLaw::shape(
+                static_cast<float>(x * SignalLaw::headroomVolts))
+                / SignalLaw::headroomVolts;
+            worst = std::max(worst, std::abs(kernel - std::tanh(x)));
+        }
+        expect(worst <= 1.0e-6,
+               "the VCA pair's tanh kernel is " + std::to_string(worst)
+                   + " from libm over its working span");
+
+        // A 2.4 V peak sine -- the trim level -- projected onto its own
+        // third harmonic: u^2/12 within ten per cent, and about -48 dBc.
+        constexpr int samples = 4096;
+        double fundamental = 0.0;
+        double third = 0.0;
+        for (int index = 0; index < samples; ++index)
+        {
+            const double phase = 2.0 * pi * index / samples;
+            const double shaped = SignalLaw::shape(static_cast<float>(
+                SignalLaw::trimFilterPeakVolts * std::sin(phase)));
+            fundamental += shaped * std::sin(phase);
+            third += shaped * std::sin(3.0 * phase);
+        }
+        const double hd3 = std::abs(third / fundamental);
+        expectNear(hd3 / (drive * drive / 12.0), 1.0, 0.1,
+                   "the VCA pair's third harmonic at the trim level is not u^2/12");
+        expectNear(20.0 * std::log10(hd3), -48.1, 0.5,
+                   "the VCA pair's third harmonic at the trim level is not -48 dBc");
+    }
+
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
     // after the six voices are summed. Solve Roland's p. 8 converter and p. 15
     // resistor network independently in double precision, then apply NEC's

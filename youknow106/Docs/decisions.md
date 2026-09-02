@@ -5,6 +5,50 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-02 — Voice BA662 signal saturation
+
+The voice VCA's signal path is now the BA662 differential pair's
+`I_tail · tanh(V_d / 2V_t)` rather than a linear multiply. The pair has no
+linearising diodes (Open Music Labs' reverse-engineered BA662; the BA6110
+sibling does carry them and corroborates only the family's gm law), so the
+shape has no free constant, and Roland's own ADJUSTMENT steps fix how hard it
+is driven: on the same bank and key, s. 5 sets 4.8 Vp-p at the filter output
+and s. 6 sets 6 Vp-p at the VCA output, so the drive follows from the output
+side alone — 3.0 V across the load against a full-control tail of
+(9.92 + 0.26 − 0.62) V / 32 kΩ = 299 µA — and the unread pin-9 divider
+cancels. The one magnitude-setting value the JUNO-106 drawings do not print,
+the OTA's output load, is now read from Roland's own JUNO-6 and JUNO-60
+Service Notes (CPU BOARD, p. 9 in both), which draw the discrete IR3109 +
+BA662 voice circuit the 80017A integrates with R42 47 kΩ on the VCA BA662's
+output; the Open80017a reconstruction agrees. That gives u_trim = 0.217 and
+11.06 V of headroom at the filter-output node.
+
+This supersedes, for the signal nonlinearity only, the 2026-08-31 sentence
+below that "BA662 signal nonlinearity/noise/thump and converter charge
+injection remain unimplemented: available sources settle topology and nominal
+time constants, not the original hybrid transfer". The sibling drawing is the
+new evidence: the law was never in question, and the load is now a
+Roland-drawn value of the same circuit rather than one clone's choice. The
+pair's noise, its thump and the converter charge injection remain as that
+entry left them. This is an evidence-priority decision under the realism/CPU
+goal, not a listening verdict, and it does not close OQ-19: the 80017A's own
+printed load and input network are still unread, and a TP19-against-TP8
+level-swept THD capture (HD3 = −48 dBc predicted at the 4.8 Vp-p trim) would
+confirm the headroom directly. The control law, VR30 null and C59 corner are
+untouched, the switch-off path is bit-identical to the previous engine, the
+self-oscillation anchor is untouched at the filter node, and the 4 Vp-p TP8
+noise figure moves by under 0.1 dB, inside its stated crest-convention band.
+
+Measured on the shipping path at 48 kHz/4×: a full saw+pulse+sub open-filter
+voice compresses by −0.75 dB with a level-matched residual of −28.8 dBc
+(whole-file on-minus-off −20.9 dBc, dominated by the gain term); a filtered
+saw by −0.07 dB and −49.4 dBc (−41.1 dBc whole-file); the self-oscillation
+corpus row by −0.10 dB, the pair's prediction at the trim level. A native
+Apple silicon Release paired benchmark (Poly/Cubic/RK4, 256-frame blocks,
+seven alternating rounds) moved median thread CPU by −0.70 % idle, +2.04 %
+on six plain voices, +2.22 % on six resonant voices and +1.77 % on the
+six-voice full-mixer Chorus II case, inside the +5 % budget.
+
 ## 2026-09-01 — NOISE control onset
 
 The circuit-derived linear-above-onset NOISE level profile is now the

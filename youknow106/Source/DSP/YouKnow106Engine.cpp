@@ -2881,6 +2881,21 @@ double YouKnow106Engine::OtaCascade::cubicEarlyTanh(double value) noexcept
     return value * (1.0 - (4.0 / 27.0) * value * value);
 }
 
+float YouKnow106Engine::VoiceVcaSignalLaw::shape(float volts) noexcept
+{
+    constexpr double inverseHeadroom =
+        1.0 / static_cast<double>(headroomVolts);
+    const double drive = static_cast<double>(volts) * inverseHeadroom;
+    const double u = drive * drive;
+    if (u < 1.0)
+        return static_cast<float>(
+            headroomVolts * (drive * vcfInnerTanhFactor(u)));
+    // A non-finite input also lands here; the checked table call passes it
+    // through for finishVoiceFilter's own guard to zero.
+    return static_cast<float>(
+        headroomVolts * OtaCascade::zonedHermiteTanh(drive));
+}
+
 double YouKnow106Engine::OtaCascade::closedLoopSpectralFactor(
     double feedback) noexcept
 {
@@ -7893,7 +7908,13 @@ float YouKnow106Engine::finishVoiceFilter(Voice& voice,
     // multiplied by control and VCA gain, producing an unsupported
     // control-squared pulse. Do not invent a residual until a calibrated
     // TP8--TP13 capture establishes its distribution.
-    const float output = vcaInput * voice.vca * voltsToSample;
+    //
+    // The pair itself saturates ahead of the control multiply (see
+    // VoiceVcaSignalLaw); the switch only retains the linear multiply for
+    // A/B renders.
+    const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
+        ? VoiceVcaSignalLaw::shape(vcaInput) : vcaInput;
+    const float output = shaped * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
