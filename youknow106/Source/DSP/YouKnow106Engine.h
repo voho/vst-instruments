@@ -533,8 +533,9 @@ public:
     // OQ-09 shipping shape, selectable through
     // `useCircuitDerivedResonanceShape`. The
     // 2026-08-20 junction-level read of the module board's control chain --
-    // shared 0..+10 V RESO CV hold, per-card series trimmer plus 27 kOhm into
-    // a grounded-base 2SA1015-class stage, collector straight into the
+    // shared 0..+10 V RESO CV hold standing on the +0.26 V VR34 standoff
+    // (`standoffVolts` below), per-card series trimmer plus 27 kOhm into a
+    // grounded-base 2SA1015-class stage, collector straight into the
     // resonance BA662's control pin with no converter drawn anywhere on the
     // path -- makes the control current linear in the held voltage above one
     // emitter-junction drop. With the BA662 architecture's gm linear in its
@@ -542,10 +543,11 @@ public:
     // linear in the stored byte above that onset. The per-card trimmer sets
     // only the slope, which is exactly what the 4.8 Vp-p service adjustment
     // calibrates away, so the anchored endpoint is the voiced profile's own
-    // `maximumFeedback` and the onset is the one new constant. Between those
-    // ends nothing here is measured: this is a derivable shape beside the
-    // retained voiced compatibility curve, and OQ-09's measured
-    // response-versus-resonance family can still supersede it.
+    // `maximumFeedback` and the onset above the standoff is the one new
+    // constant. Between those ends nothing here is measured: this is a
+    // derivable shape beside the retained voiced compatibility curve, and
+    // OQ-09's measured response-versus-resonance family can still supersede
+    // it.
     struct CircuitDerivedResonanceProfile
     {
         // Byte 127 -> aligned word 0x3F80 -> physical code 4064 on the
@@ -556,8 +558,22 @@ public:
         // (atosynth); that trimmed figure is recorded under OQ-09 and not
         // adopted -- the nominal drop is the defensible uncalibrated prior.
         static constexpr float onsetVolts = 0.6f;
+        // The hold does not start at 0 V. Service Notes p. 18 section 3
+        // trims VR34 for +0.25...+0.27 V at TP7 with the D/A forced to 0 V,
+        // and p. 13 injects VR34 through R127 470k into IC27b's summing
+        // input, so that standoff is an additive constant on the whole
+        // 0..+10 V branch TP7 feeds; p. 8's timing chart routes TP7 through
+        // IC26 to RES. CV alongside VCA CV and NOISE LEVEL. The p. 13
+        // resonance leg -- IC26 ch6 into C86, IC22c follower, the RESO. CV
+        // bus, per-card VR26 20KB and R107 27k into Tr18's emitter with its
+        // base grounded -- has no bias or pull-down resistor (the noise leg's
+        // R114 2.2M has no counterpart here), so the standoff reaches the
+        // junction undivided and the drop above is measured from it, not
+        // from 0 V. Trimmed midpoint, anchored; the same rail state
+        // VoiceVcaControlLaw's `turnOn` is expressed on top of.
+        static constexpr float standoffVolts = 0.26f;
         static constexpr float onsetTravel =
-            onsetVolts / controlFullScaleVolts;
+            (onsetVolts - standoffVolts) / controlFullScaleVolts;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
         // Compensation and frequency correction operate in the loop-gain
@@ -971,7 +987,10 @@ public:
         // which is the coordinate this constant is expressed in. The standoff
         // is anchored; the 150 mV itself remains the surviving voiced free
         // parameter and OQ-19's sweep owns it. Do not add the +0.26 V again
-        // as a separate offset -- it is already the adjusted state.
+        // as a separate offset -- it is already the adjusted state. The RES
+        // CV hold on the same IC26 branch carries the same standoff;
+        // `CircuitDerivedResonanceProfile::standoffVolts` subtracts it from
+        // that path's junction onset.
         static constexpr float turnOn = 0.015f;
         // Ideal-BJT kT/q at room temperature on that same span; compatibility
         // approximation, not a measured BA662/Juno knee.

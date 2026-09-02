@@ -1584,12 +1584,27 @@ void testCircuitDerivedResonanceProfile()
     expectNear(Derived::controlFullScaleVolts, 10.0 * 4064.0 / 4096.0, 0.0,
                "the derived profile's full-scale voltage left the p. 8 "
                "0..+10 V branch at physical code 4064");
-    expectNear(Derived::onsetTravel, 0.6 / 9.921875, 1.0e-7,
-               "the derived profile's onset left one junction drop of the "
-               "control span");
-    expect(Derived::onsetTravel * 127.0f > 7.0f
-               && Derived::onsetTravel * 127.0f < 9.0f,
-           "the derived onset left the byte-8 region");
+    expectNear(Derived::onsetTravel, 0.34 / 9.921875, 1.0e-7,
+               "the derived profile's onset left one junction drop above the "
+               "VR34 standoff on the control span");
+    expect(Derived::onsetTravel * 127.0f > 4.0f
+               && Derived::onsetTravel * 127.0f < 5.0f,
+           "the derived onset left the byte 4..5 region");
+    // Against the pre-standoff coordinate (0.6 V measured from 0 V): same
+    // shape, same endpoint, so the standoff only lifts the low settings --
+    // about +4 dB at Resonance 1/10 and +0.3 dB at 5/10.
+    const auto ratioDb = [](int byte) {
+        const float onset = 0.6f / Derived::controlFullScaleVolts;
+        const float panel = static_cast<float>(byte) / 127.0f;
+        const float legacy = Voiced::maximumFeedback
+                           * (panel > onset ? (panel - onset) / (1.0f - onset)
+                                            : 0.0f);
+        return 20.0 * std::log10(Derived::loopGain(panel) / legacy);
+    };
+    expectNear(ratioDb(13), 3.98, 0.05,
+               "the standoff no longer lifts Resonance 1/10 by about 4 dB");
+    expectNear(ratioDb(64), 0.26, 0.02,
+               "the standoff no longer lifts Resonance 5/10 by about 0.3 dB");
 
     expect(Derived::loopGain(0.0f) == 0.0f
                && Derived::loopGain(Derived::onsetTravel) == 0.0f,

@@ -28,6 +28,26 @@ BA662's input saturation of the noise is left out because its drive is
 unfixed by the sources. The legacy linear-from-zero law remains available
 behind the internal comparison switch.
 
+## 2026-09-01 — Resonance onset on the VR34 standoff
+
+The circuit-derived resonance profile now measures its junction onset from
+the +0.26 V the RES CV hold already stands at, not from 0 V. Service Notes
+p. 18 section 3 trims VR34 for +0.25…+0.27 V at TP7 with the D/A forced to
+0 V; p. 13 injects VR34 through R127 into IC27b, whose output is TP7; p. 8
+routes TP7 through IC26 to RES CV as well as VCA CV; and the p. 13 resonance
+leg (IC26 ch6, C86, IC22c, VR26, R107, grounded-base Tr18) has no pull-down
+to divide it. The engine already treated that standoff as anchored for the
+voice VCA rail, so the onset moves from 0.6 V to 0.34 V above the hold's
+zero: first loop gain at stored byte ~4 instead of ~8, about +4 dB at
+Resonance 1/10, +1.3 dB at 2/10, +0.3 dB at 5/10 and nothing at 10/10. The
+endpoint is the same service-trimmed self-oscillation maximum, the 0.2296
+compensation is untouched, and no DSP work is added.
+
+This is an evidence-priority correction, not a listening verdict and not a
+closure of OQ-09: the standoff is the anchored service state, but the 0.6 V
+junction drop above it remains the nominal prior a measured
+response-versus-resonance family would replace.
+
 ## 2026-09-01 — Loaded MN3009 reconstruction network
 
 Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
