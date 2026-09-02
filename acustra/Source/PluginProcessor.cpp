@@ -110,6 +110,7 @@ struct PendingNoteOn
     int note { 0 };
     int channel { 1 };
     float velocity { 0.0f };
+    int pluckDelay { 0 };
 };
 
 struct PendingNoteOff
@@ -226,6 +227,10 @@ void AcustraAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
         detector.reset();
     engine.setParameters (snapshotEngineParameters());
     engine.prepare (sampleRate, samplesPerBlock);
+    currentSampleRate = sampleRate;
+    processedSamples = 0;
+    lastStrumSample = -1;
+    strumUpstroke = false;
     engine.setLowerZoneMemberCount (lowerZoneMemberCount);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
@@ -290,10 +295,45 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                            ? left.note > right.note
                            : left.channel < right.channel;
                    });
+        // Three or more notes on one sample are a chord nobody can play at
+        // once: a strum reaches its strings one after another, low to high
+        // on a downstroke and back on the return, so consecutive strums
+        // alternate. A rest long enough to start over starts over with a
+        // downstroke; two seconds is that convention, not a measurement.
+        // Legato groups are hammer-ons and stay as they are.
+        const bool strum = pendingNoteOnCount >= 3 && ! legatoDown
+            && std::all_of (pendingNoteOns.begin(),
+                            pendingNoteOns.begin() + pendingNoteOnCount,
+                            [&] (const PendingNoteOn& note)
+                            { return note.channel == pendingNoteOns[0].channel; });
+        if (strum)
+        {
+            const bool restarted = lastStrumSample < 0
+                || processedSamples - lastStrumSample
+                       > static_cast<std::int64_t> (2.0 * currentSampleRate);
+            if (restarted)
+                strumUpstroke = false;
+            lastStrumSample = processedSamples;
+            float meanVelocity = 0.0f;
+            for (int index = 0; index < pendingNoteOnCount; ++index)
+                meanVelocity += pendingNoteOns[static_cast<std::size_t> (index)].velocity;
+            meanVelocity /= static_cast<float> (pendingNoteOnCount);
+            // The list is sorted high to low, so a downstroke's rank counts
+            // from the end.
+            for (int index = 0; index < pendingNoteOnCount; ++index)
+            {
+                const int rank = strumUpstroke ? index
+                                               : pendingNoteOnCount - 1 - index;
+                pendingNoteOns[static_cast<std::size_t> (index)].pluckDelay
+                    = engine.strumDelaySamples (rank, meanVelocity);
+            }
+            strumUpstroke = ! strumUpstroke;
+        }
         for (int index = 0; index < pendingNoteOnCount; ++index)
         {
             const auto& note = pendingNoteOns[static_cast<std::size_t> (index)];
-            engine.noteOn (note.note, note.velocity, note.channel);
+            engine.noteOn (note.note, note.velocity, note.channel,
+                           strum ? note.pluckDelay : 0);
         }
         pendingNoteOnCount = 0;
 
@@ -401,6 +441,7 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                         buffer.getWritePointer (1, renderedTo),
                         numSamples - renderedTo);
 
+    processedSamples += numSamples;
     activeVoiceCount.store (engine.getActiveVoiceCount(),
                             std::memory_order_relaxed);
     sympatheticStringCount.store (engine.getSympatheticStringCount(),
@@ -469,7 +510,8 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
             // releasing it pulls off to what that string is still holding.
             // Like the bridge hand it is one gesture across the instrument,
             // not a per-channel setting.
-            engine.setLegato (value >= 64u);
+            legatoDown = value >= 64u;
+            engine.setLegato (legatoDown);
         }
         else if (controller == 120u)
         {

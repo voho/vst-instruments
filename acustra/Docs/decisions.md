@@ -3143,3 +3143,53 @@ dominant single-note error and the anchor-spring verdict decides what the
 string ends on; the two-way engine and its re-pinned tests are preserved as
 a patch with the user until then.
 
+## 2026-09-02 — repeated strums were a machine gun, and what varies now
+
+The user heard repeated strumming as a machine gun. Measured: a six-note
+chord sent on one sample and repeated eight times, hand-damped between
+strokes, renders strokes whose first 250 ms correlate 0.978 with the first
+and peak within 0.1 dB of it. A sequencer puts a chord on one sample, which
+no hand can do, and the engine plucked all six strings at once and, with
+nothing to vary, identically.
+
+Three things, each derived or measured, and no constant chosen beyond a
+player's map. First, a scheduled pluck in the engine: a note-on may carry a
+delay; the string is taken and fretted at once - the fretting hand forms the
+chord - and the pluck is released that many samples later, at the top of
+that sample, so a pluck scheduled D samples ahead is the note-on issued then
+to the bit (tested at 1, 97, 480 and 2000 samples), a release or All Sound
+Off before the pick arrives cancels it silently, and until then the string
+is a junction member with nothing on it. Second, the plug-in sweeps every
+same-sample group of three or more notes on one channel outside legato: the
+k-th string the pick reaches sounds k spacings later at the pick's speed,
+the spacing being the set-up dimension at the saddle (2 1/8" across the six
+on a steel-string, 58 mm on a classical), and the speed a player's map of the
+group's mean velocity from 0.5 m/s to 3 m/s - 108 ms to 18 ms across six
+strings - with both endpoints written beside the code as set by ear.
+Strokes alternate, low to high then high to low, because a strumming hand
+returns; a rest of more than two seconds restarts with a downstroke, a
+convention like MIDI's unsensed 64 and said so in the code. Chords whose
+notes arrive spread in time are played as sent. Third, every pluck draws
+its own point. The archtop's three takes of each note, put through the
+Traube-Smith comb on the soft rows where the estimate is clean, sit a
+median 0.02 of the string length apart; for three draws from a uniform
+spread the expected range is the spread's half-width, so each pluck lands
+within ±0.02 of the sounding length of the calibrated mean. Rendered back,
+three takes of one note span 37 to 201 cents of 0-40 ms centroid across the
+steel strings against the archtop's 158 median.
+
+What that does to the repeats: consecutive strokes correlate −0.16 (a
+downstroke against an upstroke); same-direction strokes 0.93 on the
+bass-first downstroke and 0.995 on the treble-first upstroke, because a
+pluck point moves a treble string's waveform far less than a bass string's
+(fewer strong partials for the comb to move). What still repeats is what the
+MIDI repeats - identical timing and force from the sequencer - and that
+variability is the hand's, for which no measurement here supplies the
+statistics; the corpus has no strums. It stays a Known gap rather than a
+chosen jitter. The pluck-point draw reaches every single note on a fresh
+engine, so the corpus is not bit-identical for the first time this session:
+6.8066, 6.8697 and 5.7034 against 6.8353, 6.8238 and 5.6547, −0.4%, +0.7%
+and +0.9%, a random pluck point's worth either way, with the calibrated
+pluck distance now the mean of the spread. All seven demos are re-rendered
+and an eighth, strummed chords, added.
+

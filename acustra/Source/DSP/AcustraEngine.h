@@ -81,7 +81,15 @@ public:
     // calibration resets the engine; do not call it from the audio thread.
     void setPhysicalCalibration(const PhysicalCalibration&) noexcept;
 
-    void noteOn(int midiNote, float velocity, int midiChannel = 1) noexcept;
+    // A pluck can be scheduled: the string is taken and fretted now, the
+    // fretting hand having formed the chord, and released this many samples
+    // later, which is how a strum reaches its strings one after another.
+    void noteOn(int midiNote, float velocity, int midiChannel = 1,
+                int pluckDelaySamples = 0) noexcept;
+    // Samples after the first string that a strum's k-th string sounds, from
+    // the pick's speed for this velocity and the string spacing.
+    [[nodiscard]] int strumDelaySamples(int stringRank,
+                                        float velocity) const noexcept;
     // fingerLift is MIDI release velocity as the fretting finger leaving a
     // stopped string: the lift carries the string energy a pluck at that
     // velocity would, so a pull-off at a velocity is as loud as a pluck at
@@ -360,6 +368,10 @@ private:
         float touchDamping { 1.0f };
         int touchSamples { 0 };
         int quietSamples { 0 };
+        // Samples until a scheduled pluck is released; zero when none waits.
+        int pluckDelay { 0 };
+        // Where this pluck landed, as a fraction of the sounding length.
+        float pluckPoint { 0.0f };
     };
 
     struct BodyOutput
@@ -394,6 +406,7 @@ private:
     float effectiveTouch(const Voice& voice) const noexcept;
     void initialisePluck(Voice& voice, int stringIndex, float velocity) noexcept;
     void returnToOpenString(Voice& voice, int stringIndex) noexcept;
+    void firePluck(Voice& voice, int stringIndex) noexcept;
     void beginRelease(Voice& voice, int stringIndex) noexcept;
     void captureTail(Voice& voice) noexcept;
     [[nodiscard]] float actionHeight(int stringIndex,

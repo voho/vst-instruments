@@ -1620,8 +1620,15 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     // when constructing its initial condition.
     const float distanceFromBridge = (0.045f
         + 0.135f * parameters_.pluckPosition) * physical.pluckDistanceScale;
-    const float position = clamp(distanceFromBridge / soundingLength,
-                                 0.05f, 0.46f);
+    // No two plucks land in the same place. The archtop's three takes of each
+    // note put their pluck points a median 0.02 of the string length apart
+    // (Traube-Smith comb on the soft rows, where the estimate is clean),
+    // which for three draws from a uniform spread is the spread's half-width;
+    // each pluck draws its own offset within it.
+    const float takeOffset = 0.02f * nextNoise(voice);
+    const float position = clamp(distanceFromBridge / soundingLength
+                                     + takeOffset, 0.05f, 0.46f);
+    voice.pluckPoint = position;
     // Velocity response has two bounded parts: touch brightens with velocity,
     // while the displacement exponent moves from the legacy 1.32 toward the
     // reference-response 0.82 as the same fitted depth rises.
@@ -1793,6 +1800,7 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.touchDamping = 1.0f;
     voice.touchSamples = 0;
     voice.quietSamples = 0;
+    voice.pluckDelay = 0;
     voice.tailActive = false;
     voice.tailLevel = 0.0f;
     voice.tailQuietSamples = 0;
@@ -2242,8 +2250,8 @@ AcustraEngine::chooseHarmonic(int midiNote) const noexcept
     return best;
 }
 
-void AcustraEngine::noteOn(int midiNote, float velocity,
-                           int midiChannel) noexcept
+void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
+                           int pluckDelaySamples) noexcept
 {
     if (!prepared_ || midiNote < 0 || midiNote > 127
         || !std::isfinite(velocity) || velocity <= 0.0f
@@ -2361,9 +2369,40 @@ void AcustraEngine::noteOn(int midiNote, float velocity,
             / (0.075f * static_cast<float>(sampleRate_)));
     }
     configureVoice(voice, string, midiNote, true);
-    initialisePluck(voice, string, velocity);
+    if (pluckDelaySamples > 0)
+    {
+        // Fretted and waiting: a junction member with nothing on it until
+        // the pick arrives. The countdown fires at the top of that sample,
+        // exactly where a note-on issued then would have put the shape.
+        voice.excitationEnvelope = 0.0f;
+        voice.pluckDelay = pluckDelaySamples + 1;
+        return;
+    }
+    firePluck(voice, string);
+}
+
+void AcustraEngine::firePluck(Voice& voice, int stringIndex) noexcept
+{
+    voice.pluckDelay = 0;
+    initialisePluck(voice, stringIndex, voice.velocity);
     bridgeDerivativesCrossRelease_ = true;
-    configureVoice(voice, string, midiNote, false);
+    configureVoice(voice, stringIndex, voice.midiNote, false);
+}
+
+int AcustraEngine::strumDelaySamples(int stringRank,
+                                     float velocity) const noexcept
+{
+    // The pick crosses the strings at one speed, so the k-th string it
+    // reaches sounds k spacings later. The spacing is the set-up dimension
+    // at the saddle: 2 1/8" across the six on a steel-string, 58 mm on a
+    // classical. The pick's speed is the one number MIDI does not carry; it
+    // is a player's map of velocity set by ear, from 0.5 m/s for the softest
+    // strum (108 ms across six strings) to 3 m/s for the hardest (18 ms).
+    const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
+    const float spacing = steel ? 0.0540f / 5.0f : 0.0580f / 5.0f;
+    const float speed = 0.5f + 2.5f * clamp(velocity, 0.0f, 1.0f);
+    return static_cast<int>(static_cast<float>(std::max(stringRank, 0))
+        * spacing / speed * static_cast<float>(sampleRate_) + 0.5f);
 }
 
 void AcustraEngine::noteOff(int midiNote, int midiChannel,
@@ -2391,6 +2430,7 @@ void AcustraEngine::noteOff(int midiNote, int midiChannel,
     if (--candidate.ownerCount > 0)
         return;
     candidate.ownerCount = 0;
+    candidate.pluckDelay = 0;
     freezeMemberPitchBend(candidate);
     candidate.keyDown = false;
     candidate.fingerLift = lift;
@@ -2847,6 +2887,8 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         for (int string = 0; string < stringCount; ++string)
         {
             auto& voice = voices_[static_cast<std::size_t>(string)];
+            if (voice.pluckDelay > 0 && --voice.pluckDelay == 0)
+                firePluck(voice, string);
             float releaseGain = (voice.keyDown || voice.pedalHeld
                                  || !voice.played)
                 ? 1.0f : voice.releaseDamping;

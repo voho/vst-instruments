@@ -104,6 +104,23 @@ public:
             noteOff(note);
     }
 
+    // A chord struck at once, swept as the plug-in sweeps a same-sample
+    // chord: the pick reaches the strings one after another, low to high on
+    // a downstroke and high to low on the return.
+    void strumAtOnce(std::initializer_list<int> notes, float velocity,
+                     bool upstroke)
+    {
+        std::vector<int> ordered(notes);
+        std::sort(ordered.begin(), ordered.end());
+        const int count = static_cast<int>(ordered.size());
+        for (int index = 0; index < count; ++index)
+        {
+            const int rank = upstroke ? count - 1 - index : index;
+            engine_.noteOn(ordered[static_cast<std::size_t>(index)], velocity, 1,
+                           engine_.strumDelaySamples(rank, velocity));
+        }
+    }
+
     void bridgeHand(float pressure) { engine_.setPalmMutePressure(pressure); }
 
     Audio finish() { return std::move(audio_); }
@@ -345,6 +362,47 @@ Audio tuningChord(EngineParameters parameters,
     return take.finish();
 }
 
+Audio strummedChords()
+{
+    // Chords sent on one sample, as a sequencer sends them, swept as strums:
+    // down, up, down, up at a strumming tempo, then the same chord eight
+    // times hand-damped. No two strums are the same take - the stroke
+    // alternates and every pluck lands in its own place.
+    auto parameters = baseParameters();
+    parameters.stringMaterial = StringMaterial::Steel;
+    parameters.shape = BodyShape::Dreadnought;
+    parameters.bodyMaterial = BodyMaterial::Spruce;
+    parameters.pluckPosition = 0.26f;
+    parameters.touch = 0.62f;
+
+    Take take(parameters);
+    const std::initializer_list<int> e { 40, 47, 52, 56, 59, 64 };
+    const std::initializer_list<int> a { 45, 52, 57, 61, 64 };
+    const std::initializer_list<int> d { 50, 57, 62, 66 };
+    bool upstroke = false;
+    // Two bars of a strummed progression at 108 beats per minute, eighths.
+    for (const auto* chord : { &e, &e, &a, &a, &d, &d, &a, &a })
+    {
+        take.strumAtOnce(*chord, upstroke ? 0.62f : 0.80f, upstroke);
+        take.rest(0.278);
+        take.release(*chord);
+        upstroke = !upstroke;
+    }
+    take.rest(0.6);
+    // The same E chord eight times, damped between strokes.
+    upstroke = false;
+    for (int repeat = 0; repeat < 8; ++repeat)
+    {
+        take.strumAtOnce(e, 0.78f, upstroke);
+        take.rest(0.24);
+        take.release(e);
+        take.rest(0.04);
+        upstroke = !upstroke;
+    }
+    take.rest(1.8);
+    return take.finish();
+}
+
 Audio alternateTunings()
 {
     auto parameters = baseParameters();
@@ -372,7 +430,7 @@ struct Demo
     Audio (*render)();
 };
 
-constexpr std::array<Demo, 7> demos {{
+constexpr std::array<Demo, 8> demos {{
     { "01-steel-sustain-range.wav",
       "Steel sustain from open E2 to B5, one held pluck at a time",
       steelSustainRange },
@@ -396,6 +454,10 @@ constexpr std::array<Demo, 7> demos {{
       "Hammer-ons at two velocities and a pull-off under CC68, then one "
       "fretted note released three ways by its note-off velocity",
       frettingHand },
+    { "08-strummed-chords.wav",
+      "Same-sample chords swept as alternating strums, then one chord eight "
+      "times hand-damped, no two strokes the same take",
+      strummedChords },
 }};
 
 double peak(const Audio& audio)

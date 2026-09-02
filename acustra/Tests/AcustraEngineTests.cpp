@@ -42,6 +42,7 @@ struct AcustraEngineTestAccess
         double peakPosition;
         double peakDisplacement;
         double noiseEnvelope;
+        double pluckPoint;
     };
 
     struct PreparedLossSnapshot
@@ -353,8 +354,19 @@ struct AcustraEngineTestAccess
             engine.effectiveTouch(voice),
             static_cast<double>(peakSample) / length,
             peakValue,
-            voice.excitationEnvelope
+            voice.excitationEnvelope,
+            voice.pluckPoint
         };
+    }
+
+    static double lastPluckPoint(const AcustraEngine& engine)
+    {
+        const AcustraEngine::Voice* latest = nullptr;
+        for (const auto& voice : engine.voices_)
+            if (voice.played && (latest == nullptr
+                                 || voice.startOrder > latest->startOrder))
+                latest = &voice;
+        return latest == nullptr ? -1.0 : latest->pluckPoint;
     }
 
     static PreparedLossSnapshot changePreparedLoss(
@@ -3461,6 +3473,104 @@ void testOrdinaryOutputIsLinearAndPathologicalOutputIsBounded()
 // fretted note, which the bridge and body rang on as a thump 4.6 to 8.6 dB
 // above the note's own level at that moment. Ramping the loss in over one
 // round trip, the unit it is defined in, leaves nothing above the held note.
+void testAScheduledPluckIsANoteOnIssuedThen()
+{
+    // A strum takes its strings at once and releases them one after another.
+    // A pluck scheduled D samples ahead must be the note-on issued D samples
+    // later, sample for sample, and nothing at all before it.
+    for (const int delay : { 1, 97, 480, 2000 })
+    {
+        acustra::AcustraEngine scheduled;
+        acustra::AcustraEngine issued;
+        scheduled.prepare(sampleRate, blockSize);
+        issued.prepare(sampleRate, blockSize);
+        const int total = delay + static_cast<int>(0.4 * sampleRate);
+        std::vector<float> a(static_cast<std::size_t>(total));
+        std::vector<float> b(static_cast<std::size_t>(total));
+        std::vector<float> scratch(static_cast<std::size_t>(total));
+        scheduled.noteOn(52, 0.8f, 1, delay);
+        scheduled.process(a.data(), scratch.data(), total);
+        issued.process(b.data(), scratch.data(), delay);
+        issued.noteOn(52, 0.8f);
+        issued.process(b.data() + delay, scratch.data(), total - delay);
+        bool silentBefore = true;
+        for (int sample = 0; sample < delay; ++sample)
+            silentBefore = silentBefore && a[static_cast<std::size_t>(sample)] == 0.0f;
+        expect(silentBefore, "a scheduled pluck sounded before its time");
+        expect(a == b, "a scheduled pluck differed from the note-on issued then");
+    }
+
+    // The hand leaving before the pick arrives means the string never sounds.
+    acustra::AcustraEngine cancelled;
+    cancelled.prepare(sampleRate, blockSize);
+    std::vector<float> left(static_cast<std::size_t>(sampleRate));
+    std::vector<float> right(static_cast<std::size_t>(sampleRate));
+    cancelled.noteOn(52, 0.8f, 1, 4800);
+    cancelled.process(left.data(), right.data(), 2400);
+    cancelled.noteOff(52);
+    cancelled.process(left.data(), right.data(), static_cast<int>(sampleRate));
+    expect(std::all_of(left.begin(), left.end(), [] (float v) { return v == 0.0f; }),
+           "a pluck released before the pick arrived still sounded");
+    acustra::AcustraEngine silenced;
+    silenced.prepare(sampleRate, blockSize);
+    silenced.noteOn(52, 0.8f, 1, 4800);
+    silenced.process(left.data(), right.data(), 2400);
+    silenced.allSoundOff();
+    silenced.process(left.data(), right.data(), static_cast<int>(sampleRate));
+    expect(std::all_of(left.begin(), left.end(), [] (float v) { return v == 0.0f; }),
+           "All Sound Off left a scheduled pluck waiting");
+}
+
+void testStrumTimingFollowsThePickAcrossTheStrings()
+{
+    // The k-th string a strum reaches sounds k spacings later at the pick's
+    // speed for that velocity: later strings later, harder strums faster,
+    // and the whole sweep between the map's two endpoints.
+    acustra::AcustraEngine engine;
+    engine.prepare(sampleRate, blockSize);
+    expect(engine.strumDelaySamples(0, 0.5f) == 0,
+           "the first string of a strum did not sound at once");
+    for (const float velocity : { 0.1f, 0.5f, 1.0f })
+        for (int rank = 1; rank < 6; ++rank)
+            expect(engine.strumDelaySamples(rank, velocity)
+                       > engine.strumDelaySamples(rank - 1, velocity),
+                   "a later string of a strum did not sound later");
+    for (int rank = 1; rank < 6; ++rank)
+        expect(engine.strumDelaySamples(rank, 1.0f)
+                   < engine.strumDelaySamples(rank, 0.2f),
+               "a harder strum did not cross the strings faster");
+    const double softest = engine.strumDelaySamples(5, 0.0f) / sampleRate;
+    const double hardest = engine.strumDelaySamples(5, 1.0f) / sampleRate;
+    expect(std::abs(softest - 0.108) < 0.004 && std::abs(hardest - 0.018) < 0.002,
+           "the strum's endpoints moved from the player's map");
+}
+
+void testNoTwoPlucksLandInTheSamePlace()
+{
+    // Each pluck draws its own point within the take-to-take spread the
+    // recordings show, and stays inside it.
+    acustra::AcustraEngine engine;
+    engine.prepare(sampleRate, blockSize);
+    std::vector<float> left(static_cast<std::size_t>(blockSize));
+    std::vector<float> right(static_cast<std::size_t>(blockSize));
+    std::vector<double> points;
+    for (int take = 0; take < 6; ++take)
+    {
+        engine.noteOn(52, 0.8f);
+        points.push_back(acustra::AcustraEngineTestAccess::lastPluckPoint(engine));
+        for (int block = 0; block < 40; ++block)
+            engine.process(left.data(), right.data(), blockSize);
+        engine.noteOff(52);
+        for (int block = 0; block < 400; ++block)
+            engine.process(left.data(), right.data(), blockSize);
+    }
+    const auto [lowest, highest] = std::minmax_element(points.begin(), points.end());
+    expect(*highest - *lowest <= 0.0401 && *lowest > 0.0,
+           "a pluck landed outside the measured take-to-take spread");
+    expect(*highest - *lowest > 1.0e-4,
+           "six plucks of one note all landed in the same place");
+}
+
 void testNoteOffOnlyRemovesEnergy()
 {
     const auto renderNote = [] (acustra::StringMaterial material,
@@ -3815,6 +3925,9 @@ int main()
     testApertureRegisterExponentChangesOnlyRegisterGeometry();
     testOrdinaryOutputIsLinearAndPathologicalOutputIsBounded();
     testNoteOffOnlyRemovesEnergy();
+    testAScheduledPluckIsANoteOnIssuedThen();
+    testStrumTimingFollowsThePickAcrossTheStrings();
+    testNoTwoPlucksLandInTheSamePlace();
     testFrettingHandFollowsThePluckLaw();
     testPerformance();
     if (failures == 0)

@@ -96,6 +96,12 @@ private:
     std::array<std::atomic<float>*, acustra::parameters::parameterCount>
         parameterPointers {};
     acustra::AcustraEngine engine;
+    bool legatoDown { false };
+    // A strum's stroke alternates; the sample clock tells a rest from a beat.
+    bool strumUpstroke { false };
+    double currentSampleRate { 48000.0 };
+    std::int64_t processedSamples { 0 };
+    std::int64_t lastStrumSample { -1 };
     std::array<juce::MidiRPNDetector, 16> rpnDetectors {};
     std::array<float, 16> rawPitchWheels {};
     std::array<float, 16> conventionalPitchBendRanges {};
