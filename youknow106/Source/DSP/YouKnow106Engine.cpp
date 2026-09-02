@@ -7071,8 +7071,9 @@ void YouKnow106Engine::primeStartupVoiceWaveNodes(
     // A restored pre-audio snapshot describes a powered, already-settled
     // instrument. Prime the WAVE-node coupling capacitor at the periodic
     // source's DC mean so Pulse Off's documented constant-high comparator does
-    // not become a fabricated power-on thump on the first note. Saw and SUB
-    // are bipolar; the pulse mean is level * (2*duty - 1), including +level
+    // not become a fabricated power-on thump on the first note. Saw is
+    // bipolar; the sub is a half-wave current whose mean equals its AC
+    // amplitude; the pulse mean is level * (2*duty - 1), including +level
     // for the pinned-high off state.
     for (auto& voice : voices_)
         primeVoiceWaveNode(voice, parameters);
@@ -7117,6 +7118,21 @@ float YouKnow106Engine::pulseWaveNodeMean(
         : 0.0f;
 }
 
+float YouKnow106Engine::subWaveNodeMean(
+    const Voice& voice, const EngineParameters& parameters) const noexcept
+{
+    // Module p. 13: Tr19's collector node feeds R101 27k -> D6 (cathode on
+    // the pin-14 WAVE line) and R102 33k back to the SUB LEVEL rail, so the
+    // rail's current enters the node on the half-cycle Tr19 is off and the
+    // unipolar square's mean equals its AC amplitude -- the same subGain
+    // prepareVoiceFilter applies. Zero with the switch off (bipolar square).
+    if (!parameters.enableSubHalfWaveNodeCoupling)
+        return 0.0f;
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    return subMixVolts * static_cast<float>(subCv_)
+         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
+}
+
 void YouKnow106Engine::primeVoiceWaveNode(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
@@ -7134,7 +7150,8 @@ void YouKnow106Engine::primeVoiceWaveNode(
     voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
     voice.pulseThresholdPrimed = true;
     voice.moduleCoupling.state = static_cast<double>(
-        pulseWaveNodeMean(voice, parameters));
+        pulseWaveNodeMean(voice, parameters)
+        + subWaveNodeMean(voice, parameters));
 }
 
 // ---------------------------------------------------------------------------
@@ -7523,28 +7540,42 @@ void YouKnow106Engine::freewheelVoiceCard(Voice& voice) noexcept
     // comparator into false DC, while the omitted capacitor ripple is bounded
     // to about 45 mV at the crossover and falls with frequency. Regressions
     // compare both the lowest pitch and the >1-cycle/sample extreme to Exact.
-    // The legacy A/B path deliberately retains its former frozen state.
-    if (activeParameters_.enablePulseOffWaveNodeCoupling)
+    // The legacy A/B path (both node couplings off) deliberately retains its
+    // former frozen state. The sub's half-wave mean sits on the same node
+    // (see subWaveNodeMean); an idle card must keep tracking it, with or
+    // without the pulse-off coupling, or the next note-on would replay the
+    // SUB level as a C56 step.
+    const bool trackPulseNode = activeParameters_.enablePulseOffWaveNodeCoupling;
+    const bool trackSubNode = activeParameters_.enableSubHalfWaveNodeCoupling;
+    if (trackPulseNode || trackSubNode)
     {
-        auto& dco = voice.dco;
-        const double totalScale = static_cast<double>(dco.renderScale)
-                                * static_cast<double>(voice.rampCurrentScale);
-        const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
-                               * totalScale * (dco.rampValue + 1.0);
-        dco.pulseState = voice.pulsePinnedHigh
-                      || rampVolts >= voice.pulseThresholdVolts
-                       ? 1.0f : -1.0f;
-        constexpr double endpointTrackingMaximumHz = 100.0;
-        const double carrierHz = oversampledRate_
-            / std::max(dco.periodSamples, 1.0);
-        const float pulseNode = carrierHz <= endpointTrackingMaximumHz
-            ? dco.pulseState * pulseMixVolts
-            : pulseWaveNodeMean(voice, activeParameters_);
+        float pulseNode = 0.0f;
+        if (trackPulseNode)
+        {
+            auto& dco = voice.dco;
+            const double totalScale = static_cast<double>(dco.renderScale)
+                                    * static_cast<double>(voice.rampCurrentScale);
+            const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
+                                   * totalScale * (dco.rampValue + 1.0);
+            dco.pulseState = voice.pulsePinnedHigh
+                          || rampVolts >= voice.pulseThresholdVolts
+                           ? 1.0f : -1.0f;
+            constexpr double endpointTrackingMaximumHz = 100.0;
+            const double carrierHz = oversampledRate_
+                / std::max(dco.periodSamples, 1.0);
+            pulseNode = carrierHz <= endpointTrackingMaximumHz
+                ? dco.pulseState * pulseMixVolts
+                : pulseWaveNodeMean(voice, activeParameters_);
+        }
         static_cast<void>(voice.moduleCoupling.process(
-            pulseNode, moduleCouplingG_, 0.0f, 1.0f));
-        voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
-        voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
-        voice.pulseThresholdPrimed = true;
+            pulseNode + subWaveNodeMean(voice, activeParameters_),
+            moduleCouplingG_, 0.0f, 1.0f));
+        if (trackPulseNode)
+        {
+            voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
+            voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
+            voice.pulseThresholdPrimed = true;
+        }
     }
 }
 
@@ -7609,7 +7640,13 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
         dco.pulse.advance(dco.pulseState) * pulseMixVolts;
     const float subGain = subMixVolts * static_cast<float>(subCv_)
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
-    const float subOut = dco.sub.advance(dco.subState) * subGain;
+    // Half-wave: AC +/- subGain as before, plus a +subGain mean (see the
+    // summing-node note below). The comparison switch keeps the zero-mean
+    // square.
+    const float subTrack = dco.sub.advance(dco.subState);
+    const float subOut = parameters.enableSubHalfWaveNodeCoupling
+        ? (subTrack + 1.0f) * subGain
+        : subTrack * subGain;
 
     // --- Summing node --------------------------------------------------------
     // Module p. 13 (2026-08-07 designator read): saw and pulse leave the
@@ -7625,6 +7662,21 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
     // pins the comparator high on the fixed WAVE output, SUB by its collector
     // supply and NOISE by the level OTA. Exact pinned-node voltage and loading
     // remain OQ-15/OQ-11.
+    // The sub's single series diode makes its current unipolar -- the rail
+    // sources (9.92 V * subCv - V_D6) / 60k, roughly 155 uA at full scale
+    // for a ~0.6 V drop (the D6 part is unread), on the half-cycle Tr19 is
+    // off and nothing on the other -- so its mean rides on this node for
+    // C56/C50 to remove; the level law stays linear in the held rail (the
+    // diode's onset and the saw-dependent modulation of the sub current
+    // through the node's own swing are OQ-15). The node's
+    // DC-to-AC impedance ratio is voiced at 1, the floor of its <= 2 bracket,
+    // inside the already-voiced subMixVolts coordinate. This is NOT the
+    // removed "sub-driver amplitude asymmetry" (a fabricated 0.3 % inequality
+    // of two divider levels, DC plus even harmonics, misattributed to 4013
+    // edge timing): this DC is the topology-derived half-wave mean, adds no
+    // even harmonics (50 % duty), leaves the edges unchanged, and is nulled
+    // by C56 at steady state -- it is audible only as the C56/C59-shaped bump
+    // a SUB level step produces.
     // Generators mute or clamp; legs never switch. The node's loading is one
     // configuration-independent constant, which the established
     // filterInputAttenuation coordinate already absorbs -- an earlier

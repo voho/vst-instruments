@@ -210,6 +210,12 @@ struct EngineParameters
     // existing C56/C50 coupling capacitor remove it. False retains the former
     // hard-zero gate solely for controlled A/B renders.
     bool enablePulseOffWaveNodeCoupling { true };
+    // On by default: the sub reaches the WAVE node as the half-cycle current
+    // its R102/R101/D6 leg passes from the SUB LEVEL rail, so its mean rides
+    // on the node and C56/C50 remove it; the level law is unchanged. False
+    // retains the former zero-mean bipolar square solely for controlled A/B
+    // renders.
+    bool enableSubHalfWaveNodeCoupling { true };
     // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
     // loaded by C41/R79. Putting the scanned NOISE control before that output
     // pole lets C41 discharge while muted and recharge when the level returns.
@@ -2303,6 +2309,8 @@ private:
         bool requested, float duty, bool couplePinnedLevel) noexcept;
     [[nodiscard]] static float pulseWaveNodeMean(
         const Voice& voice, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float subWaveNodeMean(
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     void primeVoiceWaveNode(Voice& voice,
                             const EngineParameters& parameters) noexcept;
     void primeStartupVoiceWaveNodes(

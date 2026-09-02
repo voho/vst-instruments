@@ -10119,6 +10119,195 @@ void testSubHoldUsesItsR11C1TimeConstant()
     }
 }
 
+// The sub reaches the WAVE node as the half-cycle current its R102/R101/D6
+// leg passes from the SUB LEVEL rail (module p. 13), so its mean rides on
+// the node and C56/C50 remove it. These fixtures hold the shipping engine
+// against the former zero-mean square: identical AC, and a DC bump only when
+// the SUB level itself moves.
+EngineParameters subHalfWavePatch(bool coupled)
+{
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.noiseLevel = 0.0f;
+    parameters.subLevel = 1.0f;
+    parameters.cutoff = 1.0f;
+    parameters.resonance = 0.0f;
+    parameters.chorus = ChorusMode::Off;
+    parameters.enableSubHalfWaveNodeCoupling = coupled;
+    return parameters;
+}
+
+void testSubHalfWaveIsLevelMatchedAtFullScale()
+{
+    // The AC of a unipolar 50 % square is the bipolar square; C56 removes
+    // the mean, so the steady-state output must not move at any SUB level.
+    constexpr double sampleRate = 48000.0;
+    const auto renderSub = [&](bool coupled) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        engine.setParameters(subHalfWavePatch(coupled));
+        engine.noteOn(48, 1.0f);
+        return render(engine, static_cast<int>(sampleRate * 2.0));
+    };
+    const auto coupled = renderSub(true);
+    const auto bipolar = renderSub(false);
+    const std::size_t from = coupled.left.size() / 2;
+    const auto rmsFrom = [&](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (std::size_t index = from; index < signal.size(); ++index)
+            sum += static_cast<double>(signal[index]) * signal[index];
+        return std::sqrt(sum / static_cast<double>(signal.size() - from));
+    };
+    const double rmsDelta = 20.0 * std::log10(rmsFrom(coupled.left)
+                                              / rmsFrom(bipolar.left));
+    expect(std::abs(rmsDelta) < 0.05,
+           "the half-wave sub changed the steady-state level by "
+               + std::to_string(rmsDelta) + " dB");
+
+    constexpr int window = 1024;
+    double floor = 0.0;
+    for (int bin = 1; bin < window / 2; ++bin)
+        floor = std::max(floor, magnitudeAt(bipolar.left, from, window,
+                                            bin * sampleRate / window,
+                                            sampleRate));
+    floor *= 1.0e-4; // -80 dB: bins below carry only the modelled noise floor
+    double worstBinDb = 0.0;
+    for (int bin = 1; bin < window / 2; ++bin)
+    {
+        const double frequency = bin * sampleRate / window;
+        const double reference = magnitudeAt(bipolar.left, from, window,
+                                             frequency, sampleRate);
+        if (reference < floor)
+            continue;
+        const double candidate = magnitudeAt(coupled.left, from, window,
+                                             frequency, sampleRate);
+        worstBinDb = std::max(
+            worstBinDb, std::abs(20.0 * std::log10(candidate / reference)));
+    }
+    expect(worstBinDb < 0.1,
+           "the half-wave sub changed the steady-state spectrum by "
+               + std::to_string(worstBinDb) + " dB in a bin");
+}
+
+void testStartupPrimesC56WithTheSubMean()
+{
+    // A restored pre-audio snapshot is a settled instrument: C56 already
+    // holds the pinned-high pulse level plus the sub's half-wave mean.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    engine.setParameters(subHalfWavePatch(true));
+    const double subTarget = YouKnow106TestAccess::subTarget(engine);
+    expectNear(subTarget, 1.0, 1.0e-6, "full-scale SUB is not a unit DAC fraction");
+    expectNear(YouKnow106TestAccess::moduleCouplingState(engine, 0),
+               6.0 + 5.0 * subTarget, 1.0e-6,
+               "startup did not pre-charge C56 with the sub's half-wave mean");
+
+    YouKnow106Engine legacy;
+    legacy.prepare(48000.0, blockSize, false);
+    legacy.setParameters(subHalfWavePatch(false));
+    expectNear(YouKnow106TestAccess::moduleCouplingState(legacy, 0),
+               6.0, 1.0e-6,
+               "the comparison bypass pre-charged C56 from a zero-mean sub");
+}
+
+// Pin 9 VCA IN, sampled once per host sample while a note is held, so the
+// shipping and comparison renders can be differenced sample for sample.
+std::vector<float> probeVcaInput(YouKnow106Engine& engine, int hostSamples)
+{
+    std::vector<float> probe(static_cast<std::size_t>(hostSamples));
+    for (auto& value : probe)
+    {
+        renderExact(engine, 1);
+        value = YouKnow106TestAccess::vcaInputVolts(engine, 0);
+    }
+    return probe;
+}
+
+void testSubLevelJumpCouplesThroughC56AndC59()
+{
+    // A SUB level step moves the node's mean; C56 passes the step, the open
+    // filter passes DC, and C59 (tau 33 ms) differentiates it at the VCA
+    // input. subMixVolts * 0.40 = 2.0 V arriving through the 10 ms R11/C1
+    // hold peaks near 1.15 V about 20 ms in (1.19 V at 17 ms before C56's
+    // own decay and the filter's residual gain) and is gone within a few tau.
+    constexpr double sampleRate = 48000.0;
+    const auto probe = [&](bool coupled) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = subHalfWavePatch(coupled);
+        parameters.subLevel = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        renderExact(engine, static_cast<int>(sampleRate * 0.9));
+        const auto before = probeVcaInput(engine, static_cast<int>(sampleRate * 0.1));
+        parameters.subLevel = 1.0f;
+        engine.setParameters(parameters);
+        auto after = probeVcaInput(engine, static_cast<int>(sampleRate * 0.3));
+        return std::pair<std::vector<float>, std::vector<float>> { before, after };
+    };
+    const auto coupled = probe(true);
+    const auto bipolar = probe(false);
+    expect(maximumDifference(coupled.first, bipolar.first) < 0.05,
+           "the half-wave sub differed from the bipolar one before the level moved");
+
+    const auto& on = coupled.second;
+    const auto& off = bipolar.second;
+    double peak = 0.0;
+    std::size_t peakAt = 0;
+    double settled = 0.0;
+    for (std::size_t index = 0; index < on.size(); ++index)
+    {
+        const double difference = static_cast<double>(on[index]) - off[index];
+        if (std::abs(difference) > std::abs(peak))
+        {
+            peak = difference;
+            peakAt = index;
+        }
+        if (index >= static_cast<std::size_t>(sampleRate * 0.25))
+            settled = std::max(settled, std::abs(difference));
+    }
+    expect(peak > 0.8 && peak < 1.5,
+           "the SUB level jump's C56/C59 bump peaked at "
+               + std::to_string(peak) + " V");
+    expect(peakAt < static_cast<std::size_t>(sampleRate * 0.06),
+           "the SUB level jump's bump peaked "
+               + std::to_string(peakAt / sampleRate * 1000.0) + " ms after the jump");
+    // What remains after the bump is C56's own 0.33 s tail seen through C59:
+    // about -(33 ms / 330 ms) * 2 V * exp(-t / 0.33 s), -0.09 V at 250 ms.
+    expect(settled < 0.15,
+           "the SUB level jump's bump was still "
+               + std::to_string(settled) + " V after 250 ms");
+}
+
+void testNoteOnDoesNotBumpC56WithTheSubOn()
+{
+    // The sub runs continuously on an idle card and its mean is primed and
+    // tracked on both the always-rendered and the freewheeling path, so
+    // assigning the card must not replay the SUB level as a C56 step.
+    constexpr double sampleRate = 48000.0;
+    for (const auto tanhMode : { VcfTanhMode::Exact, VcfTanhMode::PolyZoned })
+    {
+        const auto probe = [&](bool coupled) {
+            YouKnow106Engine engine;
+            engine.prepare(sampleRate, blockSize, false);
+            auto parameters = subHalfWavePatch(coupled);
+            parameters.vcfTanhMode = tanhMode;
+            if (tanhMode != VcfTanhMode::Exact)
+                parameters.vcfSolverMode = VcfSolverMode::Rk4Single;
+            engine.setParameters(parameters);
+            renderExact(engine, static_cast<int>(sampleRate * 0.5));
+            engine.noteOn(48, 1.0f);
+            return probeVcaInput(engine, static_cast<int>(sampleRate * 0.2));
+        };
+        const double bump = maximumDifference(probe(true), probe(false));
+        expect(bump < 0.05,
+               std::string(tanhMode == VcfTanhMode::Exact ? "Exact" : "fast")
+                   + " note-on replayed the sub mean as a C56 step of "
+                   + std::to_string(bump) + " V");
+    }
+}
+
 void testPortamentoRateFollowsItsControl()
 {
     // The glide rate is set by a control in the pitch integrator's path, not
@@ -14140,6 +14329,10 @@ int main()
     testPwmHoldCrossesItsTwoSmoothingPoles();
     testExactPwmHoldEndpointNonFiniteGuards();
     testSubHoldUsesItsR11C1TimeConstant();
+    testSubHalfWaveIsLevelMatchedAtFullScale();
+    testStartupPrimesC56WithTheSubMean();
+    testSubLevelJumpCouplesThroughC56AndC59();
+    testNoteOnDoesNotBumpC56WithTheSubOn();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
