@@ -2841,10 +2841,11 @@ The committed fit report and the README summary quoted 6.7679, 6.7683 and
 gain was set to zero when the drip was removed, and the numbers were not
 re-taken. Rendered and scored here, the shipping engine reads 6.8353, 6.8238
 and 5.6547 - the pre-longitudinal build to four places, as it should - and
-the report, its summary and the README now say so. Every engine change in
-this session was checked against that baseline by byte comparison of the 79
-model renders, and all of them are identical: nothing in this session touched
-a single note on a fresh engine.
+the report, its summary and the README now say so (the README's benchmark
+table kept the stale row for a day longer; it agrees now). Every engine
+change in this session was checked against that baseline by byte comparison
+of the 79 model renders, and all of them are identical: nothing in this
+session touched a single note on a fresh engine.
 
 ## 2026-09-01 — close stereo microphones: what the body already is, and a pair to choose by ear
 
@@ -2898,3 +2899,166 @@ the more realistic pair is the ear's question. A is the shipping pair, B the
 upper-bout pair, steel and nylon, level-matched on whole-file RMS with Stereo
 Width at 1.0; the set is with the user and its key is unread by design.
 Nothing is promoted until it is heard.
+
+A correction to the second item, from the audit's verifier. The 0.76-0.86
+failure was of the ratio-derived side, the minimum-phase mid times the raw
+inter-microphone ratio. Fitting the raw side response itself with the
+generator's own pole and residue machinery reaches a relative complex error
+of 0.209, a median magnitude error of 0.95 dB and a 90th percentile of 2.88
+dB at 96 modes, inside the generator's 0.30, 1.25 and 3.75 dB gates (48 modes
+fail at 0.411). A 96-mode side bank at the measured Q against the shipping
+mid passes the engine suite with the mono unchanged to six places, but it
+leaves 9 of the 79 corpus notes wider than any of the eight stereo
+recordings and 3 with the side above the mid, and applying the shipping
+bodyQScale to the side removes the effect. So the side bank is not a fit
+failure; it is a listening candidate that waits on the body-damping verdict,
+because its width depends on which Q the mid ends up with.
+
+## 2026-09-02 — the audit: five lenses, fourteen candidates, seven verified, one shipped
+
+The realism audit ran as a workflow: five lenses (excitation, string-bridge-
+body, performance, signal analysis, market and literature) each measured the
+shipping engine against the 115 recordings and proposed mechanisms; a merge
+stage consolidated them into fourteen candidates; one adversarial verifier
+per candidate then tried to refute it against the code, this log and its own
+probe renders; a synthesis ranked what survived. What each verdict licensed
+is recorded here so nothing is re-proposed on the evidence that already
+refuted it.
+
+Rejected on measurement. A pick-release contact transient (C03): 89% of the
+recordings' velocity brightness is harmonic, and adding the recordings' own
+aperiodic residual to the renders moves training by 0.32%, the ceiling any
+noise burst can reach; a shaped burst would only fill the harmonic deficit
+with noise. A velocity-dependent release time in seconds (C04): it is the
+shipping aperture map in other units, its published bound on a plectrum's
+edge (0.4 mm) puts the hard pluck into the smoother's comb regime, and the
+80-250 ms H5-H12 balance it targets is filled by the idle strings' partials
+and the loop's own loss, so no initial condition owns that descriptor until
+the junction and the loss are fixed. A nylon velocity-to-Touch slope
+transferred from steel (C05): fails its own monotonicity gate on the first
+string and is a chosen number. A matched-Z bridge discretisation (C08b):
+positive-real but a worse match to the analogue fit than the prewarped
+bilinear at 44.1 and 48 kHz. A bass-side bridge port for the low strings
+(C09): on g21 the bass-side driving point is more mobile than the treble
+side at 82.8, 90.8, 178 and 412 Hz (conductance 1.19, 1.27, 1.57 and 1.15
+times) and less only at the rocking modes 209, 591, 656 and 767 Hz, the two
+ends are nearly one point below 250 Hz (coupling 0.96 and 0.69 in 60-120 and
+120-250 Hz) and decouple only above 2 kHz (0.25-0.28), and a bass-port bridge
+for E2, A2 and D3 at the shipping calibration scores 6.938, 6.830 and 5.696
+while speeding the low fundamentals further from the targets: the low-string
+over-damping is not a bridge-position artefact, and the 2026-08-30 reading
+that it is the flamenco body against the corpus instruments stands.
+
+Confirmed and closed in this session. The fretting hand (C06) does what its
+commit says on every point measured, with the overclaims corrected in the
+README: a hammer-on carries a pluck's energy, not its loudness (+7 to −2 dB,
+1 to 3 dB of its own range), release velocity is a two-region control, and a
+sensed release ghosts the open string at a stated level. The documentation
+and dead-code corrections (C14) are in: the inert bridge-contact filter is
+gone with the corpus byte-identical, the benchmark table row is corrected,
+the loss-corner clamp and the aperture map say what they do beside the code,
+and the anchor spring, the decay bands, the attack deficit's two owners, the
+idle strings' measured cost, the dispersion above the last anchor and the
+second axis's corpus signature are in Known gaps. Of the attack deficit,
+about 4 dB at every velocity is the residue tilt chosen by ear on 2026-08-31
+(−1.0 against the fitted +1.862 dB per octave: the model's H5-H12 balance at
+80-250 ms moves from −23.7, −23.3, −22.6 and −22.8 to −20.2, −19.2, −18.8 and
+−18.9 dB for the four layers against the targets' −18.9, −15.9, −13.2 and
+−11.3); the remainder, 1.3 dB at the softest layer to 7.6 dB at the loudest,
+grows with velocity and is therefore the excitation, not a linear chain.
+The same verifier corrected the reading of the 2026-08-31 entry "neither
+excitation control explains the dark steel attack": its "matches them to 0.1
+dB over 5-10 kHz" was a pooled median over four velocity layers; per layer
+the steel 2560-5120 and 5120-10000 Hz shape reads +3.3 and −2.7 dB at the
+softest (n = 27), −0.7 and −9.0 at the second (7), −7.0 and −10.1 at the
+third (7) and −10.3 and −17.5 dB at the loudest (27), with the 0-12 ms
+centroid −269 cents at the softest and −2398 at the loudest. The attack audit
+tool should report per velocity; until it does, its pooled figure is not
+evidence about the loudest layer.
+
+Standing, with gates written. The two-way six-string junction (C01), the
+largest single defect: built in this session with the verifier's five
+prerequisites, its own entry below. The body's low-mode damping (C02): the
+set of 2026-09-01, with the user. The bridge anchor spring (C13): a defect,
+not a blocked measurement - its own entry below. The lossless fractional
+delay (C08a): a settled correctness defect with no invented constant. The
+Catmull-Rom read loses −0.23 and −0.53 dB per pass at 8 and 10 kHz at a
+half-sample fraction and nothing at an integer one, so a string's upper
+partials decay by an amount that depends on the accidental fraction of its
+loop length and on the host rate: with the bridge and sympathy off, H8 on
+steel MIDI 76 to 84 decays at 40, 34, 50, 189 and 113 dB/s at 48 kHz, and
+MIDI 84's H8 at 468, 113 and 65 dB/s at 44.1, 48 and 96 kHz, where a
+first-order Thiran allpass reads 19 to 32 and 36, 32 and 48. The naive fold
+into the tuning collocation fails (the residual is discontinuous at the
+half-sample boundary and partial placement reaches 12 cents on steel 84);
+the form that survives fixes the integer part per voice, lets the fraction
+run continuously in (0, 2) as the delay slews, re-anchors with the
+Välimäki-Laakso state correction, and folds that phase into the collocation
+and the tests' loop-phase model. At the shipping calibration it scores
+6.8184, 6.8111 and 5.9850, and no shelf value between 1.2 and 2.17 brings
+the flat-top rows below 5.92 because the material loss above 6 kHz was
+fitted with the accidental loss present, so it needs its restricted refit
+(the high-loss corner and the two frequency-loss scales) and then, if the
+flat-top rows still disagree, a listening set. It is next after the junction
+is heard, and deliberately not in the same set. A strum sweep for
+same-sample chords (C07) survives as a feature with its design settled: an
+engine-side deferred pluck that allocates at the group's sample and plucks
+string by string at the pick's traversal pace, off by default. Deferred on a
+measurement: the second radiating polarisation (C12), the g21 modes' own
+over-damping and the loudest layer's remaining brightness (C13's blocked
+halves), and a bound on the hammer-on's finger speed, which waits on one
+published fingertip-speed figure.
+
+## 2026-09-02 — the anchor spring is a corpus-fitted shield, and a set to choose by ear
+
+The audit's verifier of the g21 chain candidate found that its central
+attribution was wrong in a way that turns a blocked item into a defect. The
+strings do not see the raw bridge mobility; each ends on the junction's
+effective admittance, the bridge in series with the lumped anchor spring
+(the sum of T/L over six strings at the fitted 17.2 mm, about 41.5 kN/m).
+Between the body's modes the measured mobility is mass-like, and a spring to
+ground in series with a mass resonates: computed from the shipped headers,
+the strings' effective conductance is 0.309 at 233 Hz and 0.047 at 102 Hz
+where the bridge's own is 0.0039 and 0.0048, 78 and 10 times, with the
+coupling at 233 Hz strong enough (G·Z about 0.28) for Gough's veering. That
+is where every doublet the audit listed comes from, and the halo of the
+one-way idle strings hides most of it today.
+
+Reproduced here on a copy of HEAD with the sympathetic strings off, early
+decay of the named partial over 0.15-1.2 s, in dB/s, recording | shipping |
+no spring | DAFx-26's 3.25 mm stub: flat-top A#2 H2 (233 Hz) 8.0 | 79 with a
+−40/+40 cent doublet | 14 | 8.2; flat-top A#3 H1 17.8 | 78 (−46/+40) | 15 |
+8.3; nylon G2 H1 (98 Hz) 6.2 | 63 (doublet) | 23 | 15; nylon A3 H1 18.5 | 82
+(doublet) | 24 | 15; steel A3 H1 8.1 | 30 | 29 | 8.3; and the low E, where
+removing the spring exposes the flamenco body's own 83 and 91 Hz modes,
+recorded 4.5-8.6 | 10 | 68 with a −25/+32 cent doublet | 7.8. No length
+inside the 8-60 mm bound is free of the artefact; it sits at 102 and 233 Hz
+as shipped, 95 and 215 Hz at 60 mm, 107 and 260 Hz at 8 mm, and 306, 602
+and 668 Hz at the stub. So the fitted spring is a low-frequency shield the
+corpus fitted for a flamenco body against an archtop and a classical,
+wearing a bridge dimension's name, and the README no longer calls it
+geometry.
+
+Two terminations are each defensible on their own physics and disagree with
+the corpus. No spring at all is the physically consistent one - the string
+ends on the driving-point mobility, which Mores measured on a strung bridge,
+so a spring to ground is double-counted geometry (Woodhouse 2004) - and it
+scores 6.8723, 6.8800 and 5.8989 against 6.8353, 6.8238 and 5.6547, worse on
+every split, while exposing the low E at 68 dB/s. DAFx-26's own stub scores
+6.4921, 6.4762 and 6.5464: 5.0% and 5.1% better on the picked splits and
+15.8% worse on the eight finger-played rows, the disagreement the 2026-08-31
+bracket rule sends to the ear. The set is with the user: A the shipping
+engine, B no spring (tail 1000 m), C the stub (3.25 mm), one value changed
+and its bound relaxed to allow it; single notes that land a partial on each
+artefact placement, then the open low E and A held; steel and nylon judged
+separately; whole-file RMS matched to A with the trims in the key; letters
+only; key unread by design. What would settle it without the ear is the
+matched flat-top or classical bridge mobility this log has asked for since
+2026-08-30. Gates for whichever letter is chosen, if any: the analytic ratio
+of effective to bridge conductance below 3 over 60-3000 Hz; the four
+233/98/220 Hz rows above within twice their recordings with no secondary
+peak above −20 dB within ±150 cents; the low E no worse than twice its
+recording, which no spring fails; the held-chord T60 ratio within 1.10; the
+suite at three rates; the corpus re-scored and reported, because it will
+change.
+

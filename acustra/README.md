@@ -296,6 +296,15 @@ saddle-to-anchor length is a bounded fitted parameter over the 8--60 mm range
 real bridges occupy, because it is not part of the g21 measurement. Summing
 only the played strings instead made the port stiffen with every voice, and a
 note inside a chord then rang 2.15 times longer than the same note alone.
+The audit then found what the fitted spring does: between the body's modes
+the measured mobility is mass-like, and a spring to ground in series with it
+resonates, so the strings see an effective conductance of 0.31 at 233 Hz and
+0.047 at 102 Hz where the bridge's own is 0.004 and 0.005. With the
+sympathetic strings off, a 233 Hz partial on the shipping engine decays at
+78 dB/s with a ±40 cent split against 8 to 18 dB/s on the recordings, and no
+length inside 8--60 mm is free of it; the artefact only moves. Whether the
+string should end on the measured mobility alone, or on DAFx-26's 3.25 mm
+stub, is a listening set with the user (Known gaps).
 
 The junction turns those displacement waves into bridge velocity and force
 with finite differences, so anything that moves a wave without the bridge
@@ -451,9 +460,9 @@ Lower is better in the robust descriptor score:
 
 | Split | Rows | Neutral baseline | Fitted | Shipping | Change |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Training | 83 | 8.768535 | 6.441362 | 6.768470 | −22.81% |
-| Development validation | 24 | 8.145301 | 6.427690 | 6.774969 | −16.82% |
-| Flat top (reported only) | 8 | 9.309315 | 7.428581 | 5.645406 | −39.36% |
+| Training | 83 | 8.768535 | 6.441362 | 6.835323 | −22.05% |
+| Development validation | 24 | 8.145301 | 6.427690 | 6.823751 | −16.22% |
+| Flat top (reported only) | 8 | 9.309315 | 7.428581 | 5.654679 | −39.26% |
 
 The shipping column is not the fitted one. Five of the twenty-seven values were
 moved off the fit's answer by a listening verdict — the body's low-mode gain
@@ -510,8 +519,11 @@ The JUCE-free suites cover:
   dispersion across steel, nylon, notes and sample rates;
 - exact complex sample-rate conversion of the 48 kHz body residues, tested
   body-only from 44.1 to 384 kHz so a direct path cannot mask drift;
-- stiff-string dispersion below 1.21 cents across the tested material, note,
-  partial and sample-rate matrix, using H1/H7/H11.5 phase collocation;
+- stiff-string dispersion below 1.21 cents over H2--H12 across the tested
+  material, note and sample-rate matrix, using H1/H7/H11.5 phase collocation
+  (above the last anchor the single allpass delivers 60 to 75% of the
+  stiff-string stretch: steel E2 −4.6, −14.5 and −29.6 cents at H16, H20 and
+  H24 against +35, +54 and +76, a Known gap);
 - fitted register-dependent pluck aperture with an exact legacy identity point,
   a tested negative-exponent continuation and held-out spectral improvement;
 - a bounded, monotone steel Kirchhoff--Carrier pitch surrogate across velocity
@@ -619,7 +631,12 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   corpus, and did not close. Velocity barely reaches the attack: from the
   archtop's softest to its loudest layer the recordings' attack centroid
   rises by about 1,900 cents and the model's by 96, and at the loudest layer
-  H4--H12 sit 12 to 21 dB short; audio-rate tension modulation was built and
+  H4--H12 sit 12 to 21 dB short - about 4 dB of that at every velocity is the
+  residue tilt chosen by ear on 2026-08-31 (−1.0 against the fitted +1.86 dB
+  per octave), and the rest, 1.3 dB at the softest layer to 7.6 dB at the
+  loudest, grows with velocity and so is not the linear chain but the
+  excitation, blocked on a same-instrument controlled-pluck capture;
+  audio-rate tension modulation was built and
   is inert at the fitted displacement (the decision log says by how much),
   and a plectrum's dent whose width its speed sets raises the model's
   velocity-to-brightness rise from under half a decibel to about three,
@@ -715,7 +732,11 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   tangential components, so a passive 2x2 on the existing 96-mode body needs
   one extra number per mode rather than a second measurement of everything.
   A proper second axis requires that number;
-  the tested arbitrary rotation did not generalise and is not shipped. Two
+  the tested arbitrary rotation did not generalise and is not shipped. The
+  corpus's clearest signature of angle-selected doublet members is the
+  archtop's open E2 at the softest layer, whose H2 is a resolved doublet
+  about 0.8 Hz wide whose dominant member switches across the three round
+  robins, on a partial with no open-string unison partner. Two
   independent lines now raise its priority rather than lower its bar: no
   excitation control can reach the take-to-take attack variation real recordings
   show, which points at the plucking angle, and the established physically
@@ -728,7 +749,15 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   attack variation measured below.
 - Idle strings are coupled one-way into radiation. This is stable and follows
   the measurement-informed reference topology, but it is not a complete
-  bidirectional six-string/body solve.
+  bidirectional six-string/body solve, and the audit measured its cost: their
+  partials sit at −15 dB re a played note's fundamental over 0.5--2 s where the
+  archtop, classical and flat-top recordings sit at −40, −31 and −25; a
+  hand-damped A3 stays above its held level 100 ms after the note-off; ten
+  repeated A3s pump the idle A string 7 dB above the first note. A two-way
+  six-string junction, in which every string loads and injects at the bridge
+  so the idle reaction is bounded by the played string's force, is built and
+  passes the suite; it is being refit from the neutral calibration beside the
+  one-way topology and goes to a listening set (decision log).
 - Shape and Body Material morph one measured flamenca-body model; they are not
   separate measurements of four guitar sizes or four woods.
 - The band audits now measure a distance the build chose rather than an error
@@ -754,9 +783,9 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
 - The decay audit moved with it. Steel now decays 6.4 dB/s too fast at
   80--120 Hz and 8.7 dB/s too fast at 180--270 Hz against the archtop, but
   4.4 and 4.6 dB/s too slowly over 270--600 Hz; nylon 8.5 dB/s too fast at
-  270--400 Hz and 7.4 at 400--600 Hz. Those are the bands where the g21
-  measurement's own body resonances set the decay, so they cannot be corrected
-  without either a matched measurement or an invented conductance.
+  270--400 Hz and 7.4 at 400--600 Hz. The 80--120 and 180--270 Hz excesses
+  are the fitted anchor spring; the rest are g21's own modes, and only those
+  need a matched measurement or an invented conductance.
 - The steel calibration corpus is a miked archtop, while nylon has one captured
   dynamic/take per region. Both limit how literally the current fit can describe
   a flat-top steel or another classical guitar. None of the 321 real-note
@@ -793,10 +822,13 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   improving in two of the three runs here.
 - The remaining damping error is at the low end. Steel still decays about
   7.8 dB/s too fast at 80--120 Hz and 10.1 dB/s too fast at 180--270 Hz, and
-  nylon 8.5 dB/s too fast at 270--400 Hz and 7.4 dB/s at 400--600 Hz. Those are
-  the bands where the g21 measurement's own body resonances set the decay, so
-  they cannot be corrected without either a matched measurement or an invented
-  conductance.
+  nylon 8.5 dB/s too fast at 270--400 Hz and 7.4 dB/s at 400--600 Hz. The two
+  steel bands are the fitted anchor spring's resonances at 102 and 233 Hz (the
+  bullet above); the rest are g21's own modes - the bridge's 412 Hz Q 38
+  beside the body's 406 Hz, and its 591 Hz Q 75 and 656 Hz Q 65 - and the
+  nylon 147 and 196 Hz fundamentals, which decay at 15 to 21 dB/s with any
+  anchor, so those cannot be corrected without either a matched measurement
+  or an invented conductance.
 - The gated loss and the damping audit used to disagree about the upper band,
   and no longer do. Re-run at three cutoffs, every band the audit will report
   prefers the fitted 2.170 except steel's 2000--3000 Hz, which prefers 1.2 by
@@ -862,12 +894,20 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   their published density is an effective composite figure that is right for
   transverse mass and wrong for axial stiffness, so nothing here fixes their
   axial speed. A per-string core diameter for the nylon set would close it.
-- No listening question is outstanding. The body direction is settled for this
-  corpus — a symmetric bracket around the adopted point found the letter half
-  way back toward the fitted calibration clearly worst and the letter half way
-  further indistinguishable from what ships, so the corpus broke the tie in
-  favour of not moving. The upper-band damping set was cancelled rather than
-  rendered: the disagreement it was built on is gone, and a number settles it.
+- Four listening questions are outstanding, each a set with the user and a
+  key unread by design, and each a choice between options that are defensible
+  on their own physics and disagree with the corpus: the close-microphone
+  pair (the shipping bridge pair against the treble-bridge/upper-bout pair of
+  the same measurement), the body's low-mode damping (the shipping window
+  against the header's own Q and the 250 ms resolved header, with and without
+  the by-ear low-mode gain), the bridge anchor (the fitted 17 mm spring
+  against no spring and DAFx-26's 3.25 mm stub), and, once its refit is
+  scored, the two-way six-string junction against the one-way idle path. A
+  verdict for any letter but A moves a calibration value or a header, re-pins
+  the regression it trips, and is recorded as chosen by ear; a tie keeps A.
+  The body direction chosen earlier stands: a symmetric bracket around it
+  found the letter half way back clearly worst and the letter half way
+  further indistinguishable from what ships.
 - A mechanism-level scan of what else exists puts one gap ahead of the others.
   Applied Acoustics Systems' Strum GS-2, the established physically modelled
   acoustic guitar, states that it models the vertical *and* horizontal
@@ -897,10 +937,21 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   its stiffness now comes from a fitted saddle-to-anchor length rather than
   from the 3.2 mm stub `xi_b = 0.995` happens to leave. The earlier attempt
   kept the stub and so made the anchor six times stiffer than any single note
-  had seen, which is what the corpus rejected. Whether 8--60 mm is the right
-  bound, and whether one shared length can describe both a steel bridge's pins
-  and a classical tie block, is open: no measurement here supplies the
-  distance for the g21 guitar the bridge and body come from.
+  had seen, which is what the corpus rejected. The audit's verifier then
+  showed the fitted spring is a corpus-fitted low-frequency shield wearing a
+  bridge dimension's name: its series resonance with the body's inter-modal
+  reactance gives the strings 78 times the bridge's conductance at 233 Hz and
+  10 times at 102 Hz, which is where every doublet the audit listed comes
+  from (sympathy off, early decay of the named partial, dB/s, recording |
+  shipping | no spring | 3.25 mm stub: flat-top A#2 H2 8.0 | 79 with a ±40 c
+  split | 14 | 8.2; flat-top A#3 H1 17.8 | 78 | 15 | 8.3; nylon G2 H1 6.2 |
+  63 | 23 | 15; nylon A3 H1 18.5 | 82 | 24 | 15; steel A3 H1 8.1 | 30 | 29 |
+  8.3; and the low E, where no spring exposes the flamenco body's own 83 and
+  91 Hz modes, 4.5--8.6 | 10 | 68 with a split | 7.8). The halo of the
+  one-way idle strings masks most of it today. Scores: no spring 6.8723,
+  6.8800 and 5.8989; the stub 6.4921, 6.4762 and 6.5464 - 5% better on the
+  picked splits and 16% worse on the flat-top rows, so it is a listening set
+  (A shipping, B no spring, C the stub), with the user.
 - Starting a note while the instrument is sounding no longer clicks, and the
   port impedance was not the reason it did. That step is real but small: with
   the bridge's immediate admittance at 0.00305 and a string impedance of
@@ -956,7 +1007,8 @@ git history rather than here.
 - **Corrected the benchmark record.** The committed report and its summary
   still quoted the scores of the longitudinal path at gain 0.025 after that
   gain had been set to zero; they now carry the shipping engine's own:
-  6.8353, 6.8238 and 5.6547 on the three splits.
+  6.8353, 6.8238 and 5.6547 on the three splits (the benchmark table's
+  shipping column had been missed by that correction and now agrees).
 - **Removed the pitched drip from string attacks.** The unmeasured axial-mode
   radiation was a narrow resonant ping at every pluck. Its mechanism remains
   available to calibration and measurement tools, but its shipping gain is
