@@ -1730,6 +1730,73 @@ void testVoicedResonanceCompatibilityProfile()
            "voiced resonance frequency correction does not respond to loop gain");
 }
 
+void testResonanceInputCompensationBracket()
+{
+    using Profile =
+        YouKnow106Engine::VoicedResonanceCompatibilityProfile;
+
+    // Each end of the bracket is its own derivation, so a stray edit to any
+    // one resistor is caught rather than silently re-pinning the coefficient.
+    // Roland JUNO-6/JUNO-60 CPU BOARD p. 9: R14 10k in, R7 68k feedback,
+    // R5 47k + R2 1.5k from VCF IN, R3 100k + R1 1.5k from VCF OUT.
+    expectNear(Profile::drawnInputCompensationPerFeedback,
+               (10000.0 / 68000.0) * ((100000.0 + 1500.0) / (47000.0 + 1500.0)),
+               1.0e-7,
+               "the Roland-drawn resonance compensation left its network");
+    expectNear(Profile::drawnInputCompensationPerFeedback, 0.307762, 1.0e-6,
+               "the Roland-drawn resonance compensation moved off 0.307762");
+    // Open80017a Rev 0.2: R3 4.7k in, R5 68k feedback, R1 24k + R2 1.5k from
+    // VCF IN, R25 100k + R26 1.5k from VCF OUT.
+    expectNear(Profile::inputCompensationPerFeedback,
+               (4700.0 / 68000.0) * ((100000.0 + 1500.0) / (24000.0 + 1500.0)),
+               1.0e-7,
+               "the shipped resonance compensation left its network");
+    expectNear(Profile::inputCompensationPerFeedback, 0.275116, 1.0e-6,
+               "the shipped resonance compensation moved off 0.275116");
+
+    // The shipped value is the bracket's floor, and the retired coefficient
+    // sits below both readings -- which is why it is no longer the default.
+    expect(Profile::inputCompensationPerFeedback
+               < Profile::drawnInputCompensationPerFeedback,
+           "the shipped resonance compensation is not the bracket floor");
+    expect(Profile::legacyInputCompensationPerFeedback
+               < Profile::inputCompensationPerFeedback,
+           "the retired resonance compensation is no longer below the bracket");
+
+    // Zero loop gain is unity for every reading, so a resonance-0 render is
+    // identical whichever shape is selected.
+    for (auto shape : { ResonanceCompensationShape::Reconstruction,
+                        ResonanceCompensationShape::Drawn,
+                        ResonanceCompensationShape::Legacy })
+        expect(Profile::inputCompensation(0.0f, shape) == 1.0f,
+               "a resonance compensation shape is not unity at zero loop gain");
+
+    // The two panel points, pinned as numbers so the audible size cannot
+    // drift unnoticed.
+    const float half =
+        YouKnow106Engine::CircuitDerivedResonanceProfile::loopGain(0.5f);
+    expectNear(half, 2.17209, 1.0e-4,
+               "the circuit-derived loop gain moved at panel 0.50");
+    expectNear(Profile::inputCompensation(
+                   half, ResonanceCompensationShape::Reconstruction),
+               1.59757, 1.0e-4,
+               "the shipped compensation moved at panel 0.50");
+    expectNear(Profile::inputCompensation(
+                   half, ResonanceCompensationShape::Legacy),
+               1.49871, 1.0e-4,
+               "the retired compensation moved at panel 0.50");
+    expectNear(Profile::inputCompensation(
+                   Profile::maximumFeedback,
+                   ResonanceCompensationShape::Reconstruction),
+               2.23913, 1.0e-4,
+               "the shipped compensation moved at full resonance");
+    expectNear(Profile::inputCompensation(
+                   Profile::maximumFeedback,
+                   ResonanceCompensationShape::Drawn),
+               2.38616, 1.0e-4,
+               "the Roland-drawn compensation moved at full resonance");
+}
+
 void testEnvelopeAndAmplifierLaws()
 {
     // Hash-matched B-2 coefficient vectors. The compact generators in the
@@ -6626,6 +6693,7 @@ int main()
     testStoredControlDigitalVectors();
     testResonanceLeavesTheCornerAloneBelowOscillation();
     testVoicedResonanceCompatibilityProfile();
+    testResonanceInputCompensationBracket();
     testCircuitDerivedResonanceProfile();
     testCircuitDerivedNoiseLevelProfile();
     testEnvelopeAndAmplifierLaws();

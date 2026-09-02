@@ -26,6 +26,10 @@ enum class PwmSource { Lfo, Manual };
 enum class HighPassMode { Boost, One, Two, Three };
 enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
+// Which reading of the resonance input-compensation bracket the voice applies.
+// Reconstruction is the shipped floor; Drawn is Roland's own sibling JUNO-6/60
+// value; Legacy is the former underived coefficient, for A/B renders only.
+enum class ResonanceCompensationShape { Reconstruction, Drawn, Legacy };
 enum class KeyMode { Poly1, Poly2, Unison };
 // Published ordinals are stored by session state and must not move. PolyZoned
 // is appended rather than folded into ZonedHermite so a session saved on Fast
@@ -271,6 +275,13 @@ struct EngineParameters
     // family still owns the final calibration; the physical topology is the
     // stronger prior in its absence.
     bool useCircuitDerivedResonanceShape { true };
+    // Which reading of the resonance input-compensation bracket the voice
+    // applies. Both derivable readings put the coefficient between 0.2751 and
+    // 0.3078; the shipped default is that bracket's floor, and Legacy restores
+    // the former underived 0.2296 bit-exactly for controlled A/B renders. Not
+    // serialised, like the rest of this family.
+    ResonanceCompensationShape resonanceCompensationShape {
+        ResonanceCompensationShape::Reconstruction };
     // Comparison-only. Restores the former softplus envelope-to-gain stand-in
     // (turn-on 0.015, knee 0.0026) bit-exactly for A/B renders; the default
     // solves the traced Tr20 grounded-base stage's own junction law, see
@@ -532,20 +543,57 @@ public:
         // amplitude alone once the joint trade was gone, which is what moved
         // the rendered limit cycle from 4.83 Vp-p on to 4.80.
         static constexpr float maximumFeedback = 4.504f;
-        // Voiced, but bracketed by the same reconstruction: its resonance
-        // OTA takes VCF IN through 24k/1.5k (1/17.0) on the non-inverting
-        // input, VCF OUT through 100k/1.5k on the inverting one, and injects
-        // its output current at the first stage's 4.7k/560/68k summing node.
-        // With stage 1's own -68k/4.7k feedback gain the OTA's gm cancels
-        // and the slope in this loop-gain coordinate is resistor-only,
-        // (67.7/17.0)*(4.7/68) = 0.275 -- about 20% above the value below
-        // (which sits 17% under it), same linear-in-k form. One
-        // reconstruction lineage, so not promoted; OQ-09's measured family
-        // still owns this number.
-        static constexpr float inputCompensationPerFeedback = 0.2296f;
+        // How much of the resonance OTA's own input signal reaches the first
+        // stage alongside the feedback -- the term that decides how much
+        // bottom the instrument keeps as resonance opens.
+        //
+        // Two independent readings of the same network now exist, and they
+        // agree on the mechanism and on the linear-in-k form but not on the
+        // number. At DC each stage's input node is held at zero by its own
+        // integrator, so with the OTA's gm written as k the transfer is
+        //   V_out = (R_fb/R_in) V_in (1 + c k) / (1 + k),
+        //   c = (R_in/R_fb) * (R_out_leg) / (R_in_leg),
+        // and gm cancels: the slope is resistor-only.
+        //
+        //   Roland, JUNO-6 (MAY.10,1982) and JUNO-60 (April 10, 1983) CPU
+        //   BOARD p. 9, drawing the discrete IR3109 + BA662 circuit the
+        //   A1QH80017A integrates: R14 10k in, R7 68k stage-1 feedback,
+        //   R5 47k + R2 1.5k from VCF IN, R3 100k + R1 1.5k from VCF OUT.
+        //     c = (10/68) * (101.5/48.5) = 0.307762
+        //   Open80017a (Thomas Herpoel, Rev 0.2, 2024-02-28), the published
+        //   reconstruction on LM13700s: R3 4.7k in, R5 68k feedback,
+        //   R1 24k + R2 1.5k from VCF IN, R25 100k + R26 1.5k from VCF OUT.
+        //     c = (4.7/68) * (101.5/25.5) = 0.275116
+        //
+        // They disagree 2.1x on the stage-1 input resistor and 2x on the +
+        // leg, and land 12 % apart only because those errors compensate. That
+        // is NOT the situation that licensed the 47 kOhm VCA load above,
+        // where drawing and reconstruction agreed; here two sources bound the
+        // magnitude without fixing it, which is this project's
+        // voiced-in-bracket class. Shipped at the bracket's floor on the
+        // NOISE-onset precedent -- the end that claims least -- with the
+        // Roland-drawn value kept beside it for the A/B the bracket invites.
+        // The 80017A's own thick-film resistors are unmarked and unmeasured;
+        // OQ-09's measured family still owns the point value.
+        static constexpr float drawnInputCompensationPerFeedback =
+            (10000.0f / 68000.0f)
+            * ((100000.0f + 1500.0f) / (47000.0f + 1500.0f));
+        static constexpr float inputCompensationPerFeedback =
+            (4700.0f / 68000.0f)
+            * ((100000.0f + 1500.0f) / (24000.0f + 1500.0f));
+        // The former value, retained bit-exactly for controlled A/B renders.
+        // It was voiced with no derivation behind it and sits 17 % below the
+        // bracket's floor, so it is no longer a defensible default.
+        static constexpr float legacyInputCompensationPerFeedback = 0.2296f;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
-        [[nodiscard]] static float inputCompensation(float feedback) noexcept;
+        // `shape` selects which reading of the bracket is applied; the
+        // default is the shipped floor. Defaulted so the research fixtures in
+        // Tools/ keep their one-argument call.
+        [[nodiscard]] static float inputCompensation(
+            float feedback,
+            ResonanceCompensationShape shape
+                = ResonanceCompensationShape::Reconstruction) noexcept;
         // The reciprocal of the pole scaling the cascade's own limit cycle
         // imposes on itself, as a function of the loop gain that sustains it.
         // Exactly 1 at and below `nominalOscillationFeedback`, where there is

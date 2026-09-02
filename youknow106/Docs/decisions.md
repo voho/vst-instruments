@@ -5,6 +5,58 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-02 — Resonance input compensation: off a voiced value, on to a bracket
+
+`inputCompensationPerFeedback` was 0.2296 with no derivation behind it. Two
+independent readings of the network now exist, and both put it higher.
+
+At DC each filter stage's input node is held at zero by its own integrator, so
+with the resonance OTA's transconductance written as `k` the transfer is
+`V_out = (R_fb/R_in)·V_in·(1 + ck)/(1 + k)` and `gm` cancels: the slope in this
+loop-gain coordinate is resistor-only.
+
+- Roland's own **JUNO-6 (10 May 1982)** and **JUNO-60 (10 April 1983)** CPU
+  BOARD p. 9 draw the discrete IR3109 + BA662 circuit the A1QH80017A
+  integrates: R14 10k in, R7 68k stage-1 feedback, R5 47k + R2 1.5k from
+  VCF IN, R3 100k + R1 1.5k from VCF OUT. `(10/68)·(101.5/48.5) = 0.307762`.
+- The published **Open80017a** reconstruction (Thomas Herpoel, Rev 0.2,
+  2024-02-28) carries R3 4.7k in, R5 68k feedback, R1 24k + R2 1.5k from
+  VCF IN, R25 100k + R26 1.5k from VCF OUT. `(4.7/68)·(101.5/25.5) = 0.275116`.
+  The engine's former comment transcribed this lineage correctly at 0.275.
+
+They disagree 2.1× on the stage-1 input resistor and 2× on the non-inverting
+leg, and land 12 % apart only because those errors compensate. This is
+therefore **not** the situation that promoted the 47 kΩ voice-VCA load on
+2026-09-02, where drawing and reconstruction agreed; two sources that bound a
+magnitude without fixing it is the voiced-in-bracket class, and its own
+precedent — the NOISE onset bracketed on VR32 and shipped at its floor — takes
+the end that claims least. **Shipped at 0.275116.** The Roland-drawn 0.307762
+and the retired 0.2296 both remain selectable through
+`EngineParameters::resonanceCompensationShape`, which is not serialised.
+
+This is an evidence-priority decision, not a listening verdict: what settles it
+is that 0.2296 sits 17 % below every derivable reading, not that anything
+sounded better. The remaining choice inside the bracket is a genuine by-ear
+question — 0.2751 against 0.3078 is +0.88 dB on a resonant pad — and an A/B/C
+set was rendered for it (A = 0.2296, B = 0.2751 shipped, C = 0.3078; key.md
+written at render time and unread by design). **No letter has been chosen yet**,
+so nothing here is recorded as chosen by ear. It does not close OQ-09.
+
+Measured, shipping defaults at 48 kHz/4×, against the retired coefficient:
+resonance-0 material is unchanged and silence is untouched; +0.11 dB at panel
+0.10, +0.56 dB on a full-mixer patch at 0.40, +0.60 dB on 0.55 plucks, +2.75 dB
+on a resonant 0.85 pad, where the extra input drive also feeds the peak and the
+level change exceeds the 0.76 dB of added input gain. Stepped and swept
+RESONANCE lanes differ by −9.5 to −12.7 dBc. Paired native benchmark: +0.10 %,
++0.37 %, +0.28 %, +0.65 % across the four scenarios, inside measurement noise.
+
+The endpoint solve is untouched and does not need re-solving: the 4.8 Vp-p
+self-oscillation trim renders with no oscillator, sub or noise in the patch, so
+the only signal the compensation multiplies is the pinned-pulse DC that C56/C50
+has already removed. A regression now renders that take through the widest pair
+of readings in the bracket and requires the same limit cycle, to a tolerance
+rather than to the bit.
+
 ## 2026-09-02 — Resonance CV steps at the write; the VCF/VCA lag is on p. 13
 
 The three post-converter control slews were documented as standing "only on

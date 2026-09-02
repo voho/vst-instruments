@@ -2740,7 +2740,7 @@ void selfTest(const AuditResult& audit)
                     expectedVcfHotOracleOffMaskDb[index], 1.0,
                     "VCF hot oracle off-mask");
         requireNear(cell.vcf.hotFundamentalAmplitude,
-                    0.6158, 0.005,
+                    0.6744, 0.005,
                     "VCF hot reference fundamental");
         requireNear(cell.vcf.oscillationPitchErrorCents,
                     expectedVcfPitchCents[index], 0.03,

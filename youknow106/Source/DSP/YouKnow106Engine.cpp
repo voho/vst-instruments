@@ -528,13 +528,17 @@ float YouKnow106Engine::VoicedResonanceCompatibilityProfile::loopGain(
 }
 
 float YouKnow106Engine::VoicedResonanceCompatibilityProfile::inputCompensation(
-    float feedback) noexcept
+    float feedback, ResonanceCompensationShape shape) noexcept
 {
-    // The direction and coefficient are part of the same voiced profile as
-    // loopGain(). They preserve the existing high-Q drive character without
-    // asserting a measured JUNO-106 compensation transfer.
+    // The direction is settled by the drawn network; the coefficient is
+    // voiced inside the bracket the two readings span. See the constants.
     const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, 8.0f);
-    return 1.0f + inputCompensationPerFeedback * k;
+    const float c = shape == ResonanceCompensationShape::Drawn
+        ? drawnInputCompensationPerFeedback
+        : (shape == ResonanceCompensationShape::Legacy
+               ? legacyInputCompensationPerFeedback
+               : inputCompensationPerFeedback);
+    return 1.0f + c * k;
 }
 
 namespace
@@ -7055,7 +7059,8 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         resonanceCv_, card, tolerance,
         parameters.useCircuitDerivedResonanceShape);
     voice.inputCompensation =
-        VoicedResonanceCompatibilityProfile::inputCompensation(voice.feedback);
+        VoicedResonanceCompatibilityProfile::inputCompensation(
+            voice.feedback, parameters.resonanceCompensationShape);
 
     const float analogCounts = cutoffAnalogCounts(
         voice.cutoffCounts, card, tolerance, powerSupplyDroop_);

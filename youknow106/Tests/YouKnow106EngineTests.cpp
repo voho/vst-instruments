@@ -12727,10 +12727,13 @@ void testSelfOscillationMatchesTheServiceTrim()
     // so nothing but satisfying both at once fixes either.
     constexpr double sampleRate = 48000.0;
     struct Take { double peakToPeak; double hertz; };
-    const auto oscillate = [&](int note, float keyFollow) {
+    const auto oscillate = [&](int note, float keyFollow,
+                               ResonanceCompensationShape shape
+                                   = ResonanceCompensationShape::Reconstruction) {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
+        parameters.resonanceCompensationShape = shape;
         // A *self*-oscillation trim: nothing may reach the filter but the
         // card's own excitation.
         parameters.sawEnabled = false;
@@ -12784,6 +12787,20 @@ void testSelfOscillationMatchesTheServiceTrim()
     };
 
     const auto atC4 = oscillate(60, 0.0f);
+    // The resonance input compensation cannot reach this anchor, which is why
+    // moving it does not re-open the maximumFeedback solve: the trim patch
+    // has no oscillator, sub or noise in it, so the only thing the
+    // compensation multiplies is the pinned-pulse DC that C56/C50 has already
+    // removed. Rendering the same take through the widest pair of readings in
+    // the bracket must land on the same limit cycle. A tolerance, not a bit
+    // compare -- the residual DC is small, not identically zero.
+    const auto atC4Legacy = oscillate(
+        60, 0.0f, ResonanceCompensationShape::Legacy);
+    expect(std::abs(atC4.peakToPeak - atC4Legacy.peakToPeak) < 1.0e-3
+               && std::abs(atC4.hertz - atC4Legacy.hertz) < 0.05,
+           "the resonance input compensation reached the self-oscillation "
+           "trim, so the endpoint solve is coupled to it after all");
+
     // Ten per cent: the procedure publishes no tolerance, and the trimmer it
     // describes is set by ear against a scope, so this is a fidelity bound
     // rather than a claim that a card lands on 4.8 to the millivolt.
