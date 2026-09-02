@@ -7950,6 +7950,77 @@ void testDoublePassiveHoldStatesDoNotStallAtHighRate()
            "the double PWM second node stalled at 768 kHz");
 }
 
+void testVoiceVcaJunctionLawShortensReleaseTails()
+{
+    // One released note rendered twice, identical in everything but the
+    // voice-VCA control law: A the former softplus stand-in, B the exact
+    // Tr20 emitter law. Both share the sub-knee tail and the full-scale
+    // point, so the difference lives between them -- the exact law sits up to
+    // about 2.5 dB under the softplus where the envelope has fallen 25 to
+    // 50 dB, and nowhere above it in that region. More than 90 dB down the
+    // two tails cross again by a fraction of a decibel, so the never-louder
+    // bound is asserted over the 50 dB the change is about. The mid release
+    // byte reaches that region inside six seconds; the slowest one takes over
+    // twenty.
+    constexpr double sampleRate = 48000.0;
+    constexpr int holdSamples = 24000;
+    constexpr int tailSamples = 264000;
+    constexpr int window = 2400;
+    auto parameters = plainPatch();
+    parameters.release = 64.0f / 127.0f;
+
+    const auto windowRms = [](const std::vector<float>& audio, std::size_t offset)
+    {
+        double sumOfSquares = 0.0;
+        for (int index = 0; index < window; ++index)
+        {
+            const double value = audio[offset + static_cast<std::size_t>(index)];
+            sumOfSquares += value * value;
+        }
+        return std::sqrt(sumOfSquares / window);
+    };
+    const auto renderRelease = [&](bool softplus)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto law = parameters;
+        law.useSoftplusVoiceVcaCompatibilityLaw = softplus;
+        engine.setParameters(law);
+        engine.noteOn(60, 1.0f);
+        const auto held = renderExact(engine, holdSamples);
+        engine.noteOff(60);
+        return std::pair { windowRms(held.left, holdSamples - window),
+                           renderExact(engine, tailSamples) };
+    };
+    const auto [sustainA, tailA] = renderRelease(true);
+    const auto [sustainB, tailB] = renderRelease(false);
+    // The sustain hold sits a hair under full scale, where the exact law is
+    // about a thousandth of a decibel under the softplus.
+    expectNear(sustainB / sustainA, 1.0, 1.0e-3,
+               "the junction law moved the sustained level");
+
+    double deepest = 0.0;
+    double loudest = -100.0;
+    for (std::size_t offset = 0; offset + window <= tailA.left.size();
+         offset += window)
+    {
+        const double rmsA = windowRms(tailA.left, offset);
+        if (rmsA < sustainA * 3.16e-3)
+            break;
+        const double ratio = 20.0 * std::log10(windowRms(tailB.left, offset) / rmsA);
+        deepest = std::min(deepest, ratio);
+        loudest = std::max(loudest, ratio);
+    }
+    expect(loudest <= 0.05,
+           "the junction law is louder than the softplus by "
+               + std::to_string(loudest) + " dB within 50 dB of sustain");
+    // The static law difference peaks at -2.54 dB; the rendered window reads
+    // -2.65 dB at 4x.
+    expect(deepest > -3.0 && deepest < -1.3,
+           "the junction law's release tail sits " + std::to_string(deepest)
+               + " dB under the softplus at its deepest, not -1.3 to -3.0");
+}
+
 void testPulseOffPinsComparatorWithoutResettingTheDco()
 {
     YouKnow106Engine engine;
@@ -9782,10 +9853,13 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
         }
         // Unlike the converter/VCA milestones above, this threshold also sees
         // DCO phase. The remaining HQ split is reconstruction-grid behavior;
-        // serial restart has removed the old one-pass scan-phase split.
+        // serial restart has removed the old one-pass scan-phase split. The
+        // HQ-on extremes moved one sample later when the voice VCA took Tr20's
+        // exact junction law, which sits up to 2.5 dB under the former
+        // softplus where the attack crosses this threshold.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 131.0, 177.5, 223.0 }
+                          ? std::array<double, 3> { 132.0, 177.5, 224.0 }
                           : std::array<double, 3> { 113.0, 159.5, 205.0 },
                       0.0, mode + " output-onset-proxy");
     }
@@ -14035,6 +14109,7 @@ int main()
     testFractionalPwmHoldIsHostBlockPartitionInvariant();
     testPitchAndNoiseRemainSampleGridWrites();
     testDoublePassiveHoldStatesDoNotStallAtHighRate();
+    testVoiceVcaJunctionLawShortensReleaseTails();
     testPulseOffPinsComparatorWithoutResettingTheDco();
     testPulseOffCouplingSettlesWhileFastCardsFreewheel();
     testMovingPwmComparatorDoesNotMissThresholdCrossings();

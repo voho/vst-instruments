@@ -1491,13 +1491,66 @@ float YouKnow106Engine::pwmDutyCycle(float controlVolts,
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
 }
 
+const std::array<float, YouKnow106Engine::VoiceVcaControlLaw::tableSteps + 1>&
+YouKnow106Engine::VoiceVcaControlLaw::exactGainTable()
+{
+    // y + ln y = v solved by Newton in double precision, then normalised on
+    // the full-scale entry. From y0 = e^v (v <= 1) or v - ln v (v > 1) the
+    // first step lands at or below the root and every later one climbs
+    // monotonically towards it, so the iterate never leaves y > 0; a dozen
+    // steps are far more than the quadratic tail needs. Built once, off the
+    // audio thread, by prepare().
+    static const std::array<float, tableSteps + 1> table = []
+    {
+        std::array<double, tableSteps + 1> solved {};
+        constexpr double voltsPerUnit =
+            static_cast<double>(CircuitDerivedResonanceProfile::controlFullScaleVolts)
+            / static_cast<double>(thermalVoltage);
+        for (int i = 0; i <= tableSteps; ++i)
+        {
+            const double v = (static_cast<double>(i) / tableSteps
+                              - static_cast<double>(turnOn)) * voltsPerUnit;
+            double y = v > 1.0 ? v - std::log(v) : std::exp(v);
+            for (int step = 0; step < 12; ++step)
+            {
+                const double delta = (y + std::log(y) - v) * y / (y + 1.0);
+                y -= delta;
+                if (std::abs(delta) <= 1.0e-15 * y)
+                    break;
+            }
+            solved[static_cast<std::size_t>(i)] = y;
+        }
+        std::array<float, tableSteps + 1> result {};
+        const double fullScale = solved[tableSteps];
+        for (int i = 0; i <= tableSteps; ++i)
+            result[static_cast<std::size_t>(i)] = static_cast<float>(
+                solved[static_cast<std::size_t>(i)] / fullScale);
+        return result;
+    }();
+    return table;
+}
+
 float YouKnow106Engine::VoiceVcaControlLaw::gain(float control) noexcept
 {
-    // The grounded-base stage motivates a quasi-linear response above
-    // conduction, but V_be depends on current and the BA662's low-current gm is
-    // not measured here. Softplus is a smooth compatibility approximation to
-    // that shape, normalised so full control is unity gain; its provisional
-    // turn-on and knee choose the low-level curvature.
+    const float level = clamp01(sanitised(control, 0.0f));
+    if (level <= deadband)
+        return 0.0f;
+    const auto& table = exactGainTable();
+    const float position = level * static_cast<float>(tableSteps);
+    // Control 1 is entry tableSteps itself; the clamp keeps its upper lerp
+    // neighbour inside the array.
+    const int index = std::min(static_cast<int>(position), tableSteps - 1);
+    const auto at = static_cast<std::size_t>(index);
+    const float fraction = position - static_cast<float>(index);
+    return table[at] + (table[at + 1] - table[at]) * fraction;
+}
+
+float YouKnow106Engine::VoiceVcaControlLaw::softplusGain(float control) noexcept
+{
+    // The former stand-in: a smooth approximation to the grounded-base
+    // stage's shape, normalised so full control is unity gain, with the same
+    // exponential tail as the exact law and a slightly fuller knee. Kept
+    // verbatim so the comparison switch is bit-exact.
     const float level = clamp01(sanitised(control, 0.0f));
     if (level <= deadband)
         return 0.0f;
@@ -4816,6 +4869,7 @@ void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
     // Touch it here, where blocking is allowed, so the first audio callback
     // never pays for it.
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
+    (void) VoiceVcaControlLaw::exactGainTable();
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
     // one, must not be able to put a zero, a negative or a NaN on the internal
@@ -6972,9 +7026,11 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // The retire check below the main scan loop asks this same law about
     // this same vcaControl a moment later, to see whether the card has
     // actually gone silent; cache the raw gain so it reads this value
-    // instead of paying for another log1p/exp pair.
-    voice.vcaGain = VoiceVcaControlLaw::gain(
-        static_cast<float>(voice.vcaControl));
+    // instead of paying for another lookup.
+    const auto vcaControl = static_cast<float>(voice.vcaControl);
+    voice.vcaGain = parameters.useSoftplusVoiceVcaCompatibilityLaw
+                        ? VoiceVcaControlLaw::softplusGain(vcaControl)
+                        : VoiceVcaControlLaw::gain(vcaControl);
     voice.vca = voice.vcaGain
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
 

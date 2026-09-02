@@ -35,6 +35,11 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::otaHeadroomVolts;
     }
 
+    static constexpr float thermalVoltage() noexcept
+    {
+        return YouKnow106Engine::thermalVoltage;
+    }
+
     static constexpr float feedbackHeadroom() noexcept
     {
         return YouKnow106Engine::VoicedResonanceCompatibilityProfile::
@@ -1810,11 +1815,15 @@ void testEnvelopeAndAmplifierLaws()
                "slowest decay-to-minus-20-dB misses the integer recurrence");
 
     // The voice amplifier is a current-controlled OTA behind a grounded-base
-    // volts-to-amps stage, so its gain is linear in the control voltage above
-    // the turn-on with the transistor's own exponential knee below it. These
-    // check that shape against the schematic rather than against a chosen
+    // volts-to-amps stage, and its control current solves that stage's own
+    // emitter equation: y + ln y = v, y the emitter current in units of
+    // Vt / R and v the control voltage above the knee in units of Vt. That is
+    // linear in the control voltage well above the knee, short of the ideal
+    // straight line by the junction's own Vt * ln y, and the transistor's
+    // exponential tail below it. These check the shipped table against the
+    // equation, solved independently here, rather than against a chosen
     // curve; the remaining open part of OQ-19 is a measured BA662 gain sweep,
-    // which would fix the turn-on point, not the law.
+    // which would fix the knee's placement, not the law.
     using VoiceVcaLaw = YouKnow106Engine::VoiceVcaControlLaw;
     float previousGain = -1.0f;
     for (int step = 0; step <= 1000; ++step)
@@ -1827,27 +1836,92 @@ void testEnvelopeAndAmplifierLaws()
     expectNear(VoiceVcaLaw::gain(1.0f), 1.0, 1.0e-6,
                "full control does not give the voice VCA unity gain");
 
-    // Linear in control above the turn-on: equal control steps are equal gain
-    // steps, which an exponential law cannot do. Checked well clear of the
-    // knee, whose whole width is a couple of per cent of the span.
+    // KCL on Tr20's emitter, solved here in double precision from the same
+    // constants the table is built from: Vt over the converter's full-scale
+    // volts turns control travel into units of Vt.
+    const double voltsPerUnit =
+        static_cast<double>(
+            YouKnow106Engine::CircuitDerivedResonanceProfile::controlFullScaleVolts)
+        / static_cast<double>(YouKnow106TestAccess::thermalVoltage());
+    const auto solveOmega = [](double v)
+    {
+        double y = v > 1.0 ? v - std::log(v) : std::exp(v);
+        for (int step = 0; step < 40; ++step)
+        {
+            const double delta = (y + std::log(y) - v) * y / (y + 1.0);
+            y -= delta;
+            if (std::abs(delta) <= 1.0e-15 * y)
+                break;
+        }
+        return y;
+    };
+    const double fullScaleCurrent =
+        solveOmega((1.0 - VoiceVcaLaw::turnOn) * voltsPerUnit);
+    // 369.97 Vt / R is 300.6 uA through 32 kOhm.
+    expectNear(fullScaleCurrent, 369.97, 0.01,
+               "the full-scale emitter current is not 370 Vt/R");
+
+    // On the table's own grid every entry must satisfy y + ln y = v: the
+    // residual is the whole distance between the shipped number and the
+    // circuit equation.
+    for (const int index : { 82, 205, 410, 820, 2048, 3686, 4096 })
+    {
+        const double control =
+            static_cast<double>(index) / VoiceVcaLaw::tableSteps;
+        const double y = VoiceVcaLaw::gain(static_cast<float>(control))
+                       * fullScaleCurrent;
+        const double v = (control - VoiceVcaLaw::turnOn) * voltsPerUnit;
+        expect(std::abs(y + std::log(y) - v) < 2.0e-4,
+               "the voice VCA table does not satisfy Tr20's emitter KCL at "
+                   "control " + std::to_string(control));
+    }
+    // Between grid points the lookup interpolates; a hold voltage is never on
+    // the grid, so the interpolation itself has to be inaudibly close.
+    for (const float control : { 0.02f, 0.05f, 0.1f, 0.3f, 0.7f })
+    {
+        const double direct =
+            solveOmega((static_cast<double>(control) - VoiceVcaLaw::turnOn)
+                       * voltsPerUnit)
+            / fullScaleCurrent;
+        const double error = 20.0 * std::log10(VoiceVcaLaw::gain(control) / direct);
+        expect(std::abs(error) < 0.01,
+               "the voice VCA lookup strays " + std::to_string(error)
+                   + " dB from the solved law at control "
+                   + std::to_string(control));
+    }
+
+    // Readable without the equation: above the knee the response is a
+    // straight line in control that sits a little under the ideal
+    // (V_cv - V_be) / R line, because V_be keeps rising with current --
+    // about 0.8 dB under it at a tenth of travel, closing towards unity.
     for (float control = 0.1f; control <= 0.9f; control += 0.1f)
     {
         const double linear = (static_cast<double>(control) - VoiceVcaLaw::turnOn)
                             / (1.0 - VoiceVcaLaw::turnOn);
-        expectNear(VoiceVcaLaw::gain(control), linear, 2.0e-6,
-                   "the voice VCA is not linear in control above its turn-on");
+        expect(VoiceVcaLaw::gain(control) < linear,
+               "the voice VCA does not sit under the ideal straight line above "
+               "its turn-on");
+    }
+    {
+        const double linear = (0.1 - VoiceVcaLaw::turnOn) / (1.0 - VoiceVcaLaw::turnOn);
+        const double lag = 20.0 * std::log10(VoiceVcaLaw::gain(0.1f) / linear);
+        expect(lag > -1.0 && lag < -0.6,
+               "the junction's Vt ln y lag at a tenth of travel is "
+                   + std::to_string(lag) + " dB, not about -0.8");
     }
 
-    // And exponential below it, at the grounded-base stage's own 60 mV per
-    // decade -- kT/q times ln 10, referred to the converter's 10 V span. One
-    // decade of control below the turn-on against two decades below it, where
-    // the softplus is already close to its exponential asymptote.
+    // And exponential below the knee, at the grounded-base stage's own 60 mV
+    // per decade -- kT/q times ln 10, referred to the converter's 10 V span.
+    // One decade of control below the turn-on against two decades below it.
+    // The exact tail is y = e^(v - y), so at this depth each decade falls a
+    // little short of tenfold (about 9.2, the emitter resistors still
+    // dropping a few per cent of a Vt) and closes on ten further down.
     {
-        const float decade = VoiceVcaLaw::knee * 2.302585f;
+        const float decade = static_cast<float>(2.302585 / voltsPerUnit);
         const double upper = VoiceVcaLaw::gain(VoiceVcaLaw::turnOn - decade);
         const double lower = VoiceVcaLaw::gain(VoiceVcaLaw::turnOn - 2.0f * decade);
-        expectNear(upper / lower, 10.0, 0.5,
-                   "the voice VCA's low-level knee is not 60 mV per decade");
+        expect(upper / lower > 9.0 && upper / lower < 10.0,
+               "the voice VCA's low-level tail is not 60 mV per decade");
         expect(VoiceVcaLaw::gain(VoiceVcaLaw::deadband) == 0.0f,
                "the voice VCA does not shut below its declared deadband");
         // A card sitting at the largest control offset the Unit Character
@@ -1855,6 +1929,20 @@ void testEnvelopeAndAmplifierLaws()
         // retires. 0.004 per unit of Unit Character, bounded at two.
         expect(VoiceVcaLaw::gain(2.0f * 0.004f) < VoiceVcaLaw::silenceGain,
                "the worst card control offset escapes the silence threshold");
+    }
+
+    // The comparison switch restores the former softplus stand-in to the bit:
+    // the same float expression, evaluated here in the same order.
+    for (int step = 1; step <= 20; ++step)
+    {
+        const float control = static_cast<float>(step) / 20.0f;
+        const float x = (control - VoiceVcaLaw::turnOn) / VoiceVcaLaw::knee;
+        const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
+        const float expected =
+            VoiceVcaLaw::knee * softplus / (1.0f - VoiceVcaLaw::turnOn);
+        expect(VoiceVcaLaw::softplusGain(control) == expected,
+               "the softplus comparison path is not bit-exact at control "
+                   + std::to_string(control));
     }
 
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA

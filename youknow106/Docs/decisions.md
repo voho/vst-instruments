@@ -48,6 +48,37 @@ closure of OQ-09: the standoff is the anchored service state, but the 0.6 V
 junction drop above it remains the nominal prior a measured
 response-versus-resonance family would replace.
 
+## 2026-09-01 — Voice-VCA control: exact junction law replaces softplus
+
+The voice VCA's envelope-to-gain law is now the solved emitter equation of the
+traced Tr20 grounded-base stage — R106 + R105 = 32 kΩ, kT/q and the VR34
++0.26 V standoff, all already in tree — tabulated once at prepare time. The
+softplus it replaces was labelled in the code as a smooth, replaceable
+approximation of that same topology; the exact law shares its sub-knee
+exponential tail and its full-scale point and differs only in between, where
+V_be keeps rising with current: −0.2 dB at control 0.010, −2.5 dB at 0.020,
+−1.6 dB at 0.050, −0.8 dB at 0.10, −0.24 dB at 0.30, −0.05 dB at 0.70, 0 at
+full scale. Audibly, release tails and slow decays between about −25 and
+−50 dB close one to two and a half decibels sooner; attacks cross that region
+in under a millisecond and sustain levels do not move.
+
+This is an evidence-priority shape replacement on an anchored topology, not a
+listening verdict, and it does not close OQ-19. The knee stays voiced: the
+reconstruction's 150 mV on the +0.26 V standoff, carried over under the stated
+convention that the exact law's tail coincides with the former softplus's. That
+convention is a convention, not a derivation — the other defensible placement
+(emitter current equal to Vt/R at the turn-on) moves the −45 dB region by about
+9 dB, several times the 2.5 dB the shape itself changes — so OQ-19's measured
+gain sweep owns placement. The former softplus remains available behind the
+internal comparison switch `useSoftplusVoiceVcaCompatibilityLaw`, bit-exact.
+CPU: one table index and lerp per voice per internal sample in place of the
+softplus; the repo's paired A/B benchmark at the shipping Poly/Cubic/RK4
+4x 48 kHz defaults read, over three runs, idle 77.65 → 78.04 ms (+0.50 %),
+six-voice plain 214.24 → 213.77 ms (−0.22 %), six-voice resonant 216.65 →
+216.80 ms (+0.07 %) and six-voice full-mixer Chorus II 303.97 → 304.99 ms
+(+0.33 %) on the last run, every scenario inside the loaded machine's ±0.5 %
+run-to-run noise.
+
 ## 2026-09-01 — Loaded MN3009 reconstruction network
 
 Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
