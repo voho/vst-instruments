@@ -516,8 +516,10 @@ Deliberate, each with its reason recorded:
   in that arithmetic, so six voices on one key are always exactly in tune
   and unison carries no detune generator. The crystal's whole tolerance
   budget sits below the pitch quantisation step.
-- **No mains ripple.** Derived at ~0.03 cents of cutoff through the
-  regulators — below audibility; and neither ripple nor rail droop may ever
+- **No mains ripple.** Derived at ~0.011 cents of cutoff through the
+  regulators — the ±15 V rails are an M5230L whose data sheet gives 68 dB of
+  ripple rejection at 120 Hz, so about 0.30 mVpp reaches a card — below
+  audibility; and neither ripple nor rail droop may ever
   be routed to pitch.
 - **No invented behaviour where evidence is missing.** Mechanisms whose
   magnitude the sources cannot fix either ship voiced and labelled (mixer
