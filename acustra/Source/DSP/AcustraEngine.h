@@ -326,11 +326,6 @@ private:
         float excitationDecay { 0.0f };
         float excitationColour { 0.0f };
         float excitationLowpass { 0.0f };
-        float bridgeContactState { 0.0f };
-        float bridgeContactState2 { 0.0f };
-        float bridgeContactCoefficient { 0.5f };
-        float bridgeContactBlend { 0.0f };
-        float bridgeContactDecay { 0.99f };
         float characteristicImpedance { 0.5f };
         float bridgeTailStiffness { 10000.0f };
         float attackPitchCents { 0.0f };

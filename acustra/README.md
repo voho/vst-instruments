@@ -223,9 +223,8 @@ per-note pressure and CC74 timbre are not implemented.
 Each audible string path is a full-round-trip stiff-string waveguide. A note
 begins as a triangular string displacement released from rest. A finite spatial
 aperture rounds that shape, and a short deterministic noise burst adds the
-release detail. The two-pole bridge-contact transient in the code reaches the
-output only through the direct body-force path, whose fitted gain is zero, so
-it is inert on the shipping calibration. Pluck Position moves the
+release detail; the bridge-local direct path's fitted gain is zero, so the
+measured body is the only radiator. Pluck Position moves the
 displacement point; Touch and MIDI velocity alter its aperture, level and
 brightness. A fitted register law broadens the effective low-note contact and
 narrows it in the upper register, correcting a repeatable corpus-wide spectral
@@ -961,8 +960,8 @@ git history rather than here.
 - **Removed the pitched drip from string attacks.** The unmeasured axial-mode
   radiation was a narrow resonant ping at every pluck. Its mechanism remains
   available to calibration and measurement tools, but its shipping gain is
-  now zero so the displacement release and bridge-contact transient define the
-  attack without an artificial water-drop tone.
+  now zero so the displacement release defines the attack without an
+  artificial water-drop tone.
 
 ### 2026-08-31
 

@@ -42,7 +42,6 @@ struct AcustraEngineTestAccess
         double peakPosition;
         double peakDisplacement;
         double noiseEnvelope;
-        double analyticTransient;
     };
 
     struct PreparedLossSnapshot
@@ -354,8 +353,7 @@ struct AcustraEngineTestAccess
             engine.effectiveTouch(voice),
             static_cast<double>(peakSample) / length,
             peakValue,
-            voice.excitationEnvelope,
-            voice.bridgeContactBlend
+            voice.excitationEnvelope
         };
     }
 
@@ -2193,11 +2191,8 @@ void testMaterialCalibrationChangesStringAndPluckDescriptors()
         noTransient, acustra::StringMaterial::Steel, 0.8f);
     const auto strongAttack = acustra::AcustraEngineTestAccess::pluck(
         strongTransient, acustra::StringMaterial::Steel, 0.8f);
-    expect(quietAttack.noiseEnvelope == 0.0
-               && quietAttack.analyticTransient == 0.0
-               && strongAttack.noiseEnvelope > 0.0
-               && strongAttack.analyticTransient == 1.0,
-           "transient calibration missed its analytic or noise branch");
+    expect(quietAttack.noiseEnvelope == 0.0 && strongAttack.noiseEnvelope > 0.0,
+           "transient calibration missed its noise branch");
 
     auto responsive = acustra::fittedPhysicalCalibration;
     responsive.steel.velocityBrightnessDepth = 1.2f;

@@ -1351,7 +1351,10 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     const float age = parameters_.stringAge;
     // Preserve the material/age law while allowing one shared fitted cutoff
     // scale to reduce excess upper-partial damping without changing the
-    // fundamental T60 target below.
+    // fundamental T60 target below. The fitted scale puts the steel corner
+    // near 22.5 kHz at the default age, above the 0.44 fs clamp at 44.1 and
+    // 48 kHz, so at those rates it sits on the clamp and the shelf is not a
+    // free control there; nylon's 15.8 kHz corner never reaches it.
     const float cutoff = (steel
         ? 12500.0f * std::exp(-1.25f * age)
         :  8200.0f * std::exp(-0.78f * age))
@@ -1509,14 +1512,6 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         broadLossCoefficient, broadLoss, omega)
         * magnitudeForOnePoleMix(lowpassCoefficient, mutedHighLoss, omega);
     const float loopGain = desiredPeriodGain / std::max(filterGain, 0.50f);
-    const float touch = effectiveTouch(voice);
-    const float contactCutoff = ((steel ? 900.0f : 1800.0f)
-        + (steel ? 2000.0f : 3000.0f) * touch)
-        * (0.90f + 0.03f * static_cast<float>(stringIndex));
-    voice.bridgeContactCoefficient = 1.0f - std::exp(-twoPi
-        * clamp(contactCutoff, 700.0f,
-                 0.35f * static_cast<float>(sampleRate_))
-        * inverseSampleRate_);
 
     for (int polarisation = 0; polarisation < 2; ++polarisation)
     {
@@ -1663,6 +1658,11 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
         const float apertureSamples
             = ACUSTRA_ANALYSIS_APERTURE_MILLISECONDS * 48.0f;
 #else
+        // An authored map, not a contact width: with the fitted register
+        // law the smoother spans about +/-89 mm of a nylon low E's period
+        // and +/-48 mm of a soft-plucked steel one (H12 at -45 and -9 dB),
+        // against +/-21 mm on a hard steel pluck, and nylon's velocity depth
+        // is fitted to zero, so nylon's release does not move with velocity.
         const float apertureSamples = 0.70f + 3.60f * (1.0f - touch)
             + (stringIndex < 3 ? 1.0f : 0.0f)
             + (voice.fret >= 17 ? 1.5f : 0.0f);
@@ -1761,12 +1761,6 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
         / (std::max(burstSeconds, 0.0004f) * static_cast<float>(sampleRate_)));
     voice.excitationColour = 0.10f + 0.62f * touch;
     voice.excitationLowpass = 0.0f;
-    voice.bridgeContactState = 0.0f;
-    voice.bridgeContactState2 = 0.0f;
-    voice.bridgeContactBlend = std::min(physical.transientScale, 1.0f);
-    const float contactSeconds = 0.0050f + 0.0030f * (1.0f - touch);
-    voice.bridgeContactDecay = std::exp(-1.0f
-        / (contactSeconds * static_cast<float>(sampleRate_)));
     voice.level = std::max(voice.level, 0.02f * v);
     voice.releaseDamping = 1.0f;
     voice.quietSamples = 0;
@@ -1786,9 +1780,6 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex) noexcept
     voice.fret = 0;
     voice.velocity = 0.0f;
     voice.excitationEnvelope = 0.0f;
-    voice.bridgeContactState = 0.0f;
-    voice.bridgeContactState2 = 0.0f;
-    voice.bridgeContactBlend = 0.0f;
     voice.attackPitchCents = 0.0f;
     voice.attackPitchDecay = 1.0f;
     voice.frozenMemberPitchBendSemitones = 0.0f;
@@ -2772,22 +2763,9 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
         * (2.0f * verticalVelocity - bridgeVelocity);
     if (!voice.played && sympatheticStringsEnabled_)
         sympatheticForce += localReactionForce;
-    const float rawDirectForce = localReactionForce * voice.polarisationMix
+    const float directForce = localReactionForce * voice.polarisationMix
         + 0.44f * impedance * horizontalVelocity
             * (1.0f - voice.polarisationMix);
-    // Approximate the finite release aperture with a two-pole transient.  The
-    // blend applies only to the quiet bridge-local output; the measured
-    // force-to-pressure bank receives the unaltered junction reaction force.
-    voice.bridgeContactState += voice.bridgeContactCoefficient
-        * (rawDirectForce - voice.bridgeContactState);
-    voice.bridgeContactState2 += voice.bridgeContactCoefficient
-        * (voice.bridgeContactState - voice.bridgeContactState2);
-    const float contactBlend = voice.bridgeContactBlend;
-    const float directForce = rawDirectForce
-        + contactBlend * (voice.bridgeContactState2 - rawDirectForce);
-    voice.bridgeContactBlend *= voice.bridgeContactDecay;
-    if (voice.bridgeContactBlend < 1.0e-5f)
-        voice.bridgeContactBlend = 0.0f;
 
     const float pan = (static_cast<float>(stringIndex) - 2.5f) / 2.5f;
     // The measured force-to-pressure bank is the acoustic source. Retain only
