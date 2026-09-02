@@ -622,9 +622,10 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   rises by about 1,900 cents and the model's by 96, and at the loudest layer
   H4--H12 sit 12 to 21 dB short; audio-rate tension modulation was built and
   is inert at the fitted displacement (the decision log says by how much),
-  and a plectrum's dent whose width its speed sets doubles the model's
-  velocity-to-brightness rise, to about half the recordings', but trades the
-  flat-top for it: at the shipping
+  and a plectrum's dent whose width its speed sets raises the model's
+  velocity-to-brightness rise from under half a decibel to about three,
+  against the recordings' nine, but trades the flat-top for it: at the
+  shipping
   calibration and after a full refit around it the picked corpus improves by
   under 2% while the eight finger-played flat-top rows worsen by 14 to 19%,
   because nothing the player sends says whether a finger or a plectrum is

@@ -2718,11 +2718,13 @@ velocity drags a V-shaped dent whose flanks have slope v/c, so the released
 shape is the triangle with that dent clipped into it at the pluck point, plus
 the velocity the dent carries; the pick speed is the one new quantity, set
 to velocity times Touch times a scale, and the rest is the string's own
-geometry. It does part of what the recordings ask. On the six steel notes
-rendered at both the softest and the loudest layer, the loudest layer's
-H5-H12 balance over the softest rises by a median 4.7 dB against the shipping
-engine's 2.2 and the recordings' 8; the attack centroid's 1,900-cent rise it
-does not touch, and the audit's verifier of the same mechanism in its
+geometry. It does a fraction of what the recordings ask. On the six steel
+notes rendered at both the softest and the loudest layer, the loudest layer's
+H5-H12 balance over the softest rises by a median 2.8 dB against the shipping
+engine's 0.4 and the recordings' 9.3 (peak partial levels at 80-250 ms, the
+recordings read at their own 44.1 kHz mono and the renders as the mid of
+their 48 kHz stereo); the attack centroid's 1,900-cent rise it does not
+touch, and the audit's verifier of the same mechanism in its
 release-duration form found why the rest is out of the excitation's reach:
 the 80-250 ms H5-H12 bins are filled by the idle strings' partials and the
 loop's own upper-partial loss, so no initial condition owns that descriptor
@@ -2808,9 +2810,11 @@ level on validation, and 19.7% worse on the flat-top, which is the eight
 finger-played rows once more asking for the low-mode gain). Against the
 recordings themselves the direction is the other way: the standard deviation
 of the H1-H12 partial levels about a quadratic trend over 80-400 ms, a
-measure of how much the body colours one note, is 9.5 dB on the archtop
-rows, 11.4 on the classical and 7.3 on the flat-top; A renders 5.1, 3.7 and
-5.3, and B, C and D all render 6.1 to 6.2, 4.9 and 6.1. The benchmark's
+measure of how much the body colours one note, is 7.2 dB on the archtop
+rows, 8.1 on the classical and 6.1 on the flat-top; A renders 5.0, 4.2 and
+4.6, B 6.5, 5.5 and 6.7, C 6.7, 5.8 and 6.4, D 6.7, 5.9 and 6.7 (the
+verifier's independent implementation of the same measure reads 7.1, 8.0
+and 6.3 against A's 5.1, 4.2 and 5.1). The benchmark's
 40-band body term reads that colour as error because its reference is a
 different guitar; the recordings' own fine structure says every letter but A
 is closer to a real one. That is the same disagreement the 2026-08-31
