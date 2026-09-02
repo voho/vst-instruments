@@ -5,6 +5,40 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-02 — Resonance CV steps at the write; the VCF/VCA lag is on p. 13
+
+The three post-converter control slews were documented as standing "only on
+whatever lag exists downstream inside the 80017a module (p. 9 prints no
+values)". That is wrong on all three counts, and re-reading module board p. 13
+at the scan's native resolution settles them.
+
+- **Resonance ships changed.** IC26's C86 feeds IC22c, whose output runs to the
+  card as bare wire into VR26 20KB, R107 27 kΩ and the grounded-base Tr18.
+  There is no capacitor anywhere on that run, and CH2's VR21/R88/Tr15 is
+  identical. That is the direct-follower topology whose 522 µs compatibility
+  slews the DCO and NOISE holds already retired (2026-09-01), so resonance
+  steps at its write too. The retired constant was the first revision's single
+  undifferentiated `controlSlewSeconds` and never had a network behind it.
+- **The voice VCA keeps its number and gains a derivation.** The VCA CV crosses
+  R106 10 kΩ into C58 0.1 µF with R105 22 kΩ onward to Tr20, so C58 sees
+  6.875 kΩ and the time constant is 687.5 µs — the shipped 687 µs to three
+  figures. Anchored topology, derived constant, no audio change.
+- **The VCF keeps its number as a bracket.** Its C61 0.1 µF sits behind VR28
+  5KB (WIDTH) and R113 10 kΩ, with R110 8.2 kΩ and the R111 560 Ω positor
+  onward to pin 6, so C61 sees 4.67–5.53 kΩ across the trimmer's travel:
+  467–553 µs. The shipped 522 µs is inside it at about 58 % of the track. The
+  trimmer's set position is unread, so the point stays voiced-in-bracket on the
+  NOISE-onset precedent rather than being re-pinned to an endpoint.
+
+Measured impact of the resonance change, shipping defaults at 48 kHz/4×: every
+static-control scenario renders bit-identically (difference at the float dump's
+−250 to −345 dBc floor, including a cutoff sweep, which confirms the cutoff
+trajectory is untouched). It shows only while the RESONANCE control moves —
+−9.2 dBc against a stepped ramp, −13.1 dBc against a slow sweep, −28.4 dBc
+against a 3 Hz wobble — where each 7-bit converter step now lands hard instead
+of gliding. Paired native benchmark: −0.32 %, +0.33 %, +0.59 %, +0.43 % across
+the four scenarios, all inside the noise of a loaded machine.
+
 ## 2026-09-02 — Voice BA662 signal saturation
 
 The voice VCA's signal path is now the BA662 differential pair's

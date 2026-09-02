@@ -135,8 +135,6 @@ struct YouKnow106TestAccess
 
     static constexpr double holdSeconds() noexcept
     {
-        static_assert(YouKnow106Engine::vcfHoldSlewSeconds
-                      == YouKnow106Engine::resonanceHoldSlewSecondsVoiced);
         return YouKnow106Engine::vcfHoldSlewSeconds;
     }
 

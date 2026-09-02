@@ -2606,6 +2606,28 @@ YouKnow106Engine::exactVcfHoldInterval(
     return result;
 }
 
+YouKnow106Engine::VcfHoldInterval
+YouKnow106Engine::steppedHoldInterval(
+    float held, bool hasEvent, double eventPosition,
+    float eventTarget) noexcept
+{
+    VcfHoldInterval result;
+    const double before = std::isfinite(held)
+        ? static_cast<double>(held) : 0.0;
+    const double after = hasEvent && std::isfinite(eventTarget)
+        ? static_cast<double>(eventTarget) : before;
+    const double event = std::clamp(
+        std::isfinite(eventPosition) ? eventPosition : 1.0, 0.0, 1.0);
+
+    for (std::size_t point = 0; point < result.value.size(); ++point)
+    {
+        const double position = OtaCascade::controlNodePositions[point];
+        result.value[point] = (hasEvent && event <= position) ? after : before;
+    }
+    result.endpoint = static_cast<float>(result.value.back());
+    return result;
+}
+
 double YouKnow106Engine::exactOnePoleHoldEndpoint(
     double state, float target, bool hasEvent, double eventPosition,
     float eventTarget, double intervalSeconds, double timeConstantSeconds,
@@ -4931,8 +4953,6 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
     processingCoefficients_.vcfSlew = slewFor(vcfHoldSlewSeconds);
-    processingCoefficients_.resonanceSlew =
-        slewFor(resonanceHoldSlewSecondsVoiced);
     processingCoefficients_.internalIntervalSeconds = 1.0 / oversampledRate_;
     processingCoefficients_.voiceVcaDecay = std::exp(
         -processingCoefficients_.internalIntervalSeconds
@@ -8402,30 +8422,21 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             const bool cutoffHoldEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::Vcf;
+            // IC22c drives VR26/R107/Tr18 through bare wire, so the RESO CV
+            // holds its written value and steps at the write. The interval is
+            // rebuilt every sample either way: the cascade reads it beside the
+            // cutoff trajectory, and a stale one would replay the pre-write
+            // value at the early control nodes.
             if (resonanceEvent)
             {
-                resonanceVcfHoldInterval_ = exactVcfHoldInterval(
-                    resonanceIntervalStart,
-                    physicalHoldEvent.previousTarget, true,
-                    physicalHoldEvent.position, physicalHoldEvent.target,
-                    coefficients.internalIntervalSeconds);
+                resonanceVcfHoldInterval_ = steppedHoldInterval(
+                    resonanceIntervalStart, true, physicalHoldEvent.position,
+                    physicalHoldEvent.target);
                 resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
             }
             else
-            {
-                if (cutoffHoldEvent)
-                {
-                    resonanceVcfHoldInterval_ = exactVcfHoldInterval(
-                        resonanceIntervalStart, resonanceCvTarget_, false,
-                        1.0, resonanceCvTarget_,
-                        coefficients.internalIntervalSeconds);
-                    resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
-                }
-                else
-                    resonanceCv_ +=
-                        (resonanceCvTarget_ - resonanceCv_)
-                            * coefficients.resonanceSlew;
-            }
+                resonanceVcfHoldInterval_ = steppedHoldInterval(
+                    resonanceCv_, false, 1.0, resonanceCv_);
             const bool commonVcaEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::CommonVca;

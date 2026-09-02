@@ -4770,6 +4770,75 @@ void testDcoAndNoiseHoldsAcquireAtTheWrite()
                "the DCO launch scale still weighted a stale hold value");
 }
 
+void testResonanceHoldStepsAtTheWrite()
+{
+    // IC26's C86 feeds IC22c, whose output reaches the card as bare wire into
+    // VR26 20KB, R107 27k and the grounded-base Tr18: p. 13 draws no capacitor
+    // on that run, so the RESO CV holds its written value and steps at the
+    // write instead of gliding. The retired 522 us was the first commit's
+    // single undifferentiated control slew, and had no network behind it.
+    constexpr double sampleRate = 8000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto initial = plainPatch();
+    initial.resonance = 0.09f;
+    engine.setParameters(initial);
+    engine.noteOn(60, 1.0f);
+
+    auto eventParameters = initial;
+    eventParameters.resonance = 0.68f;
+    engine.setParameters(eventParameters);
+    const double delta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    constexpr double requestedPosition = 0.27;
+    YouKnow106TestAccess::setConverterScheduler(
+        engine, 1.0 - requestedPosition * delta,
+        YouKnow106TestAccess::converterWriteCount());
+    // Seed a stale held value distinct from anything the pass can write, so
+    // the step has somewhere to come from. Only the target is recomputed at
+    // the block boundary; the held node keeps whatever the card is holding.
+    constexpr float staleHold = 0.19f;
+    YouKnow106TestAccess::setResonanceHold(
+        engine, staleHold, YouKnow106TestAccess::resonanceTarget(engine));
+    const float heldBefore = YouKnow106TestAccess::resonanceHeld(engine);
+
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    const auto latch = YouKnow106TestAccess::passiveHoldLatch(engine);
+    expect(latch.valid && latch.eventPosition > 0.0,
+           "the RESO step fixture did not latch a fractional write");
+    expect(latch.target != heldBefore,
+           "the RESO step fixture did not change the converter payload");
+
+    // The write steps, exactly: no partial trajectory, no dependence on any
+    // time constant. Every control node at or after the event position carries
+    // the written value and every node before it still carries the old one.
+    expect(YouKnow106TestAccess::resonanceHeld(engine) == latch.target,
+           "the RESO CV hold did not step to its target at the write");
+    const auto stepped = YouKnow106TestAccess::resonanceVcfHoldNodes(engine);
+    bool sawOld = false;
+    bool sawNew = false;
+    for (std::size_t point = 0; point < vcfControlNodePositions.size(); ++point)
+    {
+        const bool afterEvent =
+            latch.eventPosition <= vcfControlNodePositions[point];
+        const double expected = afterEvent
+            ? static_cast<double>(latch.target)
+            : static_cast<double>(heldBefore);
+        sawOld = sawOld || !afterEvent;
+        sawNew = sawNew || afterEvent;
+        expect(stepped[point] == expected,
+               "a RESO control node interpolated across the write instead of "
+               "stepping at it");
+    }
+    expect(sawOld && sawNew,
+           "the RESO step fixture did not straddle the event position");
+    // The complementary case -- a cutoff write leaving the RESO CV exactly
+    // where it was -- is asserted by
+    // testFractionalVcfWritesPeekWithoutConsumingTheScheduler.
+}
+
 void testMasterTuneUsesRecoveredSignedPitchWord()
 {
     expect(YouKnow106Engine::masterTunePitchWordOffset(-50.0) == -128
@@ -7317,12 +7386,10 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
     expectNear(YouKnow106TestAccess::cutoffHeld(engine, slot),
                expectedEndpoint, 0.0,
                "the fractional VCF write missed its exact 522 us endpoint");
-    expectNear(YouKnow106TestAccess::resonanceHeld(engine),
-               YouKnow106TestAccess::exactVcfHoldEndpoint(
-                   resonanceHeldBefore, resonanceTargetBefore, 1.0,
-                   resonanceTargetBefore, 1.0 / sampleRate, false),
-               0.0,
-               "a VCF event interval did not advance resonance exactly once");
+    // The RESO CV has no post-hold network, so a cutoff write leaves it
+    // exactly where it was: it moves only at its own write.
+    expect(YouKnow106TestAccess::resonanceHeld(engine) == resonanceHeldBefore,
+           "a VCF event interval moved the held RESO CV");
     const auto cutoffNodes =
         YouKnow106TestAccess::cutoffVcfHoldNodes(engine, slot);
     const auto resonanceNodes =
@@ -7339,10 +7406,7 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
                    2.5e-12,
                    "the process-populated cutoff hold node is not segmented-exact");
         expectNear(resonanceNodes[point],
-                   independentVcfHoldValue(
-                       resonanceHeldBefore, resonanceTargetBefore, false,
-                       1.0, resonanceTargetBefore, 1.0 / sampleRate,
-                       vcfControlNodePositions[point]),
+                   static_cast<double>(resonanceHeldBefore),
                    2.5e-12,
                    "a cutoff event populated the wrong reciprocal resonance node");
     }
@@ -7407,12 +7471,8 @@ void testFractionalResonancePeekCrossesThePassBoundary()
            "the pass-wrap resonance peek consumed the old pass cursor");
     expect(YouKnow106TestAccess::resonanceTarget(engine) == targetBefore,
            "the pass-wrap peek changed the official resonance target");
-    expectNear(YouKnow106TestAccess::resonanceHeld(engine),
-               YouKnow106TestAccess::exactVcfHoldEndpoint(
-                   heldBefore, targetBefore, latch.eventPosition,
-                   latch.target, 1.0 / sampleRate),
-               0.0,
-               "the pass-wrap resonance event missed its exact endpoint");
+    expect(YouKnow106TestAccess::resonanceHeld(engine) == latch.target,
+           "the pass-wrap resonance event did not step to its written value");
     expectNear(YouKnow106TestAccess::cutoffHeld(engine, 0),
                YouKnow106TestAccess::exactVcfHoldEndpoint(
                    cutoffHeldBefore, cutoffTargetBefore, 1.0,
@@ -7428,12 +7488,12 @@ void testFractionalResonancePeekCrossesThePassBoundary()
     for (std::size_t point = 0; point < vcfControlNodePositions.size(); ++point)
     {
         expectNear(resonanceNodes[point],
-                   independentVcfHoldValue(
-                       heldBefore, targetBefore, true, latch.eventPosition,
-                       latch.target, 1.0 / sampleRate,
-                       vcfControlNodePositions[point]),
-                   2.5e-12,
-                   "the process-populated resonance hold node is not segmented-exact");
+                   latch.eventPosition <= vcfControlNodePositions[point]
+                       ? static_cast<double>(latch.target)
+                       : static_cast<double>(heldBefore),
+                   0.0,
+                   "the process-populated resonance hold node did not step at "
+                   "the write");
         expectNear(cutoffNodes[point],
                    independentVcfHoldValue(
                        cutoffHeldBefore, cutoffTargetBefore, false, 1.0,
@@ -14425,6 +14485,7 @@ int main()
     testRangeDoesNotRetargetDcoCompensationCv();
     testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
     testDcoAndNoiseHoldsAcquireAtTheWrite();
+    testResonanceHoldStepsAtTheWrite();
     testMasterTuneUsesRecoveredSignedPitchWord();
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();

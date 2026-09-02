@@ -1418,12 +1418,9 @@ private:
     // reaches its mixer OTA through R11 into C1 ahead of the R9/R10 inverter.
     // Both networks settle to their held value, so the calibrated DC laws are
     // untouched; what they add is the lag the hardware's PWM LFO and level
-    // staircase actually cross. Resonance keeps a voiced compatibility value
-    // behind its own name so a measured destination can be replaced without
-    // silently changing the others. IC23 (VCF) and IC26's VCA/RESO channels
-    // share IC24's direct-follower topology below, so the 522/687 us values
-    // stand only on lag downstream inside the 80017a module (p. 9 prints no
-    // values); they are not re-derived here.
+    // staircase actually cross. IC26's RESO channel instead shares IC24's
+    // direct-follower topology below and steps at the write; see the note
+    // beside the retired constant further down.
     //
     // The DCO pitch-CV and NOISE holds have no post-hold network at all on
     // p. 13: six of IC24's seven '.01x7' holds (C79, C78, C74, C77, C73, C76)
@@ -1464,7 +1461,6 @@ private:
     static constexpr float subSmoothingC1Farads = 10.0e-6f;
     static constexpr float subHoldSlewSeconds =              // 10 ms
         subSmoothingR11Ohms * subSmoothingC1Farads;
-    static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
     // p. 13 '.01x7' (IC24, C73-C79) and '.01x8' (IC26, C80-C87).
     static constexpr float converterHoldFarads = 10.0e-9f;
     // Hitachi HD14051B, VDD-VEE = 15 V column, 25 C maximum:
@@ -1475,11 +1471,15 @@ private:
                   "the DCO/NOISE hold acquisition bound must sit inside one "
                   "internal sample at the 192 kHz reference, or the "
                   "direct-assignment holds below are wrong");
-    static_assert(std::bit_cast<std::uint32_t> (vcfHoldSlewSeconds)
-                      == std::bit_cast<std::uint32_t> (
-                          resonanceHoldSlewSecondsVoiced),
-                  "the shared exact VCF-hold trajectory requires equal "
-                  "cutoff and resonance constants");
+    // The RESO CV destination has no post-hold network at all, so it is not on
+    // the list above. IC26's C86 ('.01x8') feeds IC22c, whose output runs as
+    // bare wire into the card, through VR26 20KB and R107 27k to the
+    // grounded-base Tr18 -- p. 13 draws no capacitor anywhere on that run, and
+    // CH2's VR21/R88/Tr15 is identical. That is the same direct-follower
+    // topology as the DCO and NOISE holds, whose own 522 us compatibility
+    // slews the same bound retired, so resonance steps at the write too. The
+    // 522 us it used to carry was the first commit's single undifferentiated
+    // control slew and never had a network behind it.
     // The shared white-noise generator and each card's microscopic filter
     // excitation represent continuous-time noise densities.  Their discrete
     // sample amplitudes therefore grow with sqrt(processing rate).  The
@@ -1908,6 +1908,12 @@ private:
     [[nodiscard]] static VcfHoldInterval exactVcfHoldInterval(
         float state, float target, bool hasEvent, double eventPosition,
         float eventTarget, double intervalSeconds) noexcept;
+    // The same interval payload for a destination whose follower drives the
+    // card through bare wire and resistors alone: the node holds its written
+    // value and steps at the write, with no trajectory between the two.
+    [[nodiscard]] static VcfHoldInterval steppedHoldInterval(
+        float held, bool hasEvent, double eventPosition,
+        float eventTarget) noexcept;
 
     // The same converter timing rule applies to every passive hold whose
     // post-write trajectory is modelled, including resonance's explicitly
@@ -1949,7 +1955,6 @@ private:
     struct ProcessingCoefficients
     {
         float vcfSlew { 0.0f };
-        float resonanceSlew { 0.0f };
         double internalIntervalSeconds { 0.0 };
         double voiceVcaDecay { 1.0 };
         double commonVcaTime { 1.0 };
