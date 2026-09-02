@@ -755,9 +755,14 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   hand-damped A3 stays above its held level 100 ms after the note-off; ten
   repeated A3s pump the idle A string 7 dB above the first note. A two-way
   six-string junction, in which every string loads and injects at the bridge
-  so the idle reaction is bounded by the played string's force, is built and
-  passes the suite; it is being refit from the neutral calibration beside the
-  one-way topology and goes to a listening set (decision log).
+  so the idle reaction is bounded by the played string's force, is built,
+  passes the suite and is with the user as a listening set: at the shipping
+  calibration it leaves the idle A string 44 dB below a repeated note where
+  shipping leaves it 7 dB above, moves the open-string partials 4 to 10 dB
+  toward the recordings, and scores 6.606, 6.784 and 6.630 against 6.835,
+  6.824 and 5.655, better on the picked splits and worse on the flat-top
+  rows, whose played-string over-damping the halo was masking (decision
+  log).
 - Shape and Body Material morph one measured flamenca-body model; they are not
   separate measurements of four guitar sizes or four woods.
 - The band audits now measure a distance the build chose rather than an error

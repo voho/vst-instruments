@@ -3062,3 +3062,84 @@ recording, which no spring fails; the held-chord T60 ratio within 1.10; the
 suite at three rates; the corpus re-scored and reported, because it will
 change.
 
+## 2026-09-02 — the two-way six-string junction, built and gated, with a set to choose by ear
+
+The audit's largest confirmed defect is the one-way idle-string path. Each
+idle string is written from the bridge displacement and its reaction force is
+added to the body's input, but it is not a member of the junction: the
+bridge displacement it is driven from does not see its load, so at a
+coincidence the idle string's force is bounded by nothing. The symptoms the
+lenses measured on the shipping engine follow from that: ten hand-damped
+repeats of A3 pump the idle A string until, one second after the last, its
+220 Hz band sits 7 dB above the first note's held level on steel; a released
+open E4 stays above its held level for 600 ms; single notes carry
+open-string partials at −15 dB re the played fundamental over 0.5-2 s where
+the archtop, classical and flat-top recordings carry them at −40, −31 and
+−25; and the flat-top rows' decay term is supplied by that halo.
+
+The fix is the same solve with six members. F_b = Σ Z_i (2a_i − x_b) and
+x_b = Y_b F_b, the derivation of 2026-08-31, summed over every string on the
+bridge rather than the played ones: an idle string at its resonance then
+presents thousands of times its characteristic impedance and pins the bridge
+there, which is what bounds the sympathetic energy on a real guitar
+(Woodhouse 2004; Gough 1981; Bank and Karjalainen 2010). The exact edits,
+each one a consequence of that membership and none a new constant: the
+junction's impedance sum and weighted incident include every string
+whenever the sympathetic switch is on, so the port impedance is a constant
+of the instrument and the note-on port step is gone; a taken string's tail
+is a second wave on the same string, so it adds to that string's incident
+with the impedance counted once, and neither it nor an idle string radiates
+outside the junction any more; the tuning compensation evaluates the bridge
+for every string; and a released string is handed back to the allocator
+when its release damping has run its T60 (0.16 s fretted, 1.25 s open, the
+constants beginRelease already has) plus the hand's 80 ms, keeping whatever
+it still carries as an idle string's wave, because the level test it used
+before never fires once the bridge re-drives it. All Sound Off and the
+retunes still clear. The engine suite passes with three one-way assertions
+re-pinned to what the mechanism does: the bypass must now unload the bridge
+(it was asserted to change nothing), the resonant tail share loses its 0.97
+ceiling because the ratio is no longer a share of a separate radiator (its
+selectivity, resonant against off-resonant, is 25 to 1), and the pitch-pull
+bound admits 6 cents, because at exact coincidence (E3 on the low E's second
+partial) the played and idle strings form a coupled pair whose modes split:
+the played energy sits in the lower member at −4.8 cents with the upper
+member 12 cents above and 24 dB down, the coupling itself, not a tuning
+error, verified on a high-resolution spectrum of the render.
+
+Gated as the verifier predeclared, on a copy of HEAD. Ten hand-damped A3s
+leave the idle A string one second later at −44 dB (steel) and −89 dB
+(nylon) below the first note, against +7 and −8 on shipping. A six-string
+chord's 0.5 s envelope is non-increasing after 0.5 s at 44.1, 48 and 96 kHz
+(largest rise −1.5 dB); a single E3 over five idle strings shows one +1.4 dB
+half-second exchange on its way down, which is the coupled pair trading
+energy, and reaches −85 dB at six seconds where shipping's halo is at −55.
+Open-string partials re the played fundamental move to −21, −25 and −22 dB
+on the steel, nylon and flat-top rows, 4 to 10 dB toward the recordings and
+still 20, 6 and 3 dB above them. The corpus at the shipping calibration
+scores 6.6060, 6.7836 and 6.6298 against 6.8353, 6.8238 and 5.6547: 3.4%
+and 0.6% better on the picked splits and 17% worse on the eight
+finger-played rows, whose played-string decay the halo was filling in - with
+the halo gone their fundamentals decay at 14.7 dB/s against the recordings'
+6.0 and shipping's 9.3, which is the anchor spring and g21's own modes
+showing through (the entry above). Refit from the same neutral calibration
+with the same default budget, the two topologies reach different values and
+the two-way one fits better on both picked splits, 7.437 and 7.275 against
+7.740 and 7.377, and worse on the flat-top, 9.08 against 8.64; a
+longer-budget pair was started and is not part of this record.
+
+This is an improvement question, not a correctness one - less shimmer and
+shorter tails against a halo the references do not have - so it goes to the
+ear. The set is with the user, steel and nylon judged separately, letters
+only, key unread by design: fretted E3 and A3 over free open strings, a
+hand-damped repeated A3 line, a staccato scale and a sustained open chord;
+A the shipping engine, B the two-way junction at the shipping calibration,
+C and D the two topologies at their own common-start refits; level-matched
+on the first pluck's attack window rather than the whole file, because the
+whole-file level is the halo under test (about 10 dB of A's steel RMS), with
+the trims in the key. Nothing ships until it is heard. If B is chosen, what
+follows is a proper refit of the string losses and the bridge mobility
+around the junction, because the flat-top rows' over-damping is then the
+dominant single-note error and the anchor-spring verdict decides what the
+string ends on; the two-way engine and its re-pinned tests are preserved as
+a patch with the user until then.
+
