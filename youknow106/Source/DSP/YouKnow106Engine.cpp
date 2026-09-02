@@ -4844,10 +4844,8 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
     processingCoefficients_.vcfSlew = slewFor(vcfHoldSlewSeconds);
-    processingCoefficients_.dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
     processingCoefficients_.resonanceSlew =
         slewFor(resonanceHoldSlewSecondsVoiced);
-    processingCoefficients_.noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
     processingCoefficients_.internalIntervalSeconds = 1.0 / oversampledRate_;
     processingCoefficients_.voiceVcaDecay = std::exp(
         -processingCoefficients_.internalIntervalSeconds
@@ -7019,33 +7017,17 @@ float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
     const float targetCode = capturedCountReady
         ? voice.dcoPitchTransactionCvTarget : voice.dcoCvTarget;
 
-    // A construction-only cold transaction has no earlier physical hold to
-    // inherit. Initialise that first cell from its captured pair rather than
-    // from an arbitrary power-on code. T then installs the same captured code
-    // as both live target and settled value.
-    if (capturedCountReady && voice.dcoPitchTransactionColdStart)
-    {
-        const float scale = targetCode
-                          * static_cast<float>(voice.dco.divider)
-                          / dcoRampReferenceProduct;
-        return std::clamp(scale, 0.25f, 4.0f);
-    }
-
-    // The frozen per-cycle slope stands in for the integral of the slewing
-    // compensation current across the rise it charges. Weighting the held-code
-    // error by tau/period is that integral to first order: a long bass cycle
-    // sees nearly the target code, while a short cycle keeps more of the launch
-    // value. Multiplying the resulting code by the active count retains the
-    // B-2 pair's settled ripple and its real high-note CV saturation; the
-    // centre anchor removes any need to guess DAC volts or integrator gain.
-    const float tauSamples = dcoHoldSlewSecondsVoiced
-                           * static_cast<float>(oversampledRate_);
-    const float weight = std::min(
-        1.0f, tauSamples / static_cast<float>(
-                  std::max(voice.dco.periodSamples, 1.0)));
-    const float effectiveCode = targetCode
-                              + (voice.dcoCv - targetCode) * weight;
-    const float scale = effectiveCode
+    // The physical hold steps to the captured code at T, at most 97 us after
+    // the PIT write and so inside the cycle for every musical period, so the
+    // frozen-slope integral is the new code; before the count is active, or
+    // after T, the target and the settled hold coincide. A construction-only
+    // cold transaction, which has no earlier physical hold to inherit, is the
+    // same case: its first cell starts from the captured pair, and T installs
+    // that code as both live target and settled value. Multiplying the code
+    // by the active count retains the B-2 pair's settled ripple and its real
+    // high-note CV saturation; the centre anchor removes any need to guess
+    // DAC volts or integrator gain.
+    const float scale = targetCode
                       * static_cast<float>(voice.dco.divider)
                       / dcoRampReferenceProduct;
     return std::clamp(scale, 0.25f, 4.0f);
@@ -8047,8 +8029,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     // Each converter destination owns a separately named hold network. VCF,
     // voice VCA, common VCA, PWM and SUB have evidence-backed post-hold
     // networks; resonance keeps Step 11's explicitly voiced 522 us companion
-    // trajectory, while DCO and noise retain their isolated compatibility
-    // policies until their RCs are established. Exact full-interval decays
+    // trajectory; DCO and NOISE have no post-hold network on p. 13 and their
+    // rON x C acquisition (2.8 us maximum) is a step within the slot, so they
+    // are assigned at the write. Exact full-interval decays
     // are precomputed when the processing rate changes; only the rare interval
     // that actually contains a fractional write needs an event-position
     // exponential.
@@ -8313,7 +8296,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     coefficients.subDecay)
                 : advanceOrdinaryOnePoleHold(
                     subCv_, subCvTarget_, coefficients.subDecay);
-            noiseCv_ += (noiseCvTarget_ - noiseCv_) * coefficients.noiseSlew;
+            // IC26's C85 hold: rON x C is at most 2.8 us, a step within the
+            // slot (see converterHoldFarads).
+            noiseCv_ = noiseCvTarget_;
             advanceThermalWarmup();
 
             if (--driftControlCountdown_ <= 0)
@@ -8418,8 +8403,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 // would only write the same values twice.
                 exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
                     resonanceEvent || cutoffEvent;
-                voice.dcoCv +=
-                    (voice.dcoCvTarget - voice.dcoCv) * coefficients.dcoSlew;
+                // IC24's per-voice DCO hold (C79/C78/C74/C77/C73/C76 into
+                // IC20/IC16/IC19): the same rON x C bound, a step within the
+                // slot.
+                voice.dcoCv = voice.dcoCvTarget;
                 const bool voiceVcaEvent = physicalHoldEvent.active
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca

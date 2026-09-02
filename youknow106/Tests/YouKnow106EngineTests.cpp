@@ -4651,6 +4651,43 @@ void testDcoPitchPairKeepsSettledRampProductAndCvSaturation()
                "a cold B-2 transaction normalized its captured pair to unity");
 }
 
+void testDcoAndNoiseHoldsAcquireAtTheWrite()
+{
+    // IC24's six DCO holds (C79/C78/C74/C77/C73/C76 into IC20/IC16/IC19) and
+    // IC26's C85 have no post-hold network on p. 13: the HD14051B's rON into
+    // 0.01 uF settles in at most 2.8 us, inside one internal sample at
+    // 192 kHz, so the launch scale is the target code's product even while
+    // the stored hold still reads an older value, and both holds equal their
+    // target after one internal sample.
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
+    const double period = YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
+    const float unitCode = YouKnow106TestAccess::dcoCvCodeForScale(
+        engine, 0, 1.0f);
+    YouKnow106TestAccess::setDcoLaunchState(
+        engine, 0, period, 256.0f, 1.5f * unitCode);
+    expectNear(YouKnow106TestAccess::dcoLaunchScale(engine, 0), 1.5f, 1.0e-6,
+               "the DCO launch scale still weighted the stale hold against "
+               "the target code before the write");
+    YouKnow106TestAccess::setDcoLaunchState(engine, 0, period, 256.0f,
+                                            4095.0f);
+    YouKnow106TestAccess::setNoiseHold(engine, 0.0f, 1.0f);
+    std::vector<float> left(static_cast<std::size_t>(blockSize), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(blockSize), 0.0f);
+    engine.process(left.data(), right.data(), 1);
+    expect(YouKnow106TestAccess::dcoCv(engine, 0) == 4095.0f,
+           "the DCO pitch-CV hold did not step to its target at the write");
+    expect(YouKnow106TestAccess::noiseHeld(engine)
+               == YouKnow106TestAccess::noiseTarget(engine),
+           "the NOISE hold did not step to its target at the write");
+    const float expectedScale = std::clamp(
+        4095.0f / YouKnow106TestAccess::dcoCvCodeForScale(engine, 0, 1.0f),
+        0.25f, 4.0f);
+    expectNear(YouKnow106TestAccess::dcoLaunchScale(engine, 0),
+               expectedScale, 1.0e-6,
+               "the DCO launch scale still weighted a stale hold value");
+}
+
 void testMasterTuneUsesRecoveredSignedPitchWord()
 {
     expect(YouKnow106Engine::masterTunePitchWordOffset(-50.0) == -128
@@ -6111,7 +6148,7 @@ void testComparatorEndpointPinsAndTransitionTiming()
     const float suffixUnitCode = YouKnow106TestAccess::dcoCvCodeForScale(
         rescaledSuffix, 0, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
-        rescaledSuffix, 0, 1.0, 2.0f * suffixUnitCode, suffixUnitCode);
+        rescaledSuffix, 0, 1.0, 2.0f * suffixUnitCode, 2.0f * suffixUnitCode);
     YouKnow106TestAccess::setDcoResetState(
         rescaledSuffix, 0, -0.5, -1.0 / suffixInterval,
         0.5 * suffixInterval);
@@ -6221,7 +6258,7 @@ void testPitEventBudgetCoversWorstCaseInterval()
         YouKnow106TestAccess::dcoCvCodeForScale(engine, 0, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
         engine, 0, YouKnow106TestAccess::dcoPeriodSamples(engine, 0),
-        4.0f * eventBudgetUnitCode, eventBudgetUnitCode);
+        4.0f * eventBudgetUnitCode, 4.0f * eventBudgetUnitCode);
     YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
         engine, 0, DcoRange::Four,
         20.0f, 20.0f, false, false, true);
@@ -13886,6 +13923,7 @@ int main()
     testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
     testRangeDoesNotRetargetDcoCompensationCv();
     testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
+    testDcoAndNoiseHoldsAcquireAtTheWrite();
     testMasterTuneUsesRecoveredSignedPitchWord();
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();

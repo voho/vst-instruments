@@ -109,9 +109,13 @@ forty-year-old unit will null against the plug-in.
   timing; propagation unmodelled).
 - One 12-bit converter scans 23 sample-and-hold destinations — 18 per-card,
   5 shared — over a 4.2 ms pass in the service chart's exact write order,
-  on a fractional scheduler with per-destination smoothing constants
-  (anchored order and constants; the intra-pass offsets are compatibility
-  policy, with a pixel-measured chart-geometry profile selectable).
+  on a fractional scheduler with per-destination hold networks (anchored
+  order; VCF/resonance/voice-VCA keep their declared 522/687 µs
+  trajectories, PWM/SUB/common-VCA their designator-complete networks; the
+  DCO pitch-CV and NOISE holds have no post-hold network and are derived
+  steps — HD14051B rON × 0.01 µF ≤ 2.8 µs, current-limited < 10 µs — within
+  their slot; the intra-pass offsets are compatibility policy, with a
+  pixel-measured chart-geometry profile selectable).
 - Envelope recurrence, sustain mapping, DAC truncation, the onset-scaled LFO
   reaching DCO and VCF, and the portamento glide law are the exact digital
   behaviour of the hash-identified B-2 firmware. PWM separately reads the raw
@@ -500,7 +504,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-05 | Loaded TA75558S IC6 and High-output clipping swing. Device identity, resistor gains and ±15 V supply rails are settled. The traced maximum-volume, no-external-load midband impedance is about 8.22 kΩ; an approximate symmetric reading of the datasheet's 25 °C typical Vop-p graph is roughly ±13.9 V around 8–9 kΩ. The modelled ±13.5 V asymptote is therefore plausible and about 0.4 V below that typical curve, but is not a guaranteed limit. Toshiba's [era-correct table](https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3) specifies 1.0 V/µs slew as a typical value only at unity gain, 2 kΩ and 25 °C; the model now uses that nominal value while the installed-load slew, exact swing and knee remain open | P0 |
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced | P0 |
 | OQ-06 | Absolute output-reference calibration. The product convention is settled and not reopenable; only the physical reference value is open. Roland's L −30 / M −15 / H 0 dBm selector spec fixes the intended steps but not the reference impedance | dependent |
-| OQ-07 | Converter hold topology and time constants. Ownership and inventory are closed — 23 used 0.01 µF holds over a 4.2 ms pass, per-destination smoothing designator-complete. Roland identifies the DCO mux as Hitachi HD14051BP, explicitly excluding Toshiba; its loaded acquisition and injection remain open | P1 |
+| OQ-07 | Converter hold topology and time constants. Ownership and inventory are closed — 23 used 0.01 µF holds over a 4.2 ms pass, per-destination smoothing designator-complete. Roland identifies the DCO mux as Hitachi HD14051BP, explicitly excluding Toshiba; its acquisition is bounded (rON × C ≤ 2.8 µs, current-limited < 10 µs: a step within the slot); the exact enable timestamp and charge injection remain open and would need a capture of C79 during a pitch write | P1 |
 | OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The 23-write ordinal order is settled; the normalised `ordinal/23` offsets are compatibility policy, not timestamps. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741), [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) and [converter-output](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the nominal no-interrupt relationship to the existing pitch-converter timestamp `T`. Treating `T` as the start of `ANI PA,$EF`, running LSB instruction start is `T-334` states (83.50 us), both paths' MSB instruction start is `T-323` (80.75 us), and reset-control instruction start is `T-389` (97.25 us); reset control-to-LSB remains 55 states and LSB-to-MSB 11. The engine captures the paired count, reset decision and DCO-CV target at `T-389`, applies the modelled control/LSB/MSB events at those instruction anchors, and commits only that captured CV when the converter cursor reaches `T`, so later host edits cannot splice two scans together. The matching [OKI MSM82C53-2 mode timing](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=186) anchors PIT OUT polarity, odd-count split and delayed CE transfer; its same-part Mode 2/3 timing diagram places CE changes and PIT OUT transitions on the TP5 falling/count edge. Roland maps only positive-going PIT OUT to C54 discharge and the sub clock. IC29's 12 MHz resonator and IC35's separate 8 MHz resonator prove there is no fixed CPU-to-PIT phase to recover. Exact coincidences therefore use two separate deterministic compatibility policies, not hardware claims: **Policy A** compares the PIT `/WR` trailing/latch edge with TP5 falling/count; **Policy B** compares the PF6/PF7 update with IC35 parallel reload, whose corresponding TP5 rise appears later after propagation. Neither coincidence outcome is manufacturer-specified; no metastability behaviour is asserted or modelled. IC35's [installed-part truth table](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17) and the firmware's [`$C0/$40/$00` range writes](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L246-L273) establish DCBA presets 14/12/8 and ÷2/÷4/÷8. The model separates TP5 falling/count from IC35 reload by one nominal raw-8 MHz tick, 125 ns, and leaves propagation refinements unmodelled. At exact equality, Policy A is TP5-count-first, so the tied count edge sees the pre-write state; Policy B is IC35-reload-first, so the stable old preset is captured. Both orderings are deterministic compatibility policy, not hardware claims. Preset 10/÷6 remains a structural bit-skew hypothesis and is neither implemented nor synthesised in tests. ADC service cannot reach the DCO transaction; semantic Voice On/Off instead discard their interrupt return and restart the voice-board loop. The engine reproduces that restart at its logical command boundary, preserving protected PIT writes and completed port stores while cancelling abandoned CPU/CV work. What remains open is each physical converter/mux timestamp; serial wire phase and installed-NMOS automatic-entry timing; installed resonator frequencies and drift; `/WR`-to-TP5-falling and PF-to-reload phase statistics; measured, rather than nominal, PIT-count-to-reload separation and TP5 pulse-width distortion; C54 reset waveform; and installed MC5534A output swing, saturation onset and shape, recovery, and the magnitude—not the existence—of ramp-to-comparator coupling. Roland's [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9) give an approximately 12 Vpp Miller ramp and identify C54 as 0.001 µF with 390/200/100 kΩ range resistors, but the custom IC's internal amplifier/discharge-transistor values are unpublished; the renderer therefore retains its finite-linear discharge and scale-aware +15 V ideal-supply bound as compatibility policy rather than a measurement claim | P1 |
 | OQ-09 | Resonance byte-to-loop-gain law. Topology and mechanism are settled, including the Roland-printed input-side compensation from the p. 9 module drawing; the drawing prints no component values, so the 0.2296 coefficient stays voiced | P1 |
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. Roland establishes that about −0.8 V holds the comparator high and the module drawing keeps that output on the fixed WAVE node ahead of C56/C50. The model now retains the high state and lets its existing coupling node reject the settled DC, replacing the contradicted hard-zero mixer gate; the transient therefore follows actual comparator crossings. Absolute WAVE level is still an OQ-15 coordinate, while installed residual bleed, loading and switching-waveform detail remain unmeasured | P1 |
@@ -531,6 +535,19 @@ gives 0.850 us typical / 2.125 us maximum enable at 5 V and 25 C, but only into
 50 pF with 10 kΩ and with no minimum. That is not a settling specification for
 the board's 10,000 pF hold, cascaded TL082 source or negative-signal path;
 there is no defensible fixed acquisition delay without a hardware capture.
+The rON × C bound is a different, derivable statement: it says the hold
+settles inside its slot, not when. The same
+[datasheet](https://akizukidenshi.com/goodsaffix/hd14051b_e.pdf#page=2) gives
+80 Ω typical / 280 Ω maximum on-resistance in its 15 V column at 25 °C, so
+into the 0.01 µF hold the time constant is at most 2.8 µs and even a
+full-scale step, limited by the switch's 25 mA and the follower's slew,
+completes in under 10 µs — against an enable window of at least 97 µs, a
+183 µs slot and a 5.2 µs internal sample. The DCO pitch-CV and NOISE holds
+have nothing after the follower on p. 13, so the engine assigns them at the
+write. IC23 (VCF) and IC26's VCA and RESO channels share that identical
+direct-follower topology; their 522 µs and 687 µs values therefore stand
+only on whatever lag exists downstream inside the 80017a module (p. 9 prints
+no values) and were not re-derived here.
 
 `DI` still prevents an interrupt from splitting the PIT bytes, but the exact
 boundary is now closed at the semantic handler timestamp. On the running path
@@ -617,6 +634,11 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   noise terms are deterministic, quality-invariant and remain around the
   analogue circuit's roughly -120 dBFS floor rather than becoming a sound-
   design hiss control.
+- The DCO pitch-CV and NOISE converter holds now step at the write, bounded
+  by the HD14051B's rON into their 0.01 µF holds (≤ 2.8 µs), replacing two
+  voiced 522 µs compatibility slews. No audible change (a sub-2 dB one-cycle
+  ramp-amplitude transient at note-on; un-smoothed 0.07 dB noise-level
+  steps).
 - Replaced the chorus output's ideal-source, separable tap approximation with
   the documented loaded MN3009 network. Both BBD followers, their 3.3 kΩ legs,
   the 47 kΩ/2.2 nF tap and first reconstruction section now advance as one

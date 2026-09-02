@@ -1160,9 +1160,38 @@ private:
     // reaches its mixer OTA through R11 into C1 ahead of the R9/R10 inverter.
     // Both networks settle to their held value, so the calibrated DC laws are
     // untouched; what they add is the lag the hardware's PWM LFO and level
-    // staircase actually cross. The remaining nodes retain compatibility
-    // values behind separate names so a measured destination can be replaced
-    // without silently changing the others.
+    // staircase actually cross. Resonance keeps a voiced compatibility value
+    // behind its own name so a measured destination can be replaced without
+    // silently changing the others. IC23 (VCF) and IC26's VCA/RESO channels
+    // share IC24's direct-follower topology below, so the 522/687 us values
+    // stand only on lag downstream inside the 80017a module (p. 9 prints no
+    // values); they are not re-derived here.
+    //
+    // The DCO pitch-CV and NOISE holds have no post-hold network at all on
+    // p. 13: six of IC24's seven '.01x7' holds (C79, C78, C74, C77, C73, C76)
+    // feed the unity followers IC20a/b, IC16a/b, IC19a/b ('072 or 082 x3')
+    // straight onto the DCO CV bus for CH1-CH6 -- the seventh, C75, is the SUB
+    // hold through IC17b into R11/C1 and keeps its declared network above --
+    // and IC26's C85 ('.01x8', C80-C87) feeds IC22d straight into VR32/R115.
+    // Their acquisition is the HD14051BP switch's on-resistance into the
+    // 0.01 uF hold -- Roland's parts list installs the Hitachi part and
+    // excludes the TC4051 -- for which the datasheet's 15 V column gives
+    // 80 ohm typical / 280 ohm maximum at 25 C (300 ohm at 85 C), so rON x C
+    // is 0.8 us typical and 2.8 us maximum, and even a full-scale step
+    // limited by the switch's 25 mA and the follower's slew completes in
+    // under 10 us. The firmware keeps the hold enabled for the whole
+    // next-voice computation (at least 97 us, more than thirty maximum time
+    // constants) inside a 183 us scan slot, and one internal sample at the
+    // 192 kHz reference is 5.2 us.
+    // That is a derived bound, not a measured time constant: the hold settles
+    // inside its slot, within about two internal samples, so both holds are
+    // assigned at the write. The two 522 us compatibility slews this replaces
+    // overstated the acquisition by two orders of magnitude. Droop between
+    // scans is not modelled: at the same datasheet's typical +/-0.01 nA
+    // off-channel leakage plus the follower's 65 pA typical input bias (TI
+    // TL08xC table, 25 C), 10 nF loses well under 0.1 mV per 4.2 ms pass
+    // against a 2.44 mV LSB (its 1 uA 25 C leakage maximum is a test limit,
+    // not a measurement).
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
     static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
     static constexpr float pwmSmoothingR117Ohms = 100.0e3f;
@@ -1177,9 +1206,17 @@ private:
     static constexpr float subSmoothingC1Farads = 10.0e-6f;
     static constexpr float subHoldSlewSeconds =              // 10 ms
         subSmoothingR11Ohms * subSmoothingC1Farads;
-    static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
+    // p. 13 '.01x7' (IC24, C73-C79) and '.01x8' (IC26, C80-C87).
+    static constexpr float converterHoldFarads = 10.0e-9f;
+    // Hitachi HD14051B, VDD-VEE = 15 V column, 25 C maximum:
+    // https://akizukidenshi.com/goodsaffix/hd14051b_e.pdf#page=2
+    static constexpr float hd14051MaximumOnResistanceOhms = 280.0f;
+    static_assert(hd14051MaximumOnResistanceOhms * converterHoldFarads
+                      < 1.0f / 192000.0f,
+                  "the DCO/NOISE hold acquisition bound must sit inside one "
+                  "internal sample at the 192 kHz reference, or the "
+                  "direct-assignment holds below are wrong");
     static_assert(std::bit_cast<std::uint32_t> (vcfHoldSlewSeconds)
                       == std::bit_cast<std::uint32_t> (
                           resonanceHoldSlewSecondsVoiced),
@@ -1654,9 +1691,7 @@ private:
     struct ProcessingCoefficients
     {
         float vcfSlew { 0.0f };
-        float dcoSlew { 0.0f };
         float resonanceSlew { 0.0f };
-        float noiseSlew { 0.0f };
         double internalIntervalSeconds { 0.0 };
         double voiceVcaDecay { 1.0 };
         double commonVcaTime { 1.0 };
