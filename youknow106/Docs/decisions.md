@@ -79,6 +79,38 @@ six-voice plain 214.24 → 213.77 ms (−0.22 %), six-voice resonant 216.65 →
 (+0.33 %) on the last run, every scenario inside the loaded machine's ±0.5 %
 run-to-run noise.
 
+## 2026-09-01 — µPC1252H2: noise floor adopted, nonlinearity rejected
+
+NEC's [1983 consumer-IC data book](https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262) (µPC1252H2, p. 257) specifies the part at
+Vcc/Vee ±12 V, ISET 2 mA and RIN = ROUT = 33 kΩ, and Roland's
+[jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
+installs IC5 in exactly that circuit: C12 10 µF / R36 33 kΩ in, R34 5.6 kΩ +
+R35 680 Ω to −15 V for 2.006 mA, pin 8 into IC2b's 33 kΩ I/V, and +15 V
+through R17 1.5 kΩ. Two of the table's rows were candidates.
+
+Distortion is rejected. At the derived bus levels (0.3–1.7 Vrms, VCA LEVEL
+−16.3..+4.7 dB) the trimmed typical THD is 0.007–0.02 %, −70 dB or better,
+and Roland fits no symmetry trimmer (pin 4 is grounded through R33 47 Ω), so
+the installed part sits somewhere in an untrimmed curve NEC bounds only as
+"≥ 0.05 %" with no typical, sign or shape. That is no sourced magnitude, so
+the stage stays linear rather than carry an invented one.
+
+The output-noise floor ships. NV = −94 dBV typical (max −84 dBV) over
+10 Hz–20 kHz is a derivable figure under the installed conditions, folded to
+a white-equivalent density and added at IC2b's output ahead of the dry/wet
+split, scaled by Unit Character like the resistor floors. Rendered, the term
+is −109.4 dBFS on the dry leg at every VCA LEVEL byte (−93.3 dBV referred to
+IC2b over the 0–24 kHz window, 8 % above the band-limited datasheet figure),
+lifting the idle chorus-Off floor from −119.1 to −108.9 dBFS; through the wet
+legs it lifts the default-HISS chorus-I idle floor by 0.46 dB, from −98.8 to
+−98.3 dBFS. NEC publishes NV only at Av = 0 dB, so the constant
+output-referred form is likely slightly high below 0 dB; that gain dependence
+and the voice cards' own contribution to the dry floor stay with OQ-16.
+
+This is an evidence-priority decision, not a listening verdict: nothing here
+is audible, and no letters were rendered. The old floor remains available
+behind the internal `enableCommonVcaNoise` comparison switch.
+
 ## 2026-09-01 — Loaded MN3009 reconstruction network
 
 Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)

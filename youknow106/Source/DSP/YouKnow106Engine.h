@@ -270,6 +270,12 @@ struct EngineParameters
     // solves the traced Tr20 grounded-base stage's own junction law, see
     // VoiceVcaControlLaw. Not serialised.
     bool useSoftplusVoiceVcaCompatibilityLaw { false };
+    // On by default: the common uPC1252H2's NEC-typical -94 dBV output noise
+    // (installed test-circuit conditions) joins the bus ahead of the chorus
+    // split as a flat floor; comparison-only switch. Scaled by Unit Character
+    // exactly like the resistor floors -- the exact-silence endpoint at 0 is
+    // product policy, not a statement that the floor is a tolerance.
+    bool enableCommonVcaNoise { true };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
@@ -1865,6 +1871,7 @@ private:
         float outputSlewMaxStep { 0.0f };
         float outputSummerBandwidthBlend { 1.0f };
         float outputSummerNoiseScale { 0.0f };
+        float commonVcaNoiseScale { 0.0f };
     };
     [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
         double intervalSeconds) noexcept;
@@ -2558,6 +2565,7 @@ private:
     std::uint32_t outputNoiseStateRight_ { 0xd1b54a35u };
     std::uint32_t outputWiperNoiseStateLeft_ { 0x94d049bbu };
     std::uint32_t outputWiperNoiseStateRight_ { 0x8538ecadu };
+    std::uint32_t commonVcaNoiseState_ { 0x7f4a7c15u };
 
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };

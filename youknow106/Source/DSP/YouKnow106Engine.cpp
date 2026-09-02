@@ -150,6 +150,21 @@ constexpr float vcaInputCouplingResistanceOhms = 33000.0f;  // voiced, OQ-19
 constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
 constexpr float commonVcaInputResistanceOhms = 33000.0f;
 
+// NEC 1983 consumer-IC data book, uPC1252H2 electrical characteristics
+// (p. 257; https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262): Output Noise Level NV typ -94 dBV, max -84 dBV, at Av = 0 dB,
+// RIN = 33 kOhm, BPF 10 Hz-20 kHz, Vcc/Vee +/-12 V, ISET 2 mA, RIN = ROUT =
+// 33 kOhm -- measured at the external 33 kOhm I/V output. Roland's IC5
+// wiring on p. 15 is that test circuit: C12 10 uF / R36 33 kOhm in, R34
+// 5.6K + R35 680 from pin 5 to -15 V so ISET = (15 - 2.4)/6.28k = 2.006 mA,
+// pin 8 into IC2b's 33 kOhm I/V (R16, C5 22p), and +15 V through R17 1.5K
+// (about +12 V after the 2 mA supply drop). NEC publishes NV only at
+// Av = 0 dB, so it is applied as a constant output-referred floor across
+// the installed -16.3..+4.7 dB VCA LEVEL span -- likely slightly high below
+// 0 dB. The 33 kOhm resistors' own thermal floor (4.66 uVrms in that band)
+// sits 12 dB under the part's figure and is not added separately.
+constexpr float commonVcaOutputNoiseDbv = -94.0f;
+constexpr float commonVcaOutputNoiseBandwidthHz = 19990.0f;
+
 // Stored VCA LEVEL control path on the jack board. Roland's p. 8 converter
 // chart gives the +4..-6 V buffer span and the firmware stores byte b as the
 // physical 12-bit code b<<5. Page 15 then shows R30/C7 at the held node, R32
@@ -4937,6 +4952,18 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         outputSummerResistorNoiseDensity()
         * std::sqrt(1.5f * static_cast<float>(sampleRate_))
         * voltsToSample;
+    // IC5's datasheet floor is a band RMS, folded to a white-equivalent
+    // density over NEC's 10 Hz-20 kHz filter. It joins the bus ahead of the
+    // chorus split and the decimators, so it is generated at the internal
+    // rate with sqrt(3*Fint/2) rather than the host rate above: after
+    // decimation its RMS over NEC's band is again the datasheet's 19.95 uV
+    // (about 8 % more over a full 0-24 kHz host band).
+    const float commonVcaNoiseDensity =
+        std::pow(10.0f, commonVcaOutputNoiseDbv / 20.0f)
+        / std::sqrt(commonVcaOutputNoiseBandwidthHz);
+    processingCoefficients_.commonVcaNoiseScale = commonVcaNoiseDensity
+        * std::sqrt(1.5f * static_cast<float>(oversampledRate_))
+        * voltsToSample;
 
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
@@ -5157,6 +5184,7 @@ void YouKnow106Engine::clearOutputPath() noexcept
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
     outputWiperNoiseStateRight_ = 0x8538ecadu;
+    commonVcaNoiseState_ = 0x7f4a7c15u;
 }
 
 void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
@@ -8720,7 +8748,19 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 patchLevelCacheKey = patchLevelKey;
                 patchLevelCacheValid = true;
             }
-            const float levelled = vcaInput * patchLevelCacheValue;
+            float levelled = vcaInput * patchLevelCacheValue;
+            // The uPC1252H2's own output noise (see commonVcaOutputNoiseDbv)
+            // appears at IC2b's output regardless of what the bus carries, so
+            // it is added here, ahead of the dry/wet split, and the dry and
+            // both wet legs carry it. Unit Character 0 keeps the exact-
+            // silence calibrated nominal, exactly as the resistor floors do.
+            if (parameters.enableCommonVcaNoise)
+            {
+                commonVcaNoiseState_ = xorshift32(commonVcaNoiseState_);
+                levelled += bipolarFromState(commonVcaNoiseState_)
+                          * coefficients.commonVcaNoiseScale
+                          * parameters.calibration;
+            }
 
             // The chorus input coupling capacitors sit in its two wet branches;
             // dry bypasses them. IC6 applies its component-derived dry/wet

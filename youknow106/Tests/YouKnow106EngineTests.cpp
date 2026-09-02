@@ -12078,11 +12078,13 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
         return 10.0 * std::log10(meanSquare + 1.0e-40);
     };
 
-    // With the chorus switched out this fixture carries only the newly
-    // modelled output-resistor floor. Keep it far enough below the BBD line
-    // noise that the chorus-on figure remains determined by
-    // `independentLineRandomAmplitude`, rather than requiring an unphysical
-    // exact zero from five warm resistors.
+    // With the chorus switched out this fixture carries only the modelled
+    // output-resistor floors and the common uPC1252H2's datasheet output
+    // noise (about -109 dBFS RMS, output-referred so independent of VCA
+    // LEVEL). Keep it far enough below the BBD line noise that the chorus-on
+    // figure remains determined by `independentLineRandomAmplitude`, rather
+    // than requiring an unphysical exact zero from five warm resistors and a
+    // VCA.
     {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
@@ -12099,8 +12101,8 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
             peak = std::max({ peak,
                               static_cast<double>(std::abs(rendered.left[index])),
                               static_cast<double>(std::abs(rendered.right[index])) });
-        expect(peak > 0.0 && peak < std::pow(10.0, -110.0 / 20.0),
-               "the output-resistor floor can contaminate the BBD line-noise "
+        expect(peak > 0.0 && peak < std::pow(10.0, -95.0 / 20.0),
+               "the dry idle floor can contaminate the BBD line-noise "
                "fixture (peak "
                    + std::to_string(peak) + ")");
     }
@@ -12169,6 +12171,74 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
                "the idle floor moved " + std::to_string(floorDelta)
                    + " dB while the wet line moved " + std::to_string(lineDelta)
                    + " dB, so something other than the BBD line noise moved");
+}
+
+void testCommonVcaCarriesItsDatasheetNoiseFloor()
+{
+    // NEC's uPC1252H2 table gives NV = -94 dBV typical over 10 Hz-20 kHz at
+    // the external 33 kOhm I/V output, under exactly the supply, ISET and
+    // resistor conditions Roland installs around IC5. Render the idle bus
+    // with the term on and off, isolate it as the sample-wise difference and
+    // refer that back to IC2b's output: through IC6's 100/47 dry leg, the
+    // loaded volume network at full travel and the output boundary. The
+    // measured window is 0-24 kHz through the decimators rather than NEC's
+    // 10 Hz-20 kHz band-pass, so the tolerance leaves room for that.
+    constexpr double sampleRate = 48000.0;
+    const auto renderIdle = [&](bool enable, float calibration) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        EngineParameters parameters;
+        parameters.volume = 1.0f;
+        parameters.vcaLevel = 1.0f;
+        parameters.calibration = calibration;
+        parameters.chorus = ChorusMode::Off;
+        parameters.enableCommonVcaNoise = enable;
+        engine.setParameters(parameters);
+        render(engine, static_cast<int>(sampleRate * 0.5));
+        return render(engine, static_cast<int>(sampleRate * 2.0));
+    };
+    const auto rms = [](const std::vector<float>& left,
+                        const std::vector<float>& right,
+                        const std::vector<float>* leftReference,
+                        const std::vector<float>* rightReference) {
+        double energy = 0.0;
+        for (std::size_t index = 0; index < left.size(); ++index)
+        {
+            const double l = left[index]
+                - (leftReference ? (*leftReference)[index] : 0.0f);
+            const double r = right[index]
+                - (rightReference ? (*rightReference)[index] : 0.0f);
+            energy += l * l + r * r;
+        }
+        return std::sqrt(energy / static_cast<double>(left.size() * 2));
+    };
+
+    const auto on = renderIdle(true, 1.0f);
+    const auto off = renderIdle(false, 1.0f);
+    const double differenceRms =
+        rms(on.left, on.right, &off.left, &off.right);
+    const double ic2bVolts = differenceRms
+        * static_cast<double>(YouKnow106Engine::internalVoltsPerUnit)
+        / (static_cast<double>(Chorus::dryMixGain)
+           * YouKnow106Engine::outputCouplingHighGain(1.0f)
+           * YouKnow106Engine::outputBoundaryGain());
+    const double datasheetVolts = std::pow(10.0, -94.0 / 20.0);
+    expectNear(ic2bVolts / datasheetVolts, 1.0, 0.15,
+               "the common VCA floor is not NEC's -94 dBV at IC2b's output ("
+                   + std::to_string(20.0 * std::log10(ic2bVolts)) + " dBV)");
+
+    // Unit Character zero keeps the exact-silence calibrated nominal.
+    const auto onAtZero = renderIdle(true, 0.0f);
+    const auto offAtZero = renderIdle(false, 0.0f);
+    expect(onAtZero.left == offAtZero.left && onAtZero.right == offAtZero.right,
+           "the common VCA floor leaks into the calibration-0 reference");
+
+    // The whole idle dry floor -- this term plus the resistor floors -- stays
+    // an analogue-circuit figure, never a hiss control.
+    const double idleDbfs =
+        20.0 * std::log10(rms(on.left, on.right, nullptr, nullptr) + 1.0e-40);
+    expect(idleDbfs < -100.0,
+           "the idle dry floor rose to " + std::to_string(idleDbfs) + " dBFS");
 }
 
 void testMainNoiseDensityIsProcessingRateInvariant()
@@ -14367,6 +14437,7 @@ int main()
     testElectrolyticC14VoltageCoefficientIsComparisonOnly();
     testChorusNoiseIsPresentAndDefeatable();
     testIdleOutputFloorCarriesTheHissProductPolicy();
+    testCommonVcaCarriesItsDatasheetNoiseFloor();
     testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
