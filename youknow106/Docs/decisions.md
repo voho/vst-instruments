@@ -5,6 +5,29 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-01 — NOISE control onset
+
+The circuit-derived linear-above-onset NOISE level profile is now the
+default. Module board p. 13 draws Tr22 (PNP, base grounded) fed from the
+NOISE LEVEL hold through R115 10 kΩ and VR32 100 kΩ in series, with R114
+2.2 MΩ pulling its emitter node towards −15 V, and its collector straight
+into IC14's BA662 control pin. The control current is therefore zero until
+the hold clears 0.6 V + Rs × 7.09 µA and linear above, with the anchored
+full-level endpoint unchanged. The hold stands on the anchored +0.26 V VR34
+standoff (p. 18 section 3, TP7 → IC26 → NOISE LEVEL), so the onset is
+measured from there. Rs is VR32, the p. 19 section 9 NOISE LEVEL trimmer:
+the notes fix its criterion (4 Vp-p at TP8) but not its position, which
+follows Tr21's selected amplitude, so the onset is bracketed 0.671 V (VR32
+at zero) to 1.380 V (maximum) and ships at the floor, the one position that
+never overstates the deadband.
+
+This is an evidence-priority decision under the realism/CPU goal, not a
+listening verdict and not a closure of OQ-16: VR32's installed position and
+Tr21's selected amplitude still await a TP8 sweep or a trimmer reading. The
+BA662's input saturation of the noise is left out because its drive is
+unfixed by the sources. The legacy linear-from-zero law remains available
+behind the internal comparison switch.
+
 ## 2026-09-01 — Loaded MN3009 reconstruction network
 
 Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)

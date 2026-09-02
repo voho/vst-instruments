@@ -2695,11 +2695,93 @@ void testMixerLevelIsContinuousInSubAndNoise()
            "leaving the SUB stop moved the voice by " + std::to_string(stepDb)
                + " dB; that leg is wired whether or not it is turned up");
 
-    const double noiseJustOff = levelAt(0.0f, 1.0f / 127.0f);
+    // Byte 6 is the first stored NOISE byte Tr22 conducts at (see
+    // testNoiseLevelFollowsTr22JunctionOnset); bytes 1-5 sit inside the
+    // deadband and would make this probe vacuous.
+    const double noiseJustOff = levelAt(0.0f, 6.0f / 127.0f);
     const double noiseStepDb = std::abs(20.0 * std::log10(noiseJustOff / atRest));
     expect(noiseStepDb < 0.5,
            "leaving the NOISE stop moved the voice by "
                + std::to_string(noiseStepDb) + " dB");
+}
+
+void testNoiseLevelFollowsTr22JunctionOnset()
+{
+    // Module board p. 13 feeds the NOISE LEVEL hold through VR32 + R115 into
+    // Tr22's grounded-base stage, with R114 2.2 MOhm pulling the emitter
+    // node towards -15 V, straight into the BA662's control pin. So the
+    // level is silent until the hold clears one junction drop plus that
+    // pull-down (stored byte 6 at VR32's floor) and linear above it, with the
+    // full-level endpoint unchanged. Calibration 0 removes the per-card level
+    // error and the Johnson floor, and one seed makes every take the same
+    // noise realisation, so the take ratios are the control law itself.
+    const auto take = [](float noiseLevel, bool circuitDerived) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.noiseLevel = noiseLevel;
+        parameters.vcaLevel = 0.5f;
+        parameters.useCircuitDerivedNoiseLevelShape = circuitDerived;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        return render(engine, 48000).left;
+    };
+    const auto rms = [](const std::vector<float>& samples) {
+        double sumOfSquares = 0.0;
+        const std::size_t start = samples.size() / 2;
+        for (std::size_t index = start; index < samples.size(); ++index)
+            sumOfSquares += static_cast<double>(samples[index])
+                          * static_cast<double>(samples[index]);
+        return std::sqrt(sumOfSquares
+                         / static_cast<double>(samples.size() - start));
+    };
+    const auto dbRe = [](double level, double reference) {
+        return 20.0 * std::log10(level / reference);
+    };
+
+    const auto full = take(1.0f, true);
+    const double fullRms = rms(full);
+    expect(fullRms > 0.0, "the full-level NOISE take produced no output");
+
+    // (i) Inside the deadband the derived law is exactly silent.
+    expect(maximumDifference(take(4.0f / 127.0f, true), take(0.0f, true))
+               == 0.0,
+           "stored NOISE byte 4 did not null against byte 0 under the "
+           "Tr22 onset");
+    // (ii) The legacy law is linear from zero: byte 4 is 4/127 of full.
+    const double legacyByte4Db = dbRe(rms(take(4.0f / 127.0f, false)),
+                                     rms(take(1.0f, false)));
+    expect(std::abs(legacyByte4Db - 20.0 * std::log10(4.0 / 127.0)) < 0.3,
+           "the legacy linear NOISE law left -30.0 dB at byte 4: "
+               + std::to_string(legacyByte4Db) + " dB");
+    // (iii) Above the onset the derived law is linear from byte ~5.26:
+    // (16/127 - onsetTravel) / (1 - onsetTravel) = -21.1 dB against the
+    // legacy 16/127 = -18.0 dB.
+    const double derivedByte16Db = dbRe(rms(take(16.0f / 127.0f, true)),
+                                       fullRms);
+    expect(std::abs(derivedByte16Db + 21.1) < 0.3,
+           "the Tr22 onset law left -21.1 dB at byte 16: "
+               + std::to_string(derivedByte16Db) + " dB");
+    const double legacyByte16Db = dbRe(rms(take(16.0f / 127.0f, false)),
+                                      rms(take(1.0f, false)));
+    expect(std::abs(legacyByte16Db + 18.0) < 0.3,
+           "the legacy linear NOISE law left -18.0 dB at byte 16: "
+               + std::to_string(legacyByte16Db) + " dB");
+    // (iv) The endpoint is shared: full level is bit-identical either way.
+    expect(maximumDifference(full, take(1.0f, false)) == 0.0,
+           "the Tr22 onset law moved the anchored full NOISE level");
+    // (v) Monotone in the stored byte.
+    double previous = -1.0;
+    for (int byte = 0; byte <= 127; byte += 8)
+    {
+        const double level = rms(take(static_cast<float>(byte) / 127.0f, true));
+        expect(level >= previous,
+               "the Tr22 onset law is not monotone at byte "
+                   + std::to_string(byte));
+        previous = level;
+    }
 }
 
 void testUnisonDoesNotBeat()
@@ -13903,6 +13985,7 @@ int main()
     testSelfOscillationLandsOnTheServiceAnchor();
     testFilterPolesAreStaggeredOnlyByUnitCharacter();
     testMixerLevelIsContinuousInSubAndNoise();
+    testNoiseLevelFollowsTr22JunctionOnset();
     testUnisonDoesNotBeat();
     testStepCorrectionKeepsTheAnalyticEventSide();
     testAliasFloor();

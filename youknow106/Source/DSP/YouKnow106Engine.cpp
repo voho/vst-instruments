@@ -76,10 +76,13 @@ constexpr float subMixVolts = 5.0f;
 constexpr float noiseMixVolts = 7.4161f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
-// factory-selected for noise) with R104 470 kOhm collector load, coupled by
-// C42 1 uF into the BA662 level OTA whose input pin sits on a 4.7 kOhm bias
-// resistor -- a 33.9 Hz high-pass -- and whose output is loaded by C41 100 pF
-// against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered NOISE rail.
+// factory-selected for noise) with R104 470 kOhm EMITTER load -- its base and
+// collector are tied to ground and its emitter-base junction is reverse-biased
+// through R104 from +15 V, an E-B avalanche source -- with C42 1 uF taken from
+// that emitter node into the BA662 level OTA whose input pin sits on a 4.7 kOhm
+// bias resistor -- a 33.9 Hz high-pass -- and whose output is loaded by
+// C41 100 pF against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered
+// NOISE rail.
 // The audible source is therefore band-shaped by its own circuit, not flat.
 // The shaping passes its passband at unity, so it does not change in-band
 // density -- but it does change total power: the 4.82 kHz pole keeps only
@@ -6816,6 +6819,16 @@ float YouKnow106Engine::CircuitDerivedResonanceProfile::loopGain(
     return VoicedResonanceCompatibilityProfile::maximumFeedback * active;
 }
 
+float YouKnow106Engine::CircuitDerivedNoiseLevelProfile::drive(
+    float dacFraction) noexcept
+{
+    // Tr22's collector current is linear in the hold voltage above the
+    // junction drop plus R114's pull-down and zero below; normalised so the
+    // full-travel level lands on the unchanged noiseMixVolts anchor.
+    const float x = clamp01(dacFraction);
+    return std::max(0.0f, x - onsetTravel) * spanReciprocal;
+}
+
 void YouKnow106Engine::selectConverterTimingProfile(
     ConverterTimingProfile profile) noexcept
 {
@@ -8326,8 +8339,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
                 bipolarFromState(noiseState_) * noiseRateScale_;
+            // The hold voltage is what moves; Tr22 converts it to control
+            // current instantaneously, so the onset law is applied after the
+            // hold and ahead of both the C41-driven and legacy level paths.
+            const float noiseDrive = parameters.useCircuitDerivedNoiseLevelShape
+                ? CircuitDerivedNoiseLevelProfile::drive(noiseCv_)
+                : noiseCv_;
             const float noiseSample = processMainNoiseSource(
-                rawNoise, noiseCv_, parameters.enableNoiseLevelBeforeC41);
+                rawNoise, noiseDrive, parameters.enableNoiseLevelBeforeC41);
 
             // Polyphonic current draw loads the +/-15 V regulators, so the
             // rails sag as more cards work. This is the DC part only. The

@@ -216,6 +216,14 @@ struct EngineParameters
     // Coarse grids that cannot resolve its 33 us memory collapse it safely.
     // False retains the former post-C41 scalar solely for controlled A/Bs.
     bool enableNoiseLevelBeforeC41 { true };
+    // On by default: the scanned NOISE hold reaches IC14's control pin through
+    // Tr22's grounded-base stage (R115 + VR32 in series, R114 2.2 MOhm to
+    // -15 V, module board p. 13), so the level is zero below one junction
+    // drop plus the R114 pull-down and linear above it; the full-level
+    // endpoint is unchanged. See CircuitDerivedNoiseLevelProfile. False
+    // retains the former linear-from-zero law solely for controlled A/B
+    // renders.
+    bool useCircuitDerivedNoiseLevelShape { true };
     // On by default: the live I+II extension collapses the two wet returns to
     // their arithmetic mid, matching an original-unit owner's remembered
     // narrow/near-mono result while preserving the ordinary I/II topology.
@@ -555,6 +563,88 @@ public:
         // Compensation and frequency correction operate in the loop-gain
         // coordinate and belong to the mechanism, not the shape, so this
         // profile shares the voiced profile's functions for both.
+    };
+
+    // NOISE LEVEL shape, selectable through `useCircuitDerivedNoiseLevelShape`.
+    // Module board p. 13 draws the scanned NOISE LEVEL hold (IC21/22 pin 14)
+    // into VR32 100KB and R115 10 kOhm in series, then into a node that R114
+    // 2.2 MOhm pulls towards -15 V and that is Tr22's emitter; Tr22's base is
+    // grounded and its collector goes straight into IC14 (BA662) pin 1, the
+    // level OTA's control input. The control current is therefore the hold
+    // voltage less one emitter-junction drop, divided by the series
+    // resistance, less R114's pull-down -- zero until the hold clears that
+    // sum and linear above it. With the BA662 architecture's gm linear in
+    // control current (the same premise as CircuitDerivedResonanceProfile),
+    // the noise level is linear in the stored byte above the onset. The
+    // shape is derived from the drawn topology; the hold's standoff is
+    // anchored (p. 18 section 3); the onset magnitude is voiced-in-bracket
+    // because VR32's installed position is untraced. Full level is
+    // unchanged: drive(1) = 1, so noiseMixVolts and the 4 Vp-p TP8 anchor
+    // (p. 19 section 9, read at TP8 = CH1 VCA OUT with NOISE 10 / LEVEL 5)
+    // keep their calibration.
+    //
+    // The BA662's input saturation of the noise itself is NOT modelled: the
+    // drive at pin 2 depends on Tr21's factory-selected amplitude and
+    // bandwidth and on VR32's position, none of which the sources fix, and
+    // the 4 Vp-p anchor bounds only the C41-filtered pin-6 voltage, not the
+    // broadband OTA current behind it (OQ-16; a TP8 crest-factor capture
+    // would settle it).
+    struct CircuitDerivedNoiseLevelProfile
+    {
+        // The NOISE LEVEL hold rides the same 0..+10 V converter branch as
+        // the resonance hold (p. 8): byte 127 -> code 4064 -> 9.921875 V.
+        static constexpr float controlFullScaleVolts =
+            CircuitDerivedResonanceProfile::controlFullScaleVolts;
+        // Anchored standoff under the hold. p. 18 section 3 adjusts VR34
+        // "VCA BIAS" for +0.25...+0.27 V at TP7 with the D/A forced to 0 V;
+        // p. 13 takes VR34 through R127 470 kOhm into IC27b, whose output is
+        // TP7 and feeds demux IC26, whose channel 8 is the NOISE LEVEL hold
+        // (IC21/22 pin 14). So the hold stands at +0.26 V at byte 0, and the
+        // onset below is measured from there (see VoiceVcaControlLaw).
+        static constexpr float holdStandoffVolts = 0.26f;
+        // Nominal silicon emitter-junction drop, the same prior the
+        // resonance profile uses. The real Tr22 knee is soft -- Vbe is
+        // nearer 0.45...0.5 V at the microampere control currents just
+        // above onset -- so the hard 0.6 V corner is the nominal prior, not
+        // a measured knee.
+        static constexpr float junctionVolts =
+            CircuitDerivedResonanceProfile::onsetVolts;
+        static constexpr float r115Ohms = 10.0e3f;         // p. 13 R115
+        static constexpr float vr32Ohms = 100.0e3f;        // p. 13 VR32 100KB
+        static constexpr float r114Ohms = 2.2e6f;          // p. 13 R114
+        static constexpr float negativeRailVolts = 15.0f;  // p. 13 -15 V
+        // R114 pulls the emitter node towards -15 V from one junction drop
+        // above ground: (15 + 0.6) V / 2.2 MOhm = 7.09 uA. The series
+        // resistance must supply that before Tr22 conducts at all.
+        static constexpr float pullDownAmps =
+            (negativeRailVolts + junctionVolts) / r114Ohms;
+        // VR32 is the p. 19 section 9 NOISE LEVEL trimmer, adjusted for
+        // 4 Vp-p at TP8, so its position is set by Tr21's factory-selected
+        // amplitude rather than by the notes: a louder Tr21 means a larger
+        // Rs and a larger deadband. VR32 at zero: R115 alone, the smallest
+        // deadband the drawn circuit can produce. An end-stop is the least
+        // likely installed state but the one that never overstates the
+        // deadband; mid-travel (60 kOhm,
+        // 1.025 V onset, travel 0.0771) is the natural second candidate and
+        // the maximum (110 kOhm, 1.380 V, travel 0.1129) the ceiling. If
+        // the BA662 inherits its BA6110 sibling's 0.5 mA control-current
+        // ceiling, the full-level current (10.18 V - 0.6 V) / Rs - 7.09 uA
+        // needs Rs >= 18.9 kOhm and the floor would move to 0.734 V (travel
+        // 0.0478); not adopted, it is a sibling-part figure.
+        static constexpr float trimSeriesOhms = r115Ohms;
+        // 0.6709 V at the floor; bracket to 1.380 V at VR32's maximum.
+        static constexpr float onsetVolts =
+            junctionVolts + trimSeriesOhms * pullDownAmps;
+        // 0.04141 of the converter's travel at the floor; bracket
+        // 0.0414...0.1129. First conducting stored byte is 6.
+        static constexpr float onsetTravel =
+            (onsetVolts - holdStandoffVolts) / controlFullScaleVolts;
+        // Normalises the conducting span to unity at full travel; a
+        // multiply in the per-sample path instead of a division.
+        static constexpr float spanReciprocal = 1.0f / (1.0f - onsetTravel);
+
+        // Linear above the onset, zero below, unity at full travel.
+        [[nodiscard]] static float drive(float dacFraction) noexcept;
     };
 
     // The two-term generalized algebraic soft clip used by VCF saturation is
@@ -975,11 +1065,12 @@ public:
     // is voiced and bracketed -- see the constant's note in the .cpp.
     [[nodiscard]] static float vcaInputCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
-    // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
-    // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
-    // C41 100 pF against R79 330 kOhm (low-pass). The BA662 level control sits
-    // between the two poles, so its time-varying gain must drive C41 rather
-    // than scale the already-shaped rail afterwards.
+    // Tr21's emitter-junction avalanche noise crosses C42 1 uF into the
+    // BA662 level OTA's 4.7 kOhm input bias (high-pass), and the OTA's
+    // output is loaded by C41 100 pF against R79 330 kOhm (low-pass). The
+    // BA662 level control sits between the two poles, so its time-varying
+    // gain must drive C41 rather than scale the already-shaped rail
+    // afterwards.
     [[nodiscard]] static float noiseSourceHighPassHz() noexcept;
     [[nodiscard]] static float noiseSourceLowPassHz() noexcept;
 

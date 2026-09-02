@@ -161,7 +161,16 @@ forty-year-old unit will null against the plug-in.
   noise source crosses C42's 33.9 Hz high-pass into the scanned BA662 level
   OTA, whose output drives the stateful C41/R79 4.8 kHz pole before feeding
   every voice (anchored topology, shaping and control ordering; the level
-  coordinates remain voiced).
+  coordinates remain voiced). The scanned NOISE hold reaches the BA662's
+  control pin through Tr22's grounded-base stage (R115 10 kΩ plus VR32
+  100 kΩ in series, R114 2.2 MΩ to −15 V), so the level is zero below one
+  junction drop plus the trimmer-dependent pull-down offset and linear above
+  it: derived shape; onset bracketed 0.67–1.38 V of the 9.92 V hold by
+  VR32's untraced position and shipped at the 0.67 V floor, about 4 % of
+  travel above the anchored +0.26 V standoff, so stored bytes 0–5 are silent
+  and Noise 1/10 sits near −24 dB rather than −20 dB re full. The OTA's
+  input saturation of the noise is not modelled: its drive depends on Tr21's
+  selected amplitude and on VR32, neither fixed (OQ-16).
 - C56/C50 couple the mixer into the filter, keeping duty-dependent DC out
   of the signal path (anchored).
 
@@ -475,8 +484,9 @@ Deliberate, each with its reason recorded:
   be routed to pitch.
 - **No invented behaviour where evidence is missing.** Mechanisms whose
   magnitude the sources cannot fix either ship voiced and labelled (mixer
-  level coordinates, resonance onset/compensation, upper cutoff knee, noise
-  distribution) or are left out entirely until measured: chorus wet-mute
+  level coordinates, resonance onset/compensation, noise control onset, upper
+  cutoff knee, noise distribution) or are left out entirely until measured:
+  chorus wet-mute
   click and leakage, HPF mode-change transients, converter charge injection,
   and envelope/LFO physical timing against a real unit. Pulse-off switching
   now follows the settled comparator/C56 topology; its installed residual,
@@ -514,7 +524,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
 | OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly. Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) has no minimum-stop resistor on LFO RATE, and the A-5 assigner's [exact ADC conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296) maps raw codes 0–5 to stored byte 0; the physical control path therefore does not force byte 1. Its coincidental 0.109 Hz rate cannot replace the reachable byte-0 rate without a unit measurement. The [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bounds PWM's loaded full-travel duty while raw SysEx retains its overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. One standing contradiction remains: the printed 0.1 Hz floor is unreconcilable with rate byte 0 at any pass period | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
-| OQ-16 | Installed main-noise spectrum and self-oscillation startup. Level is settled; Roland's p. 13 designators settle the shape class and state ordering (C42's 33.9 Hz high-pass, scanned BA662 level OTA, then C41/R79's 4822.877 Hz pole). Installed-device PSD and startup remain capture questions | P2 |
+| OQ-16 | Installed main-noise spectrum and self-oscillation startup. Level is settled; Roland's p. 13 designators settle the shape class and state ordering (C42's 33.9 Hz high-pass, scanned BA662 level OTA, then C41/R79's 4822.877 Hz pole). Installed-device PSD and startup remain capture questions. VR32's installed position (hence the NOISE deadband, 4–11 % of travel) and Tr21's selected amplitude are unmeasured; a TP8-versus-NOISE level sweep or a trimmer reading closes both, and a TP8 crest-factor capture would settle whether the BA662 input saturates | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy | P2 |
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056° | P2 |
@@ -617,6 +627,10 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### 1.1.0 — unreleased
 
+- NOISE level follows the drawn Tr22 grounded-base control law: silent
+  through the first ~4 % of travel (stored bytes 0–5), linear above; the
+  4 Vp-p full-level anchor and the C42/C41 shaping are unchanged. Comparison
+  switch `useCircuitDerivedNoiseLevelShape` retains the linear-from-zero law.
 - Universal macOS 11+ VST3, Audio Unit and Standalone distribution, with a
   signed, notarized, stapled PKG release path carrying bundled licence and
   user documentation, a build manifest and SHA-256 checksums.

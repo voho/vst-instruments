@@ -1625,6 +1625,54 @@ void testCircuitDerivedResonanceProfile()
                "the derived shape's threshold no longer solves its own law");
 }
 
+void testCircuitDerivedNoiseLevelProfile()
+{
+    using Profile = YouKnow106Engine::CircuitDerivedNoiseLevelProfile;
+
+    // The NOISE hold reaches IC14's control pin through Tr22's grounded-base
+    // stage (p. 13: VR32 + R115 in series, R114 2.2 MOhm to -15 V), so the
+    // level is zero until the hold clears one junction drop plus R114's
+    // pull-down and linear above it. The hold stands on VR34's anchored
+    // +0.26 V standoff (p. 18 section 3); VR32's position is untraced, so
+    // the onset is bracketed and shipped at its floor.
+    expect(EngineParameters {}.useCircuitDerivedNoiseLevelShape,
+           "the default left the circuit-derived NOISE level shape");
+    expectNear(Profile::pullDownAmps, 15.6 / 2.2e6, 1.0e-12,
+               "R114's pull-down left (15 + 0.6) V / 2.2 MOhm");
+    expectNear(Profile::onsetVolts, 0.6 + 10.0e3 * 15.6 / 2.2e6, 1.0e-7,
+               "the onset left one junction drop plus R115 times the "
+               "pull-down");
+    expectNear(Profile::onsetTravel, (0.6 + 10.0e3 * 15.6 / 2.2e6 - 0.26)
+                                         / 9.921875, 1.0e-7,
+               "the onset travel left the anchored standoff on the p. 8 "
+               "0..+10 V branch");
+    expect(Profile::onsetTravel >= 0.0414f && Profile::onsetTravel <= 0.1129f,
+           "the onset travel left VR32's 0.671...1.380 V bracket");
+
+    expect(Profile::drive(0.0f) == 0.0f
+               && Profile::drive(Profile::onsetTravel) == 0.0f,
+           "the derived NOISE shape conducts below its onset");
+    expect(Profile::drive(5.0f / 127.0f) == 0.0f
+               && Profile::drive(6.0f / 127.0f) > 0.0f,
+           "the first conducting stored byte left 6");
+    expectNear(Profile::drive(1.0f), 1.0, 1.0e-6,
+               "the derived NOISE shape left the anchored full-level endpoint");
+    expectNear(Profile::drive((1.0f + Profile::onsetTravel) * 0.5f), 0.5,
+               1.0e-6, "the derived NOISE shape is not linear from its onset");
+    float previous = -1.0f;
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float drive = Profile::drive(static_cast<float>(byte) / 127.0f);
+        expect(std::isfinite(drive) && drive >= previous,
+               "the derived NOISE shape is not finite and monotone");
+        previous = drive;
+    }
+    // Linearity above the onset: equal byte steps add equal level.
+    expectNear(Profile::drive(0.50f) - Profile::drive(0.25f),
+               Profile::drive(0.75f) - Profile::drive(0.50f), 1.0e-6,
+               "the derived NOISE shape is not linear above its onset");
+}
+
 void testVoicedResonanceCompatibilityProfile()
 {
     using Profile = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
@@ -6412,6 +6460,7 @@ int main()
     testResonanceLeavesTheCornerAloneBelowOscillation();
     testVoicedResonanceCompatibilityProfile();
     testCircuitDerivedResonanceProfile();
+    testCircuitDerivedNoiseLevelProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
     testPwmDutyCycleDefensiveGuard();
