@@ -8526,10 +8526,25 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // rectifier's own 100/120 Hz ripple is deliberately NOT modelled:
             // Service Notes p. 16 gives a 3300 uF reservoir per rail behind a
             // 0.25 A secondary, so the unregulated ripple is about 0.76 Vpp at
-            // 50 Hz, and the M5230L regulators after it reject roughly 60 dB of
-            // that. What reaches a card is on the order of 50 ppm of 15 V --
-            // some 0.03 cents of cutoff shift through the transfer below. It is
-            // derivably inaudible, not merely unmeasured.
+            // 50 Hz. The rejection after it is no longer an estimate: the
+            // Mitsubishi M5231L data sheet specifies ripple rejection 62 dB
+            // typical at 120 Hz (with output noise 6 uVrms, 20 Hz-100 kHz,
+            // line regulation 0.04 %/V typ and 0.1 %/V max, load regulation
+            // 0.03 % typ and 0.1 % max). Typical, not guaranteed -- the part
+            // publishes no minimum. That leaves about 0.76 mVpp on the rail,
+            // some 50 ppm of 15 V, or 0.028 cents of cutoff through the
+            // transfer below, which is -96 dBc of sideband on a 24 dB/oct
+            // slope and -86 dBc on a near-self-oscillating skirt, under the
+            // instrument's own noise floor either way. Derivably inaudible,
+            // not merely unmeasured.
+            //
+            // The 12-bit converter's reference does not reopen it. The
+            // reference is the output-high level of the 4050 buffers IC30-32
+            // on the +5.0 V net (p. 13), and IC3 M5231L derives that net from
+            // the already-regulated +15 V through R11 100 ohm (p. 16). Two
+            // cascaded regulators leave about 0.12 ppm, four orders below the
+            // single-regulator figure above, so the common-mode path that
+            // would move every held CV together carries nothing audible.
             //
             // The sum is kept as a pure load measure. Unit Character scales the
             // consequence once, where the droop is applied.

@@ -122,12 +122,40 @@ public:
 
     // ------------------------------------------------------------------
     // Panasonic specifies noise at the MN3009 output under fixed conditions:
-    // Ta=25 C, VDD/VCP=-15 V, VGG=-14 V, RL=100 kOhm, fCP=100 kHz and an
-    // A-weighted meter. A later sheet gives 0.200 mVrms maximum, while the
-    // earlier BBD book gives 0.150 mVrms maximum; no installed-lot mapping is
-    // available, so HISS 100% keeps the conservative 0.200 mVrms endpoint.
-    // This is an upper limit, not a typical target and not a measurement after
-    // Roland's external tap-sum/reconstruction network.
+    // Ta=25 C, VDD=VCPL=-15 V, VCPH=0 V, VGG=-14 V, RL=100 kOhm. The part
+    // datasheet's electrical table, read at 600 dpi from the scan, gives one
+    // noise row and no other:
+    //
+    //   Noise            Vno  fcp = 100kHz Weighted by "A" curve   Max 0.2  mVrms
+    //   Signal to Noise  S/N  Maximum output voltage to noise volt. Typ 88  dB
+    //
+    // So 0.200 mVrms is a MAXIMUM and the part publishes NO typical noise
+    // figure. The 0.150 mVrms this comment used to set against it does not
+    // appear in that table at all, so the "two conflicting maxima" reading is
+    // retired: there is one maximum, and the other figure belongs to some
+    // other part or revision. HISS 100% keeps the 0.200 mVrms endpoint, still
+    // as an upper limit and still not a measurement after Roland's external
+    // tap-sum/reconstruction network.
+    //
+    // The same sheet's TYPICAL THD-Vi curve does carry a noise figure, by
+    // implication, and it is the only typical on record. That curve is
+    // U-shaped: 0.62 % at 0.3 Vrms falling to a 0.42 % minimum near 0.75 Vrms
+    // and rising to about 2.2 % at 2.0 Vrms. A saturating nonlinearity cannot
+    // produce the left arm, so the curve is THD+N and its low-level rise is
+    // the noise floor entering the measurement. Subtracting the harmonic floor
+    // in power gives 1.37, 1.29 and 1.05 mVrms at 0.3, 0.4 and 0.5 Vrms --
+    // consistent across three readings, so roughly 1.1-1.4 mVrms unweighted
+    // and wideband at the 40 kHz clock the curve is taken at. That is not in
+    // conflict with a 0.2 mVrms A-weighted maximum at 100 kHz once weighting
+    // and clock rate are accounted for, and it is derived from a small
+    // log-log plot, so it is a bracket for OQ-03 rather than an anchor. It is
+    // recorded here because the model separates the write nonlinearity from
+    // the line noise, and this is the evidence that separation is right.
+    //
+    // The curve's right arm confirms both anchors bbdTransferBase is fitted
+    // to: 0.3 % typ at 0.78 Vrms from the table, about 2.2 % at 2.0 Vrms here.
+    // Insertion loss is Min -4 / Typ 0 / Max +4 dB, a real unit-to-unit spread
+    // on wet level the model does not carry.
     // https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf
     static constexpr float mn3009OutputNoiseAWeightedMaximumVrms = 0.200e-3f;
 
