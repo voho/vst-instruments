@@ -76,10 +76,13 @@ constexpr float subMixVolts = 5.0f;
 constexpr float noiseMixVolts = 7.4161f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
-// factory-selected for noise) with R104 470 kOhm collector load, coupled by
-// C42 1 uF into the BA662 level OTA whose input pin sits on a 4.7 kOhm bias
-// resistor -- a 33.9 Hz high-pass -- and whose output is loaded by C41 100 pF
-// against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered NOISE rail.
+// factory-selected for noise) with R104 470 kOhm EMITTER load -- its base and
+// collector are tied to ground and its emitter-base junction is reverse-biased
+// through R104 from +15 V, an E-B avalanche source -- with C42 1 uF taken from
+// that emitter node into the BA662 level OTA whose input pin sits on a 4.7 kOhm
+// bias resistor -- a 33.9 Hz high-pass -- and whose output is loaded by
+// C41 100 pF against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered
+// NOISE rail.
 // The audible source is therefore band-shaped by its own circuit, not flat.
 // The shaping passes its passband at unity, so it does not change in-band
 // density -- but it does change total power: the 4.82 kHz pole keeps only
@@ -146,6 +149,21 @@ constexpr float vcaInputCouplingResistanceOhms = 33000.0f;  // voiced, OQ-19
 // C12 10 uF NP followed by R36 33 kOhm.
 constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
 constexpr float commonVcaInputResistanceOhms = 33000.0f;
+
+// NEC 1983 consumer-IC data book, uPC1252H2 electrical characteristics
+// (p. 257; https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262): Output Noise Level NV typ -94 dBV, max -84 dBV, at Av = 0 dB,
+// RIN = 33 kOhm, BPF 10 Hz-20 kHz, Vcc/Vee +/-12 V, ISET 2 mA, RIN = ROUT =
+// 33 kOhm -- measured at the external 33 kOhm I/V output. Roland's IC5
+// wiring on p. 15 is that test circuit: C12 10 uF / R36 33 kOhm in, R34
+// 5.6K + R35 680 from pin 5 to -15 V so ISET = (15 - 2.4)/6.28k = 2.006 mA,
+// pin 8 into IC2b's 33 kOhm I/V (R16, C5 22p), and +15 V through R17 1.5K
+// (about +12 V after the 2 mA supply drop). NEC publishes NV only at
+// Av = 0 dB, so it is applied as a constant output-referred floor across
+// the installed -16.3..+4.7 dB VCA LEVEL span -- likely slightly high below
+// 0 dB. The 33 kOhm resistors' own thermal floor (4.66 uVrms in that band)
+// sits 12 dB under the part's figure and is not added separately.
+constexpr float commonVcaOutputNoiseDbv = -94.0f;
+constexpr float commonVcaOutputNoiseBandwidthHz = 19990.0f;
 
 // Stored VCA LEVEL control path on the jack board. Roland's p. 8 converter
 // chart gives the +4..-6 V buffer span and the firmware stores byte b as the
@@ -510,13 +528,17 @@ float YouKnow106Engine::VoicedResonanceCompatibilityProfile::loopGain(
 }
 
 float YouKnow106Engine::VoicedResonanceCompatibilityProfile::inputCompensation(
-    float feedback) noexcept
+    float feedback, ResonanceCompensationShape shape) noexcept
 {
-    // The direction and coefficient are part of the same voiced profile as
-    // loopGain(). They preserve the existing high-Q drive character without
-    // asserting a measured JUNO-106 compensation transfer.
+    // The direction is settled by the drawn network; the coefficient is
+    // voiced inside the bracket the two readings span. See the constants.
     const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, 8.0f);
-    return 1.0f + inputCompensationPerFeedback * k;
+    const float c = shape == ResonanceCompensationShape::Drawn
+        ? drawnInputCompensationPerFeedback
+        : (shape == ResonanceCompensationShape::Legacy
+               ? legacyInputCompensationPerFeedback
+               : inputCompensationPerFeedback);
+    return 1.0f + c * k;
 }
 
 namespace
@@ -1488,13 +1510,66 @@ float YouKnow106Engine::pwmDutyCycle(float controlVolts,
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
 }
 
+const std::array<float, YouKnow106Engine::VoiceVcaControlLaw::tableSteps + 1>&
+YouKnow106Engine::VoiceVcaControlLaw::exactGainTable()
+{
+    // y + ln y = v solved by Newton in double precision, then normalised on
+    // the full-scale entry. From y0 = e^v (v <= 1) or v - ln v (v > 1) the
+    // first step lands at or below the root and every later one climbs
+    // monotonically towards it, so the iterate never leaves y > 0; a dozen
+    // steps are far more than the quadratic tail needs. Built once, off the
+    // audio thread, by prepare().
+    static const std::array<float, tableSteps + 1> table = []
+    {
+        std::array<double, tableSteps + 1> solved {};
+        constexpr double voltsPerUnit =
+            static_cast<double>(CircuitDerivedResonanceProfile::controlFullScaleVolts)
+            / static_cast<double>(thermalVoltage);
+        for (int i = 0; i <= tableSteps; ++i)
+        {
+            const double v = (static_cast<double>(i) / tableSteps
+                              - static_cast<double>(turnOn)) * voltsPerUnit;
+            double y = v > 1.0 ? v - std::log(v) : std::exp(v);
+            for (int step = 0; step < 12; ++step)
+            {
+                const double delta = (y + std::log(y) - v) * y / (y + 1.0);
+                y -= delta;
+                if (std::abs(delta) <= 1.0e-15 * y)
+                    break;
+            }
+            solved[static_cast<std::size_t>(i)] = y;
+        }
+        std::array<float, tableSteps + 1> result {};
+        const double fullScale = solved[tableSteps];
+        for (int i = 0; i <= tableSteps; ++i)
+            result[static_cast<std::size_t>(i)] = static_cast<float>(
+                solved[static_cast<std::size_t>(i)] / fullScale);
+        return result;
+    }();
+    return table;
+}
+
 float YouKnow106Engine::VoiceVcaControlLaw::gain(float control) noexcept
 {
-    // The grounded-base stage motivates a quasi-linear response above
-    // conduction, but V_be depends on current and the BA662's low-current gm is
-    // not measured here. Softplus is a smooth compatibility approximation to
-    // that shape, normalised so full control is unity gain; its provisional
-    // turn-on and knee choose the low-level curvature.
+    const float level = clamp01(sanitised(control, 0.0f));
+    if (level <= deadband)
+        return 0.0f;
+    const auto& table = exactGainTable();
+    const float position = level * static_cast<float>(tableSteps);
+    // Control 1 is entry tableSteps itself; the clamp keeps its upper lerp
+    // neighbour inside the array.
+    const int index = std::min(static_cast<int>(position), tableSteps - 1);
+    const auto at = static_cast<std::size_t>(index);
+    const float fraction = position - static_cast<float>(index);
+    return table[at] + (table[at + 1] - table[at]) * fraction;
+}
+
+float YouKnow106Engine::VoiceVcaControlLaw::softplusGain(float control) noexcept
+{
+    // The former stand-in: a smooth approximation to the grounded-base
+    // stage's shape, normalised so full control is unity gain, with the same
+    // exponential tail as the exact law and a slightly fuller knee. Kept
+    // verbatim so the comparison switch is bit-exact.
     const float level = clamp01(sanitised(control, 0.0f));
     if (level <= deadband)
         return 0.0f;
@@ -2535,6 +2610,28 @@ YouKnow106Engine::exactVcfHoldInterval(
     return result;
 }
 
+YouKnow106Engine::VcfHoldInterval
+YouKnow106Engine::steppedHoldInterval(
+    float held, bool hasEvent, double eventPosition,
+    float eventTarget) noexcept
+{
+    VcfHoldInterval result;
+    const double before = std::isfinite(held)
+        ? static_cast<double>(held) : 0.0;
+    const double after = hasEvent && std::isfinite(eventTarget)
+        ? static_cast<double>(eventTarget) : before;
+    const double event = std::clamp(
+        std::isfinite(eventPosition) ? eventPosition : 1.0, 0.0, 1.0);
+
+    for (std::size_t point = 0; point < result.value.size(); ++point)
+    {
+        const double position = OtaCascade::controlNodePositions[point];
+        result.value[point] = (hasEvent && event <= position) ? after : before;
+    }
+    result.endpoint = static_cast<float>(result.value.back());
+    return result;
+}
+
 double YouKnow106Engine::exactOnePoleHoldEndpoint(
     double state, float target, bool hasEvent, double eventPosition,
     float eventTarget, double intervalSeconds, double timeConstantSeconds,
@@ -2808,6 +2905,21 @@ double YouKnow106Engine::OtaCascade::cubicEarlyTanh(double value) noexcept
     if (magnitude >= 1.5)
         return std::copysign(1.0, value);
     return value * (1.0 - (4.0 / 27.0) * value * value);
+}
+
+float YouKnow106Engine::VoiceVcaSignalLaw::shape(float volts) noexcept
+{
+    constexpr double inverseHeadroom =
+        1.0 / static_cast<double>(headroomVolts);
+    const double drive = static_cast<double>(volts) * inverseHeadroom;
+    const double u = drive * drive;
+    if (u < 1.0)
+        return static_cast<float>(
+            headroomVolts * (drive * vcfInnerTanhFactor(u)));
+    // A non-finite input also lands here; the checked table call passes it
+    // through for finishVoiceFilter's own guard to zero.
+    return static_cast<float>(
+        headroomVolts * OtaCascade::zonedHermiteTanh(drive));
 }
 
 double YouKnow106Engine::OtaCascade::closedLoopSpectralFactor(
@@ -4813,6 +4925,7 @@ void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
     // Touch it here, where blocking is allowed, so the first audio callback
     // never pays for it.
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
+    (void) VoiceVcaControlLaw::exactGainTable();
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
     // one, must not be able to put a zero, a negative or a NaN on the internal
@@ -4844,10 +4957,6 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
     processingCoefficients_.vcfSlew = slewFor(vcfHoldSlewSeconds);
-    processingCoefficients_.dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
-    processingCoefficients_.resonanceSlew =
-        slewFor(resonanceHoldSlewSecondsVoiced);
-    processingCoefficients_.noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
     processingCoefficients_.internalIntervalSeconds = 1.0 / oversampledRate_;
     processingCoefficients_.voiceVcaDecay = std::exp(
         -processingCoefficients_.internalIntervalSeconds
@@ -4881,6 +4990,18 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     processingCoefficients_.outputSummerNoiseScale =
         outputSummerResistorNoiseDensity()
         * std::sqrt(1.5f * static_cast<float>(sampleRate_))
+        * voltsToSample;
+    // IC5's datasheet floor is a band RMS, folded to a white-equivalent
+    // density over NEC's 10 Hz-20 kHz filter. It joins the bus ahead of the
+    // chorus split and the decimators, so it is generated at the internal
+    // rate with sqrt(3*Fint/2) rather than the host rate above: after
+    // decimation its RMS over NEC's band is again the datasheet's 19.95 uV
+    // (about 8 % more over a full 0-24 kHz host band).
+    const float commonVcaNoiseDensity =
+        std::pow(10.0f, commonVcaOutputNoiseDbv / 20.0f)
+        / std::sqrt(commonVcaOutputNoiseBandwidthHz);
+    processingCoefficients_.commonVcaNoiseScale = commonVcaNoiseDensity
+        * std::sqrt(1.5f * static_cast<float>(oversampledRate_))
         * voltsToSample;
 
     // C14's load and the following HPF are selected by one panel switch.  Their
@@ -5102,6 +5223,7 @@ void YouKnow106Engine::clearOutputPath() noexcept
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
     outputWiperNoiseStateRight_ = 0x8538ecadu;
+    commonVcaNoiseState_ = 0x7f4a7c15u;
 }
 
 void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
@@ -6818,6 +6940,16 @@ float YouKnow106Engine::CircuitDerivedResonanceProfile::loopGain(
     return VoicedResonanceCompatibilityProfile::maximumFeedback * active;
 }
 
+float YouKnow106Engine::CircuitDerivedNoiseLevelProfile::drive(
+    float dacFraction) noexcept
+{
+    // Tr22's collector current is linear in the hold voltage above the
+    // junction drop plus R114's pull-down and zero below; normalised so the
+    // full-travel level lands on the unchanged noiseMixVolts anchor.
+    const float x = clamp01(dacFraction);
+    return std::max(0.0f, x - onsetTravel) * spanReciprocal;
+}
+
 void YouKnow106Engine::selectConverterTimingProfile(
     ConverterTimingProfile profile) noexcept
 {
@@ -6927,7 +7059,8 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         resonanceCv_, card, tolerance,
         parameters.useCircuitDerivedResonanceShape);
     voice.inputCompensation =
-        VoicedResonanceCompatibilityProfile::inputCompensation(voice.feedback);
+        VoicedResonanceCompatibilityProfile::inputCompensation(
+            voice.feedback, parameters.resonanceCompensationShape);
 
     const float analogCounts = cutoffAnalogCounts(
         voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
@@ -6961,9 +7094,11 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // The retire check below the main scan loop asks this same law about
     // this same vcaControl a moment later, to see whether the card has
     // actually gone silent; cache the raw gain so it reads this value
-    // instead of paying for another log1p/exp pair.
-    voice.vcaGain = VoiceVcaControlLaw::gain(
-        static_cast<float>(voice.vcaControl));
+    // instead of paying for another lookup.
+    const auto vcaControl = static_cast<float>(voice.vcaControl);
+    voice.vcaGain = parameters.useSoftplusVoiceVcaCompatibilityLaw
+                        ? VoiceVcaControlLaw::softplusGain(vcaControl)
+                        : VoiceVcaControlLaw::gain(vcaControl);
     voice.vca = voice.vcaGain
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
 
@@ -7004,8 +7139,9 @@ void YouKnow106Engine::primeStartupVoiceWaveNodes(
     // A restored pre-audio snapshot describes a powered, already-settled
     // instrument. Prime the WAVE-node coupling capacitor at the periodic
     // source's DC mean so Pulse Off's documented constant-high comparator does
-    // not become a fabricated power-on thump on the first note. Saw and SUB
-    // are bipolar; the pulse mean is level * (2*duty - 1), including +level
+    // not become a fabricated power-on thump on the first note. Saw is
+    // bipolar; the sub is a half-wave current whose mean equals its AC
+    // amplitude; the pulse mean is level * (2*duty - 1), including +level
     // for the pinned-high off state.
     for (auto& voice : voices_)
         primeVoiceWaveNode(voice, parameters);
@@ -7019,33 +7155,17 @@ float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
     const float targetCode = capturedCountReady
         ? voice.dcoPitchTransactionCvTarget : voice.dcoCvTarget;
 
-    // A construction-only cold transaction has no earlier physical hold to
-    // inherit. Initialise that first cell from its captured pair rather than
-    // from an arbitrary power-on code. T then installs the same captured code
-    // as both live target and settled value.
-    if (capturedCountReady && voice.dcoPitchTransactionColdStart)
-    {
-        const float scale = targetCode
-                          * static_cast<float>(voice.dco.divider)
-                          / dcoRampReferenceProduct;
-        return std::clamp(scale, 0.25f, 4.0f);
-    }
-
-    // The frozen per-cycle slope stands in for the integral of the slewing
-    // compensation current across the rise it charges. Weighting the held-code
-    // error by tau/period is that integral to first order: a long bass cycle
-    // sees nearly the target code, while a short cycle keeps more of the launch
-    // value. Multiplying the resulting code by the active count retains the
-    // B-2 pair's settled ripple and its real high-note CV saturation; the
-    // centre anchor removes any need to guess DAC volts or integrator gain.
-    const float tauSamples = dcoHoldSlewSecondsVoiced
-                           * static_cast<float>(oversampledRate_);
-    const float weight = std::min(
-        1.0f, tauSamples / static_cast<float>(
-                  std::max(voice.dco.periodSamples, 1.0)));
-    const float effectiveCode = targetCode
-                              + (voice.dcoCv - targetCode) * weight;
-    const float scale = effectiveCode
+    // The physical hold steps to the captured code at T, at most 97 us after
+    // the PIT write and so inside the cycle for every musical period, so the
+    // frozen-slope integral is the new code; before the count is active, or
+    // after T, the target and the settled hold coincide. A construction-only
+    // cold transaction, which has no earlier physical hold to inherit, is the
+    // same case: its first cell starts from the captured pair, and T installs
+    // that code as both live target and settled value. Multiplying the code
+    // by the active count retains the B-2 pair's settled ripple and its real
+    // high-note CV saturation; the centre anchor removes any need to guess
+    // DAC volts or integrator gain.
+    const float scale = targetCode
                       * static_cast<float>(voice.dco.divider)
                       / dcoRampReferenceProduct;
     return std::clamp(scale, 0.25f, 4.0f);
@@ -7066,6 +7186,21 @@ float YouKnow106Engine::pulseWaveNodeMean(
         : 0.0f;
 }
 
+float YouKnow106Engine::subWaveNodeMean(
+    const Voice& voice, const EngineParameters& parameters) const noexcept
+{
+    // Module p. 13: Tr19's collector node feeds R101 27k -> D6 (cathode on
+    // the pin-14 WAVE line) and R102 33k back to the SUB LEVEL rail, so the
+    // rail's current enters the node on the half-cycle Tr19 is off and the
+    // unipolar square's mean equals its AC amplitude -- the same subGain
+    // prepareVoiceFilter applies. Zero with the switch off (bipolar square).
+    if (!parameters.enableSubHalfWaveNodeCoupling)
+        return 0.0f;
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    return subMixVolts * static_cast<float>(subCv_)
+         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
+}
+
 void YouKnow106Engine::primeVoiceWaveNode(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
@@ -7083,7 +7218,8 @@ void YouKnow106Engine::primeVoiceWaveNode(
     voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
     voice.pulseThresholdPrimed = true;
     voice.moduleCoupling.state = static_cast<double>(
-        pulseWaveNodeMean(voice, parameters));
+        pulseWaveNodeMean(voice, parameters)
+        + subWaveNodeMean(voice, parameters));
 }
 
 // ---------------------------------------------------------------------------
@@ -7472,28 +7608,42 @@ void YouKnow106Engine::freewheelVoiceCard(Voice& voice) noexcept
     // comparator into false DC, while the omitted capacitor ripple is bounded
     // to about 45 mV at the crossover and falls with frequency. Regressions
     // compare both the lowest pitch and the >1-cycle/sample extreme to Exact.
-    // The legacy A/B path deliberately retains its former frozen state.
-    if (activeParameters_.enablePulseOffWaveNodeCoupling)
+    // The legacy A/B path (both node couplings off) deliberately retains its
+    // former frozen state. The sub's half-wave mean sits on the same node
+    // (see subWaveNodeMean); an idle card must keep tracking it, with or
+    // without the pulse-off coupling, or the next note-on would replay the
+    // SUB level as a C56 step.
+    const bool trackPulseNode = activeParameters_.enablePulseOffWaveNodeCoupling;
+    const bool trackSubNode = activeParameters_.enableSubHalfWaveNodeCoupling;
+    if (trackPulseNode || trackSubNode)
     {
-        auto& dco = voice.dco;
-        const double totalScale = static_cast<double>(dco.renderScale)
-                                * static_cast<double>(voice.rampCurrentScale);
-        const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
-                               * totalScale * (dco.rampValue + 1.0);
-        dco.pulseState = voice.pulsePinnedHigh
-                      || rampVolts >= voice.pulseThresholdVolts
-                       ? 1.0f : -1.0f;
-        constexpr double endpointTrackingMaximumHz = 100.0;
-        const double carrierHz = oversampledRate_
-            / std::max(dco.periodSamples, 1.0);
-        const float pulseNode = carrierHz <= endpointTrackingMaximumHz
-            ? dco.pulseState * pulseMixVolts
-            : pulseWaveNodeMean(voice, activeParameters_);
+        float pulseNode = 0.0f;
+        if (trackPulseNode)
+        {
+            auto& dco = voice.dco;
+            const double totalScale = static_cast<double>(dco.renderScale)
+                                    * static_cast<double>(voice.rampCurrentScale);
+            const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
+                                   * totalScale * (dco.rampValue + 1.0);
+            dco.pulseState = voice.pulsePinnedHigh
+                          || rampVolts >= voice.pulseThresholdVolts
+                           ? 1.0f : -1.0f;
+            constexpr double endpointTrackingMaximumHz = 100.0;
+            const double carrierHz = oversampledRate_
+                / std::max(dco.periodSamples, 1.0);
+            pulseNode = carrierHz <= endpointTrackingMaximumHz
+                ? dco.pulseState * pulseMixVolts
+                : pulseWaveNodeMean(voice, activeParameters_);
+        }
         static_cast<void>(voice.moduleCoupling.process(
-            pulseNode, moduleCouplingG_, 0.0f, 1.0f));
-        voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
-        voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
-        voice.pulseThresholdPrimed = true;
+            pulseNode + subWaveNodeMean(voice, activeParameters_),
+            moduleCouplingG_, 0.0f, 1.0f));
+        if (trackPulseNode)
+        {
+            voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
+            voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
+            voice.pulseThresholdPrimed = true;
+        }
     }
 }
 
@@ -7558,7 +7708,13 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
         dco.pulse.advance(dco.pulseState) * pulseMixVolts;
     const float subGain = subMixVolts * static_cast<float>(subCv_)
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
-    const float subOut = dco.sub.advance(dco.subState) * subGain;
+    // Half-wave: AC +/- subGain as before, plus a +subGain mean (see the
+    // summing-node note below). The comparison switch keeps the zero-mean
+    // square.
+    const float subTrack = dco.sub.advance(dco.subState);
+    const float subOut = parameters.enableSubHalfWaveNodeCoupling
+        ? (subTrack + 1.0f) * subGain
+        : subTrack * subGain;
 
     // --- Summing node --------------------------------------------------------
     // Module p. 13 (2026-08-07 designator read): saw and pulse leave the
@@ -7574,6 +7730,21 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
     // pins the comparator high on the fixed WAVE output, SUB by its collector
     // supply and NOISE by the level OTA. Exact pinned-node voltage and loading
     // remain OQ-15/OQ-11.
+    // The sub's single series diode makes its current unipolar -- the rail
+    // sources (9.92 V * subCv - V_D6) / 60k, roughly 155 uA at full scale
+    // for a ~0.6 V drop (the D6 part is unread), on the half-cycle Tr19 is
+    // off and nothing on the other -- so its mean rides on this node for
+    // C56/C50 to remove; the level law stays linear in the held rail (the
+    // diode's onset and the saw-dependent modulation of the sub current
+    // through the node's own swing are OQ-15). The node's
+    // DC-to-AC impedance ratio is voiced at 1, the floor of its <= 2 bracket,
+    // inside the already-voiced subMixVolts coordinate. This is NOT the
+    // removed "sub-driver amplitude asymmetry" (a fabricated 0.3 % inequality
+    // of two divider levels, DC plus even harmonics, misattributed to 4013
+    // edge timing): this DC is the topology-derived half-wave mean, adds no
+    // even harmonics (50 % duty), leaves the edges unchanged, and is nulled
+    // by C56 at steady state -- it is audible only as the C56/C59-shaped bump
+    // a SUB level step produces.
     // Generators mute or clamp; legs never switch. The node's loading is one
     // configuration-independent constant, which the established
     // filterInputAttenuation coordinate already absorbs -- an earlier
@@ -7762,7 +7933,13 @@ float YouKnow106Engine::finishVoiceFilter(Voice& voice,
     // multiplied by control and VCA gain, producing an unsupported
     // control-squared pulse. Do not invent a residual until a calibrated
     // TP8--TP13 capture establishes its distribution.
-    const float output = vcaInput * voice.vca * voltsToSample;
+    //
+    // The pair itself saturates ahead of the control multiply (see
+    // VoiceVcaSignalLaw); the switch only retains the linear multiply for
+    // A/B renders.
+    const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
+        ? VoiceVcaSignalLaw::shape(vcaInput) : vcaInput;
+    const float output = shaped * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
@@ -8047,8 +8224,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     // Each converter destination owns a separately named hold network. VCF,
     // voice VCA, common VCA, PWM and SUB have evidence-backed post-hold
     // networks; resonance keeps Step 11's explicitly voiced 522 us companion
-    // trajectory, while DCO and noise retain their isolated compatibility
-    // policies until their RCs are established. Exact full-interval decays
+    // trajectory; DCO and NOISE have no post-hold network on p. 13 and their
+    // rON x C acquisition (2.8 us maximum) is a step within the slot, so they
+    // are assigned at the write. Exact full-interval decays
     // are precomputed when the processing rate changes; only the rare interval
     // that actually contains a fractional write needs an event-position
     // exponential.
@@ -8249,30 +8427,21 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             const bool cutoffHoldEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::Vcf;
+            // IC22c drives VR26/R107/Tr18 through bare wire, so the RESO CV
+            // holds its written value and steps at the write. The interval is
+            // rebuilt every sample either way: the cascade reads it beside the
+            // cutoff trajectory, and a stale one would replay the pre-write
+            // value at the early control nodes.
             if (resonanceEvent)
             {
-                resonanceVcfHoldInterval_ = exactVcfHoldInterval(
-                    resonanceIntervalStart,
-                    physicalHoldEvent.previousTarget, true,
-                    physicalHoldEvent.position, physicalHoldEvent.target,
-                    coefficients.internalIntervalSeconds);
+                resonanceVcfHoldInterval_ = steppedHoldInterval(
+                    resonanceIntervalStart, true, physicalHoldEvent.position,
+                    physicalHoldEvent.target);
                 resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
             }
             else
-            {
-                if (cutoffHoldEvent)
-                {
-                    resonanceVcfHoldInterval_ = exactVcfHoldInterval(
-                        resonanceIntervalStart, resonanceCvTarget_, false,
-                        1.0, resonanceCvTarget_,
-                        coefficients.internalIntervalSeconds);
-                    resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
-                }
-                else
-                    resonanceCv_ +=
-                        (resonanceCvTarget_ - resonanceCv_)
-                            * coefficients.resonanceSlew;
-            }
+                resonanceVcfHoldInterval_ = steppedHoldInterval(
+                    resonanceCv_, false, 1.0, resonanceCv_);
             const bool commonVcaEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::CommonVca;
@@ -8313,7 +8482,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     coefficients.subDecay)
                 : advanceOrdinaryOnePoleHold(
                     subCv_, subCvTarget_, coefficients.subDecay);
-            noiseCv_ += (noiseCvTarget_ - noiseCv_) * coefficients.noiseSlew;
+            // IC26's C85 hold: rON x C is at most 2.8 us, a step within the
+            // slot (see converterHoldFarads).
+            noiseCv_ = noiseCvTarget_;
             advanceThermalWarmup();
 
             if (--driftControlCountdown_ <= 0)
@@ -8341,8 +8512,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
                 bipolarFromState(noiseState_) * noiseRateScale_;
+            // The hold voltage is what moves; Tr22 converts it to control
+            // current instantaneously, so the onset law is applied after the
+            // hold and ahead of both the C41-driven and legacy level paths.
+            const float noiseDrive = parameters.useCircuitDerivedNoiseLevelShape
+                ? CircuitDerivedNoiseLevelProfile::drive(noiseCv_)
+                : noiseCv_;
             const float noiseSample = processMainNoiseSource(
-                rawNoise, noiseCv_, parameters.enableNoiseLevelBeforeC41);
+                rawNoise, noiseDrive, parameters.enableNoiseLevelBeforeC41);
 
             // Polyphonic current draw loads the +/-15 V regulators, so the
             // rails sag as more cards work. This is the DC part only. The
@@ -8418,8 +8595,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 // would only write the same values twice.
                 exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
                     resonanceEvent || cutoffEvent;
-                voice.dcoCv +=
-                    (voice.dcoCvTarget - voice.dcoCv) * coefficients.dcoSlew;
+                // IC24's per-voice DCO hold (C79/C78/C74/C77/C73/C76 into
+                // IC20/IC16/IC19): the same rON x C bound, a step within the
+                // slot.
+                voice.dcoCv = voice.dcoCvTarget;
                 const bool voiceVcaEvent = physicalHoldEvent.active
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca
@@ -8606,7 +8785,19 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 patchLevelCacheKey = patchLevelKey;
                 patchLevelCacheValid = true;
             }
-            const float levelled = vcaInput * patchLevelCacheValue;
+            float levelled = vcaInput * patchLevelCacheValue;
+            // The uPC1252H2's own output noise (see commonVcaOutputNoiseDbv)
+            // appears at IC2b's output regardless of what the bus carries, so
+            // it is added here, ahead of the dry/wet split, and the dry and
+            // both wet legs carry it. Unit Character 0 keeps the exact-
+            // silence calibrated nominal, exactly as the resistor floors do.
+            if (parameters.enableCommonVcaNoise)
+            {
+                commonVcaNoiseState_ = xorshift32(commonVcaNoiseState_);
+                levelled += bipolarFromState(commonVcaNoiseState_)
+                          * coefficients.commonVcaNoiseScale
+                          * parameters.calibration;
+            }
 
             // The chorus input coupling capacitors sit in its two wet branches;
             // dry bypasses them. IC6 applies its component-derived dry/wet

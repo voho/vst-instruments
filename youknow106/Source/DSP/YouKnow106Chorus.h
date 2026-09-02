@@ -144,27 +144,25 @@ public:
     // not a claim that the external board belongs inside Panasonic's
     // measurand. The constant below is the complete modelled board chain's
     // A-weighted transfer from uniform edge-noise amplitude to the wet line:
-    // 1/sqrt(3) times 0.6973 for hold/tap sum/reconstruction/output coupling.
+    // 1/sqrt(3) times 0.6745 for hold/tap sum/reconstruction/output coupling.
     static constexpr float productWetLineNoiseTargetAWeightedVrms =
         mn3009OutputNoiseAWeightedMaximumVrms;
     //
     // Stated at 192 kHz, which is what HQ targets from the 48 kHz host-rate
     // family and is also the engine's `noiseReferenceRateHz`. The combined
-    // exact output support measures 0.4026 there; this is a derived numerical
+    // exact output support measures 0.3894 there; this is a derived numerical
     // transfer update, not a change to the part's 0.2 mVrms row or its noise
     // law. Across HQ the recovered result moves less than 0.004 dB between the
-    // 192 and 176.4 kHz internal grids. Below HQ, extra folded power still
-    // reads high: about +0.36..+0.38 dB at 44.1 kHz, +0.30..+0.31 dB at
-    // 48 kHz, +0.06..+0.08 dB at 88.2 kHz and +0.05..+0.07 dB at 96 kHz.
-    // That is numerical-grid error rather than a property of the part.
+    // 192 and 176.4 kHz internal grids. HQ-off's separately audited folded
+    // power remains numerical-grid error rather than a property of the part.
     //
     // Known to about +/-0.1%, and no better: it is estimated from a finite
     // random sequence. Fixed-seed 128 s measurements put the effective
-    // transfer at 0.40272-0.40276 on the 176.4 kHz family and
-    // 0.40261-0.40264 on the 192 kHz family. Four figures is all the
+    // transfer at 0.38948-0.38953 on the 176.4 kHz family and
+    // 0.38937-0.38941 on the 192 kHz family. Four figures is all the
     // measurand supports, which is why the suites allow estimator margin on
     // the resulting product-policy assertion rather than fencing it exactly.
-    static constexpr float productWetLineAWeightedTransfer = 0.4026f;
+    static constexpr float productWetLineAWeightedTransfer = 0.3894f;
 
     // Amplitude of the uniform random sample each line writes at its own clock
     // edges, in model units. One equation, solved once: the recovered

@@ -2695,11 +2695,93 @@ void testMixerLevelIsContinuousInSubAndNoise()
            "leaving the SUB stop moved the voice by " + std::to_string(stepDb)
                + " dB; that leg is wired whether or not it is turned up");
 
-    const double noiseJustOff = levelAt(0.0f, 1.0f / 127.0f);
+    // Byte 6 is the first stored NOISE byte Tr22 conducts at (see
+    // testNoiseLevelFollowsTr22JunctionOnset); bytes 1-5 sit inside the
+    // deadband and would make this probe vacuous.
+    const double noiseJustOff = levelAt(0.0f, 6.0f / 127.0f);
     const double noiseStepDb = std::abs(20.0 * std::log10(noiseJustOff / atRest));
     expect(noiseStepDb < 0.5,
            "leaving the NOISE stop moved the voice by "
                + std::to_string(noiseStepDb) + " dB");
+}
+
+void testNoiseLevelFollowsTr22JunctionOnset()
+{
+    // Module board p. 13 feeds the NOISE LEVEL hold through VR32 + R115 into
+    // Tr22's grounded-base stage, with R114 2.2 MOhm pulling the emitter
+    // node towards -15 V, straight into the BA662's control pin. So the
+    // level is silent until the hold clears one junction drop plus that
+    // pull-down (stored byte 6 at VR32's floor) and linear above it, with the
+    // full-level endpoint unchanged. Calibration 0 removes the per-card level
+    // error and the Johnson floor, and one seed makes every take the same
+    // noise realisation, so the take ratios are the control law itself.
+    const auto take = [](float noiseLevel, bool circuitDerived) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.noiseLevel = noiseLevel;
+        parameters.vcaLevel = 0.5f;
+        parameters.useCircuitDerivedNoiseLevelShape = circuitDerived;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        return render(engine, 48000).left;
+    };
+    const auto rms = [](const std::vector<float>& samples) {
+        double sumOfSquares = 0.0;
+        const std::size_t start = samples.size() / 2;
+        for (std::size_t index = start; index < samples.size(); ++index)
+            sumOfSquares += static_cast<double>(samples[index])
+                          * static_cast<double>(samples[index]);
+        return std::sqrt(sumOfSquares
+                         / static_cast<double>(samples.size() - start));
+    };
+    const auto dbRe = [](double level, double reference) {
+        return 20.0 * std::log10(level / reference);
+    };
+
+    const auto full = take(1.0f, true);
+    const double fullRms = rms(full);
+    expect(fullRms > 0.0, "the full-level NOISE take produced no output");
+
+    // (i) Inside the deadband the derived law is exactly silent.
+    expect(maximumDifference(take(4.0f / 127.0f, true), take(0.0f, true))
+               == 0.0,
+           "stored NOISE byte 4 did not null against byte 0 under the "
+           "Tr22 onset");
+    // (ii) The legacy law is linear from zero: byte 4 is 4/127 of full.
+    const double legacyByte4Db = dbRe(rms(take(4.0f / 127.0f, false)),
+                                     rms(take(1.0f, false)));
+    expect(std::abs(legacyByte4Db - 20.0 * std::log10(4.0 / 127.0)) < 0.3,
+           "the legacy linear NOISE law left -30.0 dB at byte 4: "
+               + std::to_string(legacyByte4Db) + " dB");
+    // (iii) Above the onset the derived law is linear from byte ~5.26:
+    // (16/127 - onsetTravel) / (1 - onsetTravel) = -21.1 dB against the
+    // legacy 16/127 = -18.0 dB.
+    const double derivedByte16Db = dbRe(rms(take(16.0f / 127.0f, true)),
+                                       fullRms);
+    expect(std::abs(derivedByte16Db + 21.1) < 0.3,
+           "the Tr22 onset law left -21.1 dB at byte 16: "
+               + std::to_string(derivedByte16Db) + " dB");
+    const double legacyByte16Db = dbRe(rms(take(16.0f / 127.0f, false)),
+                                      rms(take(1.0f, false)));
+    expect(std::abs(legacyByte16Db + 18.0) < 0.3,
+           "the legacy linear NOISE law left -18.0 dB at byte 16: "
+               + std::to_string(legacyByte16Db) + " dB");
+    // (iv) The endpoint is shared: full level is bit-identical either way.
+    expect(maximumDifference(full, take(1.0f, false)) == 0.0,
+           "the Tr22 onset law moved the anchored full NOISE level");
+    // (v) Monotone in the stored byte.
+    double previous = -1.0;
+    for (int byte = 0; byte <= 127; byte += 8)
+    {
+        const double level = rms(take(static_cast<float>(byte) / 127.0f, true));
+        expect(level >= previous,
+               "the Tr22 onset law is not monotone at byte "
+                   + std::to_string(byte));
+        previous = level;
+    }
 }
 
 void testUnisonDoesNotBeat()
@@ -4651,6 +4733,112 @@ void testDcoPitchPairKeepsSettledRampProductAndCvSaturation()
                "a cold B-2 transaction normalized its captured pair to unity");
 }
 
+void testDcoAndNoiseHoldsAcquireAtTheWrite()
+{
+    // IC24's six DCO holds (C79/C78/C74/C77/C73/C76 into IC20/IC16/IC19) and
+    // IC26's C85 have no post-hold network on p. 13: the HD14051B's rON into
+    // 0.01 uF settles in at most 2.8 us, inside one internal sample at
+    // 192 kHz, so the launch scale is the target code's product even while
+    // the stored hold still reads an older value, and both holds equal their
+    // target after one internal sample.
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, blockSize, false);
+    const double period = YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
+    const float unitCode = YouKnow106TestAccess::dcoCvCodeForScale(
+        engine, 0, 1.0f);
+    YouKnow106TestAccess::setDcoLaunchState(
+        engine, 0, period, 256.0f, 1.5f * unitCode);
+    expectNear(YouKnow106TestAccess::dcoLaunchScale(engine, 0), 1.5f, 1.0e-6,
+               "the DCO launch scale still weighted the stale hold against "
+               "the target code before the write");
+    YouKnow106TestAccess::setDcoLaunchState(engine, 0, period, 256.0f,
+                                            4095.0f);
+    YouKnow106TestAccess::setNoiseHold(engine, 0.0f, 1.0f);
+    std::vector<float> left(static_cast<std::size_t>(blockSize), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(blockSize), 0.0f);
+    engine.process(left.data(), right.data(), 1);
+    expect(YouKnow106TestAccess::dcoCv(engine, 0) == 4095.0f,
+           "the DCO pitch-CV hold did not step to its target at the write");
+    expect(YouKnow106TestAccess::noiseHeld(engine)
+               == YouKnow106TestAccess::noiseTarget(engine),
+           "the NOISE hold did not step to its target at the write");
+    const float expectedScale = std::clamp(
+        4095.0f / YouKnow106TestAccess::dcoCvCodeForScale(engine, 0, 1.0f),
+        0.25f, 4.0f);
+    expectNear(YouKnow106TestAccess::dcoLaunchScale(engine, 0),
+               expectedScale, 1.0e-6,
+               "the DCO launch scale still weighted a stale hold value");
+}
+
+void testResonanceHoldStepsAtTheWrite()
+{
+    // IC26's C86 feeds IC22c, whose output reaches the card as bare wire into
+    // VR26 20KB, R107 27k and the grounded-base Tr18: p. 13 draws no capacitor
+    // on that run, so the RESO CV holds its written value and steps at the
+    // write instead of gliding. The retired 522 us was the first commit's
+    // single undifferentiated control slew, and had no network behind it.
+    constexpr double sampleRate = 8000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto initial = plainPatch();
+    initial.resonance = 0.09f;
+    engine.setParameters(initial);
+    engine.noteOn(60, 1.0f);
+
+    auto eventParameters = initial;
+    eventParameters.resonance = 0.68f;
+    engine.setParameters(eventParameters);
+    const double delta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    constexpr double requestedPosition = 0.27;
+    YouKnow106TestAccess::setConverterScheduler(
+        engine, 1.0 - requestedPosition * delta,
+        YouKnow106TestAccess::converterWriteCount());
+    // Seed a stale held value distinct from anything the pass can write, so
+    // the step has somewhere to come from. Only the target is recomputed at
+    // the block boundary; the held node keeps whatever the card is holding.
+    constexpr float staleHold = 0.19f;
+    YouKnow106TestAccess::setResonanceHold(
+        engine, staleHold, YouKnow106TestAccess::resonanceTarget(engine));
+    const float heldBefore = YouKnow106TestAccess::resonanceHeld(engine);
+
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    const auto latch = YouKnow106TestAccess::passiveHoldLatch(engine);
+    expect(latch.valid && latch.eventPosition > 0.0,
+           "the RESO step fixture did not latch a fractional write");
+    expect(latch.target != heldBefore,
+           "the RESO step fixture did not change the converter payload");
+
+    // The write steps, exactly: no partial trajectory, no dependence on any
+    // time constant. Every control node at or after the event position carries
+    // the written value and every node before it still carries the old one.
+    expect(YouKnow106TestAccess::resonanceHeld(engine) == latch.target,
+           "the RESO CV hold did not step to its target at the write");
+    const auto stepped = YouKnow106TestAccess::resonanceVcfHoldNodes(engine);
+    bool sawOld = false;
+    bool sawNew = false;
+    for (std::size_t point = 0; point < vcfControlNodePositions.size(); ++point)
+    {
+        const bool afterEvent =
+            latch.eventPosition <= vcfControlNodePositions[point];
+        const double expected = afterEvent
+            ? static_cast<double>(latch.target)
+            : static_cast<double>(heldBefore);
+        sawOld = sawOld || !afterEvent;
+        sawNew = sawNew || afterEvent;
+        expect(stepped[point] == expected,
+               "a RESO control node interpolated across the write instead of "
+               "stepping at it");
+    }
+    expect(sawOld && sawNew,
+           "the RESO step fixture did not straddle the event position");
+    // The complementary case -- a cutoff write leaving the RESO CV exactly
+    // where it was -- is asserted by
+    // testFractionalVcfWritesPeekWithoutConsumingTheScheduler.
+}
+
 void testMasterTuneUsesRecoveredSignedPitchWord()
 {
     expect(YouKnow106Engine::masterTunePitchWordOffset(-50.0) == -128
@@ -6111,7 +6299,7 @@ void testComparatorEndpointPinsAndTransitionTiming()
     const float suffixUnitCode = YouKnow106TestAccess::dcoCvCodeForScale(
         rescaledSuffix, 0, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
-        rescaledSuffix, 0, 1.0, 2.0f * suffixUnitCode, suffixUnitCode);
+        rescaledSuffix, 0, 1.0, 2.0f * suffixUnitCode, 2.0f * suffixUnitCode);
     YouKnow106TestAccess::setDcoResetState(
         rescaledSuffix, 0, -0.5, -1.0 / suffixInterval,
         0.5 * suffixInterval);
@@ -6221,7 +6409,7 @@ void testPitEventBudgetCoversWorstCaseInterval()
         YouKnow106TestAccess::dcoCvCodeForScale(engine, 0, 1.0f);
     YouKnow106TestAccess::setDcoLaunchState(
         engine, 0, YouKnow106TestAccess::dcoPeriodSamples(engine, 0),
-        4.0f * eventBudgetUnitCode, eventBudgetUnitCode);
+        4.0f * eventBudgetUnitCode, 4.0f * eventBudgetUnitCode);
     YouKnow106TestAccess::advanceDcoPitAndRampThreshold(
         engine, 0, DcoRange::Four,
         20.0f, 20.0f, false, false, true);
@@ -7198,12 +7386,10 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
     expectNear(YouKnow106TestAccess::cutoffHeld(engine, slot),
                expectedEndpoint, 0.0,
                "the fractional VCF write missed its exact 522 us endpoint");
-    expectNear(YouKnow106TestAccess::resonanceHeld(engine),
-               YouKnow106TestAccess::exactVcfHoldEndpoint(
-                   resonanceHeldBefore, resonanceTargetBefore, 1.0,
-                   resonanceTargetBefore, 1.0 / sampleRate, false),
-               0.0,
-               "a VCF event interval did not advance resonance exactly once");
+    // The RESO CV has no post-hold network, so a cutoff write leaves it
+    // exactly where it was: it moves only at its own write.
+    expect(YouKnow106TestAccess::resonanceHeld(engine) == resonanceHeldBefore,
+           "a VCF event interval moved the held RESO CV");
     const auto cutoffNodes =
         YouKnow106TestAccess::cutoffVcfHoldNodes(engine, slot);
     const auto resonanceNodes =
@@ -7220,10 +7406,7 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
                    2.5e-12,
                    "the process-populated cutoff hold node is not segmented-exact");
         expectNear(resonanceNodes[point],
-                   independentVcfHoldValue(
-                       resonanceHeldBefore, resonanceTargetBefore, false,
-                       1.0, resonanceTargetBefore, 1.0 / sampleRate,
-                       vcfControlNodePositions[point]),
+                   static_cast<double>(resonanceHeldBefore),
                    2.5e-12,
                    "a cutoff event populated the wrong reciprocal resonance node");
     }
@@ -7288,12 +7471,8 @@ void testFractionalResonancePeekCrossesThePassBoundary()
            "the pass-wrap resonance peek consumed the old pass cursor");
     expect(YouKnow106TestAccess::resonanceTarget(engine) == targetBefore,
            "the pass-wrap peek changed the official resonance target");
-    expectNear(YouKnow106TestAccess::resonanceHeld(engine),
-               YouKnow106TestAccess::exactVcfHoldEndpoint(
-                   heldBefore, targetBefore, latch.eventPosition,
-                   latch.target, 1.0 / sampleRate),
-               0.0,
-               "the pass-wrap resonance event missed its exact endpoint");
+    expect(YouKnow106TestAccess::resonanceHeld(engine) == latch.target,
+           "the pass-wrap resonance event did not step to its written value");
     expectNear(YouKnow106TestAccess::cutoffHeld(engine, 0),
                YouKnow106TestAccess::exactVcfHoldEndpoint(
                    cutoffHeldBefore, cutoffTargetBefore, 1.0,
@@ -7309,12 +7488,12 @@ void testFractionalResonancePeekCrossesThePassBoundary()
     for (std::size_t point = 0; point < vcfControlNodePositions.size(); ++point)
     {
         expectNear(resonanceNodes[point],
-                   independentVcfHoldValue(
-                       heldBefore, targetBefore, true, latch.eventPosition,
-                       latch.target, 1.0 / sampleRate,
-                       vcfControlNodePositions[point]),
-                   2.5e-12,
-                   "the process-populated resonance hold node is not segmented-exact");
+                   latch.eventPosition <= vcfControlNodePositions[point]
+                       ? static_cast<double>(latch.target)
+                       : static_cast<double>(heldBefore),
+                   0.0,
+                   "the process-populated resonance hold node did not step at "
+                   "the write");
         expectNear(cutoffNodes[point],
                    independentVcfHoldValue(
                        cutoffHeldBefore, cutoffTargetBefore, false, 1.0,
@@ -7829,6 +8008,77 @@ void testDoublePassiveHoldStatesDoNotStallAtHighRate()
     expect(YouKnow106TestAccess::pwmHeld(engine) < 6.0
                && YouKnow106TestAccess::pwmHeld(engine) > nearSix,
            "the double PWM second node stalled at 768 kHz");
+}
+
+void testVoiceVcaJunctionLawShortensReleaseTails()
+{
+    // One released note rendered twice, identical in everything but the
+    // voice-VCA control law: A the former softplus stand-in, B the exact
+    // Tr20 emitter law. Both share the sub-knee tail and the full-scale
+    // point, so the difference lives between them -- the exact law sits up to
+    // about 2.5 dB under the softplus where the envelope has fallen 25 to
+    // 50 dB, and nowhere above it in that region. More than 90 dB down the
+    // two tails cross again by a fraction of a decibel, so the never-louder
+    // bound is asserted over the 50 dB the change is about. The mid release
+    // byte reaches that region inside six seconds; the slowest one takes over
+    // twenty.
+    constexpr double sampleRate = 48000.0;
+    constexpr int holdSamples = 24000;
+    constexpr int tailSamples = 264000;
+    constexpr int window = 2400;
+    auto parameters = plainPatch();
+    parameters.release = 64.0f / 127.0f;
+
+    const auto windowRms = [](const std::vector<float>& audio, std::size_t offset)
+    {
+        double sumOfSquares = 0.0;
+        for (int index = 0; index < window; ++index)
+        {
+            const double value = audio[offset + static_cast<std::size_t>(index)];
+            sumOfSquares += value * value;
+        }
+        return std::sqrt(sumOfSquares / window);
+    };
+    const auto renderRelease = [&](bool softplus)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto law = parameters;
+        law.useSoftplusVoiceVcaCompatibilityLaw = softplus;
+        engine.setParameters(law);
+        engine.noteOn(60, 1.0f);
+        const auto held = renderExact(engine, holdSamples);
+        engine.noteOff(60);
+        return std::pair { windowRms(held.left, holdSamples - window),
+                           renderExact(engine, tailSamples) };
+    };
+    const auto [sustainA, tailA] = renderRelease(true);
+    const auto [sustainB, tailB] = renderRelease(false);
+    // The sustain hold sits a hair under full scale, where the exact law is
+    // about a thousandth of a decibel under the softplus.
+    expectNear(sustainB / sustainA, 1.0, 1.0e-3,
+               "the junction law moved the sustained level");
+
+    double deepest = 0.0;
+    double loudest = -100.0;
+    for (std::size_t offset = 0; offset + window <= tailA.left.size();
+         offset += window)
+    {
+        const double rmsA = windowRms(tailA.left, offset);
+        if (rmsA < sustainA * 3.16e-3)
+            break;
+        const double ratio = 20.0 * std::log10(windowRms(tailB.left, offset) / rmsA);
+        deepest = std::min(deepest, ratio);
+        loudest = std::max(loudest, ratio);
+    }
+    expect(loudest <= 0.05,
+           "the junction law is louder than the softplus by "
+               + std::to_string(loudest) + " dB within 50 dB of sustain");
+    // The static law difference peaks at -2.54 dB; the rendered window reads
+    // -2.65 dB at 4x.
+    expect(deepest > -3.0 && deepest < -1.3,
+           "the junction law's release tail sits " + std::to_string(deepest)
+               + " dB under the softplus at its deepest, not -1.3 to -3.0");
 }
 
 void testPulseOffPinsComparatorWithoutResettingTheDco()
@@ -9064,8 +9314,16 @@ void testFixedOutputBoundaryCorpus()
         // fixed depth 0.37 now means stored byte 47 / code 0x0a20 rather than
         // a continuous 0..1 interpolation. The waveform-free resonance row
         // below remains bit-identical as the negative control.
-        Baseline { 0.0945856, 0.201924, 0.203618, 0, 0 },
-        Baseline { 0.254439, 0.731238, 0.741002, 0, 0 },
+        // Re-pinned after the voice VCA gained the BA662 pair's saturation
+        // (VoiceVcaSignalLaw): every row now sits under the pair's own
+        // compression -- about -0.5 dB on the hot mixer rows and -0.10 dB on
+        // the waveform-free self-oscillation row, its predicted value at the
+        // trim level, which makes that row the positive control this time --
+        // and the Unison headroom probe moved from C2 to C1 to keep crossing
+        // full scale. Fixtures, gain, window and guards are otherwise
+        // unchanged.
+        Baseline { 0.088797, 0.182904, 0.18435, 0, 0 },
+        Baseline { 0.239833, 0.686837, 0.694453, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
         // physical C54/comparator event walk. Only this six-card Unison
@@ -9075,13 +9333,13 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.484028, 1.02109, 1.02229, 100, 398 },
+        Baseline { 0.466639, 1.03322, 1.03936, 132, 526 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.0454893, 0.0645766, 0.0645766, 0, 0 },
-        Baseline { 0.165877, 0.377675, 0.382499, 0, 0 },
-        Baseline { 0.11491, 0.254241, 0.254243, 0, 0 },
+        Baseline { 0.0449632, 0.0635818, 0.0635818, 0, 0 },
+        Baseline { 0.156117, 0.350031, 0.354098, 0, 0 },
+        Baseline { 0.107449, 0.239127, 0.240848, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -9114,6 +9372,9 @@ void testFixedOutputBoundaryCorpus()
             parameters.keyMode = KeyMode::Unison;
             // This low-register, unnormalised six-card stack is the deliberate
             // headroom probe: it must cross full scale without a hidden rail.
+            // It sat on C2 until the voice VCA gained the BA662 pair's
+            // compression, which left that stack at 0.984 peak; C1 keeps the
+            // probe crossing full scale with every other setting unchanged.
         }
         else if (fixture.playing == Playing::SelfOscillation)
         {
@@ -9129,7 +9390,7 @@ void testFixedOutputBoundaryCorpus()
             for (const int note : { 36, 43, 48, 52, 55, 60 })
                 engine.noteOn(note, 1.0f);
         else
-            engine.noteOn(fixture.playing == Playing::SoloUnison ? 36 : 60, 1.0f);
+            engine.noteOn(fixture.playing == Playing::SoloUnison ? 24 : 60, 1.0f);
 
         const int warmupSamples = fixture.playing == Playing::SelfOscillation
                                 ? 96000 : 24000;
@@ -9663,10 +9924,13 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
         }
         // Unlike the converter/VCA milestones above, this threshold also sees
         // DCO phase. The remaining HQ split is reconstruction-grid behavior;
-        // serial restart has removed the old one-pass scan-phase split.
+        // serial restart has removed the old one-pass scan-phase split. The
+        // HQ-on extremes moved one sample later when the voice VCA took Tr20's
+        // exact junction law, which sits up to 2.5 dB under the former
+        // softplus where the attack crosses this threshold.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 131.0, 177.5, 223.0 }
+                          ? std::array<double, 3> { 132.0, 177.5, 224.0 }
                           : std::array<double, 3> { 113.0, 159.5, 205.0 },
                       0.0, mode + " output-onset-proxy");
     }
@@ -9923,6 +10187,195 @@ void testSubHoldUsesItsR11C1TimeConstant()
                                 : "SUB slew misses its R11/C1 time constant");
         expectNear(expected / target, oneTau, 1.0e-4,
                    "SUB one-tau fixture is not one time constant");
+    }
+}
+
+// The sub reaches the WAVE node as the half-cycle current its R102/R101/D6
+// leg passes from the SUB LEVEL rail (module p. 13), so its mean rides on
+// the node and C56/C50 remove it. These fixtures hold the shipping engine
+// against the former zero-mean square: identical AC, and a DC bump only when
+// the SUB level itself moves.
+EngineParameters subHalfWavePatch(bool coupled)
+{
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.noiseLevel = 0.0f;
+    parameters.subLevel = 1.0f;
+    parameters.cutoff = 1.0f;
+    parameters.resonance = 0.0f;
+    parameters.chorus = ChorusMode::Off;
+    parameters.enableSubHalfWaveNodeCoupling = coupled;
+    return parameters;
+}
+
+void testSubHalfWaveIsLevelMatchedAtFullScale()
+{
+    // The AC of a unipolar 50 % square is the bipolar square; C56 removes
+    // the mean, so the steady-state output must not move at any SUB level.
+    constexpr double sampleRate = 48000.0;
+    const auto renderSub = [&](bool coupled) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        engine.setParameters(subHalfWavePatch(coupled));
+        engine.noteOn(48, 1.0f);
+        return render(engine, static_cast<int>(sampleRate * 2.0));
+    };
+    const auto coupled = renderSub(true);
+    const auto bipolar = renderSub(false);
+    const std::size_t from = coupled.left.size() / 2;
+    const auto rmsFrom = [&](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (std::size_t index = from; index < signal.size(); ++index)
+            sum += static_cast<double>(signal[index]) * signal[index];
+        return std::sqrt(sum / static_cast<double>(signal.size() - from));
+    };
+    const double rmsDelta = 20.0 * std::log10(rmsFrom(coupled.left)
+                                              / rmsFrom(bipolar.left));
+    expect(std::abs(rmsDelta) < 0.05,
+           "the half-wave sub changed the steady-state level by "
+               + std::to_string(rmsDelta) + " dB");
+
+    constexpr int window = 1024;
+    double floor = 0.0;
+    for (int bin = 1; bin < window / 2; ++bin)
+        floor = std::max(floor, magnitudeAt(bipolar.left, from, window,
+                                            bin * sampleRate / window,
+                                            sampleRate));
+    floor *= 1.0e-4; // -80 dB: bins below carry only the modelled noise floor
+    double worstBinDb = 0.0;
+    for (int bin = 1; bin < window / 2; ++bin)
+    {
+        const double frequency = bin * sampleRate / window;
+        const double reference = magnitudeAt(bipolar.left, from, window,
+                                             frequency, sampleRate);
+        if (reference < floor)
+            continue;
+        const double candidate = magnitudeAt(coupled.left, from, window,
+                                             frequency, sampleRate);
+        worstBinDb = std::max(
+            worstBinDb, std::abs(20.0 * std::log10(candidate / reference)));
+    }
+    expect(worstBinDb < 0.1,
+           "the half-wave sub changed the steady-state spectrum by "
+               + std::to_string(worstBinDb) + " dB in a bin");
+}
+
+void testStartupPrimesC56WithTheSubMean()
+{
+    // A restored pre-audio snapshot is a settled instrument: C56 already
+    // holds the pinned-high pulse level plus the sub's half-wave mean.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    engine.setParameters(subHalfWavePatch(true));
+    const double subTarget = YouKnow106TestAccess::subTarget(engine);
+    expectNear(subTarget, 1.0, 1.0e-6, "full-scale SUB is not a unit DAC fraction");
+    expectNear(YouKnow106TestAccess::moduleCouplingState(engine, 0),
+               6.0 + 5.0 * subTarget, 1.0e-6,
+               "startup did not pre-charge C56 with the sub's half-wave mean");
+
+    YouKnow106Engine legacy;
+    legacy.prepare(48000.0, blockSize, false);
+    legacy.setParameters(subHalfWavePatch(false));
+    expectNear(YouKnow106TestAccess::moduleCouplingState(legacy, 0),
+               6.0, 1.0e-6,
+               "the comparison bypass pre-charged C56 from a zero-mean sub");
+}
+
+// Pin 9 VCA IN, sampled once per host sample while a note is held, so the
+// shipping and comparison renders can be differenced sample for sample.
+std::vector<float> probeVcaInput(YouKnow106Engine& engine, int hostSamples)
+{
+    std::vector<float> probe(static_cast<std::size_t>(hostSamples));
+    for (auto& value : probe)
+    {
+        renderExact(engine, 1);
+        value = YouKnow106TestAccess::vcaInputVolts(engine, 0);
+    }
+    return probe;
+}
+
+void testSubLevelJumpCouplesThroughC56AndC59()
+{
+    // A SUB level step moves the node's mean; C56 passes the step, the open
+    // filter passes DC, and C59 (tau 33 ms) differentiates it at the VCA
+    // input. subMixVolts * 0.40 = 2.0 V arriving through the 10 ms R11/C1
+    // hold peaks near 1.15 V about 20 ms in (1.19 V at 17 ms before C56's
+    // own decay and the filter's residual gain) and is gone within a few tau.
+    constexpr double sampleRate = 48000.0;
+    const auto probe = [&](bool coupled) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = subHalfWavePatch(coupled);
+        parameters.subLevel = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        renderExact(engine, static_cast<int>(sampleRate * 0.9));
+        const auto before = probeVcaInput(engine, static_cast<int>(sampleRate * 0.1));
+        parameters.subLevel = 1.0f;
+        engine.setParameters(parameters);
+        auto after = probeVcaInput(engine, static_cast<int>(sampleRate * 0.3));
+        return std::pair<std::vector<float>, std::vector<float>> { before, after };
+    };
+    const auto coupled = probe(true);
+    const auto bipolar = probe(false);
+    expect(maximumDifference(coupled.first, bipolar.first) < 0.05,
+           "the half-wave sub differed from the bipolar one before the level moved");
+
+    const auto& on = coupled.second;
+    const auto& off = bipolar.second;
+    double peak = 0.0;
+    std::size_t peakAt = 0;
+    double settled = 0.0;
+    for (std::size_t index = 0; index < on.size(); ++index)
+    {
+        const double difference = static_cast<double>(on[index]) - off[index];
+        if (std::abs(difference) > std::abs(peak))
+        {
+            peak = difference;
+            peakAt = index;
+        }
+        if (index >= static_cast<std::size_t>(sampleRate * 0.25))
+            settled = std::max(settled, std::abs(difference));
+    }
+    expect(peak > 0.8 && peak < 1.5,
+           "the SUB level jump's C56/C59 bump peaked at "
+               + std::to_string(peak) + " V");
+    expect(peakAt < static_cast<std::size_t>(sampleRate * 0.06),
+           "the SUB level jump's bump peaked "
+               + std::to_string(peakAt / sampleRate * 1000.0) + " ms after the jump");
+    // What remains after the bump is C56's own 0.33 s tail seen through C59:
+    // about -(33 ms / 330 ms) * 2 V * exp(-t / 0.33 s), -0.09 V at 250 ms.
+    expect(settled < 0.15,
+           "the SUB level jump's bump was still "
+               + std::to_string(settled) + " V after 250 ms");
+}
+
+void testNoteOnDoesNotBumpC56WithTheSubOn()
+{
+    // The sub runs continuously on an idle card and its mean is primed and
+    // tracked on both the always-rendered and the freewheeling path, so
+    // assigning the card must not replay the SUB level as a C56 step.
+    constexpr double sampleRate = 48000.0;
+    for (const auto tanhMode : { VcfTanhMode::Exact, VcfTanhMode::PolyZoned })
+    {
+        const auto probe = [&](bool coupled) {
+            YouKnow106Engine engine;
+            engine.prepare(sampleRate, blockSize, false);
+            auto parameters = subHalfWavePatch(coupled);
+            parameters.vcfTanhMode = tanhMode;
+            if (tanhMode != VcfTanhMode::Exact)
+                parameters.vcfSolverMode = VcfSolverMode::Rk4Single;
+            engine.setParameters(parameters);
+            renderExact(engine, static_cast<int>(sampleRate * 0.5));
+            engine.noteOn(48, 1.0f);
+            return probeVcaInput(engine, static_cast<int>(sampleRate * 0.2));
+        };
+        const double bump = maximumDifference(probe(true), probe(false));
+        expect(bump < 0.05,
+               std::string(tanhMode == VcfTanhMode::Exact ? "Exact" : "fast")
+                   + " note-on replayed the sub mean as a C56 step of "
+                   + std::to_string(bump) + " V");
     }
 }
 
@@ -11696,11 +12149,13 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
         return 10.0 * std::log10(meanSquare + 1.0e-40);
     };
 
-    // With the chorus switched out this fixture carries only the newly
-    // modelled output-resistor floor. Keep it far enough below the BBD line
-    // noise that the chorus-on figure remains determined by
-    // `independentLineRandomAmplitude`, rather than requiring an unphysical
-    // exact zero from five warm resistors.
+    // With the chorus switched out this fixture carries only the modelled
+    // output-resistor floors and the common uPC1252H2's datasheet output
+    // noise (about -109 dBFS RMS, output-referred so independent of VCA
+    // LEVEL). Keep it far enough below the BBD line noise that the chorus-on
+    // figure remains determined by `independentLineRandomAmplitude`, rather
+    // than requiring an unphysical exact zero from five warm resistors and a
+    // VCA.
     {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
@@ -11717,8 +12172,8 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
             peak = std::max({ peak,
                               static_cast<double>(std::abs(rendered.left[index])),
                               static_cast<double>(std::abs(rendered.right[index])) });
-        expect(peak > 0.0 && peak < std::pow(10.0, -110.0 / 20.0),
-               "the output-resistor floor can contaminate the BBD line-noise "
+        expect(peak > 0.0 && peak < std::pow(10.0, -95.0 / 20.0),
+               "the dry idle floor can contaminate the BBD line-noise "
                "fixture (peak "
                    + std::to_string(peak) + ")");
     }
@@ -11787,6 +12242,74 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
                "the idle floor moved " + std::to_string(floorDelta)
                    + " dB while the wet line moved " + std::to_string(lineDelta)
                    + " dB, so something other than the BBD line noise moved");
+}
+
+void testCommonVcaCarriesItsDatasheetNoiseFloor()
+{
+    // NEC's uPC1252H2 table gives NV = -94 dBV typical over 10 Hz-20 kHz at
+    // the external 33 kOhm I/V output, under exactly the supply, ISET and
+    // resistor conditions Roland installs around IC5. Render the idle bus
+    // with the term on and off, isolate it as the sample-wise difference and
+    // refer that back to IC2b's output: through IC6's 100/47 dry leg, the
+    // loaded volume network at full travel and the output boundary. The
+    // measured window is 0-24 kHz through the decimators rather than NEC's
+    // 10 Hz-20 kHz band-pass, so the tolerance leaves room for that.
+    constexpr double sampleRate = 48000.0;
+    const auto renderIdle = [&](bool enable, float calibration) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        EngineParameters parameters;
+        parameters.volume = 1.0f;
+        parameters.vcaLevel = 1.0f;
+        parameters.calibration = calibration;
+        parameters.chorus = ChorusMode::Off;
+        parameters.enableCommonVcaNoise = enable;
+        engine.setParameters(parameters);
+        render(engine, static_cast<int>(sampleRate * 0.5));
+        return render(engine, static_cast<int>(sampleRate * 2.0));
+    };
+    const auto rms = [](const std::vector<float>& left,
+                        const std::vector<float>& right,
+                        const std::vector<float>* leftReference,
+                        const std::vector<float>* rightReference) {
+        double energy = 0.0;
+        for (std::size_t index = 0; index < left.size(); ++index)
+        {
+            const double l = left[index]
+                - (leftReference ? (*leftReference)[index] : 0.0f);
+            const double r = right[index]
+                - (rightReference ? (*rightReference)[index] : 0.0f);
+            energy += l * l + r * r;
+        }
+        return std::sqrt(energy / static_cast<double>(left.size() * 2));
+    };
+
+    const auto on = renderIdle(true, 1.0f);
+    const auto off = renderIdle(false, 1.0f);
+    const double differenceRms =
+        rms(on.left, on.right, &off.left, &off.right);
+    const double ic2bVolts = differenceRms
+        * static_cast<double>(YouKnow106Engine::internalVoltsPerUnit)
+        / (static_cast<double>(Chorus::dryMixGain)
+           * YouKnow106Engine::outputCouplingHighGain(1.0f)
+           * YouKnow106Engine::outputBoundaryGain());
+    const double datasheetVolts = std::pow(10.0, -94.0 / 20.0);
+    expectNear(ic2bVolts / datasheetVolts, 1.0, 0.15,
+               "the common VCA floor is not NEC's -94 dBV at IC2b's output ("
+                   + std::to_string(20.0 * std::log10(ic2bVolts)) + " dBV)");
+
+    // Unit Character zero keeps the exact-silence calibrated nominal.
+    const auto onAtZero = renderIdle(true, 0.0f);
+    const auto offAtZero = renderIdle(false, 0.0f);
+    expect(onAtZero.left == offAtZero.left && onAtZero.right == offAtZero.right,
+           "the common VCA floor leaks into the calibration-0 reference");
+
+    // The whole idle dry floor -- this term plus the resistor floors -- stays
+    // an analogue-circuit figure, never a hiss control.
+    const double idleDbfs =
+        20.0 * std::log10(rms(on.left, on.right, nullptr, nullptr) + 1.0e-40);
+    expect(idleDbfs < -100.0,
+           "the idle dry floor rose to " + std::to_string(idleDbfs) + " dBFS");
 }
 
 void testMainNoiseDensityIsProcessingRateInvariant()
@@ -12204,10 +12727,13 @@ void testSelfOscillationMatchesTheServiceTrim()
     // so nothing but satisfying both at once fixes either.
     constexpr double sampleRate = 48000.0;
     struct Take { double peakToPeak; double hertz; };
-    const auto oscillate = [&](int note, float keyFollow) {
+    const auto oscillate = [&](int note, float keyFollow,
+                               ResonanceCompensationShape shape
+                                   = ResonanceCompensationShape::Reconstruction) {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
+        parameters.resonanceCompensationShape = shape;
         // A *self*-oscillation trim: nothing may reach the filter but the
         // card's own excitation.
         parameters.sawEnabled = false;
@@ -12261,6 +12787,20 @@ void testSelfOscillationMatchesTheServiceTrim()
     };
 
     const auto atC4 = oscillate(60, 0.0f);
+    // The resonance input compensation cannot reach this anchor, which is why
+    // moving it does not re-open the maximumFeedback solve: the trim patch
+    // has no oscillator, sub or noise in it, so the only thing the
+    // compensation multiplies is the pinned-pulse DC that C56/C50 has already
+    // removed. Rendering the same take through the widest pair of readings in
+    // the bracket must land on the same limit cycle. A tolerance, not a bit
+    // compare -- the residual DC is small, not identically zero.
+    const auto atC4Legacy = oscillate(
+        60, 0.0f, ResonanceCompensationShape::Legacy);
+    expect(std::abs(atC4.peakToPeak - atC4Legacy.peakToPeak) < 1.0e-3
+               && std::abs(atC4.hertz - atC4Legacy.hertz) < 0.05,
+           "the resonance input compensation reached the self-oscillation "
+           "trim, so the endpoint solve is coupled to it after all");
+
     // Ten per cent: the procedure publishes no tolerance, and the trimmer it
     // describes is set by ear against a scope, so this is a fidelity bound
     // rather than a claim that a card lands on 4.8 to the millivolt.
@@ -12282,6 +12822,80 @@ void testSelfOscillationMatchesTheServiceTrim()
     expect(std::abs(octaves - 2.0) < 0.02,
            "full key tracking moves the filter " + std::to_string(octaves)
                + " octaves across two octaves of keyboard, not 2.00");
+}
+
+void testVoiceVcaSaturationFollowsTheBa662Pair()
+{
+    // The voice VCA is a bare BA662 pair (VoiceVcaSignalLaw), on by default.
+    // What it adds on real material is bounded by the pair's own prediction:
+    // under a decibel of compression plus odd harmonics around -30 dBc on a
+    // full open-filter mixer, and nothing worth hearing on a filtered saw.
+    // The two are separated here because the whole-file on-minus-off is
+    // dominated by the correlated gain term (-0.75 dB of gain is -21 dBc by
+    // itself); the residual after the least-squares gain between the takes
+    // is removed is the harmonic part. The switch retains the former linear
+    // multiply bit for bit for A/Bs.
+    const EngineParameters defaults;
+    expect(defaults.enableVoiceVcaSignalSaturation,
+           "the BA662 pair's saturation is no longer the shipping default");
+
+    struct Comparison
+    {
+        double gainDb;
+        double residualDbc;
+    };
+    const auto compare = [](bool fullMixer) {
+        auto parameters = plainPatch();
+        parameters.pulseEnabled = fullMixer;
+        parameters.subLevel = fullMixer ? 1.0f : 0.0f;
+        parameters.cutoff = fullMixer ? 1.0f : 0.62f;
+        const auto take = [&](bool saturate) {
+            YouKnow106Engine engine;
+            engine.prepare(48000.0, blockSize, true);
+            parameters.enableVoiceVcaSignalSaturation = saturate;
+            engine.setParameters(parameters);
+            engine.noteOn(48, 1.0f);
+            return render(engine, 48000);
+        };
+        const auto on = take(true);
+        const auto off = take(false);
+        double cross = 0.0;
+        double reference = 0.0;
+        for (std::size_t index = 0; index < off.left.size(); ++index)
+        {
+            cross += static_cast<double>(on.left[index])
+                   * static_cast<double>(off.left[index]);
+            reference += static_cast<double>(off.left[index])
+                       * static_cast<double>(off.left[index]);
+        }
+        expect(reference > 0.0, "the VCA saturation fixture rendered silence");
+        const double gain = cross / reference;
+        double residual = 0.0;
+        for (std::size_t index = 0; index < off.left.size(); ++index)
+        {
+            const double delta = static_cast<double>(on.left[index])
+                               - gain * static_cast<double>(off.left[index]);
+            residual += delta * delta;
+        }
+        return Comparison { 20.0 * std::log10(gain),
+                            10.0 * std::log10(residual / reference) };
+    };
+
+    const auto fullMixer = compare(true);
+    expect(fullMixer.gainDb > -1.2 && fullMixer.gainDb < -0.4,
+           "the BA662 pair compresses a full open-filter mixer by "
+               + std::to_string(fullMixer.gainDb) + " dB, outside -1.2..-0.4");
+    expect(fullMixer.residualDbc > -35.0 && fullMixer.residualDbc < -25.0,
+           "the BA662 pair's harmonics on a full open-filter mixer sit at "
+               + std::to_string(fullMixer.residualDbc)
+               + " dBc, outside -35..-25");
+    const auto quiet = compare(false);
+    expect(quiet.gainDb > -0.2,
+           "the BA662 pair compresses a filtered saw by "
+               + std::to_string(quiet.gainDb) + " dB, below -0.2");
+    expect(quiet.residualDbc < -45.0,
+           "the BA662 pair's harmonics on a filtered saw sit at "
+               + std::to_string(quiet.residualDbc) + " dBc, above -45");
 }
 
 void testVcfStageOffsetsBelongToUnitCharacter()
@@ -13866,6 +14480,7 @@ int main()
     testSelfOscillationLandsOnTheServiceAnchor();
     testFilterPolesAreStaggeredOnlyByUnitCharacter();
     testMixerLevelIsContinuousInSubAndNoise();
+    testNoiseLevelFollowsTr22JunctionOnset();
     testUnisonDoesNotBeat();
     testStepCorrectionKeepsTheAnalyticEventSide();
     testAliasFloor();
@@ -13886,6 +14501,8 @@ int main()
     testPhaseZeroPrestagesAllSixPhysicalCardsButNoExtension();
     testRangeDoesNotRetargetDcoCompensationCv();
     testDcoPitchPairKeepsSettledRampProductAndCvSaturation();
+    testDcoAndNoiseHoldsAcquireAtTheWrite();
+    testResonanceHoldStepsAtTheWrite();
     testMasterTuneUsesRecoveredSignedPitchWord();
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();
@@ -13914,6 +14531,7 @@ int main()
     testFractionalPwmHoldIsHostBlockPartitionInvariant();
     testPitchAndNoiseRemainSampleGridWrites();
     testDoublePassiveHoldStatesDoNotStallAtHighRate();
+    testVoiceVcaJunctionLawShortensReleaseTails();
     testPulseOffPinsComparatorWithoutResettingTheDco();
     testPulseOffCouplingSettlesWhileFastCardsFreewheel();
     testMovingPwmComparatorDoesNotMissThresholdCrossings();
@@ -13944,6 +14562,10 @@ int main()
     testPwmHoldCrossesItsTwoSmoothingPoles();
     testExactPwmHoldEndpointNonFiniteGuards();
     testSubHoldUsesItsR11C1TimeConstant();
+    testSubHalfWaveIsLevelMatchedAtFullScale();
+    testStartupPrimesC56WithTheSubMean();
+    testSubLevelJumpCouplesThroughC56AndC59();
+    testNoteOnDoesNotBumpC56WithTheSubOn();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
@@ -13978,12 +14600,14 @@ int main()
     testElectrolyticC14VoltageCoefficientIsComparisonOnly();
     testChorusNoiseIsPresentAndDefeatable();
     testIdleOutputFloorCarriesTheHissProductPolicy();
+    testCommonVcaCarriesItsDatasheetNoiseFloor();
     testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
     testResonanceDoesNotMoveTheRenderedCorner();
     testVelocityScalesTheEnvelopeIntoTheFilter();
     testSelfOscillationMatchesTheServiceTrim();
+    testVoiceVcaSaturationFollowsTheBa662Pair();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
     testVcfEarlyEffectBelongsToUnitCharacter();

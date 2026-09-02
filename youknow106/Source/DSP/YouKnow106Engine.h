@@ -26,6 +26,10 @@ enum class PwmSource { Lfo, Manual };
 enum class HighPassMode { Boost, One, Two, Three };
 enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
+// Which reading of the resonance input-compensation bracket the voice applies.
+// Reconstruction is the shipped floor; Drawn is Roland's own sibling JUNO-6/60
+// value; Legacy is the former underived coefficient, for A/B renders only.
+enum class ResonanceCompensationShape { Reconstruction, Drawn, Legacy };
 enum class KeyMode { Poly1, Poly2, Unison };
 // Published ordinals are stored by session state and must not move. PolyZoned
 // is appended rather than folded into ZonedHermite so a session saved on Fast
@@ -210,12 +214,32 @@ struct EngineParameters
     // existing C56/C50 coupling capacitor remove it. False retains the former
     // hard-zero gate solely for controlled A/B renders.
     bool enablePulseOffWaveNodeCoupling { true };
+    // On by default: the sub reaches the WAVE node as the half-cycle current
+    // its R102/R101/D6 leg passes from the SUB LEVEL rail, so its mean rides
+    // on the node and C56/C50 remove it; the level law is unchanged. False
+    // retains the former zero-mean bipolar square solely for controlled A/B
+    // renders.
+    bool enableSubHalfWaveNodeCoupling { true };
+    // On by default: the voice VCA is a bare BA662 differential pair, so its
+    // output follows I_tail * tanh(V_d / 2 V_t) rather than a linear multiply,
+    // driven as hard as Roland's own trims say through the sibling JUNO-6/60
+    // drawing's 47 kOhm load (see VoiceVcaSignalLaw). False retains the former
+    // linear multiply, bit for bit, solely for controlled A/B renders.
+    bool enableVoiceVcaSignalSaturation { true };
     // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
     // loaded by C41/R79. Putting the scanned NOISE control before that output
     // pole lets C41 discharge while muted and recharge when the level returns.
     // Coarse grids that cannot resolve its 33 us memory collapse it safely.
     // False retains the former post-C41 scalar solely for controlled A/Bs.
     bool enableNoiseLevelBeforeC41 { true };
+    // On by default: the scanned NOISE hold reaches IC14's control pin through
+    // Tr22's grounded-base stage (R115 + VR32 in series, R114 2.2 MOhm to
+    // -15 V, module board p. 13), so the level is zero below one junction
+    // drop plus the R114 pull-down and linear above it; the full-level
+    // endpoint is unchanged. See CircuitDerivedNoiseLevelProfile. False
+    // retains the former linear-from-zero law solely for controlled A/B
+    // renders.
+    bool useCircuitDerivedNoiseLevelShape { true };
     // On by default: the live I+II extension collapses the two wet returns to
     // their arithmetic mid, matching an original-unit owner's remembered
     // narrow/near-mono result while preserving the ordinary I/II topology.
@@ -251,6 +275,24 @@ struct EngineParameters
     // family still owns the final calibration; the physical topology is the
     // stronger prior in its absence.
     bool useCircuitDerivedResonanceShape { true };
+    // Which reading of the resonance input-compensation bracket the voice
+    // applies. Both derivable readings put the coefficient between 0.2751 and
+    // 0.3078; the shipped default is that bracket's floor, and Legacy restores
+    // the former underived 0.2296 bit-exactly for controlled A/B renders. Not
+    // serialised, like the rest of this family.
+    ResonanceCompensationShape resonanceCompensationShape {
+        ResonanceCompensationShape::Reconstruction };
+    // Comparison-only. Restores the former softplus envelope-to-gain stand-in
+    // (turn-on 0.015, knee 0.0026) bit-exactly for A/B renders; the default
+    // solves the traced Tr20 grounded-base stage's own junction law, see
+    // VoiceVcaControlLaw. Not serialised.
+    bool useSoftplusVoiceVcaCompatibilityLaw { false };
+    // On by default: the common uPC1252H2's NEC-typical -94 dBV output noise
+    // (installed test-circuit conditions) joins the bus ahead of the chorus
+    // split as a flat floor; comparison-only switch. Scaled by Unit Character
+    // exactly like the resistor floors -- the exact-silence endpoint at 0 is
+    // product policy, not a statement that the floor is a tolerance.
+    bool enableCommonVcaNoise { true };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
@@ -501,20 +543,57 @@ public:
         // amplitude alone once the joint trade was gone, which is what moved
         // the rendered limit cycle from 4.83 Vp-p on to 4.80.
         static constexpr float maximumFeedback = 4.504f;
-        // Voiced, but bracketed by the same reconstruction: its resonance
-        // OTA takes VCF IN through 24k/1.5k (1/17.0) on the non-inverting
-        // input, VCF OUT through 100k/1.5k on the inverting one, and injects
-        // its output current at the first stage's 4.7k/560/68k summing node.
-        // With stage 1's own -68k/4.7k feedback gain the OTA's gm cancels
-        // and the slope in this loop-gain coordinate is resistor-only,
-        // (67.7/17.0)*(4.7/68) = 0.275 -- about 20% above the value below
-        // (which sits 17% under it), same linear-in-k form. One
-        // reconstruction lineage, so not promoted; OQ-09's measured family
-        // still owns this number.
-        static constexpr float inputCompensationPerFeedback = 0.2296f;
+        // How much of the resonance OTA's own input signal reaches the first
+        // stage alongside the feedback -- the term that decides how much
+        // bottom the instrument keeps as resonance opens.
+        //
+        // Two independent readings of the same network now exist, and they
+        // agree on the mechanism and on the linear-in-k form but not on the
+        // number. At DC each stage's input node is held at zero by its own
+        // integrator, so with the OTA's gm written as k the transfer is
+        //   V_out = (R_fb/R_in) V_in (1 + c k) / (1 + k),
+        //   c = (R_in/R_fb) * (R_out_leg) / (R_in_leg),
+        // and gm cancels: the slope is resistor-only.
+        //
+        //   Roland, JUNO-6 (MAY.10,1982) and JUNO-60 (April 10, 1983) CPU
+        //   BOARD p. 9, drawing the discrete IR3109 + BA662 circuit the
+        //   A1QH80017A integrates: R14 10k in, R7 68k stage-1 feedback,
+        //   R5 47k + R2 1.5k from VCF IN, R3 100k + R1 1.5k from VCF OUT.
+        //     c = (10/68) * (101.5/48.5) = 0.307762
+        //   Open80017a (Thomas Herpoel, Rev 0.2, 2024-02-28), the published
+        //   reconstruction on LM13700s: R3 4.7k in, R5 68k feedback,
+        //   R1 24k + R2 1.5k from VCF IN, R25 100k + R26 1.5k from VCF OUT.
+        //     c = (4.7/68) * (101.5/25.5) = 0.275116
+        //
+        // They disagree 2.1x on the stage-1 input resistor and 2x on the +
+        // leg, and land 12 % apart only because those errors compensate. That
+        // is NOT the situation that licensed the 47 kOhm VCA load above,
+        // where drawing and reconstruction agreed; here two sources bound the
+        // magnitude without fixing it, which is this project's
+        // voiced-in-bracket class. Shipped at the bracket's floor on the
+        // NOISE-onset precedent -- the end that claims least -- with the
+        // Roland-drawn value kept beside it for the A/B the bracket invites.
+        // The 80017A's own thick-film resistors are unmarked and unmeasured;
+        // OQ-09's measured family still owns the point value.
+        static constexpr float drawnInputCompensationPerFeedback =
+            (10000.0f / 68000.0f)
+            * ((100000.0f + 1500.0f) / (47000.0f + 1500.0f));
+        static constexpr float inputCompensationPerFeedback =
+            (4700.0f / 68000.0f)
+            * ((100000.0f + 1500.0f) / (24000.0f + 1500.0f));
+        // The former value, retained bit-exactly for controlled A/B renders.
+        // It was voiced with no derivation behind it and sits 17 % below the
+        // bracket's floor, so it is no longer a defensible default.
+        static constexpr float legacyInputCompensationPerFeedback = 0.2296f;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
-        [[nodiscard]] static float inputCompensation(float feedback) noexcept;
+        // `shape` selects which reading of the bracket is applied; the
+        // default is the shipped floor. Defaulted so the research fixtures in
+        // Tools/ keep their one-argument call.
+        [[nodiscard]] static float inputCompensation(
+            float feedback,
+            ResonanceCompensationShape shape
+                = ResonanceCompensationShape::Reconstruction) noexcept;
         // The reciprocal of the pole scaling the cascade's own limit cycle
         // imposes on itself, as a function of the loop gain that sustains it.
         // Exactly 1 at and below `nominalOscillationFeedback`, where there is
@@ -525,8 +604,9 @@ public:
     // OQ-09 shipping shape, selectable through
     // `useCircuitDerivedResonanceShape`. The
     // 2026-08-20 junction-level read of the module board's control chain --
-    // shared 0..+10 V RESO CV hold, per-card series trimmer plus 27 kOhm into
-    // a grounded-base 2SA1015-class stage, collector straight into the
+    // shared 0..+10 V RESO CV hold standing on the +0.26 V VR34 standoff
+    // (`standoffVolts` below), per-card series trimmer plus 27 kOhm into a
+    // grounded-base 2SA1015-class stage, collector straight into the
     // resonance BA662's control pin with no converter drawn anywhere on the
     // path -- makes the control current linear in the held voltage above one
     // emitter-junction drop. With the BA662 architecture's gm linear in its
@@ -534,10 +614,11 @@ public:
     // linear in the stored byte above that onset. The per-card trimmer sets
     // only the slope, which is exactly what the 4.8 Vp-p service adjustment
     // calibrates away, so the anchored endpoint is the voiced profile's own
-    // `maximumFeedback` and the onset is the one new constant. Between those
-    // ends nothing here is measured: this is a derivable shape beside the
-    // retained voiced compatibility curve, and OQ-09's measured
-    // response-versus-resonance family can still supersede it.
+    // `maximumFeedback` and the onset above the standoff is the one new
+    // constant. Between those ends nothing here is measured: this is a
+    // derivable shape beside the retained voiced compatibility curve, and
+    // OQ-09's measured response-versus-resonance family can still supersede
+    // it.
     struct CircuitDerivedResonanceProfile
     {
         // Byte 127 -> aligned word 0x3F80 -> physical code 4064 on the
@@ -548,13 +629,109 @@ public:
         // (atosynth); that trimmed figure is recorded under OQ-09 and not
         // adopted -- the nominal drop is the defensible uncalibrated prior.
         static constexpr float onsetVolts = 0.6f;
+        // The hold does not start at 0 V. Service Notes p. 18 section 3
+        // trims VR34 for +0.25...+0.27 V at TP7 with the D/A forced to 0 V,
+        // and p. 13 injects VR34 through R127 470k into IC27b's summing
+        // input, so that standoff is an additive constant on the whole
+        // 0..+10 V branch TP7 feeds; p. 8's timing chart routes TP7 through
+        // IC26 to RES. CV alongside VCA CV and NOISE LEVEL. The p. 13
+        // resonance leg -- IC26 ch6 into C86, IC22c follower, the RESO. CV
+        // bus, per-card VR26 20KB and R107 27k into Tr18's emitter with its
+        // base grounded -- has no bias or pull-down resistor (the noise leg's
+        // R114 2.2M has no counterpart here), so the standoff reaches the
+        // junction undivided and the drop above is measured from it, not
+        // from 0 V. Trimmed midpoint, anchored; the same rail state
+        // VoiceVcaControlLaw's `turnOn` is expressed on top of.
+        static constexpr float standoffVolts = 0.26f;
         static constexpr float onsetTravel =
-            onsetVolts / controlFullScaleVolts;
+            (onsetVolts - standoffVolts) / controlFullScaleVolts;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
         // Compensation and frequency correction operate in the loop-gain
         // coordinate and belong to the mechanism, not the shape, so this
         // profile shares the voiced profile's functions for both.
+    };
+
+    // NOISE LEVEL shape, selectable through `useCircuitDerivedNoiseLevelShape`.
+    // Module board p. 13 draws the scanned NOISE LEVEL hold (IC21/22 pin 14)
+    // into VR32 100KB and R115 10 kOhm in series, then into a node that R114
+    // 2.2 MOhm pulls towards -15 V and that is Tr22's emitter; Tr22's base is
+    // grounded and its collector goes straight into IC14 (BA662) pin 1, the
+    // level OTA's control input. The control current is therefore the hold
+    // voltage less one emitter-junction drop, divided by the series
+    // resistance, less R114's pull-down -- zero until the hold clears that
+    // sum and linear above it. With the BA662 architecture's gm linear in
+    // control current (the same premise as CircuitDerivedResonanceProfile),
+    // the noise level is linear in the stored byte above the onset. The
+    // shape is derived from the drawn topology; the hold's standoff is
+    // anchored (p. 18 section 3); the onset magnitude is voiced-in-bracket
+    // because VR32's installed position is untraced. Full level is
+    // unchanged: drive(1) = 1, so noiseMixVolts and the 4 Vp-p TP8 anchor
+    // (p. 19 section 9, read at TP8 = CH1 VCA OUT with NOISE 10 / LEVEL 5)
+    // keep their calibration.
+    //
+    // The BA662's input saturation of the noise itself is NOT modelled: the
+    // drive at pin 2 depends on Tr21's factory-selected amplitude and
+    // bandwidth and on VR32's position, none of which the sources fix, and
+    // the 4 Vp-p anchor bounds only the C41-filtered pin-6 voltage, not the
+    // broadband OTA current behind it (OQ-16; a TP8 crest-factor capture
+    // would settle it).
+    struct CircuitDerivedNoiseLevelProfile
+    {
+        // The NOISE LEVEL hold rides the same 0..+10 V converter branch as
+        // the resonance hold (p. 8): byte 127 -> code 4064 -> 9.921875 V.
+        static constexpr float controlFullScaleVolts =
+            CircuitDerivedResonanceProfile::controlFullScaleVolts;
+        // Anchored standoff under the hold. p. 18 section 3 adjusts VR34
+        // "VCA BIAS" for +0.25...+0.27 V at TP7 with the D/A forced to 0 V;
+        // p. 13 takes VR34 through R127 470 kOhm into IC27b, whose output is
+        // TP7 and feeds demux IC26, whose channel 8 is the NOISE LEVEL hold
+        // (IC21/22 pin 14). So the hold stands at +0.26 V at byte 0, and the
+        // onset below is measured from there (see VoiceVcaControlLaw).
+        static constexpr float holdStandoffVolts = 0.26f;
+        // Nominal silicon emitter-junction drop, the same prior the
+        // resonance profile uses. The real Tr22 knee is soft -- Vbe is
+        // nearer 0.45...0.5 V at the microampere control currents just
+        // above onset -- so the hard 0.6 V corner is the nominal prior, not
+        // a measured knee.
+        static constexpr float junctionVolts =
+            CircuitDerivedResonanceProfile::onsetVolts;
+        static constexpr float r115Ohms = 10.0e3f;         // p. 13 R115
+        static constexpr float vr32Ohms = 100.0e3f;        // p. 13 VR32 100KB
+        static constexpr float r114Ohms = 2.2e6f;          // p. 13 R114
+        static constexpr float negativeRailVolts = 15.0f;  // p. 13 -15 V
+        // R114 pulls the emitter node towards -15 V from one junction drop
+        // above ground: (15 + 0.6) V / 2.2 MOhm = 7.09 uA. The series
+        // resistance must supply that before Tr22 conducts at all.
+        static constexpr float pullDownAmps =
+            (negativeRailVolts + junctionVolts) / r114Ohms;
+        // VR32 is the p. 19 section 9 NOISE LEVEL trimmer, adjusted for
+        // 4 Vp-p at TP8, so its position is set by Tr21's factory-selected
+        // amplitude rather than by the notes: a louder Tr21 means a larger
+        // Rs and a larger deadband. VR32 at zero: R115 alone, the smallest
+        // deadband the drawn circuit can produce. An end-stop is the least
+        // likely installed state but the one that never overstates the
+        // deadband; mid-travel (60 kOhm,
+        // 1.025 V onset, travel 0.0771) is the natural second candidate and
+        // the maximum (110 kOhm, 1.380 V, travel 0.1129) the ceiling. If
+        // the BA662 inherits its BA6110 sibling's 0.5 mA control-current
+        // ceiling, the full-level current (10.18 V - 0.6 V) / Rs - 7.09 uA
+        // needs Rs >= 18.9 kOhm and the floor would move to 0.734 V (travel
+        // 0.0478); not adopted, it is a sibling-part figure.
+        static constexpr float trimSeriesOhms = r115Ohms;
+        // 0.6709 V at the floor; bracket to 1.380 V at VR32's maximum.
+        static constexpr float onsetVolts =
+            junctionVolts + trimSeriesOhms * pullDownAmps;
+        // 0.04141 of the converter's travel at the floor; bracket
+        // 0.0414...0.1129. First conducting stored byte is 6.
+        static constexpr float onsetTravel =
+            (onsetVolts - holdStandoffVolts) / controlFullScaleVolts;
+        // Normalises the conducting span to unity at full travel; a
+        // multiply in the per-sample path instead of a division.
+        static constexpr float spanReciprocal = 1.0f / (1.0f - onsetTravel);
+
+        // Linear above the onset, zero below, unity at full travel.
+        [[nodiscard]] static float drive(float dacFraction) noexcept;
     };
 
     // The two-term generalized algebraic soft clip used by VCF saturation is
@@ -844,23 +1021,35 @@ public:
                                               float resetFraction) noexcept;
     [[nodiscard]] static float pulseFallPhase(float duty,
                                               float resetFraction) noexcept;
-    // The voice amplifier's schematic-informed compatibility law. The BA662
-    // is current-controlled and Roland draws no intentional volts-per-decade
-    // converter in this path. A grounded-base stage outside the module makes
-    // the control current:
+    // The voice amplifier's control law. The BA662 is current-controlled and
+    // Roland draws no intentional volts-per-decade converter in this path. A
+    // grounded-base stage outside the module makes the control current
+    // (Service Notes p. 13, VCA GAIN group):
     //
-    //   VCA CV (0..+10 V from the S/H) -> R106 10k -> node -> R105 22k
-    //     -> Tr20 emitter, base grounded, collector = pin 11 VCA CONT
+    //   VCA CV (0..+10 V from the S/H) -> R106 10k -> node (C58 0.1 uF to
+    //     ground) -> R105 22k -> Tr20 emitter, base grounded,
+    //     collector = pin 11 VCA CONT
     //
-    // The idealized I_ABC = (V_cv - V_be) / 32 kOhm relation motivates a
-    // quasi-linear response above conduction. It does not establish Tr20's
-    // installed onset or the BA662's gm-versus-current behavior near cutoff.
+    // KCL on that emitter, with the base grounded, is the whole law:
     //
-    // The softplus below is a smooth, replaceable approximation to that
-    // topology. Its 150 mV onset comes from a circuit reconstruction and its
-    // thermal knee from an ideal BJT; neither is a measured Juno-106 transfer.
-    // It replaced a much wider voiced knee that put 13-15 dB more attenuation
-    // on the bottom of the renderer's envelopes.
+    //   Ie * R + Vt * ln(1 + Ie / Is) = V_cv,   R = R106 + R105 = 32 kOhm
+    //
+    // Normalised on y = Ie * R / Vt and v = (V_cv - V_knee) / Vt it reads
+    // y + ln y = v (the Wright omega function). Below the knee y -> e^v, the
+    // 60 mV/decade exponential tail; above it y = v - ln v + ..., lagging the
+    // idealised (V_cv - V_be) / R straight line by Vt * ln y -- 26 mV per
+    // e-fold of current, 154 mV at full scale -- because V_be keeps rising
+    // with current. Is and the anchored +0.26 V standoff cancel in the
+    // normalised law; only Vt over the converter span and the knee position
+    // survive. Anchored topology and resistors, derived law, voiced knee
+    // (see `turnOn`). What is still not measured is where that knee sits and
+    // the BA662's own gm-versus-I_abc below about 10 uA (OQ-19).
+    //
+    // gain() solves the law; the former softplus stand-in with the same
+    // exponential tail stays bit-exact behind
+    // `useSoftplusVoiceVcaCompatibilityLaw`. That stand-in had replaced a much
+    // wider voiced knee that put 13-15 dB more attenuation on the bottom of
+    // the renderer's envelopes.
     //
     // A published teardown infers the opposite -- "the envelope generators are
     // linear and generated by the CPU, so the VCA response must be
@@ -881,11 +1070,31 @@ public:
         // which is the coordinate this constant is expressed in. The standoff
         // is anchored; the 150 mV itself remains the surviving voiced free
         // parameter and OQ-19's sweep owns it. Do not add the +0.26 V again
-        // as a separate offset -- it is already the adjusted state.
+        // as a separate offset -- it is already the adjusted state. The RES
+        // CV hold on the same IC26 branch carries the same standoff;
+        // `CircuitDerivedResonanceProfile::standoffVolts` subtracts it from
+        // that path's junction onset.
+        //
+        // Convention under the exact law: v = 0 (control = turnOn) is where
+        // y + ln y = 0, y = Omega = 0.5671 (Ie = 0.461 uA, -56.3 dB re full
+        // scale), i.e. the law's sub-knee exponential asymptote coincides
+        // with the former softplus's, so this constant keeps meaning what it
+        // meant -- the 60 mV/decade tail position the tests pin. The
+        // alternative reading "Ie * R = Vt at the turn-on" would lift the
+        // whole deep tail by e (+8.7 dB) and push the worst card offset's
+        // gain above `silenceGain`; it was rejected for that. This mapping is
+        // a stated convention, not a derivation. Implied by it, for
+        // documentation only: Is = (Vt / R) * exp(-(0.26 + 0.015 * 9.92) / Vt)
+        // = 1.2e-13 A, and Vbe = 0.563 V at the full-scale 300.6 uA, a
+        // plausible small-signal PNP figure and nothing more.
         static constexpr float turnOn = 0.015f;
-        // Ideal-BJT kT/q at room temperature on that same span; compatibility
-        // approximation, not a measured BA662/Juno knee.
+        // Legacy softplus scale, comparison path only: ideal-BJT kT/q on the
+        // converter span, rounded. The exact law uses the derived
+        // thermalVoltage / controlFullScaleVolts = 0.026 / 9.921875 = 0.0026205.
         static constexpr float knee = 0.0026f;
+        // R106 10k + R105 22k, p. 13. Documentation: it cancels in the
+        // normalised law and only sets the implied Is above.
+        static constexpr float emitterResistanceOhms = 32000.0f;
         // Below this the modelled leakage is more than 95 dB down, so the
         // model returns an exact zero rather than a denormal tail. Product
         // policy, not a measured off-isolation figure.
@@ -899,7 +1108,103 @@ public:
         // unmeasured residual is not synthesized by the nominal model.
         static constexpr float silenceGain = 3.0e-4f;
 
+        // The exact law, read from a table built once in prepare(): entry i
+        // is the control i / tableSteps, so control 1 lands on the last entry
+        // and gain(1) == 1 exactly. vcaControl is a slewed hold and is queried
+        // off-grid; the grid is justified by its lerp error, about 0.01 dB
+        // in the sub-knee tail (some ten entries per Vt) and under 0.002 dB
+        // above the knee, not by any claim of exactness at each DAC code.
+        static constexpr int tableSteps = 4096;
         [[nodiscard]] static float gain(float control) noexcept;
+        // The former stand-in, verbatim, for `useSoftplusVoiceVcaCompatibilityLaw`.
+        [[nodiscard]] static float softplusGain(float control) noexcept;
+        [[nodiscard]] static const std::array<float, tableSteps + 1>&
+        exactGainTable();
+    };
+    // The same amplifier's signal law. The BA662's input is an undegenerated
+    // bipolar pair with no linearising diodes (Open Music Labs' reverse-
+    // engineered BA662 schematic). The Rohm BA6110 DIP sibling *does* carry
+    // "distortion reduction" diodes, so its datasheet corroborates only the
+    // family law -- p. 4 prints Av = gm*Ro = Icontrol(mA)/52 mV * Ro, and
+    // 0.2 % THD typ at Icontrol = 200 uA, VI = 5 mVrms, which a bare pair's
+    // HD3 = u^2/12 reproduces -- not the absence of diodes. A bare pair has
+    // the fixed shape I_out = I_tail * tanh(V_d / (2 V_t)), so the only thing
+    // left to fix is how hard the service trim drives it, and that follows
+    // from the output side alone:
+    //
+    //   I_tail(full control) = (V_cv,max - V_be) / (R106 + R105)
+    //     V_cv,max = 9.921875 V (code 4064 on the 0..+10 V IC27b branch,
+    //     p. 8) plus the +0.26 V VR34 standoff that branch already stands at
+    //     (p. 18 s. 3; the coordinate VoiceVcaControlLaw::turnOn is in);
+    //     R106 10k + R105 22k into grounded-base Tr20 (p. 13); nominal
+    //     2SA1015-class V_be 0.62 V at about 0.3 mA; the BA662's pin-1
+    //     control current mirrored 1:1 onto the tail (Open Music Labs
+    //     measured about 500 ohm on the mirror's emitters; that both sides
+    //     are equal is the assumption).
+    //   ADJUSTMENT s. 6 VCA GAIN (p. 19; bank 3, hold C4, full sustain) sets
+    //     VR27 for 6 Vp-p at TP8 = pin 10 VCA OUT, i.e. 3.0 V peak across
+    //     the load, while the filter output at TP19 carries s. 5's 4.8 Vp-p
+    //     = 2.4 V peak self-oscillation sine of the same bank and key.
+    //   I_out,peak = 3.0 V / R_load;  tanh(u_trim) = I_out,peak / I_tail.
+    //
+    // R_load is the R||C the 80017A module drawing (p. 9) shows on the VCA
+    // BA662's output with no value printed. Roland's JUNO-6 and JUNO-60
+    // Service Notes (CPU BOARD, p. 9 in both) draw the same discrete
+    // IR3109 + BA662 voice circuit the module integrates: BA662 pin 6 ->
+    // R42 47K to GND (no capacitor) -> pin 7 buffer in -> pin 8 out (TP4);
+    // input IR3109 output -> C8 1 uF NP -> R38 56K -> VR4 20K GAIN -> pin 2,
+    // R40 470 and R39 470 to GND on pins 2 and 3; control ENV -> R44 27K ->
+    // R43 10K -> grounded-base PNP TR6 -> pin 1. The Open80017a
+    // reconstruction agrees at 47k; the 80017A's own printed resistor is
+    // unread (OQ-19). Evidence class: derived from a sibling Roland drawing
+    // of the same discrete circuit, never measured on a 106.
+    //
+    // Because VR27 fixes the output side, the pin-9 divider (VR27, R108 and
+    // the module's internal 4.7k/560) cancels and u_trim refers straight to
+    // the engine's vcaInput node: H = 2.4 V / u_trim. The shape is odd, so
+    // C59/C14/C12 see no new DC; I_tail scales with the envelope while V_d
+    // does not, so the compression is the same at every envelope level; and
+    // u_trim contains no V_t, so the warm-up does not enter it. Predicted
+    // HD3 = u^2/12: -48.1 dBc at the trim level, -36.1 dBc at twice it and
+    // about -30 dBc with -0.9 dB of compression on a full saw+pulse+sub
+    // open-filter voice (6.8 V peak in the voiced mixer coordinate, OQ-15).
+    // With the filter open its own stage tanh is nearly linear, so on bright
+    // patches this pair is the dominant odd-order nonlinearity; on resonant
+    // material the cascade's 6.37 V stages lead.
+    struct VoiceVcaSignalLaw
+    {
+        static constexpr float controlFullScaleVolts =
+            CircuitDerivedResonanceProfile::controlFullScaleVolts;
+        // VR34's +0.25...+0.27 V at TP7 (p. 18 s. 3).
+        static constexpr float holdStandoffVolts = 0.26f;
+        // R106 10k + R105 22k (p. 13).
+        static constexpr float controlSeriesOhms = 32000.0f;
+        // Tr20's nominal emitter-junction drop at about 0.3 mA.
+        static constexpr float controlJunctionVolts = 0.62f;
+        // R42 on the JUNO-6/60 CPU BOARD drawings (p. 9); the Open80017a
+        // reconstruction agrees; the 80017A's printed value is unread.
+        static constexpr float loadOhms = 47000.0f;
+        // 6 Vp-p at TP8 (p. 19 s. 6) and 4.8 Vp-p at TP19 (p. 19 s. 5).
+        static constexpr float trimOutputPeakVolts = 3.0f;
+        static constexpr float trimFilterPeakVolts = 2.4f;
+        // 298.8 uA.
+        static constexpr float fullControlTailAmps =
+            (controlFullScaleVolts + holdStandoffVolts - controlJunctionVolts)
+            / controlSeriesOhms;
+        // atanh(trimOutputPeakVolts / loadOhms / fullControlTailAmps)
+        // = atanh(63.83 uA / 298.8 uA) = atanh(0.21361). atanh is not
+        // constexpr, so the value is stored here and pinned by the circuit
+        // suite to 1e-6.
+        static constexpr float trimDrive = 0.21695541f;
+        // 11.06 V at the vcaInput node.
+        static constexpr float headroomVolts = trimFilterPeakVolts / trimDrive;
+
+        // headroomVolts * tanh(volts / headroomVolts), through the engine's
+        // PolyZoned kernel: |x*Q(x^2) - tanh(x)| <= 4.31e-7 over |x| < 1
+        // (|volts| < 11.06 V, which covers every modelled source; the pinned
+        // bound including float rounding is 1e-6), the zoned Hermite tables
+        // beyond it.
+        [[nodiscard]] static float shape(float volts) noexcept;
     };
     // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
     // voice sum. Roland's converter chart and jack-board drawing establish the
@@ -975,11 +1280,12 @@ public:
     // is voiced and bracketed -- see the constant's note in the .cpp.
     [[nodiscard]] static float vcaInputCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
-    // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
-    // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
-    // C41 100 pF against R79 330 kOhm (low-pass). The BA662 level control sits
-    // between the two poles, so its time-varying gain must drive C41 rather
-    // than scale the already-shaped rail afterwards.
+    // Tr21's emitter-junction avalanche noise crosses C42 1 uF into the
+    // BA662 level OTA's 4.7 kOhm input bias (high-pass), and the OTA's
+    // output is loaded by C41 100 pF against R79 330 kOhm (low-pass). The
+    // BA662 level control sits between the two poles, so its time-varying
+    // gain must drive C41 rather than scale the already-shaped rail
+    // afterwards.
     [[nodiscard]] static float noiseSourceHighPassHz() noexcept;
     [[nodiscard]] static float noiseSourceLowPassHz() noexcept;
 
@@ -1160,9 +1466,35 @@ private:
     // reaches its mixer OTA through R11 into C1 ahead of the R9/R10 inverter.
     // Both networks settle to their held value, so the calibrated DC laws are
     // untouched; what they add is the lag the hardware's PWM LFO and level
-    // staircase actually cross. The remaining nodes retain compatibility
-    // values behind separate names so a measured destination can be replaced
-    // without silently changing the others.
+    // staircase actually cross. IC26's RESO channel instead shares IC24's
+    // direct-follower topology below and steps at the write; see the note
+    // beside the retired constant further down.
+    //
+    // The DCO pitch-CV and NOISE holds have no post-hold network at all on
+    // p. 13: six of IC24's seven '.01x7' holds (C79, C78, C74, C77, C73, C76)
+    // feed the unity followers IC20a/b, IC16a/b, IC19a/b ('072 or 082 x3')
+    // straight onto the DCO CV bus for CH1-CH6 -- the seventh, C75, is the SUB
+    // hold through IC17b into R11/C1 and keeps its declared network above --
+    // and IC26's C85 ('.01x8', C80-C87) feeds IC22d straight into VR32/R115.
+    // Their acquisition is the HD14051BP switch's on-resistance into the
+    // 0.01 uF hold -- Roland's parts list installs the Hitachi part and
+    // excludes the TC4051 -- for which the datasheet's 15 V column gives
+    // 80 ohm typical / 280 ohm maximum at 25 C (300 ohm at 85 C), so rON x C
+    // is 0.8 us typical and 2.8 us maximum, and even a full-scale step
+    // limited by the switch's 25 mA and the follower's slew completes in
+    // under 10 us. The firmware keeps the hold enabled for the whole
+    // next-voice computation (at least 97 us, more than thirty maximum time
+    // constants) inside a 183 us scan slot, and one internal sample at the
+    // 192 kHz reference is 5.2 us.
+    // That is a derived bound, not a measured time constant: the hold settles
+    // inside its slot, within about two internal samples, so both holds are
+    // assigned at the write. The two 522 us compatibility slews this replaces
+    // overstated the acquisition by two orders of magnitude. Droop between
+    // scans is not modelled: at the same datasheet's typical +/-0.01 nA
+    // off-channel leakage plus the follower's 65 pA typical input bias (TI
+    // TL08xC table, 25 C), 10 nF loses well under 0.1 mV per 4.2 ms pass
+    // against a 2.44 mV LSB (its 1 uA 25 C leakage maximum is a test limit,
+    // not a measurement).
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
     static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
     static constexpr float pwmSmoothingR117Ohms = 100.0e3f;
@@ -1177,14 +1509,25 @@ private:
     static constexpr float subSmoothingC1Farads = 10.0e-6f;
     static constexpr float subHoldSlewSeconds =              // 10 ms
         subSmoothingR11Ohms * subSmoothingC1Farads;
-    static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
-    static_assert(std::bit_cast<std::uint32_t> (vcfHoldSlewSeconds)
-                      == std::bit_cast<std::uint32_t> (
-                          resonanceHoldSlewSecondsVoiced),
-                  "the shared exact VCF-hold trajectory requires equal "
-                  "cutoff and resonance constants");
+    // p. 13 '.01x7' (IC24, C73-C79) and '.01x8' (IC26, C80-C87).
+    static constexpr float converterHoldFarads = 10.0e-9f;
+    // Hitachi HD14051B, VDD-VEE = 15 V column, 25 C maximum:
+    // https://akizukidenshi.com/goodsaffix/hd14051b_e.pdf#page=2
+    static constexpr float hd14051MaximumOnResistanceOhms = 280.0f;
+    static_assert(hd14051MaximumOnResistanceOhms * converterHoldFarads
+                      < 1.0f / 192000.0f,
+                  "the DCO/NOISE hold acquisition bound must sit inside one "
+                  "internal sample at the 192 kHz reference, or the "
+                  "direct-assignment holds below are wrong");
+    // The RESO CV destination has no post-hold network at all, so it is not on
+    // the list above. IC26's C86 ('.01x8') feeds IC22c, whose output runs as
+    // bare wire into the card, through VR26 20KB and R107 27k to the
+    // grounded-base Tr18 -- p. 13 draws no capacitor anywhere on that run, and
+    // CH2's VR21/R88/Tr15 is identical. That is the same direct-follower
+    // topology as the DCO and NOISE holds, whose own 522 us compatibility
+    // slews the same bound retired, so resonance steps at the write too. The
+    // 522 us it used to carry was the first commit's single undifferentiated
+    // control slew and never had a network behind it.
     // The shared white-noise generator and each card's microscopic filter
     // excitation represent continuous-time noise densities.  Their discrete
     // sample amplitudes therefore grow with sqrt(processing rate).  The
@@ -1613,6 +1956,12 @@ private:
     [[nodiscard]] static VcfHoldInterval exactVcfHoldInterval(
         float state, float target, bool hasEvent, double eventPosition,
         float eventTarget, double intervalSeconds) noexcept;
+    // The same interval payload for a destination whose follower drives the
+    // card through bare wire and resistors alone: the node holds its written
+    // value and steps at the write, with no trajectory between the two.
+    [[nodiscard]] static VcfHoldInterval steppedHoldInterval(
+        float held, bool hasEvent, double eventPosition,
+        float eventTarget) noexcept;
 
     // The same converter timing rule applies to every passive hold whose
     // post-write trajectory is modelled, including resonance's explicitly
@@ -1654,9 +2003,6 @@ private:
     struct ProcessingCoefficients
     {
         float vcfSlew { 0.0f };
-        float dcoSlew { 0.0f };
-        float resonanceSlew { 0.0f };
-        float noiseSlew { 0.0f };
         double internalIntervalSeconds { 0.0 };
         double voiceVcaDecay { 1.0 };
         double commonVcaTime { 1.0 };
@@ -1669,6 +2015,7 @@ private:
         float outputSlewMaxStep { 0.0f };
         float outputSummerBandwidthBlend { 1.0f };
         float outputSummerNoiseScale { 0.0f };
+        float commonVcaNoiseScale { 0.0f };
     };
     [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
         double intervalSeconds) noexcept;
@@ -1850,9 +2197,9 @@ private:
         // VoiceVcaControlLaw::gain(vcaControl) alone, before updateVoiceAudio
         // folds in the per-card gain error to produce `vca` above. The main
         // scan loop's post-render silence check compares against this same
-        // softplus law on the same vcaControl a moment later; caching it here
-        // spares that check the log1p/exp pair updateVoiceAudio already paid
-        // for every active voice, every internal sample.
+        // law on the same vcaControl a moment later; caching it here spares
+        // that check the lookup updateVoiceAudio already paid for every
+        // active voice, every internal sample.
         float vcaGain { 0.0f };
         float pulseDuty { 0.5f };
         // Physical comparator threshold. `pulseDuty` remains the public/
@@ -2113,6 +2460,8 @@ private:
         bool requested, float duty, bool couplePinnedLevel) noexcept;
     [[nodiscard]] static float pulseWaveNodeMean(
         const Voice& voice, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float subWaveNodeMean(
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     void primeVoiceWaveNode(Voice& voice,
                             const EngineParameters& parameters) noexcept;
     void primeStartupVoiceWaveNodes(
@@ -2360,6 +2709,7 @@ private:
     std::uint32_t outputNoiseStateRight_ { 0xd1b54a35u };
     std::uint32_t outputWiperNoiseStateLeft_ { 0x94d049bbu };
     std::uint32_t outputWiperNoiseStateRight_ { 0x8538ecadu };
+    std::uint32_t commonVcaNoiseState_ { 0x7f4a7c15u };
 
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };

@@ -166,12 +166,22 @@ constexpr double firstHz = 9688.0;
 constexpr double firstQ = 0.5490625934422811;
 constexpr double secondHz = 10377.0;
 constexpr double secondQ = 1.2909944487358056;
-constexpr double tapHz = 23461.38;
+constexpr double typicalOutputSourceEstimateOhms = 3700.0;
+constexpr double outputSeriesOhms = 3300.0;
+constexpr double outputReturnOhms = 47000.0;
+constexpr double outputTapFarads = 2.2e-9;
+constexpr double outputParallelDriveOhms =
+    0.5 * (typicalOutputSourceEstimateOhms + outputSeriesOhms);
+constexpr double reconstructionSeriesOhms = 22000.0;
+constexpr double firstFeedbackFarads = 820.0e-12;
+constexpr double firstShuntFarads = 680.0e-12;
+constexpr double secondFeedbackFarads = 1.8e-9;
+constexpr double secondShuntFarads = 270.0e-12;
 constexpr double outputCapacitance = 1.0e-6;
 constexpr double outputBleed = 22000.0;
 constexpr double outputMixer = 39000.0;
 constexpr double noiseAmplitude =
-    0.200e-3 / (2.6 * 0.4026);
+    0.200e-3 / (2.6 * 0.3894);
 constexpr double modeTwoNoiseGain = 1.57579602;
 constexpr double wetGainTarget = 47.0 / 39.0;
 constexpr double wetTau = 0.005;
@@ -199,7 +209,7 @@ constexpr int referenceCellPairs = 128;
 constexpr float referenceMinimumClockHz = 10000.0f;
 constexpr float referenceMaximumClockHz = 200000.0f;
 constexpr float referenceLineNoiseAmplitude =
-    0.200e-3f / (2.6f * 0.4026f);
+    0.200e-3f / (2.6f * 0.3894f);
 constexpr float referenceModeTwoNoiseGain = 1.57579602f;
 constexpr float referenceWetGain =
     std::bit_cast<float>(UINT32_C(0x3f9a41a5));
@@ -499,16 +509,28 @@ double outputCorner(bool connected)
 
 State derivative(const State& x, double held, bool connected)
 {
-    const double wt = 2.0 * static_cast<double>(pi) * tapHz;
-    const double w1 = 2.0 * static_cast<double>(pi) * firstHz;
-    const double w2 = 2.0 * static_cast<double>(pi) * secondHz;
+    const double sourceConductance = 1.0 / outputParallelDriveOhms;
+    const double returnConductance = 1.0 / outputReturnOhms;
+    const double totalSourceConductance =
+        sourceConductance + returnConductance;
+    const double seriesConductance = 1.0 / reconstructionSeriesOhms;
     const double wc = 2.0 * static_cast<double>(pi) * outputCorner(connected);
     return {
-        wt * (held - x[0]),
-        w1 * (x[0] - x[2] - x[1] / firstQ),
-        w1 * x[1],
-        w2 * (x[2] - x[4] - x[3] / secondQ),
-        w2 * x[3],
+        (totalSourceConductance * held
+             - (totalSourceConductance + seriesConductance) * x[0]
+             + seriesConductance * x[1]) / outputTapFarads,
+        seriesConductance * x[0] / firstFeedbackFarads
+            + (seriesConductance / firstShuntFarads
+               - 2.0 * seriesConductance / firstFeedbackFarads) * x[1]
+            + (-seriesConductance / firstShuntFarads
+               + seriesConductance / firstFeedbackFarads) * x[2],
+        seriesConductance * (x[1] - x[2]) / firstShuntFarads,
+        seriesConductance * x[2] / secondFeedbackFarads
+            + (seriesConductance / secondShuntFarads
+               - 2.0 * seriesConductance / secondFeedbackFarads) * x[3]
+            + (-seriesConductance / secondShuntFarads
+               + seriesConductance / secondFeedbackFarads) * x[4],
+        seriesConductance * (x[3] - x[4]) / secondShuntFarads,
         wc * (x[4] - x[5])
     };
 }
@@ -1622,33 +1644,37 @@ bool within(double actual, double expected, double tolerance) noexcept
 
 bool metricGoldensExact(const std::array<CellResult, 10>& cells)
 {
+    // Re-pinned after replacing the separable MN3009 tap/first reconstruction
+    // approximation with Roland's coupled C45/R98/R97/C37/C35 network. The
+    // admission classes and gates are unchanged; these deterministic waveform
+    // coordinates now include the documented extra loaded attenuation.
     constexpr std::array<double, 10> whole {
-        -62.929, -62.373, -61.307, -61.982, -61.319,
-        -61.991, -24.140, -25.656, -36.362, -37.834
+        -63.883, -63.329, -62.259, -62.935, -62.271,
+        -62.943, -24.198, -25.714, -36.427, -37.901
     };
     constexpr std::array<double, 10> modeOne {
-        -70.915, -65.857, -75.649, -76.262, -75.663,
-        -76.336, -24.144, -25.662, -36.406, -37.890
+        -71.715, -66.765, -76.158, -76.782, -76.179,
+        -76.860, -24.202, -25.720, -36.463, -37.948
     };
     constexpr std::array<double, 10> mute {
-        -69.205, -72.829, -75.240, -76.242, -75.774,
-        -76.457, -24.083, -25.592, -36.350, -37.839
+        -70.061, -73.554, -75.743, -76.720, -76.246,
+        -76.934, -24.143, -25.652, -36.410, -37.899
     };
     constexpr std::array<double, 10> modeTwo {
-        -60.648, -60.380, -58.460, -59.135, -58.471,
-        -59.143, -24.138, -25.653, -36.322, -37.783
+        -61.618, -61.351, -59.421, -60.097, -59.432,
+        -60.104, -24.196, -25.712, -36.394, -37.859
     };
     constexpr std::array<double, 10> residual {
-        -75.668, -76.381, -75.555, -76.233, -75.461,
-        -76.128, -24.839, -26.344, -36.991, -38.457
+        -75.714, -76.439, -75.587, -76.269, -75.473,
+        -76.142, -24.839, -26.344, -36.992, -38.458
     };
     constexpr std::array<double, 10> noiseLevel {
-        0.072, 0.071, 0.072, 0.071, 0.072,
-        0.071, 0.696, 0.524, 0.184, 0.171
+        0.071, 0.071, 0.071, 0.071, 0.071,
+        0.071, 0.671, 0.508, 0.183, 0.171
     };
     constexpr std::array<double, 10> noiseBands {
-        0.561, 0.237, 0.412, 0.210, 0.248,
-        0.135, 1.432, 1.106, 0.328, 0.319
+        0.561, 0.237, 0.411, 0.210, 0.248,
+        0.135, 1.428, 1.101, 0.328, 0.319
     };
     constexpr std::array<double, 10> noiseCorrelationOne {
         0.015, 0.019, 0.015, 0.019, 0.015,

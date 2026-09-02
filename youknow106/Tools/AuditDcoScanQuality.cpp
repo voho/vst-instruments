@@ -211,11 +211,6 @@ struct YouKnow106TestAccess
                  engine.pwmVoltsFirstPole_, engine.pwmVolts_, engine.subCv_ };
     }
 
-    static constexpr double dcoHoldSeconds() noexcept
-    {
-        return YouKnow106Engine::dcoHoldSlewSecondsVoiced;
-    }
-
     static constexpr double pwmFirstSeconds() noexcept
     {
         return YouKnow106Engine::pwmHoldFirstPoleSeconds;
@@ -916,7 +911,9 @@ HoldMetrics runHoldMatrix(int host, int factor)
         Access::processOne(engine);
         const auto state = Access::holdState(engine);
         const double time = (frame + 1.0) / internalRate;
-        const double dcoReference = 1.0 - std::exp(-time / Access::dcoHoldSeconds());
+        // IC24's hold has no post-hold network: rON x C settles inside one
+        // internal sample, so the reference is a step at the write.
+        const double dcoReference = 1.0;
         const double subReference = 1.0 - std::exp(-time / Access::subHoldSeconds());
         const double pwmFirstReference = 1.0 - std::exp(-time / first);
         const double pwmReference = 1.0

@@ -135,8 +135,6 @@ struct YouKnow106TestAccess
 
     static constexpr double holdSeconds() noexcept
     {
-        static_assert(YouKnow106Engine::vcfHoldSlewSeconds
-                      == YouKnow106Engine::resonanceHoldSlewSecondsVoiced);
         return YouKnow106Engine::vcfHoldSlewSeconds;
     }
 
@@ -889,11 +887,11 @@ struct MovingGolden
 
 constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
     lowerRateMovingGoldens {{
-        { -53.279, -110.051 },
-        { -84.738, -142.698 },
-        { -86.568, -144.403 },
-        { -97.893, -154.666 },
-        { -99.618, -157.689 },
+        { -53.214, -109.950 },
+        { -84.662, -142.547 },
+        { -86.553, -144.613 },
+        { -97.868, -154.664 },
+        { -99.590, -157.781 },
     }};
 
 struct HotGolden
@@ -907,14 +905,14 @@ struct HotGolden
 
 constexpr std::array<HotGolden, standardLowerRateHosts.size()>
     hotGoldens {{
-        { -12.538, -135.643, -44.602, -93.242, 14618u },
-        { -14.269, -138.574, -48.081, -93.163, 13412u },
-        { -30.417, -159.637, -85.765, -97.212, 7195u },
-        { -33.080, -162.578, -88.712, -97.141, 6592u },
+        { -13.049, -136.545, -43.467, -93.242, 14618u },
+        { -14.777, -139.477, -47.881, -93.163, 13412u },
+        { -30.874, -160.548, -84.080, -97.213, 7195u },
+        { -33.528, -163.489, -89.642, -97.142, 6592u },
     }};
 
 constexpr std::array<double, 2> lowerRateSnapGoldensDb {
-    -27.259, -26.860
+    -27.145, -26.744
 };
 
 struct ScheduledEvent

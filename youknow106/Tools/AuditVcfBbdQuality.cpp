@@ -1002,7 +1002,20 @@ constexpr double bbdFirstSallenKeyHz = 9688.043;
 constexpr double bbdFirstSallenKeyQ = 0.549063;
 constexpr double bbdSecondSallenKeyHz = 10377.179;
 constexpr double bbdSecondSallenKeyQ = 1.290994;
-constexpr double bbdOutputTapHz = 23461.385;
+constexpr double bbdTypicalOutputSourceEstimateOhms = 3700.0;
+constexpr double bbdOutputSeriesOhms = 3300.0;
+constexpr double bbdOutputReturnOhms = 47000.0;
+constexpr double bbdOutputTapFarads = 2.2e-9;
+constexpr double bbdOutputParallelDriveOhms =
+    0.5 * (bbdTypicalOutputSourceEstimateOhms + bbdOutputSeriesOhms);
+constexpr double bbdOutputTapNodeOhms =
+    bbdOutputParallelDriveOhms * bbdOutputReturnOhms
+    / (bbdOutputParallelDriveOhms + bbdOutputReturnOhms);
+constexpr double bbdIsolatedOutputTapCornerHz = 1.0
+    / (2.0 * pi * bbdOutputTapNodeOhms * bbdOutputTapFarads);
+constexpr double bbdReconstructionSeriesOhms = 22000.0;
+constexpr double bbdFirstFeedbackFarads = 820.0e-12;
+constexpr double bbdFirstShuntFarads = 680.0e-12;
 constexpr double bbdOutputCouplingHz = 11.315211571801418;
 constexpr double bbdOraclePassbandHz = auditPassbandHz;
 constexpr int bbdMaximumImageOrder = 1024;
@@ -1087,9 +1100,28 @@ std::complex<double> bbdInputSupportResponse(double frequencyHz)
 
 std::complex<double> bbdOutputSupportResponse(double frequencyHz)
 {
-    return onePoleLowPass(frequencyHz, bbdOutputTapHz)
-         * sallenKeyLowPass(
-               frequencyHz, bbdFirstSallenKeyHz, bbdFirstSallenKeyQ)
+    // C45/C48 and the first reconstruction section load one another. Solve
+    // their three physical nodes directly; a separable tap pole times
+    // Sallen-Key response is only the conservative far-image envelope below.
+    const std::complex<double> s(0.0, 2.0 * pi * frequencyHz);
+    const double sourceConductance = 1.0 / bbdOutputParallelDriveOhms;
+    const double returnConductance = 1.0 / bbdOutputReturnOhms;
+    const double totalConductance =
+        sourceConductance + returnConductance;
+    const double seriesConductance = 1.0 / bbdReconstructionSeriesOhms;
+    const auto firstDenominator = 1.0
+        + s * bbdFirstShuntFarads
+              * (2.0 * bbdReconstructionSeriesOhms)
+        + s * s * bbdReconstructionSeriesOhms
+              * bbdReconstructionSeriesOhms
+              * bbdFirstFeedbackFarads * bbdFirstShuntFarads;
+    const auto firstNumeratorShape = 1.0
+        + s * bbdReconstructionSeriesOhms * bbdFirstShuntFarads;
+    const auto loadedFirst = totalConductance
+        / ((s * bbdOutputTapFarads + totalConductance + seriesConductance)
+               * firstDenominator
+           - seriesConductance * firstNumeratorShape);
+    return loadedFirst
          * sallenKeyLowPass(
                frequencyHz, bbdSecondSallenKeyHz, bbdSecondSallenKeyQ)
          * onePoleHighPass(frequencyHz, bbdOutputCouplingHz);
@@ -1250,7 +1282,7 @@ double bbdBeyondMaximumImageTailBound(
     const double ratio = definition.toneHz / definition.clockHz;
     const double minimumOrder = static_cast<double>(firstOmittedOrder) - ratio;
     const double minimumFrequency = minimumOrder * definition.clockHz;
-    if (minimumFrequency <= std::max({ bbdOutputTapHz,
+    if (minimumFrequency <= std::max({ bbdIsolatedOutputTapCornerHz,
                                       bbdFirstSallenKeyHz,
                                       bbdSecondSallenKeyHz }))
         throw std::runtime_error("BBD image envelope starts below support poles");
@@ -1270,8 +1302,12 @@ double bbdBeyondMaximumImageTailBound(
         return cutoffHz * cutoffHz
              / (1.0 - ratioAtStart * ratioAtStart);
     };
+    // The separable tap/first-section expression is no longer the nominal
+    // response, but it bounds the coupled block from above at every frequency
+    // and has the same high-frequency leading coefficient. Retain it only for
+    // this conservative beyond-enumeration image envelope.
     const double frequencyPowerConstant = baseMagnitude
-        * (definition.clockHz / pi) * bbdOutputTapHz
+        * (definition.clockHz / pi) * bbdIsolatedOutputTapCornerHz
         * skEnvelopeConstant(bbdFirstSallenKeyHz)
         * skEnvelopeConstant(bbdSecondSallenKeyHz);
     double filterL1Norm = 0.0;
@@ -2704,7 +2740,7 @@ void selfTest(const AuditResult& audit)
                     expectedVcfHotOracleOffMaskDb[index], 1.0,
                     "VCF hot oracle off-mask");
         requireNear(cell.vcf.hotFundamentalAmplitude,
-                    0.6158, 0.005,
+                    0.6744, 0.005,
                     "VCF hot reference fundamental");
         requireNear(cell.vcf.oscillationPitchErrorCents,
                     expectedVcfPitchCents[index], 0.03,
@@ -2728,7 +2764,7 @@ void selfTest(const AuditResult& audit)
                     expectedBbdPhaseError[index], 5.0e-11,
                     "BBD clock phase");
         requireNear(cell.bbd.minimumFundamentalAmplitude,
-                    1.466e-3, 5.0e-5,
+                    1.311e-3, 5.0e-5,
                     "BBD analytic fundamental");
         if (!std::isfinite(cell.vcf.worstRkRelativeRms)
             || !std::isfinite(cell.vcf.worstReferenceConvergence)

@@ -5,6 +5,290 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-02 — Resonance input compensation: off a voiced value, on to a bracket
+
+`inputCompensationPerFeedback` was 0.2296 with no derivation behind it. Two
+independent readings of the network now exist, and both put it higher.
+
+At DC each filter stage's input node is held at zero by its own integrator, so
+with the resonance OTA's transconductance written as `k` the transfer is
+`V_out = (R_fb/R_in)·V_in·(1 + ck)/(1 + k)` and `gm` cancels: the slope in this
+loop-gain coordinate is resistor-only.
+
+- Roland's own **JUNO-6 (10 May 1982)** and **JUNO-60 (10 April 1983)** CPU
+  BOARD p. 9 draw the discrete IR3109 + BA662 circuit the A1QH80017A
+  integrates: R14 10k in, R7 68k stage-1 feedback, R5 47k + R2 1.5k from
+  VCF IN, R3 100k + R1 1.5k from VCF OUT. `(10/68)·(101.5/48.5) = 0.307762`.
+- The published **Open80017a** reconstruction (Thomas Herpoel, Rev 0.2,
+  2024-02-28) carries R3 4.7k in, R5 68k feedback, R1 24k + R2 1.5k from
+  VCF IN, R25 100k + R26 1.5k from VCF OUT. `(4.7/68)·(101.5/25.5) = 0.275116`.
+  The engine's former comment transcribed this lineage correctly at 0.275.
+
+They disagree 2.1× on the stage-1 input resistor and 2× on the non-inverting
+leg, and land 12 % apart only because those errors compensate. This is
+therefore **not** the situation that promoted the 47 kΩ voice-VCA load on
+2026-09-02, where drawing and reconstruction agreed; two sources that bound a
+magnitude without fixing it is the voiced-in-bracket class, and its own
+precedent — the NOISE onset bracketed on VR32 and shipped at its floor — takes
+the end that claims least. **Shipped at 0.275116.** The Roland-drawn 0.307762
+and the retired 0.2296 both remain selectable through
+`EngineParameters::resonanceCompensationShape`, which is not serialised.
+
+This is an evidence-priority decision, not a listening verdict: what settles it
+is that 0.2296 sits 17 % below every derivable reading, not that anything
+sounded better. The remaining choice inside the bracket is a genuine by-ear
+question — 0.2751 against 0.3078 is +0.88 dB on a resonant pad — and an A/B/C
+set was rendered for it (A = 0.2296, B = 0.2751 shipped, C = 0.3078; key.md
+written at render time and unread by design). **No letter has been chosen yet**,
+so nothing here is recorded as chosen by ear. It does not close OQ-09.
+
+Measured, shipping defaults at 48 kHz/4×, against the retired coefficient:
+resonance-0 material is unchanged and silence is untouched; +0.11 dB at panel
+0.10, +0.56 dB on a full-mixer patch at 0.40, +0.60 dB on 0.55 plucks, +2.75 dB
+on a resonant 0.85 pad, where the extra input drive also feeds the peak and the
+level change exceeds the 0.76 dB of added input gain. Stepped and swept
+RESONANCE lanes differ by −9.5 to −12.7 dBc. Paired native benchmark: +0.10 %,
++0.37 %, +0.28 %, +0.65 % across the four scenarios, inside measurement noise.
+
+The endpoint solve is untouched and does not need re-solving: the 4.8 Vp-p
+self-oscillation trim renders with no oscillator, sub or noise in the patch, so
+the only signal the compensation multiplies is the pinned-pulse DC that C56/C50
+has already removed. A regression now renders that take through the widest pair
+of readings in the bracket and requires the same limit cycle, to a tolerance
+rather than to the bit.
+
+## 2026-09-02 — Resonance CV steps at the write; the VCF/VCA lag is on p. 13
+
+The three post-converter control slews were documented as standing "only on
+whatever lag exists downstream inside the 80017a module (p. 9 prints no
+values)". That is wrong on all three counts, and re-reading module board p. 13
+at the scan's native resolution settles them.
+
+- **Resonance ships changed.** IC26's C86 feeds IC22c, whose output runs to the
+  card as bare wire into VR26 20KB, R107 27 kΩ and the grounded-base Tr18.
+  There is no capacitor anywhere on that run, and CH2's VR21/R88/Tr15 is
+  identical. That is the direct-follower topology whose 522 µs compatibility
+  slews the DCO and NOISE holds already retired (2026-09-01), so resonance
+  steps at its write too. The retired constant was the first revision's single
+  undifferentiated `controlSlewSeconds` and never had a network behind it.
+- **The voice VCA keeps its number and gains a derivation.** The VCA CV crosses
+  R106 10 kΩ into C58 0.1 µF with R105 22 kΩ onward to Tr20, so C58 sees
+  6.875 kΩ and the time constant is 687.5 µs — the shipped 687 µs to three
+  figures. Anchored topology, derived constant, no audio change.
+- **The VCF keeps its number as a bracket.** Its C61 0.1 µF sits behind VR28
+  5KB (WIDTH) and R113 10 kΩ, with R110 8.2 kΩ and the R111 560 Ω positor
+  onward to pin 6, so C61 sees 4.67–5.53 kΩ across the trimmer's travel:
+  467–553 µs. The shipped 522 µs is inside it at about 58 % of the track. The
+  trimmer's set position is unread, so the point stays voiced-in-bracket on the
+  NOISE-onset precedent rather than being re-pinned to an endpoint.
+
+Measured impact of the resonance change, shipping defaults at 48 kHz/4×: every
+static-control scenario renders bit-identically (difference at the float dump's
+−250 to −345 dBc floor, including a cutoff sweep, which confirms the cutoff
+trajectory is untouched). It shows only while the RESONANCE control moves —
+−9.2 dBc against a stepped ramp, −13.1 dBc against a slow sweep, −28.4 dBc
+against a 3 Hz wobble — where each 7-bit converter step now lands hard instead
+of gliding. Paired native benchmark: −0.32 %, +0.33 %, +0.59 %, +0.43 % across
+the four scenarios, all inside the noise of a loaded machine.
+
+## 2026-09-02 — Voice BA662 signal saturation
+
+The voice VCA's signal path is now the BA662 differential pair's
+`I_tail · tanh(V_d / 2V_t)` rather than a linear multiply. The pair has no
+linearising diodes (Open Music Labs' reverse-engineered BA662; the BA6110
+sibling does carry them and corroborates only the family's gm law), so the
+shape has no free constant, and Roland's own ADJUSTMENT steps fix how hard it
+is driven: on the same bank and key, s. 5 sets 4.8 Vp-p at the filter output
+and s. 6 sets 6 Vp-p at the VCA output, so the drive follows from the output
+side alone — 3.0 V across the load against a full-control tail of
+(9.92 + 0.26 − 0.62) V / 32 kΩ = 299 µA — and the unread pin-9 divider
+cancels. The one magnitude-setting value the JUNO-106 drawings do not print,
+the OTA's output load, is now read from Roland's own JUNO-6 and JUNO-60
+Service Notes (CPU BOARD, p. 9 in both), which draw the discrete IR3109 +
+BA662 voice circuit the 80017A integrates with R42 47 kΩ on the VCA BA662's
+output; the Open80017a reconstruction agrees. That gives u_trim = 0.217 and
+11.06 V of headroom at the filter-output node.
+
+This supersedes, for the signal nonlinearity only, the 2026-08-31 sentence
+below that "BA662 signal nonlinearity/noise/thump and converter charge
+injection remain unimplemented: available sources settle topology and nominal
+time constants, not the original hybrid transfer". The sibling drawing is the
+new evidence: the law was never in question, and the load is now a
+Roland-drawn value of the same circuit rather than one clone's choice. The
+pair's noise, its thump and the converter charge injection remain as that
+entry left them. This is an evidence-priority decision under the realism/CPU
+goal, not a listening verdict, and it does not close OQ-19: the 80017A's own
+printed load and input network are still unread, and a TP19-against-TP8
+level-swept THD capture (HD3 = −48 dBc predicted at the 4.8 Vp-p trim) would
+confirm the headroom directly. The control law, VR30 null and C59 corner are
+untouched, the switch-off path is bit-identical to the previous engine, the
+self-oscillation anchor is untouched at the filter node, and the 4 Vp-p TP8
+noise figure moves by under 0.1 dB, inside its stated crest-convention band.
+
+Measured on the shipping path at 48 kHz/4×: a full saw+pulse+sub open-filter
+voice compresses by −0.75 dB with a level-matched residual of −28.8 dBc
+(whole-file on-minus-off −20.9 dBc, dominated by the gain term); a filtered
+saw by −0.07 dB and −49.4 dBc (−41.1 dBc whole-file); the self-oscillation
+corpus row by −0.10 dB, the pair's prediction at the trim level. A native
+Apple silicon Release paired benchmark (Poly/Cubic/RK4, 256-frame blocks,
+seven alternating rounds) moved median thread CPU by −0.70 % idle, +2.04 %
+on six plain voices, +2.22 % on six resonant voices and +1.77 % on the
+six-voice full-mixer Chorus II case, inside the +5 % budget.
+
+## 2026-09-01 — NOISE control onset
+
+The circuit-derived linear-above-onset NOISE level profile is now the
+default. Module board p. 13 draws Tr22 (PNP, base grounded) fed from the
+NOISE LEVEL hold through R115 10 kΩ and VR32 100 kΩ in series, with R114
+2.2 MΩ pulling its emitter node towards −15 V, and its collector straight
+into IC14's BA662 control pin. The control current is therefore zero until
+the hold clears 0.6 V + Rs × 7.09 µA and linear above, with the anchored
+full-level endpoint unchanged. The hold stands on the anchored +0.26 V VR34
+standoff (p. 18 section 3, TP7 → IC26 → NOISE LEVEL), so the onset is
+measured from there. Rs is VR32, the p. 19 section 9 NOISE LEVEL trimmer:
+the notes fix its criterion (4 Vp-p at TP8) but not its position, which
+follows Tr21's selected amplitude, so the onset is bracketed 0.671 V (VR32
+at zero) to 1.380 V (maximum) and ships at the floor, the one position that
+never overstates the deadband.
+
+This is an evidence-priority decision under the realism/CPU goal, not a
+listening verdict and not a closure of OQ-16: VR32's installed position and
+Tr21's selected amplitude still await a TP8 sweep or a trimmer reading. The
+BA662's input saturation of the noise is left out because its drive is
+unfixed by the sources. The legacy linear-from-zero law remains available
+behind the internal comparison switch.
+
+## 2026-09-01 — Resonance onset on the VR34 standoff
+
+The circuit-derived resonance profile now measures its junction onset from
+the +0.26 V the RES CV hold already stands at, not from 0 V. Service Notes
+p. 18 section 3 trims VR34 for +0.25…+0.27 V at TP7 with the D/A forced to
+0 V; p. 13 injects VR34 through R127 into IC27b, whose output is TP7; p. 8
+routes TP7 through IC26 to RES CV as well as VCA CV; and the p. 13 resonance
+leg (IC26 ch6, C86, IC22c, VR26, R107, grounded-base Tr18) has no pull-down
+to divide it. The engine already treated that standoff as anchored for the
+voice VCA rail, so the onset moves from 0.6 V to 0.34 V above the hold's
+zero: first loop gain at stored byte ~4 instead of ~8, about +4 dB at
+Resonance 1/10, +1.3 dB at 2/10, +0.3 dB at 5/10 and nothing at 10/10. The
+endpoint is the same service-trimmed self-oscillation maximum, the 0.2296
+compensation is untouched, and no DSP work is added.
+
+This is an evidence-priority correction, not a listening verdict and not a
+closure of OQ-09: the standoff is the anchored service state, but the 0.6 V
+junction drop above it remains the nominal prior a measured
+response-versus-resonance family would replace.
+
+## 2026-09-01 — Voice-VCA control: exact junction law replaces softplus
+
+The voice VCA's envelope-to-gain law is now the solved emitter equation of the
+traced Tr20 grounded-base stage — R106 + R105 = 32 kΩ, kT/q and the VR34
++0.26 V standoff, all already in tree — tabulated once at prepare time. The
+softplus it replaces was labelled in the code as a smooth, replaceable
+approximation of that same topology; the exact law shares its sub-knee
+exponential tail and its full-scale point and differs only in between, where
+V_be keeps rising with current: −0.2 dB at control 0.010, −2.5 dB at 0.020,
+−1.6 dB at 0.050, −0.8 dB at 0.10, −0.24 dB at 0.30, −0.05 dB at 0.70, 0 at
+full scale. Audibly, release tails and slow decays between about −25 and
+−50 dB close one to two and a half decibels sooner; attacks cross that region
+in under a millisecond and sustain levels do not move.
+
+This is an evidence-priority shape replacement on an anchored topology, not a
+listening verdict, and it does not close OQ-19. The knee stays voiced: the
+reconstruction's 150 mV on the +0.26 V standoff, carried over under the stated
+convention that the exact law's tail coincides with the former softplus's. That
+convention is a convention, not a derivation — the other defensible placement
+(emitter current equal to Vt/R at the turn-on) moves the −45 dB region by about
+9 dB, several times the 2.5 dB the shape itself changes — so OQ-19's measured
+gain sweep owns placement. The former softplus remains available behind the
+internal comparison switch `useSoftplusVoiceVcaCompatibilityLaw`, bit-exact.
+CPU: one table index and lerp per voice per internal sample in place of the
+softplus; the repo's paired A/B benchmark at the shipping Poly/Cubic/RK4
+4x 48 kHz defaults read, over three runs, idle 77.65 → 78.04 ms (+0.50 %),
+six-voice plain 214.24 → 213.77 ms (−0.22 %), six-voice resonant 216.65 →
+216.80 ms (+0.07 %) and six-voice full-mixer Chorus II 303.97 → 304.99 ms
+(+0.33 %) on the last run, every scenario inside the loaded machine's ±0.5 %
+run-to-run noise.
+
+## 2026-09-01 — µPC1252H2: noise floor adopted, nonlinearity rejected
+
+NEC's [1983 consumer-IC data book](https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262) (µPC1252H2, p. 257) specifies the part at
+Vcc/Vee ±12 V, ISET 2 mA and RIN = ROUT = 33 kΩ, and Roland's
+[jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
+installs IC5 in exactly that circuit: C12 10 µF / R36 33 kΩ in, R34 5.6 kΩ +
+R35 680 Ω to −15 V for 2.006 mA, pin 8 into IC2b's 33 kΩ I/V, and +15 V
+through R17 1.5 kΩ. Two of the table's rows were candidates.
+
+Distortion is rejected. At the derived bus levels (0.3–1.7 Vrms, VCA LEVEL
+−16.3..+4.7 dB) the trimmed typical THD is 0.007–0.02 %, −70 dB or better,
+and Roland fits no symmetry trimmer (pin 4 is grounded through R33 47 Ω), so
+the installed part sits somewhere in an untrimmed curve NEC bounds only as
+"≥ 0.05 %" with no typical, sign or shape. That is no sourced magnitude, so
+the stage stays linear rather than carry an invented one.
+
+The output-noise floor ships. NV = −94 dBV typical (max −84 dBV) over
+10 Hz–20 kHz is a derivable figure under the installed conditions, folded to
+a white-equivalent density and added at IC2b's output ahead of the dry/wet
+split, scaled by Unit Character like the resistor floors. Rendered, the term
+is −109.4 dBFS on the dry leg at every VCA LEVEL byte (−93.3 dBV referred to
+IC2b over the 0–24 kHz window, 8 % above the band-limited datasheet figure),
+lifting the idle chorus-Off floor from −119.1 to −108.9 dBFS; through the wet
+legs it lifts the default-HISS chorus-I idle floor by 0.46 dB, from −98.8 to
+−98.3 dBFS. NEC publishes NV only at Av = 0 dB, so the constant
+output-referred form is likely slightly high below 0 dB; that gain dependence
+and the voice cards' own contribution to the dry floor stay with OQ-16.
+
+This is an evidence-priority decision, not a listening verdict: nothing here
+is audible, and no letters were rendered. The old floor remains available
+behind the internal `enableCommonVcaNoise` comparison switch.
+
+## 2026-09-01 — Sub half-wave mean on the WAVE node
+
+Module p. 13 at 1200 dpi confirms R102 (R99 on CH2) as Tr19's (Tr16's)
+collector load to the SUB LEVEL rail and D6 (D5) as the single series diode
+from the R101 (R97) 27 kΩ leg into the WAVE line: the rail's current enters
+the node on one half-cycle only, so the sub carries a mean equal to its own AC
+amplitude. The model now adopts that unipolar shape and leaves the mean for
+C56/C50 to remove; the level law stays linear in the held rail, and the node's
+DC-to-AC impedance ratio is voiced at 1, the floor of its ≤ 2 bracket, inside
+the already-voiced sub coordinate. Steady state is unchanged; only a SUB level
+step now produces the C56/C59-shaped bump the DC-coupled leg makes. This is
+explicitly distinct from the removed sub-driver amplitude asymmetry (a
+fabricated 0.3 % level inequality). It is an evidence-priority decision, not
+a listening verdict, and does not close OQ-15: a sub-level-versus-byte capture
+at TP8 would fix the diode onset and the node loading. The former zero-mean
+square remains behind the internal `enableSubHalfWaveNodeCoupling` switch.
+
+## 2026-09-01 — Loaded MN3009 reconstruction network
+
+Roland's [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
+keeps both MN3009 outputs connected through separate 3.3 kOhm legs to the
+shared 47 kOhm / 2.2 nF tap. Panasonic's
+[MN3009 documentation](https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf)
+shows two continuously present output followers, separately loaded ahead of a
+balance pot, and its typical Gi-RL slope around the installed 50--100 kOhm
+region supports a local Thevenin estimate of about 3.7 kOhm per follower. This
+is a graph-derived typical nominal, not a specified or guaranteed Rout.
+
+The former solve treated one output as an ideal source and factorised the tap
+from the following reconstruction filter. The nominal model now combines both
+finite-source legs, C45/C48, R117/R110, and the first 22 kOhm / 22 kOhm
+Sallen-Key section in one continuous nodal system. Tr15--Tr18 remain ideal
+followers, matching the existing no-extra-parameter filter model; finite beta,
+gm, junction capacitance and bias-dependent output impedance need installed
+device data and are not guessed. The prepared transition still has six states
+and the realtime path does no additional matrix work.
+
+Compared directly with the former ideal-source, separable implementation, the
+loaded network is about 0.36 dB darker at 5 kHz, 0.87 dB at 10 kHz and 1.04 dB
+at 15 kHz. DC is normalised to the existing loaded wet coordinate because
+Panasonic's insertion-gain row already uses a 100 kOhm load and no original-unit
+capture fixes absolute wet level. The HISS-100 recovered-line policy was
+therefore remeasured, not ear-tuned: its
+fixed-seed A-weighted transfer is 0.38948--0.38953 at 176.4 kHz and
+0.38937--0.38941 at 192 kHz, represented by 0.3894. OQ-04 remains open for the
+installed spread, follower loading, absolute gain and a wet-only hardware
+sweep.
+
 ## 2026-08-31 — I+II preserves the wet mid, not the stereo side
 
 The first I+II product implementation reused the normal two-line anti-phase

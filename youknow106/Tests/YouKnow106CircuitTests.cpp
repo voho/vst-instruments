@@ -35,6 +35,11 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::otaHeadroomVolts;
     }
 
+    static constexpr float thermalVoltage() noexcept
+    {
+        return YouKnow106Engine::thermalVoltage;
+    }
+
     static constexpr float feedbackHeadroom() noexcept
     {
         return YouKnow106Engine::VoicedResonanceCompatibilityProfile::
@@ -1584,12 +1589,27 @@ void testCircuitDerivedResonanceProfile()
     expectNear(Derived::controlFullScaleVolts, 10.0 * 4064.0 / 4096.0, 0.0,
                "the derived profile's full-scale voltage left the p. 8 "
                "0..+10 V branch at physical code 4064");
-    expectNear(Derived::onsetTravel, 0.6 / 9.921875, 1.0e-7,
-               "the derived profile's onset left one junction drop of the "
-               "control span");
-    expect(Derived::onsetTravel * 127.0f > 7.0f
-               && Derived::onsetTravel * 127.0f < 9.0f,
-           "the derived onset left the byte-8 region");
+    expectNear(Derived::onsetTravel, 0.34 / 9.921875, 1.0e-7,
+               "the derived profile's onset left one junction drop above the "
+               "VR34 standoff on the control span");
+    expect(Derived::onsetTravel * 127.0f > 4.0f
+               && Derived::onsetTravel * 127.0f < 5.0f,
+           "the derived onset left the byte 4..5 region");
+    // Against the pre-standoff coordinate (0.6 V measured from 0 V): same
+    // shape, same endpoint, so the standoff only lifts the low settings --
+    // about +4 dB at Resonance 1/10 and +0.3 dB at 5/10.
+    const auto ratioDb = [](int byte) {
+        const float onset = 0.6f / Derived::controlFullScaleVolts;
+        const float panel = static_cast<float>(byte) / 127.0f;
+        const float legacy = Voiced::maximumFeedback
+                           * (panel > onset ? (panel - onset) / (1.0f - onset)
+                                            : 0.0f);
+        return 20.0 * std::log10(Derived::loopGain(panel) / legacy);
+    };
+    expectNear(ratioDb(13), 3.98, 0.05,
+               "the standoff no longer lifts Resonance 1/10 by about 4 dB");
+    expectNear(ratioDb(64), 0.26, 0.02,
+               "the standoff no longer lifts Resonance 5/10 by about 0.3 dB");
 
     expect(Derived::loopGain(0.0f) == 0.0f
                && Derived::loopGain(Derived::onsetTravel) == 0.0f,
@@ -1623,6 +1643,54 @@ void testCircuitDerivedResonanceProfile()
     expectNear(Derived::loopGain(threshold),
                Voiced::nominalOscillationFeedback, 1.0e-5,
                "the derived shape's threshold no longer solves its own law");
+}
+
+void testCircuitDerivedNoiseLevelProfile()
+{
+    using Profile = YouKnow106Engine::CircuitDerivedNoiseLevelProfile;
+
+    // The NOISE hold reaches IC14's control pin through Tr22's grounded-base
+    // stage (p. 13: VR32 + R115 in series, R114 2.2 MOhm to -15 V), so the
+    // level is zero until the hold clears one junction drop plus R114's
+    // pull-down and linear above it. The hold stands on VR34's anchored
+    // +0.26 V standoff (p. 18 section 3); VR32's position is untraced, so
+    // the onset is bracketed and shipped at its floor.
+    expect(EngineParameters {}.useCircuitDerivedNoiseLevelShape,
+           "the default left the circuit-derived NOISE level shape");
+    expectNear(Profile::pullDownAmps, 15.6 / 2.2e6, 1.0e-12,
+               "R114's pull-down left (15 + 0.6) V / 2.2 MOhm");
+    expectNear(Profile::onsetVolts, 0.6 + 10.0e3 * 15.6 / 2.2e6, 1.0e-7,
+               "the onset left one junction drop plus R115 times the "
+               "pull-down");
+    expectNear(Profile::onsetTravel, (0.6 + 10.0e3 * 15.6 / 2.2e6 - 0.26)
+                                         / 9.921875, 1.0e-7,
+               "the onset travel left the anchored standoff on the p. 8 "
+               "0..+10 V branch");
+    expect(Profile::onsetTravel >= 0.0414f && Profile::onsetTravel <= 0.1129f,
+           "the onset travel left VR32's 0.671...1.380 V bracket");
+
+    expect(Profile::drive(0.0f) == 0.0f
+               && Profile::drive(Profile::onsetTravel) == 0.0f,
+           "the derived NOISE shape conducts below its onset");
+    expect(Profile::drive(5.0f / 127.0f) == 0.0f
+               && Profile::drive(6.0f / 127.0f) > 0.0f,
+           "the first conducting stored byte left 6");
+    expectNear(Profile::drive(1.0f), 1.0, 1.0e-6,
+               "the derived NOISE shape left the anchored full-level endpoint");
+    expectNear(Profile::drive((1.0f + Profile::onsetTravel) * 0.5f), 0.5,
+               1.0e-6, "the derived NOISE shape is not linear from its onset");
+    float previous = -1.0f;
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float drive = Profile::drive(static_cast<float>(byte) / 127.0f);
+        expect(std::isfinite(drive) && drive >= previous,
+               "the derived NOISE shape is not finite and monotone");
+        previous = drive;
+    }
+    // Linearity above the onset: equal byte steps add equal level.
+    expectNear(Profile::drive(0.50f) - Profile::drive(0.25f),
+               Profile::drive(0.75f) - Profile::drive(0.50f), 1.0e-6,
+               "the derived NOISE shape is not linear above its onset");
 }
 
 void testVoicedResonanceCompatibilityProfile()
@@ -1660,6 +1728,73 @@ void testVoicedResonanceCompatibilityProfile()
            "voiced resonance compensation does not respond to loop gain");
     expect(previousTrim > Profile::frequencyTrim(0.0f),
            "voiced resonance frequency correction does not respond to loop gain");
+}
+
+void testResonanceInputCompensationBracket()
+{
+    using Profile =
+        YouKnow106Engine::VoicedResonanceCompatibilityProfile;
+
+    // Each end of the bracket is its own derivation, so a stray edit to any
+    // one resistor is caught rather than silently re-pinning the coefficient.
+    // Roland JUNO-6/JUNO-60 CPU BOARD p. 9: R14 10k in, R7 68k feedback,
+    // R5 47k + R2 1.5k from VCF IN, R3 100k + R1 1.5k from VCF OUT.
+    expectNear(Profile::drawnInputCompensationPerFeedback,
+               (10000.0 / 68000.0) * ((100000.0 + 1500.0) / (47000.0 + 1500.0)),
+               1.0e-7,
+               "the Roland-drawn resonance compensation left its network");
+    expectNear(Profile::drawnInputCompensationPerFeedback, 0.307762, 1.0e-6,
+               "the Roland-drawn resonance compensation moved off 0.307762");
+    // Open80017a Rev 0.2: R3 4.7k in, R5 68k feedback, R1 24k + R2 1.5k from
+    // VCF IN, R25 100k + R26 1.5k from VCF OUT.
+    expectNear(Profile::inputCompensationPerFeedback,
+               (4700.0 / 68000.0) * ((100000.0 + 1500.0) / (24000.0 + 1500.0)),
+               1.0e-7,
+               "the shipped resonance compensation left its network");
+    expectNear(Profile::inputCompensationPerFeedback, 0.275116, 1.0e-6,
+               "the shipped resonance compensation moved off 0.275116");
+
+    // The shipped value is the bracket's floor, and the retired coefficient
+    // sits below both readings -- which is why it is no longer the default.
+    expect(Profile::inputCompensationPerFeedback
+               < Profile::drawnInputCompensationPerFeedback,
+           "the shipped resonance compensation is not the bracket floor");
+    expect(Profile::legacyInputCompensationPerFeedback
+               < Profile::inputCompensationPerFeedback,
+           "the retired resonance compensation is no longer below the bracket");
+
+    // Zero loop gain is unity for every reading, so a resonance-0 render is
+    // identical whichever shape is selected.
+    for (auto shape : { ResonanceCompensationShape::Reconstruction,
+                        ResonanceCompensationShape::Drawn,
+                        ResonanceCompensationShape::Legacy })
+        expect(Profile::inputCompensation(0.0f, shape) == 1.0f,
+               "a resonance compensation shape is not unity at zero loop gain");
+
+    // The two panel points, pinned as numbers so the audible size cannot
+    // drift unnoticed.
+    const float half =
+        YouKnow106Engine::CircuitDerivedResonanceProfile::loopGain(0.5f);
+    expectNear(half, 2.17209, 1.0e-4,
+               "the circuit-derived loop gain moved at panel 0.50");
+    expectNear(Profile::inputCompensation(
+                   half, ResonanceCompensationShape::Reconstruction),
+               1.59757, 1.0e-4,
+               "the shipped compensation moved at panel 0.50");
+    expectNear(Profile::inputCompensation(
+                   half, ResonanceCompensationShape::Legacy),
+               1.49871, 1.0e-4,
+               "the retired compensation moved at panel 0.50");
+    expectNear(Profile::inputCompensation(
+                   Profile::maximumFeedback,
+                   ResonanceCompensationShape::Reconstruction),
+               2.23913, 1.0e-4,
+               "the shipped compensation moved at full resonance");
+    expectNear(Profile::inputCompensation(
+                   Profile::maximumFeedback,
+                   ResonanceCompensationShape::Drawn),
+               2.38616, 1.0e-4,
+               "the Roland-drawn compensation moved at full resonance");
 }
 
 void testEnvelopeAndAmplifierLaws()
@@ -1747,11 +1882,15 @@ void testEnvelopeAndAmplifierLaws()
                "slowest decay-to-minus-20-dB misses the integer recurrence");
 
     // The voice amplifier is a current-controlled OTA behind a grounded-base
-    // volts-to-amps stage, so its gain is linear in the control voltage above
-    // the turn-on with the transistor's own exponential knee below it. These
-    // check that shape against the schematic rather than against a chosen
+    // volts-to-amps stage, and its control current solves that stage's own
+    // emitter equation: y + ln y = v, y the emitter current in units of
+    // Vt / R and v the control voltage above the knee in units of Vt. That is
+    // linear in the control voltage well above the knee, short of the ideal
+    // straight line by the junction's own Vt * ln y, and the transistor's
+    // exponential tail below it. These check the shipped table against the
+    // equation, solved independently here, rather than against a chosen
     // curve; the remaining open part of OQ-19 is a measured BA662 gain sweep,
-    // which would fix the turn-on point, not the law.
+    // which would fix the knee's placement, not the law.
     using VoiceVcaLaw = YouKnow106Engine::VoiceVcaControlLaw;
     float previousGain = -1.0f;
     for (int step = 0; step <= 1000; ++step)
@@ -1764,27 +1903,92 @@ void testEnvelopeAndAmplifierLaws()
     expectNear(VoiceVcaLaw::gain(1.0f), 1.0, 1.0e-6,
                "full control does not give the voice VCA unity gain");
 
-    // Linear in control above the turn-on: equal control steps are equal gain
-    // steps, which an exponential law cannot do. Checked well clear of the
-    // knee, whose whole width is a couple of per cent of the span.
+    // KCL on Tr20's emitter, solved here in double precision from the same
+    // constants the table is built from: Vt over the converter's full-scale
+    // volts turns control travel into units of Vt.
+    const double voltsPerUnit =
+        static_cast<double>(
+            YouKnow106Engine::CircuitDerivedResonanceProfile::controlFullScaleVolts)
+        / static_cast<double>(YouKnow106TestAccess::thermalVoltage());
+    const auto solveOmega = [](double v)
+    {
+        double y = v > 1.0 ? v - std::log(v) : std::exp(v);
+        for (int step = 0; step < 40; ++step)
+        {
+            const double delta = (y + std::log(y) - v) * y / (y + 1.0);
+            y -= delta;
+            if (std::abs(delta) <= 1.0e-15 * y)
+                break;
+        }
+        return y;
+    };
+    const double fullScaleCurrent =
+        solveOmega((1.0 - VoiceVcaLaw::turnOn) * voltsPerUnit);
+    // 369.97 Vt / R is 300.6 uA through 32 kOhm.
+    expectNear(fullScaleCurrent, 369.97, 0.01,
+               "the full-scale emitter current is not 370 Vt/R");
+
+    // On the table's own grid every entry must satisfy y + ln y = v: the
+    // residual is the whole distance between the shipped number and the
+    // circuit equation.
+    for (const int index : { 82, 205, 410, 820, 2048, 3686, 4096 })
+    {
+        const double control =
+            static_cast<double>(index) / VoiceVcaLaw::tableSteps;
+        const double y = VoiceVcaLaw::gain(static_cast<float>(control))
+                       * fullScaleCurrent;
+        const double v = (control - VoiceVcaLaw::turnOn) * voltsPerUnit;
+        expect(std::abs(y + std::log(y) - v) < 2.0e-4,
+               "the voice VCA table does not satisfy Tr20's emitter KCL at "
+                   "control " + std::to_string(control));
+    }
+    // Between grid points the lookup interpolates; a hold voltage is never on
+    // the grid, so the interpolation itself has to be inaudibly close.
+    for (const float control : { 0.02f, 0.05f, 0.1f, 0.3f, 0.7f })
+    {
+        const double direct =
+            solveOmega((static_cast<double>(control) - VoiceVcaLaw::turnOn)
+                       * voltsPerUnit)
+            / fullScaleCurrent;
+        const double error = 20.0 * std::log10(VoiceVcaLaw::gain(control) / direct);
+        expect(std::abs(error) < 0.01,
+               "the voice VCA lookup strays " + std::to_string(error)
+                   + " dB from the solved law at control "
+                   + std::to_string(control));
+    }
+
+    // Readable without the equation: above the knee the response is a
+    // straight line in control that sits a little under the ideal
+    // (V_cv - V_be) / R line, because V_be keeps rising with current --
+    // about 0.8 dB under it at a tenth of travel, closing towards unity.
     for (float control = 0.1f; control <= 0.9f; control += 0.1f)
     {
         const double linear = (static_cast<double>(control) - VoiceVcaLaw::turnOn)
                             / (1.0 - VoiceVcaLaw::turnOn);
-        expectNear(VoiceVcaLaw::gain(control), linear, 2.0e-6,
-                   "the voice VCA is not linear in control above its turn-on");
+        expect(VoiceVcaLaw::gain(control) < linear,
+               "the voice VCA does not sit under the ideal straight line above "
+               "its turn-on");
+    }
+    {
+        const double linear = (0.1 - VoiceVcaLaw::turnOn) / (1.0 - VoiceVcaLaw::turnOn);
+        const double lag = 20.0 * std::log10(VoiceVcaLaw::gain(0.1f) / linear);
+        expect(lag > -1.0 && lag < -0.6,
+               "the junction's Vt ln y lag at a tenth of travel is "
+                   + std::to_string(lag) + " dB, not about -0.8");
     }
 
-    // And exponential below it, at the grounded-base stage's own 60 mV per
-    // decade -- kT/q times ln 10, referred to the converter's 10 V span. One
-    // decade of control below the turn-on against two decades below it, where
-    // the softplus is already close to its exponential asymptote.
+    // And exponential below the knee, at the grounded-base stage's own 60 mV
+    // per decade -- kT/q times ln 10, referred to the converter's 10 V span.
+    // One decade of control below the turn-on against two decades below it.
+    // The exact tail is y = e^(v - y), so at this depth each decade falls a
+    // little short of tenfold (about 9.2, the emitter resistors still
+    // dropping a few per cent of a Vt) and closes on ten further down.
     {
-        const float decade = VoiceVcaLaw::knee * 2.302585f;
+        const float decade = static_cast<float>(2.302585 / voltsPerUnit);
         const double upper = VoiceVcaLaw::gain(VoiceVcaLaw::turnOn - decade);
         const double lower = VoiceVcaLaw::gain(VoiceVcaLaw::turnOn - 2.0f * decade);
-        expectNear(upper / lower, 10.0, 0.5,
-                   "the voice VCA's low-level knee is not 60 mV per decade");
+        expect(upper / lower > 9.0 && upper / lower < 10.0,
+               "the voice VCA's low-level tail is not 60 mV per decade");
         expect(VoiceVcaLaw::gain(VoiceVcaLaw::deadband) == 0.0f,
                "the voice VCA does not shut below its declared deadband");
         // A card sitting at the largest control offset the Unit Character
@@ -1792,6 +1996,84 @@ void testEnvelopeAndAmplifierLaws()
         // retires. 0.004 per unit of Unit Character, bounded at two.
         expect(VoiceVcaLaw::gain(2.0f * 0.004f) < VoiceVcaLaw::silenceGain,
                "the worst card control offset escapes the silence threshold");
+    }
+
+    // The comparison switch restores the former softplus stand-in to the bit:
+    // the same float expression, evaluated here in the same order.
+    for (int step = 1; step <= 20; ++step)
+    {
+        const float control = static_cast<float>(step) / 20.0f;
+        const float x = (control - VoiceVcaLaw::turnOn) / VoiceVcaLaw::knee;
+        const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
+        const float expected =
+            VoiceVcaLaw::knee * softplus / (1.0f - VoiceVcaLaw::turnOn);
+        expect(VoiceVcaLaw::softplusGain(control) == expected,
+               "the softplus comparison path is not bit-exact at control "
+                   + std::to_string(control));
+    }
+
+    // The same amplifier's signal law: a bare BA662 pair driven as hard as
+    // Roland's own trims say through the sibling JUNO-6/60 drawing's 47 kOhm
+    // load. The two stored constants are re-derived from their inputs, the
+    // kernel is held to libm, and the shape is checked against the pair's
+    // predicted third harmonic rather than against a chosen curve.
+    {
+        using SignalLaw = YouKnow106Engine::VoiceVcaSignalLaw;
+        const double tail = (9.921875 + 0.26 - 0.62) / 32000.0;
+        const double drive = std::atanh(3.0 / 47000.0 / tail);
+        expectNear(SignalLaw::trimDrive, drive, 1.0e-6,
+                   "the stored VCA trim drive is not atanh(I_out / I_tail)");
+        expectNear(SignalLaw::headroomVolts, 2.4 / drive, 1.0e-3,
+                   "the VCA headroom is not the trim level over the trim drive");
+
+        // Unity at the origin, odd, monotone and bounded by the tail current.
+        expectNear(SignalLaw::shape(0.01f) / 0.01f, 1.0, 1.0e-4,
+                   "the VCA pair does not have unity small-signal gain");
+        float previous = -1.0e30f;
+        for (int step = -400; step <= 400; ++step)
+        {
+            const float volts = 0.1f * static_cast<float>(step);
+            const float shaped = SignalLaw::shape(volts);
+            expect(shaped == -SignalLaw::shape(-volts),
+                   "the VCA pair's transfer is not odd");
+            expect(shaped > previous, "the VCA pair's transfer is not monotone");
+            expect(std::abs(shaped) < SignalLaw::headroomVolts,
+                   "the VCA pair puts out more than its tail current");
+            previous = shaped;
+        }
+
+        // The kernel against libm over the whole |x| <= 1 working span.
+        double worst = 0.0;
+        for (int step = -2000; step <= 2000; ++step)
+        {
+            const double x = 0.0005 * static_cast<double>(step);
+            const double kernel = SignalLaw::shape(
+                static_cast<float>(x * SignalLaw::headroomVolts))
+                / SignalLaw::headroomVolts;
+            worst = std::max(worst, std::abs(kernel - std::tanh(x)));
+        }
+        expect(worst <= 1.0e-6,
+               "the VCA pair's tanh kernel is " + std::to_string(worst)
+                   + " from libm over its working span");
+
+        // A 2.4 V peak sine -- the trim level -- projected onto its own
+        // third harmonic: u^2/12 within ten per cent, and about -48 dBc.
+        constexpr int samples = 4096;
+        double fundamental = 0.0;
+        double third = 0.0;
+        for (int index = 0; index < samples; ++index)
+        {
+            const double phase = 2.0 * pi * index / samples;
+            const double shaped = SignalLaw::shape(static_cast<float>(
+                SignalLaw::trimFilterPeakVolts * std::sin(phase)));
+            fundamental += shaped * std::sin(phase);
+            third += shaped * std::sin(3.0 * phase);
+        }
+        const double hd3 = std::abs(third / fundamental);
+        expectNear(hd3 / (drive * drive / 12.0), 1.0, 0.1,
+                   "the VCA pair's third harmonic at the trim level is not u^2/12");
+        expectNear(20.0 * std::log10(hd3), -48.1, 0.5,
+                   "the VCA pair's third harmonic at the trim level is not -48 dBc");
     }
 
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
@@ -5561,6 +5843,58 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     using Matrix = std::array<std::array<double, 6>, 6>;
     using State = std::array<double, 6>;
 
+    // Independent component solve for the loaded tap node. Panasonic's
+    // Gi-RL curve gives about 3.7 kOhm per output follower near the JUNO's
+    // approximately 100 kOhm per-pin load. Roland then gives each follower a
+    // 3.3 kOhm leg into the shared 47 kOhm / 2.2 nF node.
+    constexpr float mn3009OutputSourceEstimate = 3700.0f;
+    constexpr float tapSeries = 3300.0f;
+    constexpr float tapReturn = 47000.0f;
+    constexpr float tapShunt = 2.2e-9f;
+    constexpr float parallelDrive =
+        0.5f * (mn3009OutputSourceEstimate + tapSeries);
+    constexpr float tapNodeResistance =
+        parallelDrive * tapReturn / (parallelDrive + tapReturn);
+    constexpr float isolatedTapCornerHzFloat = 1.0f
+        / (2.0f * static_cast<float>(pi) * tapNodeResistance * tapShunt);
+    constexpr double isolatedTapCornerHz =
+        static_cast<double>(isolatedTapCornerHzFloat);
+    expectNear(isolatedTapCornerHz, 22208.689, 0.01,
+               "isolated MN3009 tap-corner component solve changed");
+
+    // The tap capacitance is loaded by the first 22 kOhm resistor, so its
+    // response is not the separable tap-pole times Sallen-Key approximation.
+    // Check one closed-form phasor independently of the state rows/RK4 below.
+    {
+        constexpr double frequency = 10000.0;
+        constexpr double series = 22000.0;
+        constexpr double feedback = 820.0e-12;
+        constexpr double shunt = 680.0e-12;
+        const std::complex<double> s(0.0, 2.0 * pi * frequency);
+        const double source = 0.5 * (3700.0 + 3300.0);
+        const double sourceConductance = 1.0 / source + 1.0 / 47000.0;
+        const double seriesConductance = 1.0 / series;
+        const auto denominator = 1.0
+            + s * shunt * (2.0 * series)
+            + s * s * series * series * feedback * shunt;
+        const auto numeratorShape = 1.0 + s * series * shunt;
+        const auto loaded = sourceConductance
+            / ((s * 2.2e-9 + sourceConductance + seriesConductance)
+                   * denominator
+               - seriesConductance * numeratorShape);
+        const double tapResistance = source * 47000.0
+                                   / (source + 47000.0);
+        const auto separable = 1.0
+            / ((1.0 + s * tapResistance * 2.2e-9) * denominator);
+        const auto relative = loaded / separable;
+        expectNear(20.0 * std::log10(std::abs(relative)),
+                   -0.7883156, 1.0e-5,
+                   "loaded tap/first-section magnitude left its MNA result");
+        expectNear(std::arg(relative) * 180.0 / pi,
+                   -2.0290835, 1.0e-5,
+                   "loaded tap/first-section phase left its MNA result");
+    }
+
     const auto transitionFinite = [](const Transition& transition) {
         for (const auto& column : transition.stateByColumn)
             for (double value : column)
@@ -5681,23 +6015,35 @@ void testCombinedBbdSupportTransitionAndStateSafety()
         return matrix;
     };
     const auto outputMatrix = [](bool connected) {
-        const double wt = 2.0 * pi * static_cast<double>(23461.38f);
-        const double w1 = 2.0 * pi * static_cast<double>(9688.0f);
-        const double w2 = 2.0 * pi * static_cast<double>(10377.0f);
+        const double source = 0.5 * (
+            static_cast<double>(3300.0f) + static_cast<double>(3700.0f));
+        const double tapReturn = static_cast<double>(47000.0f);
+        const double tapCap = static_cast<double>(2.2e-9f);
+        const double series = static_cast<double>(22000.0f);
+        const double firstFeedback = static_cast<double>(820.0e-12f);
+        const double firstShunt = static_cast<double>(680.0e-12f);
+        const double secondFeedback = static_cast<double>(1.8e-9f);
+        const double secondShunt = static_cast<double>(270.0e-12f);
         const double wc = 2.0 * pi * static_cast<double>(
             Chorus::wetOutputCouplingCornerHz(connected));
-        const double q1 = Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f);
-        const double q2 = Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f);
         Matrix matrix {};
-        matrix[0][0] = -wt;
-        matrix[1][0] = w1;
-        matrix[1][1] = -w1 / q1;
-        matrix[1][2] = -w1;
-        matrix[2][1] = w1;
-        matrix[3][2] = w2;
-        matrix[3][3] = -w2 / q2;
-        matrix[3][4] = -w2;
-        matrix[4][3] = w2;
+        matrix[0][0] = -(1.0 / source + 1.0 / tapReturn + 1.0 / series)
+                     / tapCap;
+        matrix[0][1] = 1.0 / (series * tapCap);
+        matrix[1][0] = 1.0 / (series * firstFeedback);
+        matrix[1][1] = 1.0 / (series * firstShunt)
+                     - 2.0 / (series * firstFeedback);
+        matrix[1][2] = -1.0 / (series * firstShunt)
+                     + 1.0 / (series * firstFeedback);
+        matrix[2][1] = 1.0 / (series * firstShunt);
+        matrix[2][2] = -1.0 / (series * firstShunt);
+        matrix[3][2] = 1.0 / (series * secondFeedback);
+        matrix[3][3] = 1.0 / (series * secondShunt)
+                     - 2.0 / (series * secondFeedback);
+        matrix[3][4] = -1.0 / (series * secondShunt)
+                     + 1.0 / (series * secondFeedback);
+        matrix[4][3] = 1.0 / (series * secondShunt);
+        matrix[4][4] = -1.0 / (series * secondShunt);
         matrix[5][4] = wc;
         matrix[5][5] = -wc;
         return matrix;
@@ -5706,9 +6052,13 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     State inputDrive {};
     inputDrive[0] = 2.0 * pi * static_cast<double>(9688.0f);
     State outputDrive {};
-    outputDrive[0] = 2.0 * pi * static_cast<double>(23461.38f);
+    constexpr double outputSource = 0.5 * (
+        static_cast<double>(3300.0f) + static_cast<double>(3700.0f));
+    constexpr double outputReturn = static_cast<double>(47000.0f);
+    constexpr double outputCap = static_cast<double>(2.2e-9f);
+    outputDrive[0] = (1.0 / outputSource + 1.0 / outputReturn) / outputCap;
     constexpr State inputEquilibrium { 0.0, 1.0, 0.0, 1.0, 1.0, 0.0 };
-    constexpr State outputEquilibrium { 1.0, 0.0, 1.0, 0.0, 1.0, 1.0 };
+    constexpr State outputEquilibrium { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
     constexpr State initial { 0.03, -0.07, 0.11, -0.13, 0.17, -0.19 };
     constexpr std::array<double, 4> samples { 0.2, -0.1, 0.05, -0.03 };
 
@@ -6343,7 +6693,9 @@ int main()
     testStoredControlDigitalVectors();
     testResonanceLeavesTheCornerAloneBelowOscillation();
     testVoicedResonanceCompatibilityProfile();
+    testResonanceInputCompensationBracket();
     testCircuitDerivedResonanceProfile();
+    testCircuitDerivedNoiseLevelProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
     testPwmDutyCycleDefensiveGuard();
