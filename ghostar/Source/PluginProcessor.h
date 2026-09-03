@@ -80,7 +80,35 @@ inline constexpr auto xWheel = "xWheel";
 inline constexpr auto yWheel = "yWheel";
 // Product policy: the hardware's two rear jacks, as a stereo split.
 inline constexpr auto splitPaths = "splitPaths";
+// Rear EXTERNAL GATE switching-jack state. After the hardware's >6 V
+// comparator there are only three circuit-distinct cases: unplugged
+// (normalled Y), plugged low, and plugged high.
+inline constexpr auto externalGate = "externalGate";
+// Rear EXTERNAL PITCH switching-jack state and Spirit Keyboard Pitch
+// Out-equivalent source voltage (15k Thevenin). Presence cannot be inferred
+// from 0 V: an inserted zero-volt cable still disconnects internal pitch.
+inline constexpr auto externalPitchConnected = "externalPitchConnected";
+inline constexpr auto externalPitchVolts = "externalPitchVolts";
+// Rear EXTERNAL AUDIO switching-jack state. Host bus enablement/routing is
+// intentionally separate: a connected silent cable still opens IC4A's
+// normal contact.
+inline constexpr auto externalAudioConnected = "externalAudioConnected";
+// Rear pedal jack state plus the physical resistance of the documented
+// 100 kOhm potentiometer between tip and sleeve. A connected pedal at its
+// 100 kOhm end is electrically distinct from an unplugged jack.
+inline constexpr auto oscBPedalConnected = "oscBPedalConnected";
+inline constexpr auto oscBPedalResistance = "oscBPedalResistance";
+inline constexpr auto filterPedalConnected = "filterPedalConnected";
+inline constexpr auto filterPedalResistance = "filterPedalResistance";
 } // namespace ghostar::parameters
+
+class GhostarVST3Extensions final : public juce::VST3ClientExtensions
+{
+public:
+    // Ghostar is still an instrument; its sole audio input is the hardware's
+    // optional rear jack, so VST3 hosts should expose it as kAux/sidechain.
+    bool getPluginHasMainInput() const override { return false; }
+};
 
 class GhostarAudioProcessor final : public juce::AudioProcessor,
                                   private juce::MidiKeyboardState::Listener
@@ -93,6 +121,10 @@ public:
     void releaseResources() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    juce::VST3ClientExtensions* getVST3ClientExtensions() override
+    {
+        return &vst3Extensions;
+    }
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -157,6 +189,7 @@ public:
     createParameterLayout();
 
 private:
+    GhostarVST3Extensions vst3Extensions;
     friend struct GhostarAudioProcessorTestAccess;
 
     struct UiMidiEvent

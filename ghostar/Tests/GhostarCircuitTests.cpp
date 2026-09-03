@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <utility>
 #include <vector>
 
 namespace ghostar
@@ -133,6 +135,33 @@ struct ModulationProbeResult
     bool audioActive;
 };
 
+struct ModSourceTickProbeResult
+{
+    bool audioActive { false };
+    bool sourceMatches { false };
+    double sharedAudioError { 0.0 };
+    double sharedRedError { 0.0 };
+    double basePitchA { 0.0 };
+    double basePitchB { 0.0 };
+    double baseDutyA { 0.0 };
+    std::array<double, 4> referenceRed {};
+    std::array<double, 4> pitchA {};
+    std::array<double, 4> pitchB {};
+    std::array<double, 4> dutyA {};
+    std::array<double, 4> upperFilter {};
+    std::array<double, 4> lowerFilter {};
+};
+
+struct SampleHoldRedEdgeProbeResult
+{
+    double availableEngineRed { 0.0 };
+    double availableReferenceRed { 0.0 };
+    double captured { 0.0 };
+    std::array<double, 4> laterEngineRed {};
+    std::array<double, 4> laterReferenceRed {};
+    std::array<double, 4> held {};
+};
+
 struct EnvelopeResetProbeResult
 {
     int releaseSamples;
@@ -143,8 +172,535 @@ struct EnvelopeResetProbeResult
     bool restartedAttack;
 };
 
+struct LfoResetProbeResult
+{
+    int clampedSamples;
+    double capacitorAfterClamp;
+    double visibleDuringClamp;
+    double capacitorAfterRelease;
+    double visibleAfterRelease;
+    double sampleHoldAfterFirstStep;
+    bool risingAfterRelease;
+};
+
+struct LfoGateXProbeResult
+{
+    int envelopeResetSamples;
+    bool finalSquareHigh;
+    bool shaperCycleActive;
+    double shaperLevel;
+};
+
+struct ExternalGateProbeResult
+{
+    bool internalYHigh;
+    bool envelopeGate;
+};
+
+struct ExternalGateFallProbeResult
+{
+    bool openBeforeFall;
+    bool internalYHighAfterFall;
+    bool openAfterFall;
+};
+
+struct ExternalGateHardStopProbeResult
+{
+    bool restartedResetWhileHeldHigh;
+    bool attackedWhileHeldHigh;
+    bool restartedShaperWhileHeldHigh;
+    int resetSamplesAfterRealEdge;
+    bool attackedAfterRealEdge;
+    bool shaperStartedAfterRealEdge;
+};
+
+struct ExternalAudioTimingProbeResult
+{
+    double oracleError;
+    double impulseSum;
+    double impulseCentroid;
+    double symmetryError;
+    double passbandMagnitude;
+    double firstImageMagnitude;
+    double secondImageMagnitude;
+    double dcError;
+    int firstDelayedFrameTick;
+    double jackStateCaptureDifference;
+    double jackSelectionDifference;
+    double brightnessTickZeroAlignmentDifference;
+    double brightnessTickZeroSelectionDifference;
+    double brightnessTickOneSelectionDifference;
+    double brightnessStateDifference;
+    double brightnessCompanionMagnitude;
+};
+
+struct ExternalAudioMixerProbeResult
+{
+    double filterEnergy;
+    double shaperEnergy;
+    double filterSum;
+    double shaperSum;
+};
+
+struct ExternalAudioProcessProbeResult
+{
+    double impulseSum;
+    double impulseCentroid;
+    double polarityError;
+};
+
+struct ExternalAudioResetProbeResult
+{
+    double stageBBeforeReset;
+    double stageABeforeReset;
+    double stageBAfterReset;
+    double stageAAfterReset;
+};
+
+struct ExternalAudioRedNoiseProbeResult
+{
+    double cutoffSpan;
+    double jackCutoffDifference;
+    double jackRedNoiseDifference;
+};
+
+struct ExternalPitchProbeResult
+{
+    double glidedNote;
+    double oscillatorAOctaves;
+    double oscillatorBOctaves;
+    double oscillatorBDroneHz;
+    double upperCutoffHz;
+    double lowerCutoffHz;
+    double storedSourceVolts;
+    bool jackInserted;
+    bool keyboardGate;
+    bool envelopeGate;
+};
+
+struct ExternalPitchGlideProbeResult
+{
+    double offStep;
+    double onStep;
+    double autoOneKeyStep;
+    double autoTwoKeyStep;
+    double autoAfterDroppingToOneKey;
+    double internalNoteStep;
+    double beforeInsertion;
+    double afterInsertion;
+    double afterRemoval;
+    double beforeReset;
+    double afterReset;
+    double afterResetTick;
+};
+
+struct OscBPedalProbeResult
+{
+    double oscBNodeVolts;
+    double oscillatorAOctaves;
+    double oscillatorBOctaves;
+    double oscillatorBDroneHz;
+    double upperCutoffHz;
+    double lowerCutoffHz;
+    double oscBResistanceKOhm;
+    bool oscBInserted;
+};
+
+struct FilterPedalProbeResult
+{
+    double nodeVolts;
+    double oscillatorAOctaves;
+    double oscillatorBOctaves;
+    double upperCutoffHz;
+    double lowerCutoffHz;
+    double resistanceKOhm;
+    bool inserted;
+};
+
+struct RearPedalRetentionProbeResult
+{
+    std::array<double, 6> oscBNodes;
+    std::array<double, 6> filterNodes;
+};
+
+struct FilterPedalModeSwitchProbeResult
+{
+    double formantNodeDifference;
+    double dynamicNodeDifference;
+    double formantUpperCutoffDifference;
+    double formantLowerCutoffDifference;
+    double dynamicUpperCutoffDifference;
+    double dynamicLowerCutoffDifference;
+};
+
+struct FilterPedalRemovalProbeResult
+{
+    double connectedNode;
+    double connectedOpenReference;
+    double removedNode;
+    double removedOpenReference;
+    double resetNode;
+    double resetOpenReference;
+    double stoppedNode;
+    double stoppedOpenReference;
+};
+
 struct GhostarCircuitTestAccess
 {
+    static OscBPedalProbeResult oscBPedalAt(
+        bool inserted, double resistanceKOhm,
+        OscBRange oscillatorBRange = OscBRange::Unison) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.oscBRange = oscillatorBRange;
+        parameters.interval = 0.5f;
+        parameters.cutoff = 0.5f;
+        parameters.lowerOnly = 0.8f;
+        parameters.kbAmount = 0.0f;
+        parameters.filterEnvAmount = 0.5f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.currentNote_ = 69;
+        engine.setOscBPedalInput(inserted, resistanceKOhm);
+        engine.advanceControls();
+        return { engine.oscBPedalNodeVolts_,
+                 engine.controlOscAOctaves_,
+                 engine.controlOscBOctaves_,
+                 engine.controlOscBDroneHz_,
+                 engine.controlUpperCutoffHz_,
+                 engine.controlLowerCutoffHz_,
+                 engine.oscBPedalResistanceKOhm_,
+                 engine.oscBPedalJackInserted_ };
+    }
+
+    static FilterPedalProbeResult filterPedalAt(
+        bool inserted, double resistanceKOhm,
+        TrackingMode tracking = TrackingMode::Dynamic) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.interval = 0.5f;
+        parameters.cutoff = 0.5f;
+        parameters.lowerOnly = 0.8f;
+        parameters.kbAmount = 0.0f;
+        parameters.filterEnvAmount = 0.5f;
+        parameters.tracking = tracking;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.currentNote_ = 69;
+        engine.setFilterPedalInput(inserted, resistanceKOhm);
+        engine.advanceControls();
+        return { engine.filterPedalNodeVolts_,
+                 engine.controlOscAOctaves_,
+                 engine.controlOscBOctaves_,
+                 engine.controlUpperCutoffHz_,
+                 engine.controlLowerCutoffHz_,
+                 engine.filterPedalResistanceKOhm_,
+                 engine.filterPedalJackInserted_ };
+    }
+
+    static RearPedalRetentionProbeResult rearPedalRetention() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.tracking = TrackingMode::Dynamic;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        engine.advanceControls();
+        RearPedalRetentionProbeResult result;
+        result.oscBNodes[0] = engine.oscBPedalNodeVolts_;
+        result.filterNodes[0] = engine.filterPedalNodeVolts_;
+
+        engine.setOscBPedalInput(true, 100.0);
+        engine.setFilterPedalInput(true, 100.0);
+        engine.advanceControls();
+        result.oscBNodes[1] = engine.oscBPedalNodeVolts_;
+        result.filterNodes[1] = engine.filterPedalNodeVolts_;
+
+        engine.reset();
+        result.oscBNodes[2] = engine.oscBPedalNodeVolts_;
+        result.filterNodes[2] = engine.filterPedalNodeVolts_;
+        engine.advanceControls();
+        result.oscBNodes[3] = engine.oscBPedalNodeVolts_;
+        result.filterNodes[3] = engine.filterPedalNodeVolts_;
+
+        engine.stopAllSound();
+        result.oscBNodes[4] = engine.oscBPedalNodeVolts_;
+        result.filterNodes[4] = engine.filterPedalNodeVolts_;
+
+        engine.setOscBPedalInput(true, 0.0);
+        engine.setFilterPedalInput(true, 0.0);
+        engine.advanceControls();
+        result.oscBNodes[5] = engine.oscBPedalNodeVolts_;
+        result.filterNodes[5] = engine.filterPedalNodeVolts_;
+        return result;
+    }
+
+    static FilterPedalModeSwitchProbeResult
+    unpluggedFilterPedalModeSwitch() noexcept
+    {
+        const auto configure = [](GhostarEngine& engine,
+                                  TrackingMode tracking) noexcept {
+            EngineParameters parameters;
+            parameters.cutoff = 0.5f;
+            parameters.lowerOnly = 0.8f;
+            parameters.kbAmount = 0.0f;
+            parameters.filterEnvAmount = 0.5f;
+            parameters.tracking = tracking;
+            engine.parameters_ = parameters;
+            engine.targetParameters_ = parameters;
+        };
+
+        GhostarEngine switched;
+        switched.prepare(48000.0, 64);
+        configure(switched, TrackingMode::Dynamic);
+        switched.advanceControls();
+        configure(switched, TrackingMode::Formant);
+        switched.advanceControls();
+
+        GhostarEngine freshFormant;
+        freshFormant.prepare(48000.0, 64);
+        configure(freshFormant, TrackingMode::Formant);
+        freshFormant.advanceControls();
+        const double formantNodeDifference =
+            switched.filterPedalNodeVolts_
+            - switched.filterPedalOpenNodeVolts_;
+        const double formantUpperCutoffDifference =
+            switched.controlUpperCutoffHz_
+            - freshFormant.controlUpperCutoffHz_;
+        const double formantLowerCutoffDifference =
+            switched.controlLowerCutoffHz_
+            - freshFormant.controlLowerCutoffHz_;
+
+        configure(switched, TrackingMode::Dynamic);
+        switched.advanceControls();
+        GhostarEngine freshDynamic;
+        freshDynamic.prepare(48000.0, 64);
+        configure(freshDynamic, TrackingMode::Dynamic);
+        freshDynamic.advanceControls();
+        return {
+            formantNodeDifference,
+            switched.filterPedalNodeVolts_
+                - switched.filterPedalOpenNodeVolts_,
+            formantUpperCutoffDifference,
+            formantLowerCutoffDifference,
+            switched.controlUpperCutoffHz_
+                - freshDynamic.controlUpperCutoffHz_,
+            switched.controlLowerCutoffHz_
+                - freshDynamic.controlLowerCutoffHz_,
+        };
+    }
+
+    static FilterPedalRemovalProbeResult filterPedalRemoval() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.tracking = TrackingMode::Dynamic;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        engine.setFilterPedalInput(true, 100.0);
+        engine.advanceControls();
+        FilterPedalRemovalProbeResult result {
+            engine.filterPedalNodeVolts_,
+            engine.filterPedalOpenNodeVolts_,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        };
+        engine.setFilterPedalInput(false, 100.0);
+        engine.advanceControls();
+        result.removedNode = engine.filterPedalNodeVolts_;
+        result.removedOpenReference = engine.filterPedalOpenNodeVolts_;
+
+        engine.reset();
+        result.resetNode = engine.filterPedalNodeVolts_;
+        result.resetOpenReference = engine.filterPedalOpenNodeVolts_;
+        engine.stopAllSound();
+        result.stoppedNode = engine.filterPedalNodeVolts_;
+        result.stoppedOpenReference = engine.filterPedalOpenNodeVolts_;
+        return result;
+    }
+
+    static ExternalPitchProbeResult externalPitchAt(
+        double sourceVolts, bool jackInserted, int keyboardNote = 72,
+        TrackingMode tracking = TrackingMode::Dynamic,
+        float keyboardAmount = 1.0f,
+        OscBRange oscillatorBRange = OscBRange::Unison,
+        MasterOctave octave = MasterOctave::Eight,
+        float pitchBend = 0.0f) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.octave = octave;
+        parameters.oscBRange = oscillatorBRange;
+        parameters.interval = 0.5f;
+        parameters.cutoff = 0.5f;
+        parameters.kbAmount = keyboardAmount;
+        parameters.filterEnvAmount = 0.5f;
+        parameters.tracking = tracking;
+        parameters.glideMode = GlideMode::Off;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.setPitchBend(pitchBend);
+        engine.setExternalPitchInput(jackInserted, sourceVolts);
+        if (keyboardNote >= 0)
+            engine.noteOn(keyboardNote, 1.0f);
+        engine.advanceControls();
+        return { engine.glidedNote_, engine.controlOscAOctaves_,
+                 engine.controlOscBOctaves_, engine.controlOscBDroneHz_,
+                 engine.controlUpperCutoffHz_, engine.controlLowerCutoffHz_,
+                 engine.externalPitchSourceVolts_,
+                 engine.externalPitchJackInserted_, engine.keyGate_,
+                 engine.envelopeGate_ };
+    }
+
+    static std::array<double, 2> externalPitchNodes(
+        double sourceVolts) noexcept
+    {
+        const auto nodes = GhostarEngine::externalPitchNodes(sourceVolts);
+        return { nodes.loadedVolts, nodes.conditionedVolts };
+    }
+
+    static ExternalPitchGlideProbeResult externalPitchGlideModes() noexcept
+    {
+        const auto step = [](GlideMode mode, int heldKeys) {
+            GhostarEngine engine;
+            engine.prepare(48000.0, 64);
+            EngineParameters parameters;
+            parameters.glide = 1.0f;
+            parameters.glideMode = mode;
+            engine.parameters_ = parameters;
+            engine.targetParameters_ = parameters;
+            engine.setExternalPitchInput(true, 0.0);
+            engine.noteOn(60, 1.0f);
+            if (heldKeys == 2)
+                engine.noteOn(64, 1.0f);
+            engine.advanceControls();
+            engine.setExternalPitchInput(true, 1.1);
+            engine.advanceControls();
+            return engine.glidedNote_;
+        };
+
+        GhostarEngine autoDrop;
+        autoDrop.prepare(48000.0, 64);
+        EngineParameters autoParameters;
+        autoParameters.glide = 1.0f;
+        autoParameters.glideMode = GlideMode::Auto;
+        autoDrop.parameters_ = autoParameters;
+        autoDrop.targetParameters_ = autoParameters;
+        autoDrop.setExternalPitchInput(true, 0.0);
+        autoDrop.noteOn(60, 1.0f);
+        autoDrop.noteOn(64, 1.0f);
+        autoDrop.advanceControls();
+        autoDrop.setExternalPitchInput(true, 1.1);
+        autoDrop.advanceControls();
+        autoDrop.noteOff(64);
+        autoDrop.setExternalPitchInput(true, 2.2);
+        autoDrop.advanceControls();
+
+        GhostarEngine internalStep;
+        internalStep.prepare(48000.0, 64);
+        internalStep.noteOn(60, 1.0f);
+        internalStep.advanceControls();
+        internalStep.noteOn(72, 1.0f);
+        internalStep.advanceControls();
+
+        GhostarEngine switched;
+        switched.prepare(48000.0, 64);
+        EngineParameters switchedParameters;
+        switchedParameters.glide = 1.0f;
+        switchedParameters.glideMode = GlideMode::On;
+        switched.parameters_ = switchedParameters;
+        switched.targetParameters_ = switchedParameters;
+        switched.noteOn(48, 1.0f);
+        switched.advanceControls();
+        const double beforeInsertion = switched.glidedNote_;
+        switched.setExternalPitchInput(true, 0.0);
+        switched.advanceControls();
+        const double afterInsertion = switched.glidedNote_;
+        switched.setExternalPitchInput(false, 0.0);
+        switched.advanceControls();
+
+        GhostarEngine resetState;
+        resetState.prepare(48000.0, 64);
+        resetState.parameters_ = switchedParameters;
+        resetState.targetParameters_ = switchedParameters;
+        resetState.setExternalPitchInput(true, 0.0);
+        resetState.advanceControls();
+        resetState.setExternalPitchInput(true, 1.1);
+        resetState.advanceControls();
+        const double beforeReset = resetState.glidedNote_;
+        resetState.reset();
+        const double afterReset = resetState.glidedNote_;
+        resetState.advanceControls();
+
+        return { step(GlideMode::Off, 1), step(GlideMode::On, 1),
+                 step(GlideMode::Auto, 1), step(GlideMode::Auto, 2),
+                 autoDrop.glidedNote_, internalStep.glidedNote_,
+                 beforeInsertion, afterInsertion, switched.glidedNote_,
+                 beforeReset, afterReset, resetState.glidedNote_ };
+    }
+
+    static std::array<double, 2> externalPitchArpeggiatorTargets() noexcept
+    {
+        const auto target = [](bool inserted) {
+            GhostarEngine engine;
+            engine.prepare(48000.0, 64);
+            EngineParameters parameters;
+            parameters.arpeggiator = ArpeggiatorMode::Ripple;
+            engine.parameters_ = parameters;
+            engine.targetParameters_ = parameters;
+            engine.currentNote_ = 60;
+            engine.arpSoundingNote_ = 84;
+            // Keep this probe between clocks: it is testing the switched KCV
+            // target, not asking handleArpClock() to scan an empty key stack.
+            engine.lfoCapLevel_ = 0.0;
+            engine.lfoRising_ = true;
+            engine.lfoSquareHigh_ = true;
+            engine.previousLfoSquareHigh_ = true;
+            engine.setExternalPitchInput(inserted, 0.0);
+            engine.advanceControls();
+            return engine.glidedNote_;
+        };
+        return { target(false), target(true) };
+    }
+
+    static bool externalPitchSetterPreservesKeyboardState() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        engine.noteOn(67, 1.0f);
+        const auto keyStack = engine.keyStack_;
+        const int keyStackSize = engine.keyStackSize_;
+        const bool keyGate = engine.keyGate_;
+        const int currentNote = engine.currentNote_;
+        const bool trigger = engine.pendingTrigger_;
+        const bool lfoReset = engine.pendingLfoReset_;
+        const bool shaperTrigger = engine.pendingShaperTrigger_;
+        engine.setExternalPitchInput(true,
+            std::numeric_limits<double>::quiet_NaN());
+        return engine.externalPitchJackInserted_
+            && engine.externalPitchSourceVolts_ == 0.0
+            && engine.keyStack_ == keyStack
+            && engine.keyStackSize_ == keyStackSize
+            && engine.keyGate_ == keyGate
+            && engine.currentNote_ == currentNote
+            && engine.pendingTrigger_ == trigger
+            && engine.pendingLfoReset_ == lfoReset
+            && engine.pendingShaperTrigger_ == shaperTrigger;
+    }
+
     static double selectedWaveVolts(Waveform waveform,
                                     double bipolarSample) noexcept
     {
@@ -641,6 +1197,21 @@ struct GhostarCircuitTestAccess
         return engine.controlUpperCutoffHz_;
     }
 
+    static double oscillatorATuneOctaves(float travel) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.tune = travel;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.currentNote_ = 69;
+        engine.glidedNote_ = 69.0;
+        engine.glideInitialised_ = true;
+        engine.advanceControls();
+        return engine.controlOscAOctaves_;
+    }
+
     static std::array<double, 2> filterCutoffsForPanel(
         float master, float lowerOnly, TrackingMode tracking) noexcept
     {
@@ -654,6 +1225,25 @@ struct GhostarCircuitTestAccess
         parameters.tracking = tracking;
         engine.parameters_ = parameters;
         engine.targetParameters_ = parameters;
+        engine.advanceControls();
+        return { engine.controlUpperCutoffHz_,
+                 engine.controlLowerCutoffHz_ };
+    }
+
+    static std::array<double, 2> filterCutoffsForFilterEnvelope(
+        double envelopeLevel, float amount,
+        TrackingMode tracking = TrackingMode::Dynamic) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.cutoff = 0.5f;
+        parameters.kbAmount = 0.0f;
+        parameters.filterEnvAmount = amount;
+        parameters.tracking = tracking;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.filterEnvelope_.level = envelopeLevel;
         engine.advanceControls();
         return { engine.controlUpperCutoffHz_,
                  engine.controlLowerCutoffHz_ };
@@ -698,9 +1288,146 @@ struct GhostarCircuitTestAccess
         parameters.lfoRate = travel;
         engine.parameters_ = parameters;
         engine.targetParameters_ = parameters;
-        engine.lfoPhase_ = 0.0;
+        engine.lfoCapLevel_ = -1.0;
+        engine.lfoRising_ = true;
         engine.advanceControls();
-        return engine.lfoPhase_ * hostRate;
+        return 0.25 * (engine.lfoCapLevel_ + 1.0) * hostRate;
+    }
+
+    static LfoResetProbeResult keyboardLfoResetFrom(
+        double capacitorLevel, bool rising,
+        double hostRate = 40000.0) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        EngineParameters parameters;
+        parameters.trigger = TriggerMode::Single;
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = false;
+        parameters.arpeggiator = ArpeggiatorMode::Off;
+        parameters.modSource = ModSource::SampleHoldY;
+        parameters.lfoRate = 1.0f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.lfoCapLevel_ = capacitorLevel;
+        engine.lfoRising_ = rising;
+        engine.lfoSquareHigh_ = rising;
+        engine.previousLfoSquareHigh_ = rising;
+        engine.sampleHoldValue_ = 0.11;
+        engine.shaperLevel_ = 0.73;
+
+        engine.noteOn(60, 1.0f);
+        int clampedSamples = 0;
+        double sampleHoldAfterFirstStep = 0.0;
+        do
+        {
+            engine.advanceControls();
+            ++clampedSamples;
+            if (clampedSamples == 1)
+                sampleHoldAfterFirstStep = engine.sampleHoldValue_;
+        }
+        while (engine.lfoKtSecondsRemaining_ > 0.0);
+
+        const double capacitorAfterClamp = engine.lfoCapLevel_;
+        const double visibleDuringClamp = engine.lastLfoTriangle_;
+        engine.advanceControls();
+        return {
+            clampedSamples,
+            capacitorAfterClamp,
+            visibleDuringClamp,
+            engine.lfoCapLevel_,
+            engine.lastLfoTriangle_,
+            sampleHoldAfterFirstStep,
+            engine.lfoRising_,
+        };
+    }
+
+    static LfoResetProbeResult keyboardLfoResetWithArpeggiator() noexcept
+    {
+        constexpr double hostRate = 40000.0;
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        EngineParameters parameters;
+        parameters.trigger = TriggerMode::Single;
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = false;
+        parameters.arpeggiator = ArpeggiatorMode::Ripple;
+        parameters.modSource = ModSource::SampleHoldY;
+        parameters.lfoRate = 1.0f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.lfoCapLevel_ = 0.2;
+        engine.lfoRising_ = false;
+        engine.lfoSquareHigh_ = false;
+        engine.previousLfoSquareHigh_ = false;
+        engine.sampleHoldValue_ = 0.11;
+        engine.shaperLevel_ = 0.73;
+
+        engine.noteOn(60, 1.0f);
+        engine.advanceControls();
+        return {
+            engine.lastLfoTriangle_ == -1.0 ? 1 : 0,
+            engine.lfoCapLevel_,
+            engine.lastLfoTriangle_,
+            engine.lfoCapLevel_,
+            engine.lastLfoTriangle_,
+            engine.sampleHoldValue_,
+            engine.lfoRising_,
+        };
+    }
+
+    static double integratedLfoKtDuration(double sampleRate) noexcept
+    {
+        double ktSecondsRemaining = 25.0e-6;
+        double integrated = 0.0;
+        const double interval = 1.0 / sampleRate;
+        while (ktSecondsRemaining > 0.0)
+            integrated += GhostarEngine::consumeLfoKtDuration(
+                ktSecondsRemaining, interval);
+        return integrated;
+    }
+
+    static LfoGateXProbeResult subSampleLfoResetThroughGateX(
+        double hostRate,
+        ShaperMode shaperMode = ShaperMode::Reset) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = false;
+        parameters.gateX = true;
+        parameters.gateYExt = false;
+        parameters.trigger = TriggerMode::Single;
+        parameters.arpeggiator = ArpeggiatorMode::Off;
+        parameters.shaperMode = shaperMode;
+        parameters.shaperRate = 1.0f;
+        parameters.shaperShape = 0.0f;
+        parameters.lfoRate = 1.0f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        // KT first forces the falling LG leg high, but the retained C13
+        // charge crosses +5 V and returns LG low before this host interval
+        // ends. The edge must still reach both physical Gate-X consumers.
+        engine.lfoCapLevel_ = 0.997;
+        engine.lfoRising_ = false;
+        engine.lfoSquareHigh_ = false;
+        engine.previousLfoSquareHigh_ = false;
+        engine.previousGateForShaper_ = false;
+        engine.previousEnvelopeXGate_ = false;
+        engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
+        engine.loudnessEnvelope_.level = 0.8;
+        engine.pendingLfoReset_ = true;
+
+        engine.advanceControls();
+        return {
+            1 + static_cast<int>(engine.envelopeResetSamplesRemaining_),
+            engine.lfoSquareHigh_,
+            engine.shaperCycleActive_,
+            engine.shaperLevel_,
+        };
     }
 
     static ModulationProbeResult modulationAt(
@@ -735,7 +1462,8 @@ struct GhostarCircuitTestAccess
         engine.targetModWheel_ = 0.0;
         engine.shaperWheel_ = 0.0;
         engine.targetShaperWheel_ = 0.0;
-        engine.lfoPhase_ = 0.0;
+        engine.lfoCapLevel_ = -1.0;
+        engine.lfoRising_ = true;
 
         engine.advanceControls();
         const double baseUpperCutoff = engine.controlUpperCutoffHz_;
@@ -744,7 +1472,8 @@ struct GhostarCircuitTestAccess
         engine.targetModWheel_ = xTravel;
         engine.shaperWheel_ = yTravel;
         engine.targetShaperWheel_ = yTravel;
-        engine.lfoPhase_ = 0.0;
+        engine.lfoCapLevel_ = -1.0;
+        engine.lfoRising_ = true;
         engine.advanceControls();
         const auto& audio = engine.controlAudioRateMod_;
         return {
@@ -762,6 +1491,118 @@ struct GhostarCircuitTestAccess
             audio.duty,
             audio.active,
         };
+    }
+
+    static ModSourceTickProbeResult modSourceTicks(
+        ModSource source, ModXDestination destination) noexcept
+    {
+        constexpr double hostRate = 48000.0;
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        EngineParameters parameters;
+        parameters.modSource = source;
+        parameters.modXTo = destination;
+        parameters.shaperYTo = ShaperYDestination::Off;
+        parameters.filterEnvAmount = 0.5f;
+        parameters.kbAmount = 0.0f;
+        parameters.tracking = TrackingMode::Dynamic;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.currentNote_ = 69;
+        engine.glidedNote_ = 69.0;
+        engine.glideInitialised_ = true;
+        engine.modWheel_ = 1.0f;
+        engine.targetModWheel_ = 1.0f;
+        engine.shaperLevel_ = 1.0;
+        engine.lfoCapLevel_ = 0.0;
+        engine.lfoRising_ = true;
+        engine.lfoSquareHigh_ = true;
+        engine.previousLfoSquareHigh_ = true;
+        engine.sampleHoldValue_ = 0.375;
+
+        // Keep an independent copy of the one physical MM5837 circuit. If the
+        // audio and RED taps ever advance separate generators (or one advances
+        // twice per internal tick), these comparisons diverge immediately.
+        SpiritNoise reference;
+        reference.prepare(4.0 * hostRate);
+        for (int tick = 0; tick < 4096; ++tick)
+        {
+            (void) engine.noise_.process();
+            (void) reference.process();
+        }
+
+        engine.advanceControls();
+        ModSourceTickProbeResult result;
+        result.audioActive = engine.controlAudioRateMod_.active;
+        result.sourceMatches = engine.controlAudioRateMod_.source == source;
+        result.basePitchA = engine.controlOscAOctaves_;
+        result.basePitchB = engine.controlOscBOctaves_;
+        result.baseDutyA = engine.oscADuty_ + engine.controlPwmA_;
+        for (std::size_t tick = 0; tick < result.referenceRed.size(); ++tick)
+        {
+            const double expectedAudio = reference.process();
+            result.referenceRed[tick] = reference.red();
+            engine.renderVoiceSample();
+            const std::size_t frameIndex =
+                (static_cast<std::size_t>(engine.preMixerDelayIndex_)
+                 + engine.preMixerDelay_.size() - 1u)
+                % engine.preMixerDelay_.size();
+            const auto& frame = engine.preMixerDelay_[frameIndex];
+            result.sharedAudioError = std::max(
+                result.sharedAudioError,
+                std::abs(frame.pinkNoise - expectedAudio));
+            result.sharedRedError = std::max(
+                result.sharedRedError,
+                std::abs(engine.noise_.red() - result.referenceRed[tick]));
+            result.pitchA[tick] = engine.pitchLagA_.previousInput;
+            result.pitchB[tick] = engine.pitchLagB_.previousInput;
+            result.dutyA[tick] = engine.heldDutyA_;
+            result.upperFilter[tick] = frame.audioModUpper;
+            result.lowerFilter[tick] = frame.audioModLower;
+        }
+        return result;
+    }
+
+    static SampleHoldRedEdgeProbeResult sampleHoldRedClockEdge() noexcept
+    {
+        constexpr double hostRate = 48000.0;
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        EngineParameters parameters;
+        parameters.modSource = ModSource::SampleHoldRandom;
+        parameters.modXTo = ModXDestination::OscAB;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.modWheel_ = engine.targetModWheel_ = 1.0f;
+
+        SpiritNoise reference;
+        reference.prepare(4.0 * hostRate);
+        for (int tick = 0; tick < 4096; ++tick)
+        {
+            (void) engine.noise_.process();
+            (void) reference.process();
+        }
+
+        SampleHoldRedEdgeProbeResult result;
+        result.availableEngineRed = engine.noise_.red();
+        result.availableReferenceRed = reference.red();
+        engine.sampleHoldValue_ = -0.875;
+        engine.lfoCapLevel_ = 0.0;
+        engine.lfoRising_ = true;
+        engine.lfoSquareHigh_ = false;
+        engine.previousLfoSquareHigh_ = false;
+        engine.advanceControls();
+        result.captured = engine.sampleHoldValue_;
+
+        for (std::size_t tick = 0; tick < result.held.size(); ++tick)
+        {
+            (void) reference.process();
+            engine.renderVoiceSample();
+            result.laterEngineRed[tick] = engine.noise_.red();
+            result.laterReferenceRed[tick] = reference.red();
+            result.held[tick] = engine.sampleHoldValue_;
+        }
+        return result;
     }
 
     static double loudnessGainForEnvelope(double level,
@@ -888,7 +1729,8 @@ struct GhostarCircuitTestAccess
         engine.envelopeGate_ = true;
         engine.previousEnvelopeGs_ = true;
         engine.previousEnvelopeXGate_ = false;
-        engine.lfoPhase_ = 0.0;
+        engine.lfoCapLevel_ = -1.0;
+        engine.lfoRising_ = true;
         engine.previousLfoSquareHigh_ = false;
         engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
         engine.loudnessEnvelope_.level = 0.8;
@@ -903,6 +1745,658 @@ struct GhostarCircuitTestAccess
         }
         while (engine.envelopeResetSamplesRemaining_ != 0);
         return releaseSamples;
+    }
+
+    static ExternalGateProbeResult externalGateWithInternalY(
+        bool jackInserted, double volts) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(8000.0, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = true;
+        parameters.shaperMode = ShaperMode::Free;
+        parameters.shaperRate = 0.0f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        engine.shaperLevel_ = 0.0;
+        engine.shaperRising_ = true;
+        engine.shaperGate_ = true;
+        engine.setExternalGateInput(jackInserted, volts);
+        engine.advanceControls();
+        return { engine.shaperGate_, engine.envelopeGate_ };
+    }
+
+    static ExternalGateFallProbeResult externalGateFallOverInternalY() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(8000.0, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = true;
+        parameters.shaperMode = ShaperMode::Free;
+        parameters.shaperRate = 0.0f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        engine.shaperLevel_ = 0.0;
+        engine.shaperRising_ = true;
+        engine.shaperGate_ = true;
+        engine.previousEnvelopeYGate_ = true;
+        engine.setExternalGateInput(true, 10.0);
+        engine.advanceControls();
+        const bool openBeforeFall = engine.envelopeGate_;
+
+        engine.setExternalGateInput(true, 0.0);
+        engine.advanceControls();
+        return { openBeforeFall, engine.shaperGate_, engine.envelopeGate_ };
+    }
+
+    static int externalGateEdgeResetSamplesUnderHeldKeyboard() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(8000.0, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = true;
+        parameters.gateX = false;
+        parameters.gateYExt = true;
+        parameters.trigger = TriggerMode::Single;
+        parameters.shaperMode = ShaperMode::Free;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        engine.keyGate_ = true;
+        engine.envelopeGate_ = true;
+        engine.previousEnvelopeGs_ = true;
+        engine.previousEnvelopeYGate_ = false;
+        engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
+        engine.loudnessEnvelope_.level = 0.8;
+        engine.setExternalGateInput(true, 0.0);
+        engine.setExternalGateInput(true, 10.0);
+
+        int releaseSamples = 0;
+        do
+        {
+            engine.advanceControls();
+            if (engine.loudnessEnvelope_.stage
+                == GhostarEngine::Adsr::Stage::Release)
+                ++releaseSamples;
+        }
+        while (engine.envelopeResetSamplesRemaining_ != 0);
+        return releaseSamples;
+    }
+
+    static ExternalGateHardStopProbeResult externalGateAcrossHardStop(
+        bool allSoundOff) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(8000.0, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = true;
+        parameters.trigger = TriggerMode::Single;
+        parameters.shaperMode = ShaperMode::Run;
+        parameters.shaperRate = 1.0f;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        // Establish HIGH as an already-observed physical level before the
+        // hard stop, including completion of its legitimate reset notch.
+        engine.setExternalGateInput(true, 10.0);
+        engine.advanceControls();
+        while (engine.envelopeResetSamplesRemaining_ != 0)
+            engine.advanceControls();
+        engine.advanceControls();
+
+        if (allSoundOff)
+            engine.stopAllSound();
+        else
+            engine.reset();
+
+        bool restartedResetWhileHeldHigh = false;
+        bool attackedWhileHeldHigh = false;
+        bool restartedShaperWhileHeldHigh = false;
+        for (int sample = 0; sample < 64; ++sample)
+        {
+            engine.advanceControls();
+            restartedResetWhileHeldHigh |=
+                engine.envelopeResetSamplesRemaining_ != 0;
+            attackedWhileHeldHigh |= engine.loudnessEnvelope_.stage
+                != GhostarEngine::Adsr::Stage::Idle;
+            restartedShaperWhileHeldHigh |= engine.shaperCycleActive_;
+        }
+
+        engine.setExternalGateInput(true, 0.0);
+        engine.advanceControls();
+        engine.setExternalGateInput(true, 10.0);
+
+        int resetSamplesAfterRealEdge = 0;
+        do
+        {
+            engine.advanceControls();
+            ++resetSamplesAfterRealEdge;
+        }
+        while (engine.envelopeResetSamplesRemaining_ != 0
+               && resetSamplesAfterRealEdge < 100);
+        engine.advanceControls();
+
+        return {
+            restartedResetWhileHeldHigh,
+            attackedWhileHeldHigh,
+            restartedShaperWhileHeldHigh,
+            resetSamplesAfterRealEdge,
+            engine.loudnessEnvelope_.stage
+                == GhostarEngine::Adsr::Stage::Attack,
+            engine.shaperCycleActive_,
+        };
+    }
+
+    static ExternalAudioTimingProbeResult externalAudioTiming() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+
+        constexpr std::size_t responseSamples =
+            GhostarEngine::stageATaps
+            + 2 * (GhostarEngine::stageBTaps - 1);
+        std::array<double, responseSamples> actual {};
+        for (std::size_t tick = 0; tick < actual.size(); ++tick)
+        {
+            const int internalStep = static_cast<int>(tick % 4);
+            const double hostImpulse = tick / 4 == 0 ? 1.0 : 0.0;
+            actual[tick] = engine.reconstructExternalAudio(
+                hostImpulse, internalStep);
+        }
+
+        // Independent dense oracle: reverse B -> A interpolation is
+        // 4 * (hA convolved with hB expanded by one zero between taps).
+        // Rebuilding the dense kernels from the sparse storage keeps this
+        // check independent of both production ring schedules.
+        std::array<double, GhostarEngine::stageATaps> stageA {};
+        std::array<double, GhostarEngine::stageBTaps> stageB {};
+        for (int stored = 0; stored < engine.stageAKernel_.count; ++stored)
+        {
+            const int tap = GhostarEngine::stageATaps - 1
+                - engine.stageAKernel_.offsets[
+                    static_cast<std::size_t>(stored)];
+            stageA[static_cast<std::size_t>(tap)] =
+                engine.stageAKernel_.values[static_cast<std::size_t>(stored)];
+        }
+        for (int stored = 0; stored < engine.stageBKernel_.count; ++stored)
+        {
+            const int tap = GhostarEngine::stageBTaps - 1
+                - engine.stageBKernel_.offsets[
+                    static_cast<std::size_t>(stored)];
+            stageB[static_cast<std::size_t>(tap)] =
+                engine.stageBKernel_.values[static_cast<std::size_t>(stored)];
+        }
+
+        std::array<double, responseSamples> expected {};
+        for (std::size_t a = 0; a < stageA.size(); ++a)
+            for (std::size_t b = 0; b < stageB.size(); ++b)
+                expected[a + 2 * b] += 4.0 * stageA[a] * stageB[b];
+
+        double oracleError = 0.0;
+        double sum = 0.0;
+        double firstMoment = 0.0;
+        double symmetryError = 0.0;
+        for (std::size_t tick = 0; tick < actual.size(); ++tick)
+        {
+            oracleError = std::max(
+                oracleError, std::abs(actual[tick] - expected[tick]));
+            sum += actual[tick];
+            firstMoment += static_cast<double>(tick) * actual[tick];
+            symmetryError = std::max(
+                symmetryError,
+                std::abs(actual[tick] - actual[actual.size() - 1 - tick]));
+        }
+
+        // Independent fixed-frequency contract. The 4x interpolation impulse
+        // sums to four, so divide its DFT by four for unity signal gain. The
+        // 0.45/0.55 host-rate pair brackets stage B's sharp transition; the
+        // halfband-complementary 1.55 point exercises stage A's second-image
+        // stopband without rebuilding either production kernel.
+        const auto responseMagnitude = [&actual](double hostCycles) {
+            std::complex<double> response {};
+            constexpr double twoPi = 6.28318530717958647692;
+            for (std::size_t tick = 0; tick < actual.size(); ++tick)
+            {
+                const double angle = -twoPi * hostCycles
+                                   * static_cast<double>(tick) / 4.0;
+                response += actual[tick]
+                          * std::complex<double> { std::cos(angle),
+                                                   std::sin(angle) };
+            }
+            return std::abs(response) / 4.0;
+        };
+        const double passbandMagnitude = responseMagnitude(0.45);
+        const double firstImageMagnitude = responseMagnitude(0.55);
+        const double secondImageMagnitude = responseMagnitude(1.55);
+
+        GhostarEngine dcEngine;
+        dcEngine.prepare(48000.0, 64);
+        std::array<double, 4> expectedDc {};
+        for (std::size_t tick = 0; tick < expected.size(); ++tick)
+            expectedDc[tick % expectedDc.size()] += expected[tick];
+        double dcError = 0.0;
+        for (int hostSample = 0; hostSample < 256; ++hostSample)
+            for (int step = 0; step < 4; ++step)
+            {
+                const double value =
+                    dcEngine.reconstructExternalAudio(1.0, step);
+                if (hostSample >= 192)
+                    dcError = std::max(
+                        dcError,
+                        std::abs(value
+                                 - expectedDc[static_cast<std::size_t>(step)]));
+            }
+
+        // Put a one-tick signal/control marker into the real frame FIFO and
+        // observe the first Shaper output it can affect. This is deliberately
+        // separate from the reconstructor oracle above: both lanes must land
+        // on the same circuit tick.
+        GhostarEngine delayed;
+        delayed.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.masterVolume = 1.0f;
+        parameters.splitPaths = true;
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathB = 0.0f;
+        parameters.filterPathNoise = 0.0f;
+        parameters.shaperPathA = 0.0f;
+        parameters.shaperPathB = 0.0f;
+        parameters.shaperPathRing = 0.0f;
+        parameters.shaperPathNoise = 0.0f;
+        delayed.parameters_ = parameters;
+        delayed.targetParameters_ = parameters;
+        delayed.cem3360OutputNoiseScale_ = 0.0;
+        delayed.controlShaperMixNoise_ = 1.0;
+        delayed.controlShaperVcaGain_ = 1.0;
+        delayed.controlBrightnessResistanceOhms_ = 0.0;
+        delayed.externalAudioJackInserted_ = true;
+
+        int firstDelayedFrameTick = -1;
+        for (int tick = 0;
+             tick < GhostarEngine::externalInputLatencyInternalSamples() + 8;
+             ++tick)
+        {
+            delayed.renderVoiceSample(1.0);
+            if (firstDelayedFrameTick < 0
+                && std::abs(delayed.lastShaperPathSample_) > 1.0e-12)
+                firstDelayedFrameTick = tick;
+            if (tick == 0)
+            {
+                delayed.controlShaperMixNoise_ = 0.0;
+                delayed.externalAudioJackInserted_ = false;
+            }
+        }
+
+        const auto prepareMarker = [](GhostarEngine& marker,
+                                      double brightnessOhms,
+                                      bool jackInserted) {
+            marker.prepare(48000.0, 64);
+            EngineParameters markerParameters;
+            markerParameters.masterVolume = 1.0f;
+            markerParameters.splitPaths = true;
+            markerParameters.filterPathA = 0.0f;
+            markerParameters.filterPathB = 0.0f;
+            markerParameters.filterPathNoise = 0.0f;
+            markerParameters.shaperPathA = 0.0f;
+            markerParameters.shaperPathB = 0.0f;
+            markerParameters.shaperPathRing = 0.0f;
+            markerParameters.shaperPathNoise = 0.0f;
+            marker.parameters_ = markerParameters;
+            marker.targetParameters_ = markerParameters;
+            marker.cem3360OutputNoiseScale_ = 0.0;
+            marker.controlShaperMixNoise_ = 1.0;
+            marker.controlShaperVcaGain_ = 1.0;
+            marker.controlBrightnessResistanceOhms_ = brightnessOhms;
+            marker.externalAudioJackInserted_ = jackInserted;
+        };
+
+        // Cable presence belongs to the delayed frame too. Change only the
+        // live state after tick zero: the consumed tick-zero frame must match
+        // an engine that stayed plugged, while a genuinely unplugged
+        // tick-zero counterfactual proves external and pink are distinguishable.
+        GhostarEngine switchedJack;
+        GhostarEngine heldJack;
+        GhostarEngine normalledJack;
+        prepareMarker(switchedJack, 0.0, true);
+        prepareMarker(heldJack, 0.0, true);
+        prepareMarker(normalledJack, 0.0, false);
+        double switchedJackSample = 0.0;
+        double heldJackSample = 0.0;
+        double normalledJackSample = 0.0;
+        for (int tick = 0;
+             tick <= GhostarEngine::externalInputLatencyInternalSamples();
+             ++tick)
+        {
+            switchedJack.renderVoiceSample(1.0);
+            heldJack.renderVoiceSample(1.0);
+            normalledJack.renderVoiceSample(1.0);
+            if (tick == 0)
+            {
+                switchedJack.externalAudioJackInserted_ = false;
+                normalledJack.externalAudioJackInserted_ = true;
+            }
+            if (tick == GhostarEngine::externalInputLatencyInternalSamples())
+            {
+                switchedJackSample = switchedJack.lastShaperPathSample_;
+                heldJackSample = heldJack.lastShaperPathSample_;
+                normalledJackSample = normalledJack.lastShaperPathSample_;
+            }
+        }
+
+        // BRIGHTNESS must come from the matching delayed frame, not merely
+        // from some delayed frame. Schedule 50k at tick zero and 0R from tick
+        // one: the first response must equal a held-50k reference, while the
+        // following response must depart from it. A held-0R counterfactual
+        // proves the tick-zero comparison is able to discriminate the two.
+        // Separately poison only the live resistance at consumption to catch
+        // either output or companion-state use of the undelayed control.
+        constexpr double capturedBrightnessOhms = 50000.0;
+        constexpr double followingBrightnessOhms = 0.0;
+        constexpr double livePoisonBrightnessOhms = 100000.0;
+        GhostarEngine scheduledBrightness;
+        GhostarEngine livePerturbedBrightness;
+        GhostarEngine heldCapturedBrightness;
+        GhostarEngine heldFollowingBrightness;
+        prepareMarker(scheduledBrightness, capturedBrightnessOhms, true);
+        prepareMarker(livePerturbedBrightness, capturedBrightnessOhms, true);
+        prepareMarker(heldCapturedBrightness, capturedBrightnessOhms, true);
+        prepareMarker(heldFollowingBrightness, followingBrightnessOhms, true);
+        double brightnessTickZeroAlignmentDifference = 0.0;
+        double brightnessTickZeroSelectionDifference = 0.0;
+        double brightnessTickOneSelectionDifference = 0.0;
+        double brightnessStateDifference = 0.0;
+        double brightnessCompanionMagnitude = 0.0;
+        for (int tick = 0;
+             tick <= GhostarEngine::externalInputLatencyInternalSamples() + 1;
+             ++tick)
+        {
+            if (tick == GhostarEngine::externalInputLatencyInternalSamples())
+                livePerturbedBrightness.controlBrightnessResistanceOhms_ =
+                    livePoisonBrightnessOhms;
+            scheduledBrightness.renderVoiceSample(1.0);
+            livePerturbedBrightness.renderVoiceSample(1.0);
+            heldCapturedBrightness.renderVoiceSample(1.0);
+            heldFollowingBrightness.renderVoiceSample(1.0);
+            if (tick == 0)
+            {
+                scheduledBrightness.controlBrightnessResistanceOhms_ =
+                    followingBrightnessOhms;
+                livePerturbedBrightness.controlBrightnessResistanceOhms_ =
+                    followingBrightnessOhms;
+                scheduledBrightness.controlShaperMixNoise_ = 0.0;
+                livePerturbedBrightness.controlShaperMixNoise_ = 0.0;
+                heldCapturedBrightness.controlShaperMixNoise_ = 0.0;
+                heldFollowingBrightness.controlShaperMixNoise_ = 0.0;
+            }
+            if (tick == GhostarEngine::externalInputLatencyInternalSamples())
+            {
+                const auto stateDifference = [](const GhostarEngine& a,
+                                                const GhostarEngine& b) {
+                    return std::max(
+                        std::abs(a.lastShaperPathSample_
+                                 - b.lastShaperPathSample_),
+                        std::abs(a.brightnessCompanion_
+                                 - b.brightnessCompanion_));
+                };
+                brightnessTickZeroAlignmentDifference = stateDifference(
+                    scheduledBrightness, heldCapturedBrightness);
+                brightnessTickZeroSelectionDifference = stateDifference(
+                    heldFollowingBrightness, heldCapturedBrightness);
+                brightnessStateDifference = stateDifference(
+                    livePerturbedBrightness, scheduledBrightness);
+                brightnessCompanionMagnitude =
+                    std::abs(heldCapturedBrightness.brightnessCompanion_);
+                livePerturbedBrightness.controlBrightnessResistanceOhms_ =
+                    followingBrightnessOhms;
+            }
+            if (tick
+                == GhostarEngine::externalInputLatencyInternalSamples() + 1)
+            {
+                brightnessTickOneSelectionDifference = std::max(
+                    std::abs(scheduledBrightness.lastShaperPathSample_
+                             - heldCapturedBrightness.lastShaperPathSample_),
+                    std::abs(scheduledBrightness.brightnessCompanion_
+                             - heldCapturedBrightness.brightnessCompanion_));
+                brightnessStateDifference = std::max(
+                    brightnessStateDifference,
+                    std::max(
+                        std::abs(livePerturbedBrightness.lastShaperPathSample_
+                                 - scheduledBrightness.lastShaperPathSample_),
+                        std::abs(livePerturbedBrightness.brightnessCompanion_
+                                 - scheduledBrightness.brightnessCompanion_)));
+            }
+        }
+
+        return { oracleError, sum, firstMoment / sum, symmetryError,
+                 passbandMagnitude, firstImageMagnitude,
+                 secondImageMagnitude, dcError, firstDelayedFrameTick,
+                 std::abs(switchedJackSample - heldJackSample),
+                 std::abs(normalledJackSample - heldJackSample),
+                 brightnessTickZeroAlignmentDifference,
+                 brightnessTickZeroSelectionDifference,
+                 brightnessTickOneSelectionDifference,
+                 brightnessStateDifference,
+                 brightnessCompanionMagnitude };
+    }
+
+    static ExternalAudioMixerProbeResult externalAudioMixerProbe(
+        bool jackInserted, double externalAudio, double normalledPink) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        engine.cem3360OutputNoiseScale_ = 0.0;
+
+        GhostarEngine::PreMixerFrame frame;
+        frame.pinkNoise = normalledPink;
+        frame.upperCutoffHz = 4000.0;
+        frame.lowerCutoffHz = 4000.0;
+        frame.upperK = 1.0;
+        frame.upperInputGain = 2.0;
+        frame.lowerK = 1.0;
+        frame.loudnessGain = 1.0;
+        frame.shaperVcaGain = 1.0;
+        frame.brightnessResistanceOhms = 0.0;
+        frame.filterMixNoise = 1.0;
+        frame.shaperMixNoise = 1.0;
+        frame.masterVolume = 1.0f;
+        frame.lowerMode = LowerFilterMode::Out;
+        frame.slope = UpperSlope::TwelveDb;
+        frame.splitPaths = true;
+        frame.externalAudioJackInserted = jackInserted;
+        engine.preMixerDelay_[0] = frame;
+
+        double filterEnergy = 0.0;
+        double shaperEnergy = 0.0;
+        double filterSum = 0.0;
+        double shaperSum = 0.0;
+        for (int tick = 0; tick < 64; ++tick)
+        {
+            engine.renderVoiceSample(externalAudio);
+            filterEnergy += engine.lastFilterPathSample_
+                          * engine.lastFilterPathSample_;
+            shaperEnergy += engine.lastShaperPathSample_
+                          * engine.lastShaperPathSample_;
+            filterSum += engine.lastFilterPathSample_;
+            shaperSum += engine.lastShaperPathSample_;
+        }
+        return { filterEnergy, shaperEnergy, filterSum, shaperSum };
+    }
+
+    static ExternalAudioProcessProbeResult
+    externalAudioProcessImpulse() noexcept
+    {
+        constexpr int warmupSamples = 256;
+        constexpr int responseSamples = 512;
+        using Response = std::array<float, responseSamples>;
+
+        const auto render = [](float polarity) {
+            GhostarEngine engine;
+            engine.prepare(48000.0, responseSamples);
+            EngineParameters parameters;
+            parameters.masterVolume = 1.0f;
+            parameters.brightness = 1.0f;
+            parameters.splitPaths = true;
+            parameters.filterPathA = 0.0f;
+            parameters.filterPathB = 0.0f;
+            parameters.filterPathNoise = 0.0f;
+            parameters.shaperPathA = 0.0f;
+            parameters.shaperPathB = 0.0f;
+            parameters.shaperPathRing = 0.0f;
+            parameters.shaperPathNoise = 1.0f;
+            parameters.shaperMode = ShaperMode::KbdHold;
+            parameters.gateKbd = true;
+            engine.parameters_ = parameters;
+            engine.targetParameters_ = parameters;
+            engine.keyGate_ = true;
+            engine.shaperLevel_ = 1.0;
+            engine.shaperRising_ = false;
+            engine.externalAudioJackInserted_ = true;
+            engine.cem3360OutputNoiseScale_ = 0.0;
+            // Open C18 for this timing probe so the Shaper lane between the
+            // two halfband cascades is a memoryless, positive scalar.
+            engine.brightnessG_ = 0.0;
+
+            std::array<float, warmupSamples> silence {};
+            std::array<float, warmupSamples> warmLeft {};
+            std::array<float, warmupSamples> warmRight {};
+            engine.process(silence.data(), warmLeft.data(), warmRight.data(),
+                           warmupSamples);
+
+            Response input {};
+            Response left {};
+            Response right {};
+            input[0] = polarity;
+            engine.process(input.data(), left.data(), right.data(),
+                           responseSamples);
+            return right;
+        };
+
+        const auto positive = render(1.0f);
+        const auto negative = render(-1.0f);
+        double sum = 0.0;
+        double moment = 0.0;
+        double polarityError = 0.0;
+        for (std::size_t sample = 0; sample < positive.size(); ++sample)
+        {
+            const double value = static_cast<double>(positive[sample]);
+            sum += value;
+            moment += static_cast<double>(sample) * value;
+            polarityError = std::max(
+                polarityError,
+                std::abs(value + static_cast<double>(negative[sample])));
+        }
+        return { sum, moment / sum, polarityError };
+    }
+
+    static double externalAudioHistoryMagnitude(float input) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 1);
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process(&input, &left, &right, 1);
+
+        double magnitude = 0.0;
+        for (const double sample : engine.externalStageBRing_)
+            magnitude = std::max(magnitude, std::abs(sample));
+        for (const double sample : engine.externalStageARing_)
+            magnitude = std::max(magnitude, std::abs(sample));
+        return magnitude;
+    }
+
+    static ExternalAudioResetProbeResult externalAudioResetHistory() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 1);
+        float input = 1.0f;
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process(&input, &left, &right, 1);
+
+        const auto magnitude = [](const auto& ring) {
+            double result = 0.0;
+            for (const double sample : ring)
+                result = std::max(result, std::abs(sample));
+            return result;
+        };
+        const double stageBBefore = magnitude(engine.externalStageBRing_);
+        const double stageABefore = magnitude(engine.externalStageARing_);
+        engine.reset();
+        return { stageBBefore, stageABefore,
+                 magnitude(engine.externalStageBRing_),
+                 magnitude(engine.externalStageARing_) };
+    }
+
+    static ExternalAudioRedNoiseProbeResult
+    externalAudioKeepsRedNoiseUpstream() noexcept
+    {
+        GhostarEngine normalled;
+        GhostarEngine inserted;
+        normalled.prepare(48000.0, 64);
+        inserted.prepare(48000.0, 64);
+
+        EngineParameters parameters;
+        parameters.masterVolume = 0.0f;
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathB = 0.0f;
+        parameters.filterPathNoise = 0.0f;
+        parameters.modSource = ModSource::RedNoise;
+        parameters.modXTo = ModXDestination::FilterUL;
+        normalled.parameters_ = parameters;
+        normalled.targetParameters_ = parameters;
+        inserted.parameters_ = parameters;
+        inserted.targetParameters_ = parameters;
+        normalled.modWheel_ = normalled.targetModWheel_ = 1.0f;
+        inserted.modWheel_ = inserted.targetModWheel_ = 1.0f;
+        normalled.setExternalAudioInput(false);
+        inserted.setExternalAudioInput(true);
+
+        double minimumCutoff = std::numeric_limits<double>::infinity();
+        double maximumCutoff = 0.0;
+        double jackCutoffDifference = 0.0;
+        double jackRedNoiseDifference = 0.0;
+        for (int tick = 0; tick < 4096; ++tick)
+        {
+            normalled.advanceControls();
+            inserted.advanceControls();
+            normalled.renderVoiceSample(0.0);
+            inserted.renderVoiceSample(0.0);
+            const auto normalledFrameIndex =
+                (static_cast<std::size_t>(normalled.preMixerDelayIndex_)
+                 + normalled.preMixerDelay_.size() - 1u)
+                % normalled.preMixerDelay_.size();
+            const auto insertedFrameIndex =
+                (static_cast<std::size_t>(inserted.preMixerDelayIndex_)
+                 + inserted.preMixerDelay_.size() - 1u)
+                % inserted.preMixerDelay_.size();
+            const auto& normalledFrame =
+                normalled.preMixerDelay_[normalledFrameIndex];
+            const auto& insertedFrame =
+                inserted.preMixerDelay_[insertedFrameIndex];
+            const double normalledCutoff = normalledFrame.upperCutoffHz
+                * std::exp2(normalledFrame.audioModUpper);
+            const double insertedCutoff = insertedFrame.upperCutoffHz
+                * std::exp2(insertedFrame.audioModUpper);
+            minimumCutoff = std::min(minimumCutoff,
+                                     insertedCutoff);
+            maximumCutoff = std::max(maximumCutoff, insertedCutoff);
+            jackCutoffDifference = std::max(
+                jackCutoffDifference,
+                std::abs(normalledCutoff - insertedCutoff));
+            jackRedNoiseDifference = std::max(
+                jackRedNoiseDifference,
+                std::abs(normalled.noise_.red() - inserted.noise_.red()));
+        }
+        return { maximumCutoff - minimumCutoff, jackCutoffDifference,
+                 jackRedNoiseDifference };
     }
 
     static int multipleKeyResetSamplesWithKbdDeselected() noexcept
@@ -921,7 +2415,8 @@ struct GhostarCircuitTestAccess
         engine.envelopeGate_ = true;
         engine.previousEnvelopeGs_ = true;
         engine.previousEnvelopeXGate_ = true;
-        engine.lfoPhase_ = 0.1;
+        engine.lfoCapLevel_ = -0.6;
+        engine.lfoRising_ = true;
         engine.lfoSquareHigh_ = true;
         engine.previousLfoSquareHigh_ = true;
         engine.pendingTrigger_ = true;
@@ -956,7 +2451,8 @@ struct GhostarCircuitTestAccess
 
         engine.previousEnvelopeGs_ = true;
         engine.previousEnvelopeXGate_ = false;
-        engine.lfoPhase_ = 0.0;
+        engine.lfoCapLevel_ = -1.0;
+        engine.lfoRising_ = true;
         engine.lfoSquareHigh_ = false;
         engine.previousLfoSquareHigh_ = false;
         engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
@@ -1985,6 +3481,42 @@ void testKeyboardLaw()
           "one octave doubles the sounding frequency");
 }
 
+// P1013's 100k linear TUNE pot sees R19=1.8M into IC6's virtual earth.
+// Physical noon remains the model's zero, so loading bends the travel and
+// creates a small endpoint skew without changing the six-semitone total span.
+void testMasterTuneFollowsItsLoadedPot()
+{
+    using ghostar::GhostarCircuitTestAccess;
+
+    const auto expectedOctaves = [](double travel) {
+        const double loaded = travel * 1800.0
+            / (1800.0 + 100.0 * travel * (1.0 - travel));
+        return (loaded - 36.0 / 73.0) * (6.0 / 12.0);
+    };
+    for (const double travel : { 0.0, 0.25, 0.5, 0.75, 1.0 })
+    {
+        const double actual =
+            GhostarCircuitTestAccess::oscillatorATuneOctaves(
+                static_cast<float>(travel));
+        check(std::abs(actual - expectedOctaves(travel)) < 1.0e-12,
+              "MASTER TUNE follows P1's loaded linear-pot law");
+    }
+
+    const double low =
+        GhostarCircuitTestAccess::oscillatorATuneOctaves(0.0f);
+    const double centre =
+        GhostarCircuitTestAccess::oscillatorATuneOctaves(0.5f);
+    const double high =
+        GhostarCircuitTestAccess::oscillatorATuneOctaves(1.0f);
+    check(std::abs(centre) < 1.0e-15,
+          "MASTER TUNE preserves zero at physical noon");
+    check(std::abs((high - low) * 12.0 - 6.0) < 1.0e-12,
+          "MASTER TUNE retains its nominal six-semitone end-to-end span");
+    check(std::abs(low * 12.0 + 216.0 / 73.0) < 1.0e-12
+              && std::abs(high * 12.0 - 222.0 / 73.0) < 1.0e-12,
+          "MASTER TUNE exposes the loaded pot's nominal endpoint skew");
+}
+
 // The 108.3% amount is component-derived. P1016 also closes the absolute
 // pivot: six key bits feed DAC0800 B1..B6 while B7/B8 are grounded, so each
 // semitone advances four DAC counts. The pin-4 sink cancels +12A/R39 at
@@ -2010,6 +3542,521 @@ void testKeyboardTrackingAmount()
           "tracking zero follows P1016's signed DAC/reference cancellation");
     check(secondC < untracked,
           "the second C sits just below the nominal cancellation pitch");
+}
+
+// P1017 switches source-side D before P1016's loaded N input and IC16B's
+// inverted P output. The jack replaces pitch only: keyboard gate/trigger and
+// arpeggiator state remain on their own paths.
+void testExternalPitchSwitchAndCircuitTransfer()
+{
+    using ghostar::GhostarCircuitTestAccess;
+
+    constexpr double sourceOhms = 15.0e3;
+    constexpr double inputOhms = 95.3e3;
+    constexpr double feedbackOhms = 100.0e3;
+    for (const double source : { -1.1, 0.0, 1.1 })
+    {
+        const auto nodes = GhostarCircuitTestAccess::externalPitchNodes(source);
+        const double expectedN = source * inputOhms
+                               / (sourceOhms + inputOhms);
+        const double expectedP = -expectedN * feedbackOhms / inputOhms;
+        check(std::abs(nodes[0] - expectedN) < 1.0e-15
+                  && std::abs(nodes[1] - expectedP) < 1.0e-15,
+              "EXTERNAL PITCH independently follows the D/N/P resistor transfer");
+    }
+
+    constexpr double pivot = 48.0 + 64.0 * 4.99 / 26.6;
+    const auto unplugged = GhostarCircuitTestAccess::externalPitchAt(
+        1.1, false, 72);
+    const auto zero = GhostarCircuitTestAccess::externalPitchAt(0.0, true, 72);
+    const auto positive = GhostarCircuitTestAccess::externalPitchAt(
+        1.1, true, 72);
+    const auto negative = GhostarCircuitTestAccess::externalPitchAt(
+        -1.1, true, 72);
+    const auto noKey = GhostarCircuitTestAccess::externalPitchAt(
+        0.0, true, -1);
+
+    check(unplugged.glidedNote == 72.0,
+          "an unplugged EXTERNAL PITCH jack keeps the keyboard target");
+    check(std::abs(zero.glidedNote - pivot) < 1.0e-12
+              && std::abs(positive.glidedNote - (pivot + 12.0)) < 1.0e-12
+              && std::abs(negative.glidedNote - (pivot - 12.0)) < 1.0e-12,
+          "inserted zero and +/-1.1 V map about P1016's cancellation pitch");
+    check(zero.jackInserted && zero.storedSourceVolts == 0.0
+              && zero.glidedNote != unplugged.glidedNote,
+          "a plugged zero-volt cable is distinct from the normalled jack");
+    check(unplugged.keyboardGate && zero.keyboardGate
+              && unplugged.envelopeGate && zero.envelopeGate
+              && !noKey.keyboardGate && !noKey.envelopeGate
+              && std::abs(noKey.glidedNote - pivot) < 1.0e-12,
+          "EXTERNAL PITCH replaces pitch without supplying a keyboard gate");
+    check(GhostarCircuitTestAccess::externalPitchSetterPreservesKeyboardState(),
+          "EXTERNAL PITCH changes neither key memory nor pending trigger paths");
+
+    const auto arp =
+        GhostarCircuitTestAccess::externalPitchArpeggiatorTargets();
+    check(arp[0] == 84.0 && std::abs(arp[1] - pivot) < 1.0e-12,
+          "an inserted EXTERNAL PITCH jack replaces the arpeggiator KCV target");
+}
+
+// P1013 distributes the post-Glide KCV to both ordinary oscillator ranges and
+// KB AMOUNT. BASS/WIDE disconnect only Osc B, while FORMANT disconnects only
+// the Lower filter.
+void testExternalPitchReachesOnlyItsPhysicalKcvDestinations()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::OscBRange;
+    using ghostar::TrackingMode;
+
+    for (const auto range : { OscBRange::MinusOne, OscBRange::Unison,
+                              OscBRange::PlusOne, OscBRange::PlusTwo })
+    {
+        const auto zero = GhostarCircuitTestAccess::externalPitchAt(
+            0.0, true, 72, TrackingMode::Dynamic, 1.0f, range);
+        const auto octave = GhostarCircuitTestAccess::externalPitchAt(
+            1.1, true, 72, TrackingMode::Dynamic, 1.0f, range);
+        check(std::abs(octave.oscillatorAOctaves
+                       - zero.oscillatorAOctaves - 1.0) < 1.0e-12
+                  && std::abs(octave.oscillatorBOctaves
+                              - zero.oscillatorBOctaves - 1.0) < 1.0e-12,
+              "EXTERNAL PITCH raises both oscillators in an octave range");
+    }
+
+    const auto downstreamZero = GhostarCircuitTestAccess::externalPitchAt(
+        0.0, true, 72, TrackingMode::Dynamic, 1.0f,
+        OscBRange::Unison, ghostar::MasterOctave::Eight, 0.0f);
+    const auto downstreamShift = GhostarCircuitTestAccess::externalPitchAt(
+        0.0, true, 72, TrackingMode::Dynamic, 1.0f,
+        OscBRange::Unison, ghostar::MasterOctave::Four, 1.0f);
+    constexpr double downstreamOctaves = 1.0 + 8.0 / 12.0;
+    check(std::abs(downstreamShift.oscillatorAOctaves
+                   - downstreamZero.oscillatorAOctaves
+                   - downstreamOctaves) < 1.0e-12
+              && std::abs(downstreamShift.oscillatorBOctaves
+                          - downstreamZero.oscillatorBOctaves
+                          - downstreamOctaves) < 1.0e-12
+              && downstreamShift.upperCutoffHz
+                     == downstreamZero.upperCutoffHz
+              && downstreamShift.lowerCutoffHz
+                     == downstreamZero.lowerCutoffHz,
+          "OCTAVE and BEND stay downstream of KCV and filter tracking");
+
+    const auto dynamicMinus = GhostarCircuitTestAccess::externalPitchAt(
+        -1.1, true, 72, TrackingMode::Dynamic);
+    const auto dynamicZero = GhostarCircuitTestAccess::externalPitchAt(
+        0.0, true, 72, TrackingMode::Dynamic);
+    const auto dynamicPlus = GhostarCircuitTestAccess::externalPitchAt(
+        1.1, true, 72, TrackingMode::Dynamic);
+    const double trackingOctave = std::exp2(1.083);
+    check(std::abs(dynamicPlus.upperCutoffHz / dynamicZero.upperCutoffHz
+                   - trackingOctave) < 1.0e-12
+              && std::abs(dynamicZero.upperCutoffHz / dynamicMinus.upperCutoffHz
+                          - trackingOctave) < 1.0e-12,
+          "EXTERNAL PITCH drives Upper-filter keyboard tracking in both directions");
+    check(std::abs(dynamicPlus.lowerCutoffHz / dynamicZero.lowerCutoffHz
+                   - trackingOctave) < 1.0e-12
+              && std::abs(dynamicZero.lowerCutoffHz / dynamicMinus.lowerCutoffHz
+                          - trackingOctave) < 1.0e-12,
+          "EXTERNAL PITCH drives Lower-filter KCV only in DYNAMIC");
+
+    const auto formantZero = GhostarCircuitTestAccess::externalPitchAt(
+        0.0, true, 72, TrackingMode::Formant);
+    const auto formantPlus = GhostarCircuitTestAccess::externalPitchAt(
+        1.1, true, 72, TrackingMode::Formant);
+    check(std::abs(formantPlus.upperCutoffHz / formantZero.upperCutoffHz
+                   - trackingOctave) < 1.0e-12
+              && formantPlus.lowerCutoffHz == formantZero.lowerCutoffHz,
+          "FORMANT freezes Lower KCV while Upper tracking stays connected");
+
+    for (const auto range : { OscBRange::Bass, OscBRange::Wide })
+    {
+        const auto zero = GhostarCircuitTestAccess::externalPitchAt(
+            0.0, true, 72, TrackingMode::Dynamic, 1.0f, range);
+        const auto octave = GhostarCircuitTestAccess::externalPitchAt(
+            1.1, true, 72, TrackingMode::Dynamic, 1.0f, range);
+        check(std::abs(octave.oscillatorAOctaves
+                       - zero.oscillatorAOctaves - 1.0) < 1.0e-12
+                  && octave.oscillatorBDroneHz == zero.oscillatorBDroneHz,
+              "BASS/WIDE disconnect Osc B but not Osc A from EXTERNAL PITCH");
+    }
+}
+
+// P1017 C1 follows the selected source through R41||R42 (keyboard) or
+// R1||R42 (external). P1/C6 then follows that voltage. AUTO's separate key
+// detector enables only the Glide RC; key, jack and reset events discharge
+// neither capacitor.
+void testExternalPitchUsesThePhysicalGlideModes()
+{
+    const auto result =
+        ghostar::GhostarCircuitTestAccess::externalPitchGlideModes();
+    constexpr double pivot = 48.0 + 64.0 * 4.99 / 26.6;
+    constexpr double sourceOhms = 15.0e3;
+    constexpr double keyboardSourceOhms = 2.2e3;
+    constexpr double inputOhms = 95.3e3;
+    constexpr double inputFarads = 100.0e-9;
+    constexpr double inputTau = sourceOhms * inputOhms
+        / (sourceOhms + inputOhms) * inputFarads;
+    const double inputCoefficient =
+        1.0 - std::exp(-1.0 / (inputTau * 48000.0));
+    constexpr double keyboardInputTau = keyboardSourceOhms * inputOhms
+        / (keyboardSourceOhms + inputOhms) * inputFarads;
+    const double keyboardInputCoefficient =
+        1.0 - std::exp(-1.0 / (keyboardInputTau * 48000.0));
+    const double glideCoefficient =
+        1.0 - std::exp(-1.0 / (0.94 * 48000.0));
+    const double inputFilteredOctave = pivot + inputCoefficient * 12.0;
+    const double twiceFilteredOctave =
+        pivot + glideCoefficient * inputCoefficient * 12.0;
+
+    check(std::abs(result.offStep - inputFilteredOctave) < 1.0e-12,
+          "OFF bypasses Glide but retains the 1.296 ms EXTERNAL PITCH input pole");
+    check(std::abs(result.onStep - twiceFilteredOctave) < 1.0e-12,
+          "ON cascades the input pole with the 2M-by-470n Glide RC");
+    const double nodeAfterTwoSteps = inputCoefficient
+        + inputCoefficient * (2.0 - inputCoefficient);
+    check(std::abs(result.autoOneKeyStep - inputFilteredOctave) < 1.0e-12
+              && std::abs(result.autoTwoKeyStep - twiceFilteredOctave) < 1.0e-12
+              && std::abs(result.autoAfterDroppingToOneKey
+                          - (pivot + 12.0 * nodeAfterTwoSteps)) < 1.0e-12,
+          "AUTO Glide follows only the independent held-key detector");
+    check(std::abs(result.internalNoteStep
+                   - (60.0 + 12.0 * keyboardInputCoefficient)) < 1.0e-12,
+          "a live normalled keyboard step retains C1 through R41||R42");
+
+    const double insertedNode =
+        48.0 + inputCoefficient * (pivot - 48.0);
+    const double inserted =
+        48.0 + glideCoefficient * (insertedNode - 48.0);
+    const double removedNode = insertedNode
+        + keyboardInputCoefficient * (48.0 - insertedNode);
+    const double removed = inserted
+        + glideCoefficient * (removedNode - inserted);
+    check(result.beforeInsertion == 48.0
+              && std::abs(result.afterInsertion - inserted) < 1.0e-12
+              && std::abs(result.afterRemoval - removed) < 1.0e-12,
+          "jack changes preserve C1 and Glide continuity");
+    const double nodeAfterReset = inputCoefficient
+        + inputCoefficient * (1.0 - inputCoefficient);
+    const double expectedBeforeReset =
+        pivot + 12.0 * glideCoefficient * inputCoefficient;
+    const double expectedAfterResetTick = expectedBeforeReset
+        + glideCoefficient
+            * (pivot + 12.0 * nodeAfterReset - expectedBeforeReset);
+    check(std::abs(result.beforeReset - expectedBeforeReset) < 1.0e-12
+              && result.afterReset == result.beforeReset
+              && std::abs(result.afterResetTick - expectedAfterResetTick)
+                     < 1.0e-12,
+          "reset preserves both P1017 C1 and the audible C6 Glide charge");
+}
+
+// OSC B PEDAL is a 0..100k shunt on P1013's +12 V/R192/C47 node. Rebuild
+// the conductance equation here instead of sharing an engine helper: the
+// nominal 25k trim midpoint is the only assumption in the 383k pitch arm.
+void testOscBPedalMatchesItsDcAndRcNetwork()
+{
+    using ghostar::GhostarCircuitTestAccess;
+
+    constexpr double pullupVolts = 12.0;
+    constexpr double pullupOhms = 33.0e3;
+    constexpr double pitchArmOhms = 383.0e3 + 0.5 * 25.0e3;
+    constexpr double capacitance = 100.0e-9;
+    const auto equilibrium = [=](double resistanceKOhm) {
+        if (resistanceKOhm == 0.0)
+            return 0.0;
+        const double conductance = 1.0 / pullupOhms
+            + 1.0 / pitchArmOhms
+            + 1.0 / (resistanceKOhm * 1000.0);
+        return (pullupVolts / pullupOhms) / conductance;
+    };
+    const double openConductance = 1.0 / pullupOhms
+                                 + 1.0 / pitchArmOhms;
+    const double openVolts = (pullupVolts / pullupOhms) / openConductance;
+
+    for (const double resistance : { 0.0, 50.0, 100.0 })
+    {
+        const auto result = GhostarCircuitTestAccess::oscBPedalAt(
+            true, resistance);
+        check(std::abs(result.oscBNodeVolts - equilibrium(resistance))
+                  < 1.0e-12,
+              "OSC B PEDAL DC follows R192, C47 and the P1014 pitch arm");
+    }
+
+    const auto openAtZero = GhostarCircuitTestAccess::oscBPedalAt(
+        false, 0.0);
+    const auto openAtFull = GhostarCircuitTestAccess::oscBPedalAt(
+        false, 100.0);
+    check(openAtZero.oscBNodeVolts == openVolts
+              && openAtFull.oscBNodeVolts == openVolts
+              && openAtZero.oscillatorBOctaves
+                     == openAtFull.oscillatorBOctaves,
+          "an absent OSC B pedal is infinite resistance at every stored value");
+    check(openAtFull.oscillatorAOctaves == 0.0
+              && openAtFull.oscillatorBOctaves == 0.0,
+          "the unplugged OSC B pedal equilibrium is tuning-neutral");
+
+    const auto nan = GhostarCircuitTestAccess::oscBPedalAt(
+        true, std::numeric_limits<double>::quiet_NaN());
+    const auto infinity = GhostarCircuitTestAccess::oscBPedalAt(
+        true, std::numeric_limits<double>::infinity());
+    const auto below = GhostarCircuitTestAccess::oscBPedalAt(true, -1.0);
+    const auto above = GhostarCircuitTestAccess::oscBPedalAt(true, 101.0);
+    check(nan.oscBResistanceKOhm == 100.0
+              && infinity.oscBResistanceKOhm == 100.0
+              && below.oscBResistanceKOhm == 0.0
+              && above.oscBResistanceKOhm == 100.0,
+          "OSC B PEDAL sanitises non-finite resistance and clamps its travel");
+
+    const auto retained = GhostarCircuitTestAccess::rearPedalRetention();
+    const double closedConductance = openConductance + 1.0 / 100.0e3;
+    const double closedVolts = (pullupVolts / pullupOhms)
+                             / closedConductance;
+    const double coefficient = -std::expm1(
+        -closedConductance / (48000.0 * capacitance));
+    const double first = openVolts
+                       + coefficient * (closedVolts - openVolts);
+    const double second = first
+                        + coefficient * (closedVolts - first);
+    check(std::abs(retained.oscBNodes[0] - openVolts) < 1.0e-12
+              && std::abs(retained.oscBNodes[1] - first) < 1.0e-12
+              && retained.oscBNodes[2] == retained.oscBNodes[1]
+              && std::abs(retained.oscBNodes[3] - second) < 1.0e-12
+              && retained.oscBNodes[4] == retained.oscBNodes[3],
+          "C47 follows its exact RC and retains charge through reset and stop");
+    check(retained.oscBNodes[5] == 0.0,
+          "a zero-ohm OSC B pedal grounds C47 in one exact limiting step");
+}
+
+// The pedal arm terminates only at Osc B's CEM3340 pitch sum. It therefore
+// leaves Osc A and both filters alone, but remains active when BASS/WIDE
+// disconnect B from the keyboard bus.
+void testOscBPedalReachesOnlyOscBInEveryRange()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::OscBRange;
+
+    constexpr double pullupOhms = 33.0e3;
+    constexpr double pitchArmOhms = 383.0e3 + 0.5 * 25.0e3;
+    constexpr double sourceCurrent = 12.0 / pullupOhms;
+    const auto node = [=](bool connected) {
+        const double conductance = 1.0 / pullupOhms
+            + 1.0 / pitchArmOhms
+            + (connected ? 1.0 / 100.0e3 : 0.0);
+        return sourceCurrent / conductance;
+    };
+    const double expectedOctaves = (node(true) - node(false))
+                                 * 100.0e3 / pitchArmOhms;
+
+    const auto open = GhostarCircuitTestAccess::oscBPedalAt(false, 100.0);
+    const auto pressed = GhostarCircuitTestAccess::oscBPedalAt(true, 100.0);
+    check(std::abs(pressed.oscillatorBOctaves
+                   - open.oscillatorBOctaves - expectedOctaves) < 1.0e-12,
+          "OSC B PEDAL adds its resistor-derived delta to Osc B pitch");
+    check(pressed.oscillatorAOctaves == open.oscillatorAOctaves
+              && pressed.upperCutoffHz == open.upperCutoffHz
+              && pressed.lowerCutoffHz == open.lowerCutoffHz,
+          "OSC B PEDAL reaches neither Osc A nor either filter");
+
+    for (const OscBRange range : { OscBRange::Bass, OscBRange::Wide })
+    {
+        const auto droneOpen = GhostarCircuitTestAccess::oscBPedalAt(
+            false, 100.0, range);
+        const auto dronePressed = GhostarCircuitTestAccess::oscBPedalAt(
+            true, 100.0, range);
+        check(std::abs(std::log2(dronePressed.oscillatorBDroneHz
+                                 / droneOpen.oscillatorBDroneHz)
+                       - expectedOctaves) < 1.0e-12,
+              "OSC B PEDAL remains connected in BASS and WIDE");
+    }
+}
+
+// The service scan's J8/3/J8/4 crossing is ambiguous, so this pins the
+// functional reduction chosen from the official passive-pedal contract:
+// +12 V/R191/C48, P1017's 10k shunt, and one or two 100k virtual-earth arms.
+void testFilterPedalMatchesItsDcAndRcNetwork()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::TrackingMode;
+
+    constexpr double pullupVolts = 12.0;
+    constexpr double pullupOhms = 33.0e3;
+    constexpr double shuntOhms = 10.0e3;
+    constexpr double inputOhms = 100.0e3;
+    constexpr double capacitance = 100.0e-9;
+    const auto equilibrium = [=](double resistanceKOhm, double arms) {
+        if (resistanceKOhm == 0.0)
+            return 0.0;
+        const double conductance = 1.0 / pullupOhms + 1.0 / shuntOhms
+            + arms / inputOhms + 1.0 / (resistanceKOhm * 1000.0);
+        return (pullupVolts / pullupOhms) / conductance;
+    };
+    const auto openEquilibrium = [=](double arms) {
+        const double conductance = 1.0 / pullupOhms + 1.0 / shuntOhms
+                                 + arms / inputOhms;
+        return (pullupVolts / pullupOhms) / conductance;
+    };
+
+    for (const auto [tracking, arms] : {
+             std::pair { TrackingMode::Formant, 1.0 },
+             std::pair { TrackingMode::Dynamic, 2.0 } })
+    {
+        for (const double resistance : { 0.0, 50.0, 100.0 })
+        {
+            const auto result = GhostarCircuitTestAccess::filterPedalAt(
+                true, resistance, tracking);
+            check(std::abs(result.nodeVolts
+                           - equilibrium(resistance, arms)) < 1.0e-12,
+                  "FILTER PEDAL DC follows its mode-selected conductance");
+        }
+    }
+
+    const auto openAtZero = GhostarCircuitTestAccess::filterPedalAt(
+        false, 0.0);
+    const auto openAtFull = GhostarCircuitTestAccess::filterPedalAt(
+        false, 100.0);
+    check(openAtZero.nodeVolts == openEquilibrium(2.0)
+              && openAtFull.nodeVolts == openEquilibrium(2.0)
+              && openAtZero.upperCutoffHz == openAtFull.upperCutoffHz
+              && openAtZero.lowerCutoffHz == openAtFull.lowerCutoffHz,
+          "an absent FILTER pedal is infinite resistance and cutoff-neutral");
+
+    const auto nan = GhostarCircuitTestAccess::filterPedalAt(
+        true, std::numeric_limits<double>::quiet_NaN());
+    const auto infinity = GhostarCircuitTestAccess::filterPedalAt(
+        true, std::numeric_limits<double>::infinity());
+    const auto below = GhostarCircuitTestAccess::filterPedalAt(true, -1.0);
+    const auto above = GhostarCircuitTestAccess::filterPedalAt(true, 101.0);
+    check(nan.resistanceKOhm == 100.0
+              && infinity.resistanceKOhm == 100.0
+              && below.resistanceKOhm == 0.0
+              && above.resistanceKOhm == 100.0,
+          "FILTER PEDAL sanitises non-finite resistance and clamps its travel");
+
+    const auto retained = GhostarCircuitTestAccess::rearPedalRetention();
+    const double openConductance = 1.0 / pullupOhms + 1.0 / shuntOhms
+                                 + 2.0 / inputOhms;
+    const double closedConductance = openConductance + 1.0 / 100.0e3;
+    const double openVolts = (pullupVolts / pullupOhms) / openConductance;
+    const double closedVolts = (pullupVolts / pullupOhms)
+                             / closedConductance;
+    const double coefficient = -std::expm1(
+        -closedConductance / (48000.0 * capacitance));
+    const double first = openVolts
+                       + coefficient * (closedVolts - openVolts);
+    const double second = first
+                        + coefficient * (closedVolts - first);
+    check(std::abs(retained.filterNodes[0] - openVolts) < 1.0e-12
+              && std::abs(retained.filterNodes[1] - first) < 1.0e-12
+              && retained.filterNodes[2] == retained.filterNodes[1]
+              && std::abs(retained.filterNodes[3] - second) < 1.0e-12
+              && retained.filterNodes[4] == retained.filterNodes[3],
+          "C48 follows its exact RC and retains charge through reset and stop");
+    check(retained.filterNodes[5] == 0.0,
+          "a zero-ohm FILTER pedal grounds C48 in one exact limiting step");
+}
+
+// SW5 sends FILTER PEDAL to Upper in both positions and adds Lower only in
+// DYNAMIC. The octave scale is the filter/oscillator CV-sensitivity ratio.
+void testFilterPedalFollowsTheTrackingSwitch()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::TrackingMode;
+
+    constexpr double pullupOhms = 33.0e3;
+    constexpr double shuntOhms = 10.0e3;
+    constexpr double inputOhms = 100.0e3;
+    constexpr double sourceCurrent = 12.0 / pullupOhms;
+    for (const auto [tracking, arms] : {
+             std::pair { TrackingMode::Formant, 1.0 },
+             std::pair { TrackingMode::Dynamic, 2.0 } })
+    {
+        const auto node = [=](bool connected) {
+            const double conductance = 1.0 / pullupOhms
+                + 1.0 / shuntOhms + arms / inputOhms
+                + (connected ? 1.0 / 100.0e3 : 0.0);
+            return sourceCurrent / conductance;
+        };
+        const double expectedOctaves = (node(true) - node(false))
+                                     * (21.2 / 19.6);
+        const auto open = GhostarCircuitTestAccess::filterPedalAt(
+            false, 100.0, tracking);
+        const auto pressed = GhostarCircuitTestAccess::filterPedalAt(
+            true, 100.0, tracking);
+
+        check(std::abs(std::log2(pressed.upperCutoffHz / open.upperCutoffHz)
+                       - expectedOctaves) < 1.0e-12,
+              "FILTER PEDAL reaches Upper in FORMANT and DYNAMIC");
+        if (tracking == TrackingMode::Dynamic)
+            check(std::abs(std::log2(pressed.lowerCutoffHz
+                                     / open.lowerCutoffHz)
+                           - expectedOctaves) < 1.0e-12,
+                  "FILTER PEDAL reaches Lower in DYNAMIC");
+        else
+            check(pressed.lowerCutoffHz == open.lowerCutoffHz,
+                  "FORMANT disconnects Lower from FILTER PEDAL");
+        check(pressed.oscillatorAOctaves == open.oscillatorAOctaves
+                  && pressed.oscillatorBOctaves == open.oscillatorBOctaves,
+              "FILTER PEDAL reaches neither oscillator");
+    }
+}
+
+// C48 itself must retain charge when SW5 changes the number of Filter-pedal
+// arms. With no cable, that physical motion is also the open-jack baseline:
+// comparing against an instantaneous new equilibrium used to invent a
+// 0.1865-octave sweep. A real cable removal must still expose stored charge.
+void testFilterPedalOpenReferenceTracksModeWithoutErasingCharge()
+{
+    using ghostar::GhostarCircuitTestAccess;
+
+    constexpr double pullupVolts = 12.0;
+    constexpr double pullupOhms = 33.0e3;
+    constexpr double shuntOhms = 10.0e3;
+    constexpr double inputOhms = 100.0e3;
+    constexpr double capacitance = 100.0e-9;
+    const auto openVolts = [=](double arms) {
+        const double conductance = 1.0 / pullupOhms + 1.0 / shuntOhms
+                                 + arms / inputOhms;
+        return (pullupVolts / pullupOhms) / conductance;
+    };
+    const double priorImmediateArtifact =
+        (openVolts(2.0) - openVolts(1.0)) * (21.2 / 19.6);
+
+    const auto switched =
+        GhostarCircuitTestAccess::unpluggedFilterPedalModeSwitch();
+    check(std::abs(priorImmediateArtifact + 0.18651437443924834) < 1.0e-15,
+          "the regression oracle reconstructs the former Filter-pedal sweep");
+    check(switched.formantNodeDifference == 0.0
+              && switched.dynamicNodeDifference == 0.0
+              && switched.formantUpperCutoffDifference == 0.0
+              && switched.formantLowerCutoffDifference == 0.0
+              && switched.dynamicUpperCutoffDifference == 0.0
+              && switched.dynamicLowerCutoffDifference == 0.0,
+          "unplugged TRACKING changes remain bit-identical pedal-neutral");
+
+    const auto removal = GhostarCircuitTestAccess::filterPedalRemoval();
+    const double openConductance = 1.0 / pullupOhms + 1.0 / shuntOhms
+                                 + 2.0 / inputOhms;
+    const double closedConductance = openConductance + 1.0 / 100.0e3;
+    const double expectedOpen = (pullupVolts / pullupOhms)
+                              / openConductance;
+    const double expectedClosed = (pullupVolts / pullupOhms)
+                                / closedConductance;
+    const double openCoefficient = -std::expm1(
+        -openConductance / (48000.0 * capacitance));
+    const double expectedRemoved = expectedClosed
+        + openCoefficient * (expectedOpen - expectedClosed);
+    check(std::abs(removal.connectedNode - expectedClosed) < 1.0e-12
+              && removal.connectedOpenReference == expectedOpen
+              && std::abs(removal.removedNode - expectedRemoved) < 1.0e-12
+              && removal.removedOpenReference == expectedOpen
+              && removal.removedNode != removal.removedOpenReference,
+          "cable removal preserves C48's independently derived RC transient");
+    check(removal.resetNode == removal.removedNode
+              && removal.resetOpenReference
+                     == removal.removedOpenReference
+              && removal.stoppedNode == removal.removedNode
+              && removal.stoppedOpenReference
+                     == removal.removedOpenReference,
+          "reset and stop retain real and counterfactual C48 charge");
 }
 
 // P1013 loads both linear cutoff pots at their wipers. This independently
@@ -2098,24 +4145,108 @@ void testFilterCutoffsFollowTheLoadedP1013Pots()
           "FORMANT exposes its small MASTER-dependent coincidence drift");
 }
 
+// The owner's manual defines P1's full NORMAL/INVERT motion as a mirrored
+// five-octave sweep about CUTOFF. The schematic proves the unusual four-lug
+// topology, but does not publish its fixed-tap resistance or SW5's residual
+// FORMANT loading, so this oracle pins the sourced transfer and no more.
+void testFilterEnvelopeFollowsThePublishedFiveOctaveMirror()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::TrackingMode;
+
+    const auto octaves = [](double envelope, float amount,
+                            TrackingMode tracking, bool lower = false) {
+        const auto base = GhostarCircuitTestAccess::
+            filterCutoffsForFilterEnvelope(envelope, 0.5f, tracking);
+        const auto moved = GhostarCircuitTestAccess::
+            filterCutoffsForFilterEnvelope(envelope, amount, tracking);
+        const std::size_t index = lower ? 1 : 0;
+        return std::log2(moved[index] / base[index]);
+    };
+
+    check(std::abs(octaves(0.0, 1.0f, TrackingMode::Dynamic) + 2.5)
+                  < 1.0e-12
+              && std::abs(octaves(0.5, 1.0f, TrackingMode::Dynamic))
+                     < 1.0e-12
+              && std::abs(octaves(1.0, 1.0f, TrackingMode::Dynamic) - 2.5)
+                     < 1.0e-12,
+          "full NORMAL sweeps from 2.5 octaves below to 2.5 above CUTOFF");
+    check(std::abs(octaves(0.0, 0.0f, TrackingMode::Dynamic) - 2.5)
+                  < 1.0e-12
+              && std::abs(octaves(0.5, 0.0f, TrackingMode::Dynamic))
+                     < 1.0e-12
+              && std::abs(octaves(1.0, 0.0f, TrackingMode::Dynamic) + 2.5)
+                     < 1.0e-12,
+          "full INVERT mirrors the published NORMAL sweep");
+    check(std::abs(octaves(0.25, 0.75f, TrackingMode::Dynamic) + 0.625)
+                  < 1.0e-12
+              && std::abs(octaves(0.75, 0.75f, TrackingMode::Dynamic) - 0.625)
+                     < 1.0e-12,
+          "intermediate AMOUNT scales the mirrored envelope linearly");
+    check(std::abs(octaves(0.25, 0.75f, TrackingMode::Dynamic)
+                       - octaves(0.25, 0.75f, TrackingMode::Formant))
+              < 1.0e-12,
+          "no unsupported FORMANT loading curve is invented");
+    check(std::abs(octaves(0.0, 1.0f, TrackingMode::Dynamic, true) + 2.5)
+                  < 1.0e-12
+              && std::abs(octaves(1.0, 1.0f,
+                                  TrackingMode::Dynamic, true) - 2.5)
+                     < 1.0e-12,
+          "DYNAMIC sends the published envelope sweep to Lower too");
+    check(std::abs(octaves(0.0, 1.0f, TrackingMode::Formant, true))
+                  < 1.0e-12
+              && std::abs(octaves(1.0, 1.0f,
+                                  TrackingMode::Formant, true))
+                     < 1.0e-12,
+          "FORMANT disconnects the filter envelope from Lower");
+
+    for (const auto tracking : { TrackingMode::Dynamic,
+                                 TrackingMode::Formant })
+        for (const double envelope : { 0.0, 0.5, 1.0 })
+            check(std::abs(octaves(envelope, 0.5f, tracking)) < 1.0e-14,
+                  "AMOUNT centre is zero throughout the envelope in both modes");
+}
+
 // R135/R136/R137 offset the Loudness CEM3360's linear-control pin so the
-// first 0.5 V of the 7.5 V envelope produces no nominal gain. Absolute cell
-// gain is normalised separately; the affine law itself is component-derived.
+// first 0.5 V of the 7.5 V envelope produces no nominal gain. The factory
+// 10k/4k7/240k network then reaches the production sheet's nominal 1.0 cell
+// gain before the envelope peak under its 52%/V linear scale.
 void testLoudnessVcaUsesItsControlOffset()
 {
     const auto gain = [](double envelope) {
         return ghostar::GhostarCircuitTestAccess::
             loudnessGainForEnvelope(envelope);
     };
+    constexpr double inputOhms = 10.0e3;
+    constexpr double groundOhms = 4.7e3;
+    constexpr double negativeOhms = 240.0e3;
+    constexpr double referenceVolts = 7.5;
+    constexpr double linearGainPerVolt = 0.52;
+    constexpr double conductance = 1.0 / inputOhms + 1.0 / groundOhms
+                                 + 1.0 / negativeOhms;
+    const auto componentGain = [](double envelope) {
+        const double controlVolts =
+            (referenceVolts * envelope / inputOhms
+             - 12.0 / negativeOhms) / conductance;
+        return std::clamp(linearGainPerVolt * controlVolts, 0.0, 1.0);
+    };
+    constexpr double saturationEnvelope =
+        (conductance / linearGainPerVolt + 12.0 / negativeOhms)
+        * inputOhms / referenceVolts;
 
     check(gain(0.0) == 0.0,
           "the Loudness VCA clamps below its control offset");
     check(std::abs(gain(1.0 / 15.0)) < 1.0e-15,
           "the Loudness VCA opens at LC=0.5 V");
-    check(std::abs(gain(0.5) - 13.0 / 28.0) < 1.0e-15,
-          "the Loudness VCA follows the R135/R136/R137 affine law");
+    check(std::abs(gain(0.5) - componentGain(0.5)) < 1.0e-15
+              && std::abs(gain(0.5) - 0.5332363636363636) < 1.0e-15,
+          "mid-envelope gain follows the independent 4k7 KCL and 52%/V law");
+    check(std::abs(saturationEnvelope - 0.8793144208037824) < 1.0e-15
+              && gain(saturationEnvelope - 1.0e-6) < 1.0
+              && gain(saturationEnvelope + 1.0e-6) == 1.0,
+          "the nominal CEM3360 reaches maximum gain at the derived envelope level");
     check(std::abs(gain(1.0) - 1.0) < 1.0e-15,
-          "full envelope is the normalised Loudness gain endpoint");
+          "full envelope remains clamped to nominal maximum cell gain");
     check(ghostar::GhostarCircuitTestAccess::
               loudnessGainForEnvelope(0.0, true) == 1.0,
           "VCA BYPASS ignores the envelope control offset");
@@ -2249,6 +4380,302 @@ void testEnvelopeRetriggerUsesThePhysicalResetNotch()
           "threshold node");
 }
 
+// J2/7 is a switched jack, not a logical OR: an empty socket normals the
+// Shaper's SG output to Y/EXT, while any inserted cable opens that contact.
+// The following 4075 accepts only a voltage strictly above the manual's 6 V
+// threshold, and its own edge lane remains visible under an already-high KBD.
+void testExternalGateReplacesNormalledYAtTheStrictThreshold()
+{
+    using ghostar::GhostarCircuitTestAccess;
+
+    const auto unplugged =
+        GhostarCircuitTestAccess::externalGateWithInternalY(false, 0.0);
+    check(unplugged.internalYHigh && unplugged.envelopeGate,
+          "an unplugged EXTERNAL GATE jack normals high SG into Y/EXT");
+
+    const auto insertedLow =
+        GhostarCircuitTestAccess::externalGateWithInternalY(true, 0.0);
+    check(insertedLow.internalYHigh && !insertedLow.envelopeGate,
+          "an inserted low cable disconnects normalled SG");
+
+    const auto atThreshold =
+        GhostarCircuitTestAccess::externalGateWithInternalY(true, 6.0);
+    check(atThreshold.internalYHigh && !atThreshold.envelopeGate,
+          "exactly 6 V remains below the EXTERNAL GATE comparator");
+
+    const auto aboveThreshold =
+        GhostarCircuitTestAccess::externalGateWithInternalY(true, 6.000001);
+    check(aboveThreshold.internalYHigh && aboveThreshold.envelopeGate,
+          "a voltage above 6 V opens the selected Y/EXT gate");
+
+    const auto falling =
+        GhostarCircuitTestAccess::externalGateFallOverInternalY();
+    check(falling.openBeforeFall && falling.internalYHighAfterFall
+              && !falling.openAfterFall,
+          "a falling external gate wins over concurrently high internal SG");
+
+    check(GhostarCircuitTestAccess::
+              externalGateEdgeResetSamplesUnderHeldKeyboard() == 40,
+          "an external rise under held KBD uses the independent 5 ms lane");
+}
+
+// Reset and MIDI All Sound Off kill the voice, not the live rear-panel
+// voltage. Holding an already-observed HIGH across either hard stop must not
+// turn that unchanged level into another edge; LOW must re-arm it first.
+void testExternalGateHardStopsRequireANewPhysicalEdge()
+{
+    using ghostar::GhostarCircuitTestAccess;
+
+    for (const bool allSoundOff : { false, true })
+    {
+        const auto result =
+            GhostarCircuitTestAccess::externalGateAcrossHardStop(allSoundOff);
+        check(!result.restartedResetWhileHeldHigh,
+              "a hard stop did not synthesize another Y/EXT reset edge");
+        check(!result.attackedWhileHeldHigh,
+              "a held external HIGH did not attack again after a hard stop");
+        check(!result.restartedShaperWhileHeldHigh,
+              "a hard stop did not retrigger RUN from an unchanged HIGH");
+        check(result.resetSamplesAfterRealEdge == 40,
+              "LOW-to-HIGH re-arms the external gate's 5 ms reset lane");
+        check(result.attackedAfterRealEdge,
+              "the external gate attacks after the real edge's reset notch");
+        check(result.shaperStartedAfterRealEdge,
+              "LOW-to-HIGH re-arms RUN's selected-gate edge detector");
+    }
+}
+
+// The host jack is reconstructed onto the 4x circuit clock by the reverse
+// B->A halfband cascade. Its exact impulse must be 4*hA*up2(hB): this pins
+// stage order, interpolation gain, phase, group delay and steady DC without
+// using either of the production convolution loops as the oracle.
+void testExternalAudioReconstructionAndFrameTiming()
+{
+    const auto result =
+        ghostar::GhostarCircuitTestAccess::externalAudioTiming();
+    check(result.oracleError < 2.0e-15,
+          "the external-audio reconstructor matches 4*hA*up2(hB)");
+    check(std::abs(result.impulseSum - 4.0) < 2.0e-13,
+          "the external-audio impulse has the four-phase unity DC gain");
+    check(std::abs(result.impulseCentroid - 141.0) < 1.0e-11,
+          "the external-audio impulse is centred on circuit tick 141");
+    check(result.symmetryError < 2.0e-15,
+          "the external-audio impulse remains linear phase");
+    check(std::abs(result.passbandMagnitude - 1.0) < 2.0e-5,
+          "the external-audio reconstructor lost unity at its 0.45 host-rate "
+          "passband edge");
+    check(result.firstImageMagnitude < std::pow(10.0, -98.0 / 20.0),
+          "stage B rejects less than 98 dB at the first image edge");
+    check(result.secondImageMagnitude < std::pow(10.0, -126.0 / 20.0),
+          "stage A rejects less than 126 dB at the second image edge");
+    check(result.dcError < 2.0e-15,
+          "all four reconstructed DC phases match the cascade oracle");
+    check(result.firstDelayedFrameTick == 141,
+          "the complete internal-source frame meets external audio at tick "
+          "141");
+    check(ghostar::GhostarEngine::externalInputLatencyInternalSamples()
+              == result.firstDelayedFrameTick,
+          "the published input delay follows the real frame FIFO");
+    check(result.jackStateCaptureDifference == 0.0,
+          "jack presence was read live instead of from the delayed frame");
+    check(result.jackSelectionDifference > 1.0e-6,
+          "the delayed jack-state check cannot distinguish pink from external");
+    check(result.brightnessTickZeroAlignmentDifference == 0.0,
+          "BRIGHTNESS did not arrive with its matching tick-zero frame");
+    check(result.brightnessTickZeroSelectionDifference > 1.0e-8,
+          "the tick-zero BRIGHTNESS frame check cannot distinguish its two "
+          "resistances");
+    check(result.brightnessTickOneSelectionDifference > 1.0e-8,
+          "the following BRIGHTNESS resistance did not arrive one tick "
+          "after the tick-zero frame");
+    check(result.brightnessCompanionMagnitude > 1.0e-8,
+          "the delayed BRIGHTNESS companion check did not excite its branch");
+    check(result.brightnessStateDifference == 0.0,
+          "the BRIGHTNESS capacitor mixed delayed and live resistance");
+}
+
+// P1017 is a switching jack, not an extra mixer input. Empty, its normal
+// contact selects IC4A pink regardless of voltage presented by the host;
+// inserted, the tip replaces pink on both physical NOISE sliders, including
+// the electrically important silent-cable case.
+void testExternalAudioJackReplacesBothNoiseSliderSources()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    constexpr double pink = 0.375;
+
+    const auto normalled = GhostarCircuitTestAccess::externalAudioMixerProbe(
+        false, 0.0, pink);
+    const auto ignoredHost =
+        GhostarCircuitTestAccess::externalAudioMixerProbe(
+            false, -0.8125, pink);
+    const auto insertedSame =
+        GhostarCircuitTestAccess::externalAudioMixerProbe(
+            true, pink, -0.9);
+    const auto insertedSilent =
+        GhostarCircuitTestAccess::externalAudioMixerProbe(
+            true, 0.0, pink);
+
+    check(normalled.filterEnergy > 1.0e-12
+              && normalled.shaperEnergy > 1.0e-12,
+          "the normal contact feeds IC4A pink to both NOISE sliders");
+    check(ignoredHost.filterEnergy == normalled.filterEnergy
+              && ignoredHost.shaperEnergy == normalled.shaperEnergy,
+          "an unplugged jack ignores the unrouted host signal");
+    check(insertedSame.filterEnergy == normalled.filterEnergy
+              && insertedSame.shaperEnergy == normalled.shaperEnergy,
+          "the inserted tip replaces pink at both slider inputs");
+    check(insertedSame.filterSum == normalled.filterSum
+              && insertedSame.shaperSum == normalled.shaperSum,
+          "the inserted tip changed the normal contact's signal polarity");
+    check(insertedSilent.filterEnergy == 0.0
+              && insertedSilent.shaperEnergy == 0.0,
+          "an inserted silent cable disconnects rather than normalising");
+}
+
+// Exercise the public block API, not only its two internal helpers: a signed
+// impulse must actually traverse reconstruction, the 4x mixer and output
+// decimation with their measured aggregate latency and unchanged polarity.
+void testExternalAudioProcessPathIsSignedAndAligned()
+{
+    const auto result =
+        ghostar::GhostarCircuitTestAccess::externalAudioProcessImpulse();
+    check(std::abs(result.impulseSum - 0.45) < 1.0e-6,
+          "the public External Audio path changed gain or polarity");
+    check(std::abs(result.impulseCentroid - 69.75) < 2.0e-5,
+          "the public External Audio path bypassed or shifted a halfband");
+    check(result.polarityError == 0.0,
+          "positive and negative External Audio impulses lost symmetry");
+}
+
+// The audible IC4A branch is downstream of the R6/C8 red-noise tap. Changing
+// the switched audio contact must leave both that state and the modulation it
+// produces bit-identical, while the modulation itself remains demonstrably
+// alive.
+void testExternalAudioJackLeavesRedNoiseUpstream()
+{
+    const auto result = ghostar::GhostarCircuitTestAccess::
+        externalAudioKeepsRedNoiseUpstream();
+    check(result.cutoffSpan > 1.0,
+          "RED NOISE still modulates the filter with external audio inserted");
+    check(result.jackCutoffDifference == 0.0,
+          "the audio jack does not alter upstream RED NOISE modulation");
+    check(result.jackRedNoiseDifference == 0.0,
+          "the audio jack does not alter the shared MM5837 red branch");
+}
+
+// Host buffers are outside the analogue model's trust boundary. Every
+// non-finite or subnormal sample is electrically zero before either FIR sees
+// it, nullptr means the same silent cable, and reset removes every remembered
+// external sample from both reconstruction and downstream circuit state.
+void testExternalAudioInputSanitisesAndResets()
+{
+    constexpr int samples = 512;
+    using Mono = std::array<float, samples>;
+    using Stereo = std::array<Mono, 2>;
+
+    ghostar::EngineParameters parameters;
+    parameters.masterVolume = 1.0f;
+    parameters.brightness = 1.0f;
+    parameters.splitPaths = true;
+    parameters.filterPathA = 0.0f;
+    parameters.filterPathB = 0.0f;
+    parameters.filterPathNoise = 1.0f;
+    parameters.shaperPathA = 0.0f;
+    parameters.shaperPathB = 0.0f;
+    parameters.shaperPathRing = 0.0f;
+    parameters.shaperPathNoise = 1.0f;
+    parameters.vcaBypass = true;
+
+    const auto prepare = [&parameters](ghostar::GhostarEngine& engine) {
+        engine.prepare(48000.0, samples);
+        engine.setParameters(parameters);
+        engine.setExternalAudioInput(true);
+        engine.reset();
+    };
+    const auto render = [&prepare](const float* input) {
+        ghostar::GhostarEngine engine;
+        prepare(engine);
+        Stereo output {};
+        engine.process(input, output[0].data(), output[1].data(), samples);
+        return output;
+    };
+    const auto maximumDifference = [](const Stereo& a, const Stereo& b) {
+        double difference = 0.0;
+        for (std::size_t channel = 0; channel < a.size(); ++channel)
+            for (std::size_t sample = 0; sample < a[channel].size(); ++sample)
+                difference = std::max(
+                    difference,
+                    std::abs(static_cast<double>(a[channel][sample])
+                             - static_cast<double>(b[channel][sample])));
+        return difference;
+    };
+    const auto finite = [](const Stereo& output) {
+        for (const auto& channel : output)
+            for (const float sample : channel)
+                if (!std::isfinite(sample))
+                    return false;
+        return true;
+    };
+
+    Mono zero {};
+    const auto reference = render(zero.data());
+    check(maximumDifference(reference, render(nullptr)) == 0.0,
+          "a connected jack with no host bus is the same as zero volts");
+
+    const std::array<float, 4> hostile {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::denorm_min(),
+    };
+    for (const float value : hostile)
+    {
+        Mono input {};
+        input[17] = value;
+        const auto output = render(input.data());
+        check(finite(output),
+              "a hostile external-audio sample produced non-finite output");
+        check(maximumDifference(reference, output) == 0.0,
+              "a hostile external-audio sample entered or persisted in an "
+              "FIR");
+    }
+    check(ghostar::GhostarCircuitTestAccess::externalAudioHistoryMagnitude(
+              std::numeric_limits<float>::denorm_min()) == 0.0,
+          "a float subnormal remained hidden in external-audio FIR state");
+    check(ghostar::GhostarCircuitTestAccess::externalAudioHistoryMagnitude(
+              std::numeric_limits<float>::min()) > 0.0,
+          "sanitising subnormals also discarded the smallest normal float");
+
+    const auto resetHistory =
+        ghostar::GhostarCircuitTestAccess::externalAudioResetHistory();
+    check(resetHistory.stageBBeforeReset > 0.0
+              && resetHistory.stageABeforeReset > 0.0,
+          "external reconstruction histories were not live before reset");
+    check(resetHistory.stageBAfterReset == 0.0
+              && resetHistory.stageAAfterReset == 0.0,
+          "reset did not clear both external reconstruction histories");
+
+    ghostar::GhostarEngine used;
+    prepare(used);
+    Mono impulse {};
+    impulse[0] = 1.0f;
+    Stereo discarded {};
+    used.process(impulse.data(), discarded[0].data(), discarded[1].data(),
+                 samples);
+    used.reset();
+    Stereo afterReset {};
+    used.process(zero.data(), afterReset[0].data(), afterReset[1].data(),
+                 samples);
+
+    ghostar::GhostarEngine fresh;
+    prepare(fresh);
+    Stereo freshOutput {};
+    fresh.process(zero.data(), freshOutput[0].data(), freshOutput[1].data(),
+                  samples);
+    check(maximumDifference(afterReset, freshOutput) == 0.0,
+          "reset clears external reconstruction, frame and output memory");
+}
+
 // MOD RATE's 100k linear P2 is loaded by R33=200k before the exponential
 // CEM3360 converter. P1015 gives it 132 mV of travel; the original production
 // sheet specifies 3.0 mV/dB typical, hence 44 dB. Electrical half travel is
@@ -2279,6 +4706,89 @@ void testLfoRateIncludesItsLoadedPot()
           "MOD RATE includes P2's R33-loaded linear travel");
 }
 
+// P1016 qualifies each raw KT pulse with barred AA, then Q2 clamps the
+// visible TL068 triangle output for KT's annotated 25 us. C13 itself is not
+// discharged: it keeps charging upward while IC10B is forced to LG high.
+// A reset entered from the falling leg therefore clocks S&H once, and an
+// above-threshold hidden charge is recovered after release without wrapping.
+void testKeyboardLfoResetRetainsC13BehindItsOutputClamp()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::ShaperMode;
+
+    const auto falling =
+        GhostarCircuitTestAccess::keyboardLfoResetFrom(0.999, false);
+    check(falling.clampedSamples == 1
+              && falling.visibleDuringClamp == -1.0,
+          "annotated KT clamps the visible LFO bus for 25 us at 40 kHz");
+    check(std::abs(falling.capacitorAfterClamp - 1.004) < 1.0e-12,
+          "C13 retains and accumulates charge behind the Q2 clamp");
+    check(std::abs(falling.sampleHoldAfterFirstStep - 0.73) < 1.0e-12,
+          "forcing LG high from the falling leg clocks the sample-and-hold");
+    check(!falling.risingAfterRelease
+              && std::abs(falling.capacitorAfterRelease - 0.999) < 1.0e-12
+              && falling.visibleAfterRelease < 1.0,
+          "reset release recovers C13 overshoot without phase reflection");
+
+    const auto rising =
+        GhostarCircuitTestAccess::keyboardLfoResetFrom(-0.2, true);
+    check(rising.clampedSamples == 1
+              && std::abs(rising.capacitorAfterClamp + 0.195) < 1.0e-12
+              && std::abs(rising.capacitorAfterRelease + 0.19) < 1.0e-12,
+          "reset preserves an already-rising C13 trajectory");
+    check(std::abs(rising.sampleHoldAfterFirstStep - 0.11) < 1.0e-12,
+          "an already-high LG state does not invent another clock edge");
+
+    const auto arpeggiating =
+        GhostarCircuitTestAccess::keyboardLfoResetWithArpeggiator();
+    check(arpeggiating.clampedSamples == 1
+              && std::abs(arpeggiating.capacitorAfterClamp - 0.205)
+                     < 1.0e-12
+              && arpeggiating.visibleDuringClamp == -1.0,
+          "an arpeggiator selector alone does not suppress raw KT");
+    check(std::abs(arpeggiating.sampleHoldAfterFirstStep - 0.73) < 1.0e-12,
+          "a reset-forced LG rise still clocks S&H with arpeggiation selected");
+
+    const auto partial =
+        GhostarCircuitTestAccess::keyboardLfoResetFrom(0.2, false, 8000.0);
+    check(partial.clampedSamples == 1
+              && std::abs(partial.capacitorAfterClamp - 0.225) < 1.0e-12
+              && std::abs(partial.visibleDuringClamp + 0.028) < 1.0e-12,
+          "a sub-sample KT keeps exact C13 charge and visible clamp average");
+    const auto corner =
+        GhostarCircuitTestAccess::keyboardLfoResetFrom(0.99, false, 8000.0);
+    check(std::abs(corner.capacitorAfterClamp - 0.985) < 1.0e-12
+              && std::abs(corner.visibleDuringClamp - 0.595) < 1.0e-12
+              && !corner.risingAfterRelease,
+          "the clamp average integrates a post-release reversal in two legs");
+
+    for (const double sampleRate : { 8000.0, 44100.0, 48000.0,
+                                     96000.0, 768000.0 })
+        check(std::abs(GhostarCircuitTestAccess::
+                           integratedLfoKtDuration(sampleRate)
+                       - 25.0e-6) < 1.0e-15,
+              "fractional KT integration preserves 25 us at every host rate");
+
+    for (const auto [sampleRate, expectedResetSamples] : {
+             std::pair { 8000.0, 40 }, std::pair { 32000.0, 160 } })
+    {
+        const auto gateX = GhostarCircuitTestAccess::
+            subSampleLfoResetThroughGateX(sampleRate);
+        check(!gateX.finalSquareHigh,
+              "the Gate-X regression setup ends below the host sampling grid");
+        check(gateX.envelopeResetSamples == expectedResetSamples,
+              "a sub-sample LG rise reaches Gate X's 5 ms envelope-reset lane");
+        check(gateX.shaperCycleActive,
+              "a sub-sample LG rise reaches the Shaper's selected Gate-X input");
+
+        const auto hold = GhostarCircuitTestAccess::
+            subSampleLfoResetThroughGateX(sampleRate, ShaperMode::KbdHold);
+        check(!hold.finalSquareHigh && hold.shaperLevel > 0.015
+                  && hold.shaperLevel < 0.03,
+              "KBD HOLD integrates the sub-sample Gate-X high time");
+    }
+}
+
 // P1013 makes X a current-driven 100k rheostat, whereas Y is a voltage-fed
 // 100k divider behind R60=15k. RS1/RS2 then change the wiper load: one
 // oscillator is 22k||100k, two are 22k||100k||100k, one filter is 100k and
@@ -2291,8 +4801,10 @@ void testModulationWheelsIncludeDestinationLoading()
     };
     constexpr double wheel = 100.0;
     constexpr double sourceY = 15.0;
+    constexpr double dutyDepth = 0.42;
     const double oscillatorSingle = parallel(22.0, 100.0);
     const double oscillatorPair = parallel(oscillatorSingle, 100.0);
+    const double rwmLoad = parallel(200.0, 620.0);
     const double xReference = parallel(wheel, oscillatorSingle);
     const double yReference = xReference / (sourceY + xReference);
     constexpr double filterSensitivity = 21.2 / 19.6;
@@ -2303,6 +4815,16 @@ void testModulationWheelsIncludeDestinationLoading()
         const double lower = parallel(wheel * travel, load);
         return lower / (sourceY + wheel * (1.0 - travel) + lower)
              / yReference;
+    };
+    const auto expectedRwmX = [&](double travel) {
+        return parallel(wheel * travel, rwmLoad)
+             / parallel(wheel, rwmLoad);
+    };
+    const auto expectedRwmY = [&](double travel) {
+        const double lower = parallel(wheel * travel, rwmLoad);
+        const double fullLower = parallel(wheel, rwmLoad);
+        return lower / (sourceY + wheel * (1.0 - travel) + lower)
+             / (fullLower / (sourceY + fullLower));
     };
     const auto close = [](double measured, double expected) {
         return std::abs(measured - expected) < 1.0e-12;
@@ -2383,7 +4905,23 @@ void testModulationWheelsIncludeDestinationLoading()
                        expectedY(1.0, 100.0) * filterSensitivity)
               && close(yLHalf.lowerOctaves,
                        expectedY(0.5, 100.0) * filterSensitivity),
-          "Y to L includes the filter load and CV sensitivity");
+              "Y to L includes the filter load and CV sensitivity");
+
+    const auto xRwmHalf = GhostarCircuitTestAccess::modulationAt(
+        ModXDestination::OscARwm, ShaperYDestination::Off, 0.5f, 0.0f);
+    const auto xRwmFull = GhostarCircuitTestAccess::modulationAt(
+        ModXDestination::OscARwm, ShaperYDestination::Off, 1.0f, 0.0f);
+    check(close(xRwmHalf.pwmA, dutyDepth * expectedRwmX(0.5))
+              && close(xRwmFull.pwmA, dutyDepth),
+          "X RWM includes its 200k||620k load without moving full depth");
+
+    const auto yRwmHalf = GhostarCircuitTestAccess::modulationAt(
+        ModXDestination::Off, ShaperYDestination::OscBRwm, 0.0f, 0.5f);
+    const auto yRwmFull = GhostarCircuitTestAccess::modulationAt(
+        ModXDestination::Off, ShaperYDestination::OscBRwm, 0.0f, 1.0f);
+    check(close(yRwmHalf.pwmB, dutyDepth * expectedRwmY(0.5))
+              && close(yRwmFull.pwmB, dutyDepth),
+          "Y RWM includes its 200k||620k load without moving full depth");
 
     const auto audioAB = GhostarCircuitTestAccess::modulationAt(
         ModXDestination::OscAB, ShaperYDestination::Off,
@@ -2394,7 +4932,15 @@ void testModulationWheelsIncludeDestinationLoading()
                        expectedAudioPair)
               && close(audioAB.audioGain * audioAB.audioBOctaves,
                        expectedAudioPair),
-          "audio-rate OSC B modulation uses the same loaded X network");
+              "audio-rate OSC B modulation uses the same loaded X network");
+
+    const auto audioRwm = GhostarCircuitTestAccess::modulationAt(
+        ModXDestination::OscARwm, ShaperYDestination::Off,
+        0.5f, 0.0f, true);
+    check(audioRwm.audioActive
+              && close(audioRwm.audioGain * audioRwm.audioDuty,
+                       dutyDepth * expectedRwmX(0.5)),
+          "audio-rate X RWM uses the same loaded rheostat travel");
 
     const auto audioUL = GhostarCircuitTestAccess::modulationAt(
         ModXDestination::FilterUL, ShaperYDestination::Off,
@@ -2426,6 +4972,127 @@ void testModulationWheelsIncludeDestinationLoading()
         0.0f, 0.0f, true);
     check(!audioZero.audioActive,
           "a fully backed-off X wheel disables audio-rate modulation");
+}
+
+// P1013 takes RED NOISE continuously from the MM5837 R6/C8 junction through
+// IC4B. Unlike either S+H detent, it has no clocked hold, and its resolved
+// transfer still has an 8.16 kHz pole. It must therefore reach every MOD X
+// destination on the 4x circuit grid, from the same source tick as IC4A audio.
+void testRedNoiseModulationRunsOnTheCircuitGrid()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::ModSource;
+    using ghostar::ModXDestination;
+
+    const auto span = [](const auto& values) {
+        const auto [minimum, maximum] = std::minmax_element(
+            values.begin(), values.end());
+        return *maximum - *minimum;
+    };
+    const auto live = [&](const auto& values) {
+        return span(values) > 1.0e-10;
+    };
+    const auto parallel = [](double a, double b) {
+        return a * b / (a + b);
+    };
+    constexpr double wheel = 100.0;
+    const double oscillatorSingle = parallel(22.0, 100.0);
+    const double oscillatorPair = parallel(oscillatorSingle, 100.0);
+    const double xReference = parallel(wheel, oscillatorSingle);
+    const auto xGain = [&](double load) {
+        return parallel(wheel, load) / xReference;
+    };
+    constexpr double filterSensitivity = 21.2 / 19.6;
+    const auto matchesRoute = [](const auto& probe, const auto& actual,
+                                 double base, double gain) {
+        for (std::size_t tick = 0; tick < actual.size(); ++tick)
+        {
+            const double red = std::clamp(
+                probe.referenceRed[tick] * 0.26, -1.0, 1.0);
+            if (std::abs(actual[tick] - (base + red * gain)) > 1.0e-14)
+                return false;
+        }
+        return true;
+    };
+
+    const auto checkSharedSource = [&](const auto& probe) {
+        check(probe.audioActive && probe.sourceMatches,
+              "continuous RED NOISE publishes an audio-rate MOD X route");
+        check(probe.sharedAudioError < 1.0e-15
+                  && probe.sharedRedError < 1.0e-15,
+              "RED modulation and PINK audio share one MM5837 circuit tick");
+        check(live(probe.referenceRed),
+              "the RED branch changes inside one four-tick host sample");
+    };
+
+    const auto oscillators = GhostarCircuitTestAccess::modSourceTicks(
+        ModSource::RedNoise, ModXDestination::OscAB);
+    checkSharedSource(oscillators);
+    const double oscillatorPairGain = xGain(oscillatorPair);
+    check(matchesRoute(oscillators, oscillators.pitchA,
+                       oscillators.basePitchA, oscillatorPairGain)
+              && matchesRoute(oscillators, oscillators.pitchB,
+                              oscillators.basePitchB, oscillatorPairGain),
+          "each RED tick reaches both oscillator pitches with signed X gain");
+
+    const auto oscillatorA = GhostarCircuitTestAccess::modSourceTicks(
+        ModSource::RedNoise, ModXDestination::OscA);
+    checkSharedSource(oscillatorA);
+    check(matchesRoute(oscillatorA, oscillatorA.pitchA,
+                       oscillatorA.basePitchA, xGain(oscillatorSingle))
+              && matchesRoute(oscillatorA, oscillatorA.pitchB,
+                              oscillatorA.basePitchB, 0.0),
+          "each RED tick reaches only Osc A with signed X gain");
+
+    const auto pulseWidth = GhostarCircuitTestAccess::modSourceTicks(
+        ModSource::RedNoise, ModXDestination::OscARwm);
+    checkSharedSource(pulseWidth);
+    check(matchesRoute(pulseWidth, pulseWidth.dutyA,
+                       pulseWidth.baseDutyA, 0.42),
+          "each RED tick reaches Osc A width with signed wheel gain");
+
+    const auto filters = GhostarCircuitTestAccess::modSourceTicks(
+        ModSource::RedNoise, ModXDestination::FilterUL);
+    checkSharedSource(filters);
+    const double filterPairGain = xGain(50.0) * filterSensitivity;
+    check(matchesRoute(filters, filters.upperFilter, 0.0, filterPairGain)
+              && matchesRoute(filters, filters.lowerFilter,
+                              0.0, filterPairGain),
+          "each RED tick reaches both filters with signed X gain");
+
+    const auto upperFilter = GhostarCircuitTestAccess::modSourceTicks(
+        ModSource::RedNoise, ModXDestination::FilterU);
+    checkSharedSource(upperFilter);
+    const double filterSingleGain = xGain(100.0) * filterSensitivity;
+    check(matchesRoute(upperFilter, upperFilter.upperFilter,
+                       0.0, filterSingleGain)
+              && matchesRoute(upperFilter, upperFilter.lowerFilter,
+                              0.0, 0.0),
+          "each RED tick reaches only Upper with signed X gain");
+
+    const auto held = GhostarCircuitTestAccess::sampleHoldRedClockEdge();
+    const double expectedHeld = std::clamp(
+        held.availableReferenceRed * 0.26, -1.0, 1.0);
+    check(std::abs(held.availableEngineRed - held.availableReferenceRed)
+                  < 1.0e-15
+              && std::abs(held.captured - expectedHeld) < 1.0e-15,
+          "the S+H clock captures the RED value available at its edge");
+    bool laterSourceMatches = true;
+    bool laterSourceMoves = false;
+    bool sampleStaysHeld = true;
+    for (std::size_t tick = 0; tick < held.held.size(); ++tick)
+    {
+        laterSourceMatches = laterSourceMatches
+            && std::abs(held.laterEngineRed[tick]
+                        - held.laterReferenceRed[tick]) < 1.0e-15;
+        laterSourceMoves = laterSourceMoves
+            || std::abs(held.laterReferenceRed[tick]
+                        - held.availableReferenceRed) > 1.0e-10;
+        sampleStaysHeld = sampleStaysHeld
+            && held.held[tick] == held.captured;
+    }
+    check(laterSourceMatches && laterSourceMoves && sampleStaysHeld,
+          "later 4x RED ticks advance while S+H keeps its edge value");
 }
 
 // Lossless DWG 1 resolves C6=470n and P1=2M, hence tau=0.94 s at full
@@ -2706,9 +5373,9 @@ void testOverdriveCompresses()
 // The envelope segments are RC charges on the 4.7 uF cap through the 2 MOhm
 // log sliders, so the panel's labelled time is the time *constant*: at full
 // travel the envelope must fall to 1/e of its span in ~9.40047 s, not reach its
-// target in that time. D15 puts zero sustain at the VCA's 1/15 dead zone,
-// so the two affine laws cancel and audible gain is exactly 1/e after one
-// time constant (OQ-04).
+// target in that time. D15 puts zero sustain at the VCA's 1/15 dead zone;
+// after one time constant the remaining envelope span is 1/e, then the
+// factory 4k7 network and CEM3360's 52%/V scale set the audible level (OQ-04).
 void testDecayIsTheLabelledTimeConstant()
 {
     GhostarEngine engine;
@@ -2728,8 +5395,8 @@ void testDecayIsTheLabelledTimeConstant()
     const double atTau = peak(renderMono(engine, 0.05, 48000.0));
 
     const double ratio = atTau / std::max(1.0e-12, atPeak);
-    check(ratio > 0.35 && ratio < 0.39,
-          "one envelope time constant reaches the affine VCA gain oracle");
+    check(ratio > 0.39 && ratio < 0.43,
+          "one envelope time constant reaches the component VCA gain oracle");
 }
 
 // Ghostar's nominal attack charges toward ~1.3x the peak, so it reaches the peak in
@@ -2753,13 +5420,14 @@ void testAttackAimsPastItsPeak()
     // At travel 0.75 the slider stands at 1 kOhm * 2000^0.75 = 299 kOhm,
     // R23 adds 100 Ohm, so tau = 4.7 uF * 299.17 kOhm = 1.406 s.
     constexpr double tau = 4.7e-6 * 299170.0;
-    // One time constant into an aim of 1.3 reaches 1.3*(1-1/e) = 0.822.
+    // One time constant into an aim of 1.3 puts the envelope at
+    // 1.3*(1-1/e) = 0.822. The corrected Loudness VCA maps that to nominal
+    // gain 1.230545*0.822-0.082036 = 0.929 before its maximum-gain clamp.
     const double atTau = levelAfter(tau);
     const double atPeak = levelAfter(4.0 * tau);
     const double fraction = atTau / std::max(1.0e-12, atPeak);
-    check(fraction > 0.76 && fraction < 0.88,
-          "the attack reaches ~82 % of its peak in one time constant, as an "
-          "nominal RC model aiming 1.3x past it does");
+    check(fraction > 0.90 && fraction < 0.96,
+          "the one-tau attack level follows the RC aim through the CEM3360 law");
 }
 
 // The travel-to-Q law is derived from the CEM3350's −65 mV/decade Q scale
@@ -2787,7 +5455,9 @@ void testResonanceFollowsTheDerivedQLaw()
         parameters.cutoff = 0.5f;   // 20 Hz * 800^0.5 = 566 Hz
         // Keep this component-law probe below C37's overload knee. Hot-signal
         // compression is tested separately from the small-signal Q ratio.
-        parameters.filterPathA = 0.00001f;
+        // Stay well below C37's overload knee while clearing the final
+        // CEM3360's now-modelled -116 dBFS output-current noise floor.
+        parameters.filterPathA = 0.001f;
         engine.setParameters(parameters);
         engine.noteOn(46, 1.0f);    // ~93 Hz: sixth harmonic near 560 Hz
         const auto samples = renderMono(engine, 0.9, 48000.0, 60);
@@ -3013,8 +5683,8 @@ void testOutputCouplingMatchesP1013AndP1017()
         parameters.vcaBypass = !shaperPath;
         engine.setParameters(parameters);
         engine.noteOn(48, 1.0f);
-        renderMono(engine, 0.75, 48000.0);
-        return mean(renderMono(engine, 0.75, 48000.0));
+        renderMono(engine, 1.0, 48000.0);
+        return mean(renderMono(engine, 2.0, 48000.0));
     };
 
     const double filterDc = dcMean(false);
@@ -3025,8 +5695,8 @@ void testOutputCouplingMatchesP1013AndP1017()
           "C30 rejects at least 97% of duty-cycle DC on the Filter path");
 }
 
-// Pin the current behavioral Shaper-VCA seam until P1013's coupled two-BC173/
-// CEM3360 control node is calibrated (OQ-26): FREE has loud and quiet
+// Pin the current behavioral Shaper-VCA seam until P1013's tied-base parallel
+// BC173/CEM3360 control network is calibrated (OQ-26): FREE has loud and quiet
 // stretches, but this is not presented as a component-level oracle.
 void testShaperFreeModePulsesItsPath()
 {
@@ -3059,6 +5729,82 @@ void testShaperFreeModePulsesItsPath()
     check(loudest > 1.0e-3, "the free-running Shaper opens its VCA");
     check(quietest < 0.05 * loudest,
           "the voiced free-running Shaper seam closes in the negative half");
+}
+
+// The production CEM3360 sheet gives each cell 0.4 nA RMS typical output
+// noise in 16 Hz--16 kHz. With SPLIT open, full Master and no signal, IC7's
+// Loudness cell is isolated on the left: 0.4 nA through its fixed 20k load,
+// divided by the engine's 5 V/unit boundary, is 1.6e-6 RMS. The real
+// decimators' finite transition make that 1.58668e-6 at this 32 kHz host
+// rate. IC5 appears independently on the right, after C18/P3 colours it.
+void testOutputVcasCarryIndependentDatasheetNoise()
+{
+    constexpr double sampleRate = 32000.0;
+    struct Statistics
+    {
+        double leftRms;
+        double rightRms;
+        double correlation;
+    };
+    const auto measure = [](float brightness) {
+        constexpr int blockSize = 256;
+        GhostarEngine engine;
+        engine.prepare(sampleRate, blockSize);
+        EngineParameters parameters;
+        parameters.masterVolume = 1.0f;
+        parameters.brightness = brightness;
+        parameters.splitPaths = true;
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathB = 0.0f;
+        parameters.filterPathNoise = 0.0f;
+        parameters.shaperPathA = 0.0f;
+        parameters.shaperPathB = 0.0f;
+        parameters.shaperPathRing = 0.0f;
+        parameters.shaperPathNoise = 0.0f;
+        engine.setParameters(parameters);
+
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        for (int block = 0; block < 32; ++block)
+            engine.process(left.data(), right.data(), blockSize);
+
+        double leftSquared = 0.0;
+        double rightSquared = 0.0;
+        double cross = 0.0;
+        constexpr int measuredBlocks = 500;
+        for (int block = 0; block < measuredBlocks; ++block)
+        {
+            engine.process(left.data(), right.data(), blockSize);
+            for (int sample = 0; sample < blockSize; ++sample)
+            {
+                const double l = left[static_cast<std::size_t>(sample)];
+                const double r = right[static_cast<std::size_t>(sample)];
+                leftSquared += l * l;
+                rightSquared += r * r;
+                cross += l * r;
+            }
+        }
+        constexpr double count = measuredBlocks * blockSize;
+        return Statistics {
+            std::sqrt(leftSquared / count),
+            std::sqrt(rightSquared / count),
+            cross / std::sqrt(leftSquared * rightSquared)
+        };
+    };
+
+    const auto bright = measure(1.0f);
+    constexpr double expectedFilter = 1.586682e-6;
+    check(std::abs(bright.leftRms / expectedFilter - 1.0) < 0.08,
+          "the final CEM3360 VCA carries its 0.4 nA RMS output noise");
+    check(bright.rightRms > 0.75 * bright.leftRms
+              && bright.rightRms < 0.95 * bright.leftRms,
+          "the Shaper CEM3360 carries noise through C18/P3");
+    check(std::abs(bright.correlation) < 0.03,
+          "the two physical CEM3360 cells use independent noise streams");
+
+    const auto dark = measure(0.0f);
+    check(dark.rightRms < 0.25 * bright.rightRms,
+          "BRIGHTNESS colours the Shaper cell's output noise");
 }
 
 double noiseCircuitMagnitude(double sampleRate, double hz)
@@ -3282,9 +6028,9 @@ void testMasterVolumeIsLinear()
 }
 
 // The Shaper audio sliders are 100k LIN pots whose finite series arms end in
-// a virtual-earth summer. Their Thevenin resistance bends the 47k-arm law:
-// half travel is 0.5*47/(47+25)=0.3264 of full, not 0.5. The Filter's two
-// moving-node buses are deliberately not asserted here (OQ-20).
+// a virtual-earth summer. Their Thevenin resistance bends the law: A/B/Noise
+// use R42/R43/R44=47k, while the assembly-corrected Ring position SL4 uses
+// errata R45=6k8. The Filter's moving-node buses are separate (OQ-20).
 void testShaperMixerSliderIncludesItsLoading()
 {
     const auto shaperOscillatorLevelAt = [](float travel) {
@@ -3310,9 +6056,8 @@ void testShaperMixerSliderIncludesItsLoading()
               < 0.01,
           "the Shaper slider includes its loaded-linear law");
 
-    // R45 is the distinct errata-corrected 6.8k law. Long, identically seeded
-    // renders make the noise comparison deterministic, so the source colour
-    // and the voiced full-travel scale cancel from the ratio.
+    // PINK NOISE IN reaches SL3/R44=47k. Long, identically seeded renders
+    // make the source colour and voiced scale cancel from the ratio.
     const auto shaperNoiseLevelAt = [](float travel) {
         GhostarEngine engine;
         engine.prepare(48000.0, 256);
@@ -3330,10 +6075,34 @@ void testShaperMixerSliderIncludesItsLoading()
     };
     const double noiseFull = shaperNoiseLevelAt(1.0f);
     const double noiseHalf = shaperNoiseLevelAt(0.5f);
-    constexpr double expectedNoise = 0.5 * 6.8 / (6.8 + 25.0);
+    constexpr double expectedNoise = 0.5 * 47.0 / (47.0 + 25.0);
     check(noiseFull > 1.0e-4, "the Shaper-noise loading probe is audible");
     check(std::abs(noiseHalf / noiseFull - expectedNoise) < 0.01,
-          "the Shaper Noise slider includes its 6.8k loaded law");
+          "the Shaper Noise slider uses SL3/R44's 47k loaded law");
+
+    const auto shaperRingLevelAt = [](float travel) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        EngineParameters parameters;
+        parameters.filterPathA = 0.0f;
+        parameters.shaperPathA = 0.0f;
+        parameters.shaperPathRing = travel;
+        parameters.oscAWaveform = ghostar::Waveform::Triangle;
+        parameters.oscBWaveform = ghostar::Waveform::Triangle;
+        parameters.shaperMode = ghostar::ShaperMode::KbdHold;
+        parameters.brightness = 1.0f;
+        parameters.masterVolume = 1.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        renderMono(engine, 0.5, 48000.0);
+        return meanAbs(renderMono(engine, 0.5, 48000.0));
+    };
+    const double ringFull = shaperRingLevelAt(1.0f);
+    const double ringHalf = shaperRingLevelAt(0.5f);
+    constexpr double expectedRing = 0.5 * 6.8 / (6.8 + 25.0);
+    check(ringFull > 1.0e-4, "the Shaper-ring loading probe is audible");
+    check(std::abs(ringHalf / ringFull - expectedRing) < 0.01,
+          "the Shaper Ring slider uses SL4/R45's 6.8k loaded law");
 
 }
 
@@ -3448,14 +6217,33 @@ int main()
     testOutputCapacitorCompanionsMatchP1013();
     testRingModulatorMatchesP1013();
     testKeyboardLaw();
+    testExternalPitchSwitchAndCircuitTransfer();
+    testMasterTuneFollowsItsLoadedPot();
     testKeyboardTrackingAmount();
+    testExternalPitchReachesOnlyItsPhysicalKcvDestinations();
+    testOscBPedalMatchesItsDcAndRcNetwork();
+    testOscBPedalReachesOnlyOscBInEveryRange();
+    testFilterPedalMatchesItsDcAndRcNetwork();
+    testFilterPedalFollowsTheTrackingSwitch();
+    testFilterPedalOpenReferenceTracksModeWithoutErasingCharge();
     testFilterCutoffsFollowTheLoadedP1013Pots();
+    testFilterEnvelopeFollowsThePublishedFiveOctaveMirror();
     testFullGlideUsesTheResolvedRcEndpoint();
+    testExternalPitchUsesThePhysicalGlideModes();
     testLoudnessVcaUsesItsControlOffset();
     testEnvelopeDiodeFloorAndReleaseKnee();
     testEnvelopeRetriggerUsesThePhysicalResetNotch();
+    testExternalGateReplacesNormalledYAtTheStrictThreshold();
+    testExternalGateHardStopsRequireANewPhysicalEdge();
+    testExternalAudioReconstructionAndFrameTiming();
+    testExternalAudioJackReplacesBothNoiseSliderSources();
+    testExternalAudioProcessPathIsSignedAndAligned();
+    testExternalAudioJackLeavesRedNoiseUpstream();
+    testExternalAudioInputSanitisesAndResets();
     testLfoRateIncludesItsLoadedPot();
+    testKeyboardLfoResetRetainsC13BehindItsOutputClamp();
     testModulationWheelsIncludeDestinationLoading();
+    testRedNoiseModulationRunsOnTheCircuitGrid();
     testMasterOctave();
     testPulseDuties();
     testHardSync();
@@ -3473,6 +6261,7 @@ int main()
     testOutputNetworkMatchesP1013AndP1017();
     testOutputCouplingMatchesP1013AndP1017();
     testShaperFreeModePulsesItsPath();
+    testOutputVcasCarryIndependentDatasheetNoise();
     testNoiseCircuitMatchesTheSchematic();
     testRedNoiseCircuitMatchesTheSchematic();
     testMm5837SequenceLength();

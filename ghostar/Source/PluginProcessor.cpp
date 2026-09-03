@@ -8,10 +8,11 @@ namespace ids = ghostar::parameters;
 // Panel travel as a host parameter: 0..1, shown as 0..10 like the silkscreen.
 std::unique_ptr<juce::AudioParameterFloat> travel(const char* id,
                                                   const char* name,
-                                                  float defaultValue)
+                                                  float defaultValue,
+                                                  int versionHint = 1)
 {
     return std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { id, 1 }, name,
+        juce::ParameterID { id, versionHint }, name,
         juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, defaultValue,
         juce::AudioParameterFloatAttributes {}.withStringFromValueFunction(
             [](float value, int) {
@@ -21,18 +22,49 @@ std::unique_ptr<juce::AudioParameterFloat> travel(const char* id,
 
 std::unique_ptr<juce::AudioParameterChoice>
 detents(const char* id, const char* name, const juce::StringArray& labels,
-        int defaultIndex)
+        int defaultIndex, int versionHint = 1)
 {
     return std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID { id, 1 }, name, labels, defaultIndex);
+        juce::ParameterID { id, versionHint }, name, labels, defaultIndex);
 }
 
 std::unique_ptr<juce::AudioParameterBool> rocker(const char* id,
                                                  const char* name,
-                                                 bool defaultValue)
+                                                 bool defaultValue,
+                                                 int versionHint = 1)
 {
     return std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { id, 1 }, name, defaultValue);
+        juce::ParameterID { id, versionHint }, name, defaultValue);
+}
+
+std::unique_ptr<juce::AudioParameterFloat> pitchVolts(const char* id,
+                                                       const char* name)
+{
+    // Five octaves either side of the source's 0 V point covers the useful
+    // CEM3340 range without presenting the Spirit's +/-12 V rails as a safe
+    // external-input specification. The circuit model itself is not clipped
+    // at these host-control endpoints.
+    return std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { id, 2 }, name,
+        juce::NormalisableRange<float> { -5.5f, 5.5f }, 0.0f,
+        juce::AudioParameterFloatAttributes {}
+            .withLabel("V")
+            .withStringFromValueFunction([](float value, int) {
+                return juce::String(value, 3);
+            }));
+}
+
+std::unique_ptr<juce::AudioParameterFloat>
+pedalResistance(const char* id, const char* name)
+{
+    return std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { id, 2 }, name,
+        juce::NormalisableRange<float> { 0.0f, 100.0f }, 100.0f,
+        juce::AudioParameterFloatAttributes {}
+            .withLabel("kOhm")
+            .withStringFromValueFunction([](float value, int) {
+                return juce::String(value, 1);
+            }));
 }
 
 const juce::StringArray waveformLabels(bool oscA)
@@ -69,10 +101,17 @@ bool loadRocker(const juce::AudioProcessorValueTreeState& state,
 } // namespace
 
 GhostarAudioProcessor::GhostarAudioProcessor()
-    : AudioProcessor(BusesProperties().withOutput(
-          "Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor(BusesProperties()
+          .withInput("External Audio", juce::AudioChannelSet::mono(), false)
+          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "GhostarParameters", createParameterLayout())
 {
+    // The Standalone wrapper sizes its audio device from the initial enabled
+    // layout. Enable the hardware input there so its Audio/MIDI settings can
+    // route a capture channel; plug-in hosts may activate the optional bus.
+    if (wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        if (auto* bus = getBus(true, 0))
+            bus->enable(true);
     keyboardState.addListener(this);
 }
 
@@ -187,7 +226,20 @@ GhostarAudioProcessor::createParameterLayout()
                 static_cast<int>(defaults.glideMode)),
         travel(ids::xWheel, "Mod X Wheel", 0.0f),
         travel(ids::yWheel, "Shaper Y Wheel", 0.0f),
-        rocker(ids::splitPaths, "Split Paths", defaults.splitPaths));
+        rocker(ids::splitPaths, "Split Paths", defaults.splitPaths),
+        detents(ids::externalGate, "External Gate",
+                { "Unplugged", "Low", "High" }, 0, 2),
+        detents(ids::externalAudioConnected, "External Audio",
+                { "Unplugged", "Plugged" }, 0, 2),
+        detents(ids::externalPitchConnected, "External Pitch",
+                { "Unplugged", "Plugged" }, 0, 2),
+        pitchVolts(ids::externalPitchVolts, "External Pitch Voltage"),
+        rocker(ids::oscBPedalConnected, "Osc B Pedal Connected", false, 2),
+        pedalResistance(ids::oscBPedalResistance,
+                        "Osc B Pedal Resistance"),
+        rocker(ids::filterPedalConnected, "Filter Pedal Connected", false, 2),
+        pedalResistance(ids::filterPedalResistance,
+                        "Filter Pedal Resistance"));
 
     return layout;
 }
@@ -277,12 +329,10 @@ void GhostarAudioProcessor::setCurrentProgram(int index)
 void GhostarAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine.prepare(sampleRate, samplesPerBlock);
-    // The voice runs at 4x and comes back through two linear-phase halfband
-    // stages, which delay it by a fixed 34.5 samples at any host rate. Told
-    // nothing, a host assumes zero and lands Ghostar a third of a
-    // millisecond behind everything it is layered with. The delay is not a
-    // whole number of samples, so the nearest one is what can be published;
-    // half a sample is what the host cannot compensate.
+    // Host input reconstruction adds 35.25 samples before the shared 4x
+    // circuit and the output decimator adds 34.5. Internal sources carry the
+    // matching reconstruction delay, so both origins are fixed at 69.75
+    // samples. A host can publish only the nearest whole sample.
     setLatencySamples(juce::roundToInt(
         ghostar::GhostarEngine::outputLatencySamples()));
     updateEngineParameters();
@@ -294,8 +344,16 @@ void GhostarAudioProcessor::releaseResources() {}
 bool GhostarAudioProcessor::isBusesLayoutSupported(
     const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::mono();
+    if (layouts.inputBuses.size() != 1 || layouts.outputBuses.size() != 1)
+        return false;
+
+    const auto output = layouts.getMainOutputChannelSet();
+    if (output != juce::AudioChannelSet::stereo()
+        && output != juce::AudioChannelSet::mono())
+        return false;
+
+    const auto external = layouts.getMainInputChannelSet();
+    return external.isDisabled() || external == juce::AudioChannelSet::mono();
 }
 
 void GhostarAudioProcessor::updateEngineParameters() noexcept
@@ -381,6 +439,24 @@ void GhostarAudioProcessor::updateEngineParameters() noexcept
     engineParameters.splitPaths = loadRocker(parameters, ids::splitPaths)
                                && getMainBusNumOutputChannels() >= 2;
     engine.setParameters(engineParameters);
+
+    // Hosts have no standard analogue-gate lane, so publish the three
+    // electrically distinct jack/comparator states. Any finite value above
+    // the documented strict 6 V threshold is equivalent after that input.
+    const int externalGate = loadIndex(parameters, ids::externalGate);
+    engine.setExternalGateInput(externalGate != 0,
+                                externalGate == 2 ? 7.0 : 0.0);
+    engine.setExternalPitchInput(
+        loadIndex(parameters, ids::externalPitchConnected) != 0,
+        loadTravel(parameters, ids::externalPitchVolts));
+    engine.setExternalAudioInput(
+        loadIndex(parameters, ids::externalAudioConnected) != 0);
+    engine.setOscBPedalInput(
+        loadRocker(parameters, ids::oscBPedalConnected),
+        loadTravel(parameters, ids::oscBPedalResistance));
+    engine.setFilterPedalInput(
+        loadRocker(parameters, ids::filterPedalConnected),
+        loadTravel(parameters, ids::filterPedalResistance));
 
     // The wheels are attenuators the player rides; hosts automate them as
     // parameters and MIDI CC1/CC2 write them back through the same lane.
@@ -473,10 +549,14 @@ void GhostarAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         engine.setPitchBend(uiBend);
     }
 
-    const int numSamples = buffer.getNumSamples();
-    auto* left = buffer.getWritePointer(0);
-    auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1)
-                                              : nullptr;
+    auto outputBus = getBusBuffer(buffer, false, 0);
+    auto externalBus = getBusBuffer(buffer, true, 0);
+    const int numSamples = outputBus.getNumSamples();
+    auto* left = outputBus.getWritePointer(0);
+    auto* right = outputBus.getNumChannels() > 1
+        ? outputBus.getWritePointer(1) : nullptr;
+    const float* externalInput = externalBus.getNumChannels() == 1
+        ? externalBus.getReadPointer(0) : nullptr;
 
     // Segment-accurate event handling: render up to each event's position,
     // apply it, continue — so a gate change lands on its own sample.
@@ -489,7 +569,10 @@ void GhostarAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                        static_cast<int>(scratch.size()));
             float* rightTarget =
                 right != nullptr ? right + renderedUpTo : scratch.data();
-            engine.process(left + renderedUpTo, rightTarget, count);
+            const float* externalSegment = externalInput != nullptr
+                ? externalInput + renderedUpTo : nullptr;
+            engine.process(externalSegment, left + renderedUpTo,
+                           rightTarget, count);
             renderedUpTo += count;
         }
     };
@@ -500,9 +583,6 @@ void GhostarAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         handleMidiMessage(metadata.getMessage());
     }
     renderSegment(numSamples);
-
-    for (int channel = 2; channel < buffer.getNumChannels(); ++channel)
-        buffer.clear(channel, 0, numSamples);
 
     // The lamp means "the envelopes are being held open", which is the
     // OR'ed gate bus and not the keyboard: an X- or Y-gated patch
@@ -586,6 +666,27 @@ void GhostarAudioProcessor::setStateInformation(const void* data,
             if (program >= 0 && program < ghostar::factoryPresetCount())
                 currentProgram = program;
             parameters.replaceState(restored);
+
+            // APVTS retains an adapter's current value when an older state
+            // lacks a parameter. Rear inputs were added after the original
+            // panel set, so an old session loaded over an edited instance
+            // must restore their declared defaults instead of leaking
+            // the instance's previous cable state into that session.
+            for (const auto* id : { ids::externalGate,
+                                    ids::externalAudioConnected,
+                                    ids::externalPitchConnected,
+                                    ids::externalPitchVolts,
+                                    ids::oscBPedalConnected,
+                                    ids::oscBPedalResistance,
+                                    ids::filterPedalConnected,
+                                    ids::filterPedalResistance })
+            {
+                if (restored.getChildWithProperty("id", id).isValid())
+                    continue;
+                if (auto* parameter = parameters.getParameter(id))
+                    parameter->setValueNotifyingHost(
+                        parameter->getDefaultValue());
+            }
         }
 }
 

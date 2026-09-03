@@ -244,6 +244,14 @@ private:
     Fader xWheel;
     Fader yWheel;
     Rocker splitPaths;
+    Selector externalGate;
+    Selector externalPitchConnected;
+    Knob externalPitchVolts;
+    Rocker oscBPedalConnected;
+    Knob oscBPedalResistance;
+    Rocker filterPedalConnected;
+    Knob filterPedalResistance;
+    Selector externalAudioConnected;
 
     PanelKeyboard keyboard;
 

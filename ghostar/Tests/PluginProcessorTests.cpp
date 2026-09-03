@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
@@ -20,6 +21,37 @@ namespace ghostar
 // this test seam access for component-level checks.
 struct GhostarCircuitTestAccess
 {
+    struct ExternalPitchInput
+    {
+        bool jackInserted;
+        double sourceVolts;
+    };
+
+    struct PedalInput
+    {
+        bool jackInserted;
+        double resistanceKOhm;
+    };
+
+    static ExternalPitchInput externalPitchInput(
+        const GhostarEngine& engine) noexcept
+    {
+        return { engine.externalPitchJackInserted_,
+                 engine.externalPitchSourceVolts_ };
+    }
+
+    static PedalInput oscBPedalInput(const GhostarEngine& engine) noexcept
+    {
+        return { engine.oscBPedalJackInserted_,
+                 engine.oscBPedalResistanceKOhm_ };
+    }
+
+    static PedalInput filterPedalInput(const GhostarEngine& engine) noexcept
+    {
+        return { engine.filterPedalJackInserted_,
+                 engine.filterPedalResistanceKOhm_ };
+    }
+
     static double decimatorImpulseCentroid() noexcept
     {
         GhostarEngine engine;
@@ -84,6 +116,33 @@ private:
 };
 } // namespace ghostar
 
+struct GhostarAudioProcessorTestAccess
+{
+    static ghostar::GhostarCircuitTestAccess::ExternalPitchInput
+    externalPitchInput(GhostarAudioProcessor& processor) noexcept
+    {
+        processor.updateEngineParameters();
+        return ghostar::GhostarCircuitTestAccess::externalPitchInput(
+            processor.engine);
+    }
+
+    static ghostar::GhostarCircuitTestAccess::PedalInput
+    oscBPedalInput(GhostarAudioProcessor& processor) noexcept
+    {
+        processor.updateEngineParameters();
+        return ghostar::GhostarCircuitTestAccess::oscBPedalInput(
+            processor.engine);
+    }
+
+    static ghostar::GhostarCircuitTestAccess::PedalInput
+    filterPedalInput(GhostarAudioProcessor& processor) noexcept
+    {
+        processor.updateEngineParameters();
+        return ghostar::GhostarCircuitTestAccess::filterPedalInput(
+            processor.engine);
+    }
+};
+
 namespace
 {
 constexpr double sampleRate = 48000.0;
@@ -122,6 +181,57 @@ double peakOf(const juce::AudioBuffer<float>& buffer)
                             std::abs(static_cast<double>(samples[sample])));
     }
     return peak;
+}
+
+void setParameter(GhostarAudioProcessor& processor, const char* id,
+                  float normalised)
+{
+    if (auto* parameter = processor.parameters.getParameter(id))
+        parameter->setValueNotifyingHost(normalised);
+    else
+        expect(false, std::string("missing parameter: ") + id);
+}
+
+void setActualParameter(GhostarAudioProcessor& processor, const char* id,
+                        float value)
+{
+    if (auto* parameter = processor.parameters.getParameter(id))
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+    else
+        expect(false, std::string("missing parameter: ") + id);
+}
+
+void configureExternalAudio(GhostarAudioProcessor& processor,
+                            bool connected)
+{
+    namespace ids = ghostar::parameters;
+    setParameter(processor, ids::externalAudioConnected,
+                 connected ? 1.0f : 0.0f);
+    setParameter(processor, ids::masterVolume, 1.0f);
+    setParameter(processor, ids::brightness, 1.0f);
+    setParameter(processor, ids::vcaBypass, 1.0f);
+    setParameter(processor, ids::filterPathA, 0.0f);
+    setParameter(processor, ids::filterPathB, 0.0f);
+    setParameter(processor, ids::filterPathNoise, 1.0f);
+    setParameter(processor, ids::shaperPathA, 0.0f);
+    setParameter(processor, ids::shaperPathB, 0.0f);
+    setParameter(processor, ids::shaperPathRing, 0.0f);
+    setParameter(processor, ids::shaperPathNoise, 0.0f);
+}
+
+double maximumDifference(const juce::AudioBuffer<float>& a,
+                         const juce::AudioBuffer<float>& b)
+{
+    double difference = 0.0;
+    const int channels = std::min(a.getNumChannels(), b.getNumChannels());
+    const int samples = std::min(a.getNumSamples(), b.getNumSamples());
+    for (int channel = 0; channel < channels; ++channel)
+        for (int sample = 0; sample < samples; ++sample)
+            difference = std::max(
+                difference,
+                std::abs(static_cast<double>(a.getSample(channel, sample))
+                         - static_cast<double>(b.getSample(channel, sample))));
+    return difference;
 }
 
 // Renders `blocks` blocks, feeding `midi` into the first one; returns the
@@ -193,19 +303,131 @@ void testParameterLayoutIsStable()
         ids::filterRelease, ids::vcaBypass, ids::loudnessAttack,
         ids::loudnessDecay, ids::loudnessSustain, ids::loudnessRelease,
         ids::glide, ids::glideMode, ids::xWheel, ids::yWheel,
-        ids::splitPaths,
+        ids::splitPaths, ids::externalGate, ids::externalAudioConnected,
+        ids::externalPitchConnected, ids::externalPitchVolts,
+        ids::oscBPedalConnected, ids::oscBPedalResistance,
+        ids::filterPedalConnected, ids::filterPedalResistance,
     };
 
     int found = 0;
-    for (const auto* id : expectedIds)
+    const auto& publishedParameters = processor.getParameters();
+    for (std::size_t index = 0; index < std::size(expectedIds); ++index)
     {
-        if (processor.parameters.getParameter(id) != nullptr)
+        const auto* id = expectedIds[index];
+        const auto* ordered = index < static_cast<std::size_t>(
+                                          publishedParameters.size())
+            ? dynamic_cast<const juce::AudioProcessorParameterWithID*>(
+                  publishedParameters[static_cast<int>(index)])
+            : nullptr;
+        expect(ordered != nullptr && ordered->paramID == id,
+               std::string("wrong parameter at published position: ") + id);
+        if (const auto* parameter = processor.parameters.getParameter(id))
+        {
             ++found;
+            const bool rearInputAddedLater =
+                index >= std::size(expectedIds) - 8;
+            expect(parameter->getVersionHint()
+                       == (rearInputAddedLater ? 2 : 1),
+                   std::string("wrong Audio Unit version hint: ") + id);
+        }
         else
             expect(false, std::string("missing parameter: ") + id);
     }
     expect(found == static_cast<int>(std::size(expectedIds)),
            "the published parameter set changed");
+    expect(processor.getParameters().size()
+               == static_cast<int>(std::size(expectedIds)),
+           "the processor published an unexpected extra parameter");
+
+    const auto* pitchVoltsParameter =
+        processor.parameters.getParameter(ids::externalPitchVolts);
+    const auto* pitchVolts =
+        dynamic_cast<const juce::AudioParameterFloat*>(pitchVoltsParameter);
+    expect(pitchVolts != nullptr,
+           "External Pitch Voltage is not a float parameter");
+    if (pitchVolts != nullptr)
+    {
+        const auto& range = pitchVolts->getNormalisableRange();
+        expect(std::abs(range.start + 5.5f) < 1.0e-6f
+                   && std::abs(range.end - 5.5f) < 1.0e-6f,
+               "External Pitch Voltage range is not -5.5..5.5 V");
+        expect(std::abs(range.interval) < 1.0e-6f
+                   && !pitchVolts->isDiscrete(),
+               "External Pitch Voltage is not continuously automatable");
+        expect(std::abs(pitchVolts->convertFrom0to1(
+                            pitchVoltsParameter->getDefaultValue()))
+                   < 1.0e-6f,
+               "External Pitch Voltage actual default is not zero volts");
+        expect(pitchVolts->getLabel() == "V",
+               "External Pitch Voltage host label is not V");
+    }
+
+    const auto* pitchConnectedParameter =
+        processor.parameters.getParameter(ids::externalPitchConnected);
+    const auto* pitchConnected =
+        dynamic_cast<const juce::AudioParameterChoice*>(
+            pitchConnectedParameter);
+    expect(pitchConnected != nullptr,
+           "External Pitch connection is not a choice parameter");
+    if (pitchConnected != nullptr)
+    {
+        expect(pitchConnected->choices.size() == 2
+                   && pitchConnected->choices[0] == "Unplugged"
+                   && pitchConnected->choices[1] == "Plugged",
+               "External Pitch connection choices or order changed");
+        expect(std::abs(pitchConnected->convertFrom0to1(
+                            pitchConnectedParameter->getDefaultValue()))
+                       < 1.0e-6f
+                   && pitchConnected->getIndex() == 0,
+               "External Pitch connection no longer defaults to Unplugged");
+    }
+
+    for (const auto* id : { ids::oscBPedalConnected,
+                            ids::filterPedalConnected })
+    {
+        const auto* parameter = processor.parameters.getParameter(id);
+        const auto* connected =
+            dynamic_cast<const juce::AudioParameterBool*>(parameter);
+        expect(connected != nullptr,
+               std::string("pedal connection is not a bool parameter: ") + id);
+        if (connected != nullptr)
+            expect(connected->convertFrom0to1(parameter->getDefaultValue())
+                       < 0.5f,
+                   std::string("pedal connection does not default off: ") + id);
+    }
+
+    for (const auto* id : { ids::oscBPedalResistance,
+                            ids::filterPedalResistance })
+    {
+        const auto* parameter = processor.parameters.getParameter(id);
+        const auto* resistance =
+            dynamic_cast<const juce::AudioParameterFloat*>(parameter);
+        expect(resistance != nullptr,
+               std::string("pedal resistance is not a float parameter: ") + id);
+        if (resistance == nullptr)
+            continue;
+
+        const auto& range = resistance->getNormalisableRange();
+        expect(std::abs(range.start) < 1.0e-6f
+                   && std::abs(range.end - 100.0f) < 1.0e-6f,
+               std::string("pedal resistance range is not 0..100 kOhm: ")
+                   + id);
+        expect(std::abs(range.interval) < 1.0e-6f
+                   && !resistance->isDiscrete()
+                   && resistance->isAutomatable(),
+               std::string("pedal resistance is not continuous: ") + id);
+        expect(std::abs(resistance->convertFrom0to1(
+                            parameter->getDefaultValue())
+                        - 100.0f)
+                   < 1.0e-6f,
+               std::string("pedal resistance default is not 100 kOhm: ")
+                   + id);
+        expect(resistance->getLabel() == "kOhm",
+               std::string("pedal resistance unit changed: ") + id);
+        expect(parameter->getText(resistance->convertTo0to1(42.375f), 64)
+                   == "42.4",
+               std::string("pedal resistance host text is unclear: ") + id);
+    }
 }
 
 void testMidiProducesAudio()
@@ -277,6 +499,301 @@ void testStateRoundTrip()
            "a stored switch position did not survive the round trip");
 }
 
+void testExternalGateStatesRoundTripAndReachTheEngine()
+{
+    namespace ids = ghostar::parameters;
+
+    for (int externalGate = 0; externalGate < 3; ++externalGate)
+    {
+        GhostarAudioProcessor saved;
+        if (auto* parameter = saved.parameters.getParameter(ids::externalGate))
+            parameter->setValueNotifyingHost(
+                static_cast<float>(externalGate) / 2.0f);
+
+        juce::MemoryBlock state;
+        saved.getStateInformation(state);
+        GhostarAudioProcessor restored;
+        restored.setStateInformation(state.getData(),
+                                     static_cast<int>(state.getSize()));
+
+        const auto* raw =
+            restored.parameters.getRawParameterValue(ids::externalGate);
+        expect(raw != nullptr && std::lround(raw->load()) == externalGate,
+               "an EXTERNAL GATE jack state did not survive state restore");
+
+        if (auto* parameter = restored.parameters.getParameter(ids::gateKbd))
+            parameter->setValueNotifyingHost(0.0f);
+        if (auto* parameter = restored.parameters.getParameter(ids::gateX))
+            parameter->setValueNotifyingHost(0.0f);
+        if (auto* parameter = restored.parameters.getParameter(ids::gateYExt))
+            parameter->setValueNotifyingHost(1.0f);
+        if (auto* parameter = restored.parameters.getParameter(ids::shaperMode))
+            parameter->setValueNotifyingHost(1.0f / 3.0f); // KBD HOLD: SG low
+
+        restored.prepareToPlay(sampleRate, blockSize);
+        juce::AudioBuffer<float> buffer(2, blockSize);
+        juce::MidiBuffer midi;
+        double heard = 0.0;
+        for (int block = 0; block < 8; ++block)
+        {
+            buffer.clear();
+            restored.processBlock(buffer, midi);
+            heard = std::max(heard, peakOf(buffer));
+        }
+        // KBD HOLD has no way to raise its own normalled SG without a gate,
+        // so UNPLUGGED and LOW must both stay shut; only mapped HIGH opens.
+        const bool expectedOpen = externalGate == 2;
+        expect(restored.isGateOpenForDisplay() == expectedOpen,
+               "the restored EXTERNAL GATE state did not reach the engine");
+        expect(expectedOpen ? heard > 1.0e-4 : heard < 1.0e-4,
+               "the restored EXTERNAL GATE state did not articulate the "
+               "Loudness path");
+
+        // The complementary state signature checks the switching contact:
+        // FREE raises internal SG, so only UNPLUGGED follows it. LOW still
+        // replaces it with zero, while external HIGH remains high.
+        if (auto* parameter =
+                restored.parameters.getParameter(ids::shaperMode))
+            parameter->setValueNotifyingHost(0.0f);
+        restored.prepareToPlay(sampleRate, blockSize);
+        buffer.clear();
+        restored.processBlock(buffer, midi);
+        const bool expectedWithFreeShaper = externalGate != 1;
+        expect(restored.isGateOpenForDisplay() == expectedWithFreeShaper,
+               "the EXTERNAL GATE state did not preserve the switched SG "
+               "normal contact");
+        restored.releaseResources();
+    }
+}
+
+void testExternalAudioStateAndProgramPreservation()
+{
+    namespace ids = ghostar::parameters;
+
+    for (const bool connected : { false, true })
+    {
+        GhostarAudioProcessor saved;
+        setParameter(saved, ids::externalAudioConnected,
+                     connected ? 1.0f : 0.0f);
+        saved.setCurrentProgram(3);
+        const auto* afterProgram =
+            saved.parameters.getRawParameterValue(ids::externalAudioConnected);
+        expect(afterProgram != nullptr
+                   && (afterProgram->load() >= 0.5f) == connected,
+               "a factory program changed the physical audio-cable state");
+
+        juce::MemoryBlock state;
+        saved.getStateInformation(state);
+        GhostarAudioProcessor restored;
+        restored.setStateInformation(state.getData(),
+                                     static_cast<int>(state.getSize()));
+        const auto* raw = restored.parameters.getRawParameterValue(
+            ids::externalAudioConnected);
+        expect(raw != nullptr && (raw->load() >= 0.5f) == connected,
+               "the EXTERNAL AUDIO cable state did not survive restore");
+        expect(restored.getCurrentProgram() == 3,
+               "restoring EXTERNAL AUDIO lost the saved program label");
+
+        restored.setCurrentProgram(12);
+        expect(raw != nullptr && (raw->load() >= 0.5f) == connected,
+               "changing programs overwrote the restored audio-cable state");
+    }
+}
+
+void testExternalPitchStateProgramAndEngineForwarding()
+{
+    namespace ids = ghostar::parameters;
+    constexpr float sourceVolts = 1.2345f;
+
+    for (const bool jackInserted : { false, true })
+    {
+        GhostarAudioProcessor saved;
+        setParameter(saved, ids::externalPitchConnected,
+                     jackInserted ? 1.0f : 0.0f);
+        setActualParameter(saved, ids::externalPitchVolts, sourceVolts);
+
+        const auto forwarded =
+            GhostarAudioProcessorTestAccess::externalPitchInput(saved);
+        expect(forwarded.jackInserted == jackInserted
+                   && std::abs(forwarded.sourceVolts - sourceVolts) < 1.0e-5,
+               "the host External Pitch controls did not reach the engine");
+
+        saved.setCurrentProgram(3);
+        const auto* connected = saved.parameters.getRawParameterValue(
+            ids::externalPitchConnected);
+        const auto* volts = saved.parameters.getRawParameterValue(
+            ids::externalPitchVolts);
+        expect(connected != nullptr
+                   && (connected->load() >= 0.5f) == jackInserted
+                   && volts != nullptr
+                   && std::abs(volts->load() - sourceVolts) < 1.0e-5f,
+               "a factory program changed the physical pitch-source state");
+
+        juce::MemoryBlock state;
+        saved.getStateInformation(state);
+        GhostarAudioProcessor restored;
+        restored.setStateInformation(state.getData(),
+                                     static_cast<int>(state.getSize()));
+        connected = restored.parameters.getRawParameterValue(
+            ids::externalPitchConnected);
+        volts = restored.parameters.getRawParameterValue(
+            ids::externalPitchVolts);
+        expect(connected != nullptr
+                   && (connected->load() >= 0.5f) == jackInserted
+                   && volts != nullptr
+                   && std::abs(volts->load() - sourceVolts) < 1.0e-5f,
+               "a fractional External Pitch state did not survive restore");
+        expect(restored.getCurrentProgram() == 3,
+               "restoring External Pitch lost the saved program label");
+
+        restored.setCurrentProgram(12);
+        expect(connected != nullptr
+                   && (connected->load() >= 0.5f) == jackInserted
+                   && volts != nullptr
+                   && std::abs(volts->load() - sourceVolts) < 1.0e-5f,
+               "changing programs overwrote the restored pitch-source state");
+    }
+}
+
+void testPedalStateProgramAndEngineForwarding()
+{
+    namespace ids = ghostar::parameters;
+
+    for (const bool oscBConnected : { false, true })
+    {
+        const bool filterConnected = !oscBConnected;
+        const float oscBResistance = oscBConnected ? 17.375f : 83.625f;
+        const float filterResistance = oscBConnected ? 68.125f : 9.875f;
+        GhostarAudioProcessor saved;
+        setParameter(saved, ids::oscBPedalConnected,
+                     oscBConnected ? 1.0f : 0.0f);
+        setActualParameter(saved, ids::oscBPedalResistance, oscBResistance);
+        setParameter(saved, ids::filterPedalConnected,
+                     filterConnected ? 1.0f : 0.0f);
+        setActualParameter(saved, ids::filterPedalResistance,
+                           filterResistance);
+
+        const auto expectHostState = [&](GhostarAudioProcessor& processor,
+                                         const std::string& context) {
+            const auto* oscBConnectedRaw =
+                processor.parameters.getRawParameterValue(
+                    ids::oscBPedalConnected);
+            const auto* oscBResistanceRaw =
+                processor.parameters.getRawParameterValue(
+                    ids::oscBPedalResistance);
+            const auto* filterConnectedRaw =
+                processor.parameters.getRawParameterValue(
+                    ids::filterPedalConnected);
+            const auto* filterResistanceRaw =
+                processor.parameters.getRawParameterValue(
+                    ids::filterPedalResistance);
+            expect(oscBConnectedRaw != nullptr
+                       && (oscBConnectedRaw->load() >= 0.5f)
+                              == oscBConnected
+                       && oscBResistanceRaw != nullptr
+                       && std::abs(oscBResistanceRaw->load()
+                                   - oscBResistance)
+                              < 1.0e-5f
+                       && filterConnectedRaw != nullptr
+                       && (filterConnectedRaw->load() >= 0.5f)
+                              == filterConnected
+                       && filterResistanceRaw != nullptr
+                       && std::abs(filterResistanceRaw->load()
+                                   - filterResistance)
+                              < 1.0e-5f,
+                   context);
+        };
+
+        const auto expectEngineState = [&](GhostarAudioProcessor& processor,
+                                           const std::string& context) {
+            const auto oscB =
+                GhostarAudioProcessorTestAccess::oscBPedalInput(processor);
+            const auto filter =
+                GhostarAudioProcessorTestAccess::filterPedalInput(processor);
+            expect(oscB.jackInserted == oscBConnected
+                       && std::abs(oscB.resistanceKOhm - oscBResistance)
+                              < 1.0e-5
+                       && filter.jackInserted == filterConnected
+                       && std::abs(filter.resistanceKOhm - filterResistance)
+                              < 1.0e-5,
+                   context);
+        };
+
+        expectEngineState(saved,
+                          "the host pedal controls did not reach the engine");
+        saved.setCurrentProgram(3);
+        expectHostState(saved,
+                        "a factory program changed the physical pedal state");
+
+        juce::MemoryBlock state;
+        saved.getStateInformation(state);
+        GhostarAudioProcessor restored;
+        restored.setStateInformation(state.getData(),
+                                     static_cast<int>(state.getSize()));
+        expectHostState(restored,
+                        "the pedal state did not survive state restore");
+        expectEngineState(restored,
+                          "the restored pedal state did not reach the engine");
+        expect(restored.getCurrentProgram() == 3,
+               "restoring pedal state lost the saved program label");
+
+        restored.setCurrentProgram(12);
+        expectHostState(restored,
+                        "changing programs overwrote the restored pedal state");
+    }
+}
+
+void testLegacyStateDefaultsRearInputs()
+{
+    namespace ids = ghostar::parameters;
+    constexpr const char* rearInputIds[] = {
+        ids::externalGate,
+        ids::externalAudioConnected,
+        ids::externalPitchConnected,
+        ids::externalPitchVolts,
+        ids::oscBPedalConnected,
+        ids::oscBPedalResistance,
+        ids::filterPedalConnected,
+        ids::filterPedalResistance,
+    };
+
+    GhostarAudioProcessor legacySource;
+    setParameter(legacySource, ids::cutoff, 0.27f);
+    auto legacyState = legacySource.parameters.copyState();
+    for (const auto* id : rearInputIds)
+        if (const auto child = legacyState.getChildWithProperty("id", id);
+            child.isValid())
+            legacyState.removeChild(child, nullptr);
+
+    const auto xml = legacyState.createXml();
+    expect(xml != nullptr, "could not encode the simulated legacy state");
+    if (xml == nullptr)
+        return;
+    juce::MemoryBlock data;
+    juce::AudioProcessor::copyXmlToBinary(*xml, data);
+
+    GhostarAudioProcessor edited;
+    for (const auto* id : rearInputIds)
+        if (auto* parameter = edited.parameters.getParameter(id))
+            parameter->setValueNotifyingHost(
+                parameter->getDefaultValue() < 0.5f ? 1.0f : 0.0f);
+    edited.setStateInformation(data.getData(), static_cast<int>(data.getSize()));
+
+    const auto* cutoff = edited.parameters.getRawParameterValue(ids::cutoff);
+    expect(cutoff != nullptr && std::abs(cutoff->load() - 0.27f) < 0.002f,
+           "the simulated legacy state did not otherwise load");
+    for (const auto* id : rearInputIds)
+    {
+        const auto* parameter = edited.parameters.getParameter(id);
+        const auto* raw = edited.parameters.getRawParameterValue(id);
+        const float expected = parameter != nullptr
+            ? parameter->convertFrom0to1(parameter->getDefaultValue()) : 0.0f;
+        expect(parameter != nullptr && raw != nullptr
+                   && std::abs(raw->load() - expected) < 1.0e-6f,
+               std::string("legacy state retained edited rear input: ") + id);
+    }
+}
+
 // JUCE's Standalone holder persists the last panel as `filterState` and
 // restores it before playback or the editor starts. Ghostar instead powers
 // up at Init, but explicit Load State must still work with no audio device.
@@ -293,6 +810,8 @@ void testStandaloneStartsAtInitButStillLoadsStateExplicitly()
     GhostarAudioProcessor standalone;
     juce::AudioProcessor::setTypeOfNextNewPlugin(
         juce::AudioProcessor::wrapperType_Undefined);
+    expect(standalone.getMainBusNumInputChannels() == 1,
+           "Standalone did not enable its External Audio capture bus");
 
     standalone.setStateInformation(state.getData(),
                                    static_cast<int>(state.getSize()));
@@ -378,6 +897,147 @@ void testAllSoundOffKeepsTheBend()
     expect(bentHz > unbentHz * 1.35,
            "the pitch bend did not survive CC120");
     processor.releaseResources();
+}
+
+void testExternalAudioBusLayouts()
+{
+    GhostarAudioProcessor processor;
+    const auto initial = processor.getBusesLayout();
+    expect(initial.getMainInputChannelSet().isDisabled(),
+           "the optional external-audio bus is enabled by default");
+    expect(initial.getMainOutputChannelSet()
+               == juce::AudioChannelSet::stereo(),
+           "the default main output is no longer stereo");
+
+    auto monoToStereo = initial;
+    monoToStereo.inputBuses.getReference(0) =
+        juce::AudioChannelSet::mono();
+    expect(processor.isBusesLayoutSupported(monoToStereo),
+           "a mono external input with stereo output is unsupported");
+
+    auto monoToMono = monoToStereo;
+    monoToMono.outputBuses.getReference(0) = juce::AudioChannelSet::mono();
+    expect(processor.isBusesLayoutSupported(monoToMono),
+           "a mono external input with mono output is unsupported");
+
+    auto stereoInput = monoToStereo;
+    stereoInput.inputBuses.getReference(0) =
+        juce::AudioChannelSet::stereo();
+    expect(!processor.isBusesLayoutSupported(stereoInput),
+           "a stereo cable was accepted by the mono physical jack");
+    expect(processor.setBusesLayout(monoToStereo),
+           "the supported external-audio layout could not be activated");
+}
+
+// Cable presence is a panel state, not a synonym for whether the host has
+// enabled its optional bus. A disabled input therefore supplies zero volts
+// to an inserted jack; only the UNPLUGGED state restores IC4A pink.
+void testExternalAudioDisabledBusIsStillAnInsertedSilentCable()
+{
+    constexpr int samples = 2048;
+
+    GhostarAudioProcessor saved;
+    configureExternalAudio(saved, true);
+    juce::MemoryBlock state;
+    saved.getStateInformation(state);
+
+    GhostarAudioProcessor disabled;
+    disabled.setStateInformation(state.getData(),
+                                 static_cast<int>(state.getSize()));
+    GhostarAudioProcessor active;
+    configureExternalAudio(active, true);
+    auto activeLayout = active.getBusesLayout();
+    activeLayout.inputBuses.getReference(0) = juce::AudioChannelSet::mono();
+    expect(active.setBusesLayout(activeLayout),
+           "the mono external bus could not be enabled");
+    GhostarAudioProcessor unplugged;
+    configureExternalAudio(unplugged, false);
+
+    disabled.prepareToPlay(sampleRate, samples);
+    active.prepareToPlay(sampleRate, samples);
+    unplugged.prepareToPlay(sampleRate, samples);
+    juce::AudioBuffer<float> disabledOutput(2, samples);
+    juce::AudioBuffer<float> activeZero(2, samples);
+    juce::AudioBuffer<float> unpluggedOutput(2, samples);
+    disabledOutput.clear();
+    activeZero.clear();
+    unpluggedOutput.clear();
+    juce::MidiBuffer midi;
+    disabled.processBlock(disabledOutput, midi);
+    active.processBlock(activeZero, midi);
+    unplugged.processBlock(unpluggedOutput, midi);
+
+    expect(isFinite(disabledOutput) && isFinite(activeZero)
+               && isFinite(unpluggedOutput),
+           "an external-audio bus state produced non-finite output");
+    expect(maximumDifference(disabledOutput, activeZero) == 0.0,
+           "a disabled host bus changed the inserted jack from zero volts");
+    expect(maximumDifference(disabledOutput, unpluggedOutput) > 1.0e-5,
+           "UNPLUGGED did not restore the internal pink-noise normal");
+
+    disabled.releaseResources();
+    active.releaseResources();
+    unplugged.releaseResources();
+}
+
+// With one input and two outputs, JUCE aliases the mono input with output
+// channel zero. The processor must capture each input sample before writing
+// that output, overwrite the output-only channel even if it arrives poisoned,
+// and advance the input pointer correctly across MIDI-created segments.
+void testExternalAudioInPlaceChannelsAndMidiSegmentation()
+{
+    constexpr int samples = 512;
+    GhostarAudioProcessor whole;
+    GhostarAudioProcessor segmented;
+    GhostarAudioProcessor silentInput;
+    for (auto* processor : { &whole, &segmented, &silentInput })
+    {
+        configureExternalAudio(*processor, true);
+        auto layout = processor->getBusesLayout();
+        layout.inputBuses.getReference(0) = juce::AudioChannelSet::mono();
+        expect(processor->setBusesLayout(layout),
+               "the mono external bus could not be enabled for processing");
+        processor->prepareToPlay(sampleRate, samples);
+    }
+
+    juce::AudioBuffer<float> wholeBuffer(2, samples);
+    juce::AudioBuffer<float> segmentedBuffer(2, samples);
+    juce::AudioBuffer<float> zeroBuffer(2, samples);
+    for (int sample = 0; sample < samples; ++sample)
+    {
+        const float input = static_cast<float>(
+            0.31 * std::sin(0.037 * sample)
+            + 0.19 * std::cos(0.013 * sample)
+            + 0.07 * ((sample * 37) % 101 - 50) / 50.0);
+        wholeBuffer.setSample(0, sample, input);
+        segmentedBuffer.setSample(0, sample, input);
+        zeroBuffer.setSample(0, sample, 0.0f);
+        wholeBuffer.setSample(1, sample, 0.0f);
+        segmentedBuffer.setSample(
+            1, sample, std::numeric_limits<float>::quiet_NaN());
+        zeroBuffer.setSample(1, sample, 0.0f);
+    }
+
+    juce::MidiBuffer noEvents;
+    juce::MidiBuffer ignoredEvents;
+    for (const int position : { 1, 17, 73, 255, 383, 511 })
+        ignoredEvents.addEvent(
+            juce::MidiMessage::controllerEvent(1, 99, position % 128),
+            position);
+    whole.processBlock(wholeBuffer, noEvents);
+    segmented.processBlock(segmentedBuffer, ignoredEvents);
+    silentInput.processBlock(zeroBuffer, noEvents);
+
+    expect(isFinite(segmentedBuffer),
+           "the output-only channel retained host garbage");
+    expect(maximumDifference(wholeBuffer, segmentedBuffer) == 0.0,
+           "MIDI segmentation changed external-audio phase or sample index");
+    expect(maximumDifference(wholeBuffer, zeroBuffer) > 1.0e-5,
+           "the aliased input was overwritten before reaching the engine");
+
+    whole.releaseResources();
+    segmented.releaseResources();
+    silentInput.releaseResources();
 }
 
 // A mono host layout has no right channel to split onto; enabling SPLIT
@@ -472,10 +1132,18 @@ void testAdvertisedLatencyMatchesTheMeasuredDelay()
     processor.prepareToPlay(sampleRate, blockSize);
 
     const double derived = ghostar::GhostarEngine::outputLatencySamples();
+    expect(ghostar::GhostarEngine::externalInputLatencyInternalSamples()
+               == 141,
+           "the reconstruction/frame delay is no longer 141 circuit ticks");
+    expect(std::abs(ghostar::GhostarEngine::decimatorLatencySamples() - 34.5)
+               < 1.0e-12,
+           "the output decimator delay is no longer 34.5 host samples");
+    expect(std::abs(derived - 69.75) < 1.0e-12,
+           "the complete engine delay is no longer 69.75 host samples");
     expect(processor.getLatencySamples() == juce::roundToInt(derived),
            "the plug-in does not publish the latency the engine derives");
-    expect(processor.getLatencySamples() > 0,
-           "the plug-in still claims to be latency-free");
+    expect(processor.getLatencySamples() == 70,
+           "the plug-in does not round 69.75 samples to 70");
     processor.releaseResources();
 }
 
@@ -728,9 +1396,17 @@ int main()
     testMidiProducesAudio();
     testAllNotesOffReleasesEveryKey();
     testStateRoundTrip();
+    testExternalGateStatesRoundTripAndReachTheEngine();
+    testExternalAudioStateAndProgramPreservation();
+    testExternalPitchStateProgramAndEngineForwarding();
+    testPedalStateProgramAndEngineForwarding();
+    testLegacyStateDefaultsRearInputs();
     testStandaloneStartsAtInitButStillLoadsStateExplicitly();
     testFactoryProgramsAreTheSoundCharts();
     testAllSoundOffKeepsTheBend();
+    testExternalAudioBusLayouts();
+    testExternalAudioDisabledBusIsStillAnInsertedSilentCable();
+    testExternalAudioInPlaceChannelsAndMidiSegmentation();
     testMonoLayoutKeepsTheShaperPath();
     testPanicDropsQueuedUiNotes();
     testAdvertisedTailCoversTheLongestRelease();

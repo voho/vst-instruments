@@ -460,7 +460,9 @@ namespace
         p.oscAWaveform = Waveform::Triangle;
         p.oscBWaveform = Waveform::Triangle;
         p.filterPathA = 0.0f;
-        p.shaperPathRing = 1.0f;
+        // SL4's 6.8k arm rises very steeply near the end of travel; stop just
+        // short of the rail so this struck patch retains digital headroom.
+        p.shaperPathRing = 0.95f;
         p.shaperPathA = 0.12f;
         p.shaperPathNoise = 0.03f;
         p.brightness = 0.82f;
@@ -485,7 +487,7 @@ namespace
         p.resonance = 0.5f;
         p.filterPathA = 0.32f;
         p.filterPathB = 0.12f;
-        p.shaperPathRing = 1.0f;
+        p.shaperPathRing = 0.95f;
         p.shaperPathNoise = 0.1f;
         p.shaperPathB = 0.75f;
         p.oscBRange = OscBRange::Bass;

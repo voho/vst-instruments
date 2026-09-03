@@ -129,7 +129,8 @@ void testSilentBeforeFirstNote()
     engine.setParameters(EngineParameters {});
     const auto rendered = render(engine, 0.25, 44100.0);
     check(finite(rendered), "idle render is finite");
-    check(peak(rendered) == 0.0, "engine is silent before the first note");
+    check(peak(rendered) < 1.0e-5,
+          "idle engine stays at its analog output-noise floor");
 }
 
 void testNoteProducesAudibleFiniteAudio()
@@ -156,8 +157,8 @@ void testNoGateSourceMeansNoArticulation()
     engine.setParameters(parameters);
     engine.noteOn(60, 1.0f);
     const auto rendered = render(engine, 0.5, 44100.0);
-    check(peak(rendered) < 1.0e-6,
-          "with no gate source selected a keyed note stays silent");
+    check(peak(rendered) < 1.0e-5,
+          "with no gate source selected a keyed note stays at the analog floor");
 
     // VCA BYPASS bypasses the articulation entirely - the drone returns.
     parameters.vcaBypass = true;
@@ -323,10 +324,40 @@ void testNonFinitePerformanceControlsAreSanitised()
     engine.setPitchBend(std::numeric_limits<float>::quiet_NaN());
     engine.setModWheel(std::numeric_limits<float>::quiet_NaN());
     engine.setShaperWheel(std::numeric_limits<float>::quiet_NaN());
+    engine.setExternalGateInput(
+        true, std::numeric_limits<double>::quiet_NaN());
+    engine.setOscBPedalInput(
+        true, std::numeric_limits<double>::quiet_NaN());
+    engine.setFilterPedalInput(
+        true, std::numeric_limits<double>::infinity());
     const auto rendered = render(engine, 0.5, 44100.0);
-    check(finite(rendered), "NaN performance controls keep the render finite");
+    check(finite(rendered),
+          "NaN performance and external controls keep the render finite");
     check(peak(rendered) > 1.0e-3,
           "NaN performance controls do not silence the sounding note");
+}
+
+void testDisconnectedPedalsAreElectricallyNeutral()
+{
+    GhostarEngine untouched;
+    GhostarEngine explicitOpen;
+    untouched.prepare(48000.0, 256);
+    explicitOpen.prepare(48000.0, 256);
+    auto parameters = brightPanel();
+    parameters.filterPathB = 0.6f;
+    parameters.shaperPathB = 0.4f;
+    parameters.shaperMode = ghostar::ShaperMode::KbdHold;
+    untouched.setParameters(parameters);
+    explicitOpen.setParameters(parameters);
+    explicitOpen.setOscBPedalInput(false, 0.0);
+    explicitOpen.setFilterPedalInput(false, 0.0);
+    untouched.noteOn(57, 1.0f);
+    explicitOpen.noteOn(57, 1.0f);
+
+    const auto reference = render(untouched, 0.25, 48000.0);
+    const auto open = render(explicitOpen, 0.25, 48000.0);
+    check(reference.left == open.left && reference.right == open.right,
+          "disconnected pedal values leave the instrument exactly neutral");
 }
 
 // A corrupted preset can hand setParameters() an out-of-range switch value;
@@ -970,8 +1001,8 @@ void testEveryFactoryProgramRenders()
         if (std::string(ghostar::factoryPresetName(index))
             == "Preparatory Pattern")
         {
-            check(peak(rendered) == 0.0,
-                  "the Preparatory Pattern produces no sound");
+            check(peak(rendered) < 1.0e-5,
+                  "the Preparatory Pattern stays at the analog noise floor");
             continue;
         }
         const double renderedPeak = peak(rendered);
@@ -1131,6 +1162,7 @@ int main()
     testTopNoteAtLowestRateStaysBounded();
     testNonFiniteParametersAreSanitised();
     testNonFinitePerformanceControlsAreSanitised();
+    testDisconnectedPedalsAreElectricallyNeutral();
     testOutOfRangeSwitchesAreSanitised();
     testShaperResetRetriggersOnLegatoPress();
     testShaperRunHonoursRiseLockoutAndAcceptsLegatoAfterRise();
