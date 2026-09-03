@@ -1316,7 +1316,7 @@
       6.142083,
       8.29064
     ],
-    "restricted_refit": "highLossCutoffScale and nylon.frequencyLossScale were swept on the rendered corpus over [0.9, 3.5] x [1.15, 2.1] (24 paired rows). The training optimum, 2.3 and 1.7, scores 6.428403 training against the shipping values' 6.452449 but 6.165286 on held-out development validation against 6.142083, so gated on validation the refit is rejected and the shipping calibration stands. steel.frequencyLossScale was not swept into the calibration: it is a by-ear value and frozen in the fit",
+    "restricted_refit": "highLossCutoffScale and nylon.frequencyLossScale were swept on the rendered corpus over [0.9, 3.5] x [1.15, 2.1] (24 paired rows at 22 distinct points; the shipping point and (2.45, 1.7) were each rendered in two sweeps). The training optimum, 2.3 and 1.7, scores 6.428403 training against the shipping values' 6.452449 but 6.165286 on held-out development validation against 6.142083, so gated on validation the refit is rejected and the shipping calibration stands. steel.frequencyLossScale was not swept into the calibration: it is a by-ear value and frozen in the fit",
     "flat_top_note": "the eight flat-top rows are 2.10% worse where training is 1.87% and held-out validation 3.75% better; that disagreement is a listening set's to settle, not a refit's"
   }
 }

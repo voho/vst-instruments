@@ -285,8 +285,10 @@ double mixedOnePolePhase(double coefficient, double mix,
 // The loop's fractional delay is a second-order Thiran allpass read from the
 // line at an integer tap: an allpass has magnitude exactly one at every
 // frequency, and Thiran's coefficients make its phase delay maximally flat at
-// D samples around DC (Valimaki and Laakso, "Splitting the unit delay", IEEE
-// Signal Processing Magazine 13(1), 1996, 30-60, Eq. 44). The four-point
+// D samples around DC (Laakso, Valimaki, Karjalainen and Laine, "Splitting
+// the Unit Delay: Tools for Fractional Delay Filter Design", IEEE Signal
+// Processing Magazine 13(1), 1996, 30-60, Eq. 86 on p. 49, "Maximally Flat
+// Group Delay Design of Allpass Filters"). The four-point
 // Catmull-Rom read it replaces lost 0.23 and 0.53 dB per pass at 8 and 10 kHz
 // at a half-sample fraction and nothing at an integer one, so a string's
 // upper partials decayed at a rate set by the accidental fraction of its loop
@@ -294,11 +296,13 @@ double mixedOnePolePhase(double coefficient, double mix,
 //
 // D is kept in [1.1, 2.1). Both edges of that band sit next to a delay at
 // which the section is exact - at D = 2 it is two unit delays, at D = 1 one -
-// so the loop phase steps by only 0.038 rad at half the Nyquist rate when a
+// so the loop phase steps by only 0.037 rad at half the Nyquist rate when a
 // slewing delay crosses a band edge and the tap moves, and by a higher power
 // of frequency below it; its largest phase-delay error inside the band is
-// 0.043 rad there, against 0.142 for a first-order section on its own best
-// band. Going nearer D = 1 shrinks both further, but the pole radius is
+// 0.045 rad there, at D = 1.59. A first-order section on its own best band,
+// [0.5, 1.5), is worse at both: its phase-delay error runs from 0.142 rad at
+// the bottom edge to 0.391 at the top, and its band-edge step is 0.533 rad.
+// Going nearer D = 1 shrinks both further, but the pole radius is
 // already 0.87 at 1.1 and at D = 1 exactly a pole sits on the unit circle
 // with only a zero to cancel it. The band is one sample wide, so the tap is a
 // function of the delay alone: the loop and the design that tunes it split

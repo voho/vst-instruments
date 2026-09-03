@@ -1838,7 +1838,7 @@ void testTheFractionalDelayReadIsLossless()
     // frequency and it barely moves with the host rate. What rate dependence
     // remains is the high-loss corner, which is clamped to 0.44 of the
     // sample rate at 44.1 and 48 kHz and not at 96 kHz; it leaves H8 within
-    // 13% across the three rates and the fundamental within 1%.
+    // 13% across the three rates and the fundamental within 1.1%.
     struct Reading { double perSecond; double perPass; };
     const auto decay = [] (int midiNote, double rate, int partial)
     {
@@ -1866,7 +1866,9 @@ void testTheFractionalDelayReadIsLossless()
             audio, frequency, 0.20, 0.60, rate);
         const double late = spectralAmplitudeAt(
             audio, frequency, 1.00, 1.40, rate);
-        const double perSecond = 20.0 * std::log10(early / late) / 0.6;
+        // The two windows are equal length and 0.8 s apart start to start,
+        // so 0.8 s is what the drop in level is spread over.
+        const double perSecond = 20.0 * std::log10(early / late) / 0.8;
         return Reading { perSecond, perSecond / fundamental };
     };
 
