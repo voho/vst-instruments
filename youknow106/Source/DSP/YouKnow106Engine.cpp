@@ -913,6 +913,17 @@ std::uint16_t decayReleaseMultiplierForByte(std::uint8_t byte) noexcept
 
 std::uint16_t lfoRateIncrementForByte(std::uint8_t byte) noexcept
 {
+    // B-2's rate table at $0C60 opens 0005 000f 0019 0028 0037 0046 0050 005a,
+    // and this generator reproduces it entry for entry. The 5 -> 15 first step
+    // is a 3.0x ratio where every neighbour is at most 1.7x, which looks like a
+    // transcription error and is not one: the listing's own hex plainly reads
+    // 0005, and it was re-checked for exactly that reason.
+    //
+    // It is also what reconciles the printed specification. These coefficients
+    // give 0.0363 Hz at byte 0 and 0.1088 Hz at byte 1, so Roland's "0.1 Hz ~
+    // 30 Hz" is byte 1 to byte 127, both ends inside 0.9 %. Byte 0 is a
+    // below-spec entry the panel reaches anyway, because the LFO RATE row
+    // carries no minimum-stop resistor.
     int value = 5;
     for (int index = 1; index <= byte; ++index)
     {
