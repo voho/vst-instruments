@@ -3017,6 +3017,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
 #endif
     constexpr double feedbackHeadroom =
         VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
+    const double resonanceCompensation =
+        static_cast<double>(inputCompensationCoefficient);
     const double currentOmega = clampOmegaStep(
         static_cast<double>(omegaStep));
     const double currentFeedback = std::clamp(
@@ -3365,10 +3367,15 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                 YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
                                              result.size());
 #endif
+            // One pair, one tanh, of the difference of its two divided
+            // inputs. `resonanceCompensation` is zero when the legacy split
+            // is selected, which makes this the former argument exactly.
+            const double differentialInput =
+                value[3] - resonanceCompensation * drive;
             const double feedbackArgument = [&] {
                 if constexpr (useReciprocal)
-                    return value[3] * (1.0 / feedbackHeadroom);
-                return value[3] / feedbackHeadroom;
+                    return differentialInput * (1.0 / feedbackHeadroom);
+                return differentialInput / feedbackHeadroom;
             }();
             double previous = drive - feedbackAt[point] * feedbackHeadroom
                 * nonlinear(feedbackArgument);
@@ -3432,7 +3439,9 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
             const double loopReturn = feedbackAt[point] == 0.0
                 ? drive
                 : drive - feedbackAt[point] * feedbackHeadroom
-                    * polyZonedTanhImpl(value[3] * (1.0 / feedbackHeadroom));
+                    * polyZonedTanhImpl(
+                        (value[3] - resonanceCompensation * drive)
+                        * (1.0 / feedbackHeadroom));
 
             const std::array<double, 4> stageArg {
                 (loopReturn - value[0] + stageOffset[0]) * inverseHeadroom,
@@ -3755,9 +3764,16 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4Pair(
                                       lanes[1].inverseHeadroom);
     const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
+    // Read per cascade rather than broadcast: the coefficient is uniform
+    // across voices in practice, but two plug-in instances can differ.
+    const Pair resonanceCompensation = pack(
+        static_cast<double>(first.inputCompensationCoefficient),
+        static_cast<double>(second.inputCompensationCoefficient));
     const auto derivative = [&](const PairState& value, Pair drive) {
         const Pair feedbackArgument = pairMultiplyScalar(
-            value[3], 1.0 / feedbackHeadroom);
+            pairSubtract(value[3],
+                         pairMultiply(resonanceCompensation, drive)),
+            1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
             ? pairLow(drive)
@@ -4117,9 +4133,16 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonPair(
                                       lanes[1].inverseHeadroom);
     const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
+    // Read per cascade rather than broadcast: the coefficient is uniform
+    // across voices in practice, but two plug-in instances can differ.
+    const Pair resonanceCompensation = pack(
+        static_cast<double>(first.inputCompensationCoefficient),
+        static_cast<double>(second.inputCompensationCoefficient));
     const auto derivative = [&](const PairState& value, Pair drive) {
         const Pair feedbackArgument = pairMultiplyScalar(
-            value[3], 1.0 / feedbackHeadroom);
+            pairSubtract(value[3],
+                         pairMultiply(resonanceCompensation, drive)),
+            1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
             ? pairLow(drive)
@@ -4532,6 +4555,13 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
         [&](const Lane& lane, std::size_t) {
             return static_cast<float>(lane.feedback) * feedbackHeadroom;
         }, 0u);
+    // Read per cascade rather than broadcast: the coefficient is uniform
+    // across voices in practice, but two plug-in instances can differ.
+    const Quad resonanceCompensation = quadLoad({
+        cascades[0]->inputCompensationCoefficient,
+        cascades[1]->inputCompensationCoefficient,
+        cascades[2]->inputCompensationCoefficient,
+        cascades[3]->inputCompensationCoefficient });
     std::array<Quad, 7> drives;
     for (std::size_t point = 0; point < drives.size(); ++point)
         drives[point] = packField(
@@ -4541,7 +4571,9 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
 
     const auto derivative = [&](const QuadState& value, Quad drive) {
         const Quad feedbackArgument = quadMultiplyScalar(
-            value[3], 1.0f / feedbackHeadroom);
+            quadSubtract(value[3],
+                         quadMultiply(resonanceCompensation, drive)),
+            1.0f / feedbackHeadroom);
         const Quad loopReturn = quadSubtract(
             drive, quadMultiply(feedbackGain,
                                 polyTanhQuad(feedbackArgument)));
@@ -7107,6 +7139,14 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     voice.inputCompensation =
         VoicedResonanceCompatibilityProfile::inputCompensation(
             voice.feedback, parameters.resonanceCompensationShape);
+    // The differential form carries the same coefficient inside the pair's
+    // own tanh instead of ahead of it, so the cascade needs c rather than
+    // 1 + c*k. Zero leaves the cascade arithmetic bit-identical to the split.
+    voice.filter.inputCompensationCoefficient =
+        parameters.enableDifferentialResonanceInput
+            ? VoicedResonanceCompatibilityProfile::compensationCoefficient(
+                  parameters.resonanceCompensationShape)
+            : 0.0f;
 
     const float analogCounts = cutoffAnalogCounts(
         voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
@@ -7835,9 +7875,15 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
         mixed, moduleCouplingG_, 0.0f, 1.0f);
     // The microscopic card excitation is injected at the filter input, after
     // the source coordinate scale, so it stays outside this capacitor (OQ-16).
-    const float filterInput = coupled * filterInputAttenuation
-                            * voice.inputCompensation
-                            + microscopicNoise * noiseRateScale_;
+    // With the differential form the compensation rides inside the resonance
+    // pair's tanh, so the drive reaching the cascade is the plain coupled
+    // node; the split form keeps the feedforward multiply it always had.
+    const float compensatedDrive =
+        activeParameters_.enableDifferentialResonanceInput
+            ? coupled * filterInputAttenuation
+            : coupled * filterInputAttenuation * voice.inputCompensation;
+    const float filterInput =
+        compensatedDrive + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C.
     const float dynamicHeadroom =
         dynamicOtaHeadroomVolts(parameters, voice.cardIndex);

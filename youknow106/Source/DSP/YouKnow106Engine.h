@@ -282,6 +282,16 @@ struct EngineParameters
     // serialised, like the rest of this family.
     ResonanceCompensationShape resonanceCompensationShape {
         ResonanceCompensationShape::Reconstruction };
+    // On by default: the resonance BA662 is one differential pair, so it takes
+    // a single tanh of the difference of its two divided inputs -- VCF IN
+    // through R5/R2 on the non-inverting side, VCF OUT through R3/R1 on the
+    // inverting one (JUNO-6/60 CPU BOARD p. 9). The model used to split that
+    // into a linear feedforward at the filter input and a separate tanh on the
+    // feedback return, which agrees only while both are small. False restores
+    // that split bit-exactly for controlled A/B renders. The two forms are
+    // identical at zero drive, so the 4.8 Vp-p self-oscillation trim and the
+    // maximumFeedback solve behind it are untouched either way.
+    bool enableDifferentialResonanceInput { true };
     // Comparison-only. Restores the former softplus envelope-to-gain stand-in
     // (turn-on 0.015, knee 0.0026) bit-exactly for A/B renders; the default
     // solves the traced Tr20 grounded-base stage's own junction law, see
@@ -600,6 +610,18 @@ public:
             float feedback,
             ResonanceCompensationShape shape
                 = ResonanceCompensationShape::Reconstruction) noexcept;
+        // The bare coefficient c, without the 1 + c*k the split form wants.
+        // The differential form needs it because c multiplies the drive
+        // inside the resonance pair's own tanh.
+        [[nodiscard]] static constexpr float compensationCoefficient(
+            ResonanceCompensationShape shape) noexcept
+        {
+            return shape == ResonanceCompensationShape::Drawn
+                ? drawnInputCompensationPerFeedback
+                : (shape == ResonanceCompensationShape::Legacy
+                       ? legacyInputCompensationPerFeedback
+                       : inputCompensationPerFeedback);
+        }
         // The reciprocal of the pole scaling the cascade's own limit cycle
         // imposes on itself, as a function of the loop gain that sustains it.
         // Exactly 1 at and below `nominalOscillationFeedback`, where there is
@@ -1894,6 +1916,13 @@ private:
         // previousOmegaStep in its body -- a same-named parameter would
         // shadow it there and silently change which value gets scaled.
         void retime(float previousStep, float nextStep) noexcept;
+        // The resonance OTA's own input divider, as a coefficient on the
+        // drive, so the pair can see the DIFFERENCE of its two inputs inside
+        // one tanh instead of a linear feedforward outside it. Zero restores
+        // the former split exactly. Set per voice from the engine; uniform
+        // across voices in practice, but held per cascade so two plug-in
+        // instances on different shapes cannot interfere.
+        float inputCompensationCoefficient { 0.0f };
         template <bool useCubicEarly = false>
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,

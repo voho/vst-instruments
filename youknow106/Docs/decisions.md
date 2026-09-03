@@ -5,6 +5,54 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-03 — The resonance pair sees one difference, not two separate terms
+
+The resonance BA662 is a single differential pair. It takes **one** tanh of the
+difference of its two divided inputs: VCF IN through R5 47k / R2 1.5k on the
+non-inverting side, VCF OUT through R3 100k / R1 1.5k on the inverting one
+(JUNO-6 and JUNO-60 CPU BOARD p. 9, the discrete circuit the A1QH80017A
+integrates). The model instead did two separate things: it multiplied the filter
+input by a linear `1 + c*k` ahead of the cascade, and applied a tanh to the
+feedback return inside it. That is not a constant to re-pin; it is the wrong
+form, in all five solver kernels.
+
+The restructuring is exact and small. Writing the pair's argument as the
+difference it physically is,
+
+    previous = drive - k*H*tanh((V4 - c*drive)/H)
+
+recovers `drive*(1 + c*k) - k*V4` in the linear limit, so the two agree wherever
+both terms are small, and diverge only where the nonlinearity actually bites.
+`c` is the same bracketed coefficient the 2026-09-02 entry shipped; it now
+multiplies the drive inside the tanh instead of ahead of it.
+
+**The endpoint solve is untouched, by construction.** At `drive = 0` the two
+forms are bit-identical, and Roland's 4.8 Vp-p / 248 Hz self-oscillation trim is
+taken with no oscillator, sub or noise in the patch. So `maximumFeedback = 4.504`
+and the `frequencyTrim` droop table built on it stand without re-solving, and the
+suite's endpoint assertions pass unchanged.
+
+Measured, shipping defaults at 48 kHz/4x, against the split form: silence is
+bit-identical and small-signal material barely moves (-0.087 dB on an open saw
+pad, -39 dBc). Two effects then compete as the signal grows, and both are
+consequences of the same correction. Removing the feedforward takes level off a
+loud resonant passband: -2.49 dB on a resonant pad, -1.56 dB on a stepped
+resonance ramp, -0.97 dB on a full-mixer patch. Shrinking the tanh's argument
+stops the loop being throttled by its own drive: +3.65 dB on a self-oscillating
+chord that has an oscillator in it, which is the case the audit named -- the
+model used to stop ringing where the drawn circuit keeps ringing.
+
+This is an evidence-priority correction, not a listening verdict: the split form
+is not a defensible alternative reading of the circuit, it is an approximation
+that only holds at small signal. No letters were rendered and none are owed. It
+does not close OQ-09, which still owns the coefficient's value.
+
+Paired native benchmark: -0.53 %, +1.69 %, +2.72 %, +0.35 % across the four
+audit scenarios -- the largest CPU cost of this pass, and one extra multiply and
+subtract per node in the hot feedback path is what it buys. Full suite 15/15.
+`EngineParameters::enableDifferentialResonanceInput` restores the split
+bit-exactly for comparison renders.
+
 ## 2026-09-02 — Resonance input compensation: off a voiced value, on to a bracket
 
 `inputCompensationPerFeedback` was 0.2296 with no derivation behind it. Two

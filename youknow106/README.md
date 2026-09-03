@@ -700,6 +700,15 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   noise terms are deterministic, quality-invariant and remain around the
   analogue circuit's roughly -120 dBFS floor rather than becoming a sound-
   design hiss control.
+- The resonance loop now applies one nonlinearity to the difference of the
+  BA662 pair's two divided inputs, as the drawn circuit does, instead of a
+  linear feedforward at the filter input plus a separate tanh on the feedback
+  return. The two agree at small signal and at zero drive — so the 4.8 Vp-p
+  self-oscillation trim and the loop-gain endpoint solved against it are
+  untouched — and diverge where the pair actually compresses: −2.49 dB on a
+  resonant pad, −1.56 dB on a stepped resonance ramp, and +3.65 dB on a
+  self-oscillating chord carrying an oscillator, which previously stopped
+  ringing where the circuit keeps going.
 - Each voice card's filter input now carries the Johnson noise of its own
   68 kΩ/560 Ω stage network rather than a voiced 20 µV seed: 555.4 Ω gives
   3.02 nV/√Hz, and referring that through the stage's own attenuator puts
