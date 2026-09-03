@@ -1,4 +1,6 @@
 #include "DSP/AcustraEngine.h"
+#include "DSP/MeasuredBodyData.h"
+#include "DSP/MeasuredBridgeData.h"
 
 #include <algorithm>
 #include <chrono>
@@ -122,10 +124,14 @@ struct AcustraEngineTestAccess
                  voice.dispersionDesignInharmonicity };
     }
 
-    static BodyModeSnapshot configuredBody(PhysicalCalibration calibration,
-                                           int index)
+    static BodyModeSnapshot configuredBody(
+        PhysicalCalibration calibration, int index,
+        StringMaterial material = StringMaterial::Steel)
     {
         AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = material;
+        engine.setParameters(parameters);
         engine.setPhysicalCalibration(calibration);
         engine.prepare(48000.0, 64);
         const auto& mode = engine.bodyModes_[static_cast<std::size_t>(index)];
@@ -137,13 +143,33 @@ struct AcustraEngineTestAccess
         return { frequency, q, std::hypot(mode.leftReal, mode.leftImaginary) };
     }
 
-    static double bridgeAdmittance(PhysicalCalibration calibration)
+    static double bridgeAdmittance(
+        PhysicalCalibration calibration,
+        StringMaterial material = StringMaterial::Steel)
     {
         AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = material;
+        engine.setParameters(parameters);
         engine.setPhysicalCalibration(calibration);
         engine.prepare(48000.0, 64);
         return engine.bridgeLoad_.immediateAdmittance;
     }
+
+    static double bridgeAdmittanceOf(const AcustraEngine& engine)
+    {
+        return engine.bridgeLoad_.immediateAdmittance;
+    }
+
+    static double bodyResidueOf(const AcustraEngine& engine, int index)
+    {
+        const auto& mode = engine.bodyModes_[static_cast<std::size_t>(index)];
+        return std::hypot(mode.leftReal, mode.leftImaginary)
+             + std::hypot(mode.rightReal, mode.rightImaginary)
+             + std::hypot(mode.poleReal, mode.poleImaginary);
+    }
+
+    static constexpr int bodyModeCapacity = AcustraEngine::bodyModeCount;
 
     static double playedDelay(PhysicalCalibration calibration)
     {
@@ -3899,6 +3925,64 @@ void testFrettingHandFollowsThePluckLaw()
         }
 }
 
+void testEachStringMaterialPlaysItsOwnMeasuredGuitar()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    const auto calibration = acustra::fittedPhysicalCalibration;
+
+    // Steel plays g21 and nylon a classical; the banks are two measured
+    // instruments, so the lowest body mode and the bridge's immediate
+    // admittance must both move with the material.
+    const auto steelBody = Access::configuredBody(
+        calibration, 0, acustra::StringMaterial::Steel);
+    const auto nylonBody = Access::configuredBody(
+        calibration, 0, acustra::StringMaterial::Nylon);
+    expect(std::abs(steelBody.frequency - nylonBody.frequency) > 1.0,
+           "both string materials configured the same lowest body mode");
+    const double steelAdmittance = Access::bridgeAdmittance(
+        calibration, acustra::StringMaterial::Steel);
+    const double nylonAdmittance = Access::bridgeAdmittance(
+        calibration, acustra::StringMaterial::Nylon);
+    expect(std::abs(nylonAdmittance - steelAdmittance)
+               > 0.01 * std::abs(steelAdmittance),
+           "both string materials configured the same bridge admittance");
+
+    // Changing the material on a prepared engine has to move both banks, not
+    // only the strings.
+    acustra::AcustraEngine engine;
+    engine.prepare(48000.0, 64);
+    expect(std::abs(Access::bridgeAdmittanceOf(engine) - steelAdmittance)
+               <= 1.0e-12,
+           "a prepared engine did not start on the steel bridge bank");
+    acustra::EngineParameters parameters;
+    parameters.stringMaterial = acustra::StringMaterial::Nylon;
+    engine.setParameters(parameters);
+    expect(std::abs(Access::bridgeAdmittanceOf(engine) - nylonAdmittance)
+               <= 1.0e-12,
+           "switching to nylon left the steel bridge bank in place");
+
+    // The arrays are sized to the larger bank; the surplus slots the shorter
+    // one leaves must be silent, not stale.
+    acustra::AcustraEngine steelEngine;
+    steelEngine.prepare(48000.0, 64);
+    for (int index = static_cast<int>(
+             acustra::detail::measuredSteelBodyModes.size());
+         index < Access::bodyModeCapacity; ++index)
+        expect(Access::bodyResidueOf(steelEngine, index) == 0.0,
+               "a surplus body slot kept the other bank's mode");
+
+    // Both bridge banks must stay positive real: a negative weight would make
+    // the junction active. This guards a hand-edited header, not the fit.
+    for (const auto& mode : acustra::detail::measuredNylonBridgeModes)
+        expect(mode.weight > 0.0f && mode.q > 0.0f
+                   && mode.frequency >= 60.0f && mode.frequency <= 10000.0f,
+               "the nylon bridge bank left the passive fit's range");
+    for (const auto& mode : acustra::detail::measuredSteelBridgeModes)
+        expect(mode.weight > 0.0f && mode.q > 0.0f
+                   && mode.frequency >= 60.0f && mode.frequency <= 10000.0f,
+               "the steel bridge bank left the passive fit's range");
+}
+
 void testPerformance()
 {
     acustra::AcustraEngine engine;
@@ -3971,6 +4055,7 @@ int main()
     testStrumTimingFollowsThePickAcrossTheStrings();
     testNoTwoPlucksLandInTheSamePlace();
     testFrettingHandFollowsThePluckLaw();
+    testEachStringMaterialPlaysItsOwnMeasuredGuitar();
     testPerformance();
     if (failures == 0)
         std::cout << "All Acustra engine tests passed\n";

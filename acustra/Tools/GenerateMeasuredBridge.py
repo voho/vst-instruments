@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Generate Acustra's passive g21 driving-point bridge mobility.
+"""Generate Acustra's two passive driving-point bridge mobilities.
 
-The input is Robert Mores' ``qualified_selected_impulses.mat``.  This tool
-uses the treble bridge impact and the co-located treble accelerometer from
-g21, converts acceleration/force to velocity/force exactly as the archive's
-MATLAB script does (differentiate the hammer instead of integrating the
-sensor), finds 65 measured modal candidates through 10 kHz, and projects their
-residues onto the nonnegative cone.  Every emitted term is therefore positive
-real, so the waveguide termination can use the passive reflectance construction
-in Bank and Karjalainen, DAFx-10, Eq. (17):
+The input is Robert Mores' ``qualified_selected_impulses.mat``.  For each
+guitar this tool uses the treble bridge impact and the co-located treble
+accelerometer, converts acceleration/force to velocity/force exactly as the
+archive's MATLAB script does (differentiate the hammer instead of integrating
+the sensor), finds 65 measured modal candidates through 10 kHz, and projects
+their residues onto the nonnegative cone.  Every emitted term is therefore
+positive real, so the waveguide termination can use the passive reflectance
+construction in Bank and Karjalainen, DAFx-10, Eq. (17):
 https://www.dafx.de/paper-archive/2010/DAFx10/BankKarjalainen_DAFx10_P60.pdf
+
+Two guitars are emitted, one per string material, because a steel-string and a
+classical are different instruments and neither bridge describes the other.
+Both fits must meet the same relative-complex and median-magnitude limits;
+those limits were pinned on the g21 fit and are not relaxed for a candidate.
 
 NumPy and SciPy are required.  Regenerate or verify with:
 
     python3 Tools/GenerateMeasuredBridge.py --raw-mat /path/to/qualified_selected_impulses.mat
     python3 Tools/GenerateMeasuredBridge.py --raw-mat /path/to/qualified_selected_impulses.mat --check
+
+``--nylon-guitar`` selects a different archive record for the nylon bank; it
+exists so the choice between measured classicals can be screened, and the
+committed header is the default.
 """
 
 from __future__ import annotations
@@ -24,6 +33,7 @@ import difflib
 import hashlib
 from pathlib import Path
 import sys
+import textwrap
 
 import numpy as np
 from scipy.io import loadmat
@@ -35,7 +45,6 @@ from scipy.signal import find_peaks
 SAMPLE_RATE = 48_000.0
 FFT_SIZE = 65_536
 RECORD_SAMPLES = 48_000
-GUITAR_INDEX = 20  # MATLAB g21.
 IMPACT_INDEX = 2  # Treble-side bridge impact.
 FORCE_CHANNEL = 0
 TREBLE_ACCELEROMETER_CHANNEL = 1
@@ -47,9 +56,28 @@ CANDIDATE_COUNT = 65
 PEAK_PROMINENCE_DB = 0.5
 Q_MINIMUM = 2.0
 Q_MAXIMUM = 80.0
+# Standard tuning at A = 440 Hz; the guitars were measured strung.
+OPEN_STRING_HZ = (82.40689, 110.0, 146.83238, 195.99772, 246.94165, 329.62756)
+MAX_COMPLEX_RELATIVE_ERROR = 0.24
+MAX_MEDIAN_MAGNITUDE_ERROR_DB = 1.6
 RAW_MD5 = "733cb10baf5ce36d8bf333610ffbb260"
 HAMMER_NEWTONS_PER_FULL_SCALE = (10_000.0 / 92.90) * 4.4482
 ACCELERATION_MPS2_PER_FULL_SCALE = (10_000.0 / 10.64) * 9.80665
+DEFAULT_NYLON_GUITAR = 34
+# Provenance from the archive's List_of_guitars_description.pdf.
+GUITAR_DESCRIPTION = {
+    21: "a 2018 Lester DeVoe flamenca blanca, spruce/cypress, measured in a "
+        "school music room in Freiburg",
+    34: "a 1971 Manuel Contreras classical Spanish, cedar/Rio palisander, "
+        "measured anechoic in the class-1 free-field laboratory of the "
+        "Hamburg University of Applied Sciences",
+    35: "a 1978 Manuel Lopez Bellido classical Spanish, cedar/Rio palisander, "
+        "measured anechoic in the class-1 free-field laboratory of the "
+        "Hamburg University of Applied Sciences",
+    36: "a 2001 Jose Lopez Bellido classical Spanish, spruce/Indian "
+        "palisander, measured anechoic in the class-1 free-field laboratory "
+        "of the Hamburg University of Applied Sciences",
+}
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parents[1] / "Source" / "DSP" / "MeasuredBridgeData.h"
 )
@@ -60,7 +88,7 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "md5").hexdigest()
 
 
-def extract_mobility(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def load_matrix(path: Path) -> np.ndarray:
     actual_digest = digest(path)
     if actual_digest != RAW_MD5:
         raise ValueError(f"{path}: MD5 {actual_digest}, expected {RAW_MD5}")
@@ -70,11 +98,17 @@ def extract_mobility(path: Path) -> tuple[np.ndarray, np.ndarray]:
     ]
     if values.shape != (65, 144_000, 6):
         raise ValueError(f"{path}: unexpected source matrix shape {values.shape}")
+    return values
 
+
+def extract_mobility(
+    path: Path, guitar: int = 21
+) -> tuple[np.ndarray, np.ndarray]:
+    values = load_matrix(path)
     start = IMPACT_INDEX * RECORD_SAMPLES
-    record = values[GUITAR_INDEX, start : start + RECORD_SAMPLES, :]
+    record = values[guitar - 1, start : start + RECORD_SAMPLES, :]
     if not np.all(np.isfinite(record)):
-        raise ValueError(f"{path}: g21 treble-impact record contains non-finite data")
+        raise ValueError(f"{path}: g{guitar} treble-impact record is non-finite")
 
     taper = 0.5 * np.cos(
         np.arange(1, RECORD_SAMPLES + 1) * np.pi / RECORD_SAMPLES
@@ -211,14 +245,45 @@ def positive_real_fit(
     median_magnitude_error = float(np.median(magnitude_error_db))
     if phase_advance != 2:
         raise ValueError(f"unexpected fitted instrumentation delay {phase_advance}")
-    if relative_error > 0.24 or median_magnitude_error > 1.6:
+    if (relative_error > MAX_COMPLEX_RELATIVE_ERROR
+            or median_magnitude_error > MAX_MEDIAN_MAGNITUDE_ERROR_DB):
         raise ValueError(
             "passive bridge fit missed its regression limits: "
             f"complex={relative_error:.6f}, magnitude={median_magnitude_error:.6f} dB"
         )
     if any(weight < 0.0 for _, _, weight in fitted_modes):
         raise ValueError("passive bridge fit contains a negative modal weight")
+    # The archive's setup photographs show installed, undamped strings, so a
+    # retained mode sitting on an open string could be that string rather than
+    # the body. A guitar's low air and top modes have Q in the tens while an
+    # open string's is near a thousand, and this estimator clips at
+    # Q_MAXIMUM = 80, so a mode near an open string is cleared only if its Q is
+    # resolved below that clip. (2026-08-30: g21's one such candidate, 82.764
+    # Hz, reads Q 16.6 and is a body mode.)
+    for mode_frequency, q, _ in fitted_modes:
+        for open_frequency in OPEN_STRING_HZ:
+            cents = 1200.0 * np.log2(mode_frequency / open_frequency)
+            if abs(cents) < 25.0 and q >= Q_MAXIMUM:
+                raise ValueError(
+                    f"retained mode {mode_frequency:.3f} Hz sits {cents:+.1f} "
+                    f"cents from an open string with an unresolved Q {q:.1f}"
+                )
     return fitted_modes, phase_advance, relative_error, median_magnitude_error
+
+
+def fit_bank(path: Path, guitar: int) -> dict:
+    frequency, mobility = extract_mobility(path, guitar)
+    modes = candidate_modes(frequency, mobility)
+    fitted, phase_advance, relative_error, magnitude_error = positive_real_fit(
+        frequency, mobility, modes
+    )
+    return {
+        "guitar": guitar,
+        "modes": fitted,
+        "phase_advance": phase_advance,
+        "relative_error": relative_error,
+        "magnitude_error": magnitude_error,
+    }
 
 
 def cpp_float(value: float) -> str:
@@ -228,26 +293,35 @@ def cpp_float(value: float) -> str:
     return text + "f"
 
 
-def render_header(
-    modes: list[tuple[float, float, float]],
-    phase_advance: int,
-    relative_error: float,
-    median_magnitude_error: float,
-) -> str:
+def bank_block(name: str, bank: dict) -> str:
     rows = [
         "    { " + ", ".join(cpp_float(value) for value in mode) + " },"
-        for mode in modes
+        for mode in bank["modes"]
     ]
+    guitar = bank["guitar"]
+    comment = textwrap.fill(
+        f'g{guitar}, {GUITAR_DESCRIPTION[guitar]}. A nonnegative least-squares'
+        f' projection retained {len(bank["modes"])} of {CANDIDATE_COUNT}'
+        f' measured modal candidates after a {bank["phase_advance"]}-sample'
+        f' instrumentation alignment; relative complex error'
+        f' {bank["relative_error"]:.6f}, median magnitude error'
+        f' {bank["magnitude_error"]:.6f} dB over 60--10000 Hz.',
+        width=76, initial_indent="// ", subsequent_indent="// ")
+    return f'''{comment}
+inline constexpr std::array<MeasuredBridgeMode, {len(bank["modes"])}> {name} {{{{
+{chr(10).join(rows)}
+}}}};'''
+
+
+def render_header(steel: dict, nylon: dict) -> str:
     return f'''// Generated by Tools/GenerateMeasuredBridge.py; do not hand-edit.
-// Passive driving-point mobility fitted to g21's treble-side bridge impact and
-// co-located treble accelerometer. Acceleration/force is converted to
-// velocity/force by differentiating the hammer, following the archive script.
-// A nonnegative least-squares projection retained {len(modes)} of
-// {CANDIDATE_COUNT} measured modal candidates after a {phase_advance}-sample
-// instrumentation alignment;
-// relative complex error {relative_error:.6f}, median magnitude error
-// {median_magnitude_error:.6f} dB over 60--10000 Hz. Each positive weight
-// multiplies s/(s^2 + 2 damping s + omega^2), making the sum positive real.
+// Passive driving-point mobilities fitted to each guitar's treble-side bridge
+// impact and co-located treble accelerometer. Acceleration/force is converted
+// to velocity/force by differentiating the hammer, following the archive
+// script. Each positive weight multiplies s/(s^2 + 2 damping s + omega^2),
+// making the sum positive real. One bank per string material: a steel-string
+// and a classical are different instruments, and the engine selects by
+// StringMaterial.
 // Adapted from Robert Mores, "Archive for the acoustical documentation of
 // classical Spanish guitars, flamenco guitars and romantic guitars from
 // private and public collections -- bridge mobility" (2021),
@@ -267,9 +341,9 @@ struct MeasuredBridgeMode
     float weight;
 }};
 
-inline constexpr std::array<MeasuredBridgeMode, {len(modes)}> measuredBridgeModes {{{{
-{chr(10).join(rows)}
-}}}};
+{bank_block("measuredSteelBridgeModes", steel)}
+
+{bank_block("measuredNylonBridgeModes", nylon)}
 }} // namespace acustra::detail
 '''
 
@@ -299,28 +373,31 @@ def main() -> int:
     parser.add_argument("--raw-mat", required=True, type=Path)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
+        "--nylon-guitar", type=int, default=DEFAULT_NYLON_GUITAR,
+        choices=sorted(GUITAR_DESCRIPTION),
+        help="archive record for the nylon bank (default: %(default)s)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="compare generated content with --output without writing it",
     )
     arguments = parser.parse_args()
 
-    frequency, mobility = extract_mobility(arguments.raw_mat)
-    modes = candidate_modes(frequency, mobility)
-    fitted, phase_advance, relative_error, magnitude_error = positive_real_fit(
-        frequency, mobility, modes
-    )
-    header = render_header(
-        fitted, phase_advance, relative_error, magnitude_error
-    )
+    steel = fit_bank(arguments.raw_mat, 21)
+    nylon = fit_bank(arguments.raw_mat, arguments.nylon_guitar)
+    header = render_header(steel, nylon)
     if arguments.check:
         return 0 if check_output(arguments.output, header) else 1
     with arguments.output.open("w", encoding="utf-8", newline="\n") as stream:
         stream.write(header)
-    print(
-        f"generated {arguments.output}: {len(fitted)} passive modes, "
-        f"median magnitude error {magnitude_error:.3f} dB"
-    )
+    for name, bank in (("steel", steel), ("nylon", nylon)):
+        print(
+            f"generated {name} bank g{bank['guitar']}: {len(bank['modes'])} "
+            f"passive modes, complex error {bank['relative_error']:.4f}, "
+            f"median magnitude error {bank['magnitude_error']:.3f} dB"
+        )
+    print(f"wrote {arguments.output}")
     return 0
 
 

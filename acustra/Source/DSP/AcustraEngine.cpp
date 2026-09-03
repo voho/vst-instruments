@@ -10,6 +10,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <span>
 
 namespace acustra
 {
@@ -26,8 +27,12 @@ constexpr int localMaximumDelaySamples = 8192;
 // places the quietest public physical render just above -20 dBFS while keeping
 // ordinary output well below the limiter's -1 dBFS knee.
 constexpr float radiationReferenceGain = 18.0f;
-static_assert(detail::measuredBodyModes.size() == 96);
-static_assert(detail::measuredBridgeModes.size() == ACUSTRA_BRIDGE_MODE_COUNT);
+static_assert(detail::measuredSteelBodyModes.size() <= ACUSTRA_BODY_MODE_COUNT);
+static_assert(detail::measuredNylonBodyModes.size() <= ACUSTRA_BODY_MODE_COUNT);
+static_assert(detail::measuredSteelBridgeModes.size()
+              <= ACUSTRA_BRIDGE_MODE_COUNT);
+static_assert(detail::measuredNylonBridgeModes.size()
+              <= ACUSTRA_BRIDGE_MODE_COUNT);
 
 struct ShapeSpec
 {
@@ -165,6 +170,26 @@ float stringImpedance(bool steel, int stringIndex, int openMidi) noexcept
     const float linearMass = nylonDensity[index] * pi * 0.25f
                            * diameter * diameter;
     return linearMass * waveSpeed;
+}
+
+// A steel-string and a classical are different instruments, and neither
+// archive record describes the other, so each material plays the guitar its
+// own banks were measured on. The two banks need not be the same length; the
+// arrays are sized to the larger and the surplus slots are silenced.
+std::span<const detail::MeasuredBridgeMode> measuredBridgeBank(
+    StringMaterial material) noexcept
+{
+    if (material == StringMaterial::Steel)
+        return detail::measuredSteelBridgeModes;
+    return detail::measuredNylonBridgeModes;
+}
+
+std::span<const detail::MeasuredBodyMode> measuredBodyBank(
+    StringMaterial material) noexcept
+{
+    if (material == StringMaterial::Steel)
+        return detail::measuredSteelBodyModes;
+    return detail::measuredNylonBodyModes;
 }
 
 bool includeMeasuredBridgeMode(const detail::MeasuredBridgeMode& mode) noexcept
@@ -1025,7 +1050,6 @@ void AcustraEngine::prepare(double sampleRate, int)
         * 48000.0f / static_cast<float>(sampleRate_));
     bodyModelFadeStep_ = 1.0f
         / (0.040f * static_cast<float>(sampleRate_));
-    configureBridge();
     prepared_ = true;
     reset();
 }
@@ -1043,6 +1067,9 @@ void AcustraEngine::reset() noexcept
     width_ = parameters_.stereoWidth;
     outputGain_ = parameters_.outputGain;
     bodyConfigured_ = false;
+    // Both banks follow the string material, which is only known here: prepare
+    // runs before the pending parameters are adopted.
+    configureBridge();
     configureBody();
     for (auto& mode : bodyModes_)
         mode.reset();
@@ -1109,7 +1136,6 @@ void AcustraEngine::setPhysicalCalibration(
     physicalCalibration_ = sanitise(calibration);
     if (!prepared_)
         return;
-    configureBridge();
     reset();
 }
 
@@ -1127,8 +1153,14 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
     const bool tuningChanged = force || next.tuning != parameters_.tuning;
     parameters_ = next;
 
-    if (bodyChanged)
+    // The string material selects which measured guitar the bridge and body
+    // banks come from, so it reconfigures both. configureBody crossfades; the
+    // bridge filters are a different instrument's and are rebuilt, which the
+    // junction's cross-release below already covers.
+    if (bodyChanged || stringChanged)
         configureBody();
+    if (stringChanged)
+        configureBridge();
 
     const auto notes = openNotes(parameters_.tuning);
     for (int string = 0; string < stringCount; ++string)
@@ -1213,12 +1245,17 @@ void AcustraEngine::configureBody() noexcept
 
     const auto shape = shapeSpecs[static_cast<std::size_t>(parameters_.shape)];
     const auto wood = woodSpecs[static_cast<std::size_t>(parameters_.bodyMaterial)];
+    const auto bank = measuredBodyBank(parameters_.stringMaterial);
 
     for (int index = 0; index < bodyModeCount; ++index)
     {
         auto& mode = bodyModes_[static_cast<std::size_t>(index)];
-        const auto& measured = detail::measuredBodyModes[
-            static_cast<std::size_t>(index)];
+        if (static_cast<std::size_t>(index) >= bank.size())
+        {
+            mode = {};
+            continue;
+        }
+        const auto& measured = bank[static_cast<std::size_t>(index)];
         const float alternating = (index & 1) == 0 ? 1.0f : -1.0f;
         const bool lowBodyMode = measured.frequency > 85.0f
             && measured.frequency < 145.0f;
@@ -1318,10 +1355,16 @@ void AcustraEngine::configureBridge() noexcept
         mode.reset();
     };
 
-    for (std::size_t index = 0; index < detail::measuredBridgeModes.size();
-         ++index)
+    const auto bank = measuredBridgeBank(parameters_.stringMaterial);
+    for (std::size_t index = 0;
+         index < static_cast<std::size_t>(bridgeModeCount); ++index)
     {
-        const auto& measured = detail::measuredBridgeModes[index];
+        if (index >= bank.size())
+        {
+            configure(bridgeLoad_.modes[index], 0.0f, 1.0f, 0.0f);
+            continue;
+        }
+        const auto& measured = bank[index];
         configure(bridgeLoad_.modes[index], measured.frequency, measured.q,
                   includeMeasuredBridgeMode(measured)
                       ? measured.weight
@@ -1330,7 +1373,7 @@ void AcustraEngine::configureBridge() noexcept
     }
 
     const auto plate = plateConductanceMode(physicalCalibration_);
-    configure(bridgeLoad_.modes[detail::measuredBridgeModes.size()],
+    configure(bridgeLoad_.modes[static_cast<std::size_t>(bridgeModeCount)],
               plate.frequency, plate.q, plate.weight);
     bridgeLoad_.delayedPastResponse = 0.0f;
 }
@@ -1347,7 +1390,8 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     const std::complex<float> s(
         0.0f, bilinear * std::tan(0.5f * digitalOmega));
     std::complex<float> mobility {};
-    for (const auto& measured : detail::measuredBridgeModes)
+    for (const auto& measured
+         : measuredBridgeBank(parameters_.stringMaterial))
     {
         if (measured.frequency >= 0.45f * rate
             || !includeMeasuredBridgeMode(measured))

@@ -11,8 +11,14 @@
 #include <cstddef>
 #include <cstdint>
 
+// Capacity of the per-material measured banks: the larger of the two banks in
+// each generated header. AcustraEngine.cpp static-asserts that both fit, so a
+// regenerated header that grows fails to build rather than to sound.
 #if !defined(ACUSTRA_BRIDGE_MODE_COUNT)
 #define ACUSTRA_BRIDGE_MODE_COUNT 50
+#endif
+#if !defined(ACUSTRA_BODY_MODE_COUNT)
+#define ACUSTRA_BODY_MODE_COUNT 103
 #endif
 
 namespace acustra
@@ -139,7 +145,7 @@ private:
     friend struct AcustraEngineTestAccess;
 
     static constexpr int maximumDelaySamples = 8192;
-    static constexpr int bodyModeCount = 96;
+    static constexpr int bodyModeCount = ACUSTRA_BODY_MODE_COUNT;
     static constexpr int bridgeModeCount = ACUSTRA_BRIDGE_MODE_COUNT;
     static constexpr int controlPeriod = 32;
     static constexpr int midiChannelCount = 16;

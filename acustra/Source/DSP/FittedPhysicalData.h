@@ -49,6 +49,12 @@ struct PhysicalCalibration
     // behind the saddle instead - roughly 12-16 mm at a steel-string's pins,
     // further at a classical's tie block - and the distance is not part of
     // the g21 measurement, so it is bounded and fitted rather than assumed.
+    // Re-swept on the classical bridge rather than inherited from g21: over
+    // E, G, Am, D and C chords, the worst separable note's pull early/late in
+    // cents reads 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at
+    // 17.2 mm and 25.8/98.2 with no anchor at all, so the bound's floor -
+    // DAFx-26's own attachment, xi_b = 0.995 on a 650 mm scale - stays the
+    // shipping value on the new guitar as it was on g21.
     float bridgeTailLengthMetres { 0.020f };
     // Transverse motion stretches the string; DAFx-26's tension increase
     // EA/(2L) times the mean square slope is a force at the saddle, and it

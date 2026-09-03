@@ -1,6 +1,6 @@
 {
-  "date": "2026-09-02",
-  "runtime_source": "AcustraEngine physical model with a 50-mode passive bridge, one positive-real plate conductance floor, and a constant six-string saddle anchor at a fitted saddle-to-anchor length",
+  "date": "2026-09-03",
+  "runtime_source": "AcustraEngine physical model with one measured guitar per string material -- g21 for steel (50-mode passive bridge, 96-mode body), g34 for nylon (42-mode passive bridge, 103-mode body) -- one positive-real plate conductance floor, and a constant six-string saddle anchor at a fitted saddle-to-anchor length",
   "analysis_sample_rate": 48000,
   "render_seconds": 4.2,
   "render_block_size": 127,
@@ -61,7 +61,9 @@
     "highLossCutoffScale",
     "bridgeConductanceFloor",
     "bridgeConductanceCornerHz",
-    "bridgeTailLengthMetres"
+    "bridgeTailLengthMetres",
+    "longitudinalGain",
+    "longitudinalQ"
   ],
   "calibration": [
     1.04,
@@ -89,7 +91,9 @@
     2.16964938,
     0.011,
     2804.94773,
-    0.0171860529
+    0.00325,
+    0.0,
+    35.0
   ],
   "neutral_baseline": {
     "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length; 20 mm saddle-to-anchor length",
@@ -119,7 +123,9 @@
       1.3,
       0.0,
       1000.0,
-      0.02
+      0.02,
+      0.0,
+      80.0
     ],
     "purpose": "a reproducible neutral physical calibration, re-rendered on the current 50-mode runtime and re-scored under the corrected decay descriptor, so it is comparable with the fitted scores beside it; it is not the historical 26-mode-bridge neutral the earlier reports quoted"
   },
@@ -127,76 +133,76 @@
     "training": {
       "examples": 83,
       "unique_model_renders": 47,
-      "fitted_score": 6.606652,
+      "fitted_score": 6.632018,
       "terms": {
         "attack": {
           "neutral": 9.309916832505955,
-          "fitted": 7.98582
+          "fitted": 7.644159
         },
         "harmonics": {
           "neutral": 10.441357549351897,
-          "fitted": 8.12266
+          "fitted": 8.409883
         },
         "tuning": {
           "neutral": 4.7200069586896545,
-          "fitted": 4.628066
+          "fitted": 3.318752
         },
         "pitch_trajectory": {
           "neutral": 0.5545940344615841,
-          "fitted": 0.526233
+          "fitted": 0.510635
         },
         "decay": {
           "neutral": 6.5023449891362235,
-          "fitted": 4.968944
+          "fitted": 5.497106
         },
         "body": {
           "neutral": 15.462399754765235,
-          "fitted": 13.431658
+          "fitted": 11.858548
         },
         "dynamics": {
           "neutral": 5.262953607125741,
-          "fitted": 0.168905
+          "fitted": 0.205193
         }
       },
       "neutral_score": 8.768534755725106,
-      "change_percent": -24.655005835650947
+      "change_percent": -24.36572147165343
     },
     "held_out": {
       "examples": 24,
       "unique_model_renders": 24,
-      "fitted_score": 6.521525,
+      "fitted_score": 6.420769,
       "terms": {
         "attack": {
           "neutral": 9.155575861766145,
-          "fitted": 8.197526
+          "fitted": 7.887766
         },
         "harmonics": {
           "neutral": 10.831031892275846,
-          "fitted": 8.88432
+          "fitted": 8.782849
         },
         "tuning": {
           "neutral": 5.134666492710443,
-          "fitted": 4.937968
+          "fitted": 3.515835
         },
         "pitch_trajectory": {
           "neutral": 0.2159873722123093,
-          "fitted": 0.163319
+          "fitted": 0.159187
         },
         "decay": {
           "neutral": 5.464938238665436,
-          "fitted": 3.853281
+          "fitted": 4.340115
         },
         "body": {
           "neutral": 15.82243218879784,
-          "fitted": 13.941346
+          "fitted": 11.656359
         },
         "dynamics": {
           "neutral": 0.42473841202342505,
-          "fitted": 0.02302
+          "fitted": 0.022788
         }
       },
       "neutral_score": 8.145301055652865,
-      "change_percent": -19.93512633306488
+      "change_percent": -21.172109463726137
     },
     "flat_top": {
       "examples": 8,
@@ -205,27 +211,27 @@
       "terms": {
         "attack": {
           "neutral": 9.036944038636934,
-          "fitted": 5.295068
+          "fitted": 8.09826
         },
         "harmonics": {
           "neutral": 8.586058487630032,
-          "fitted": 7.342431
+          "fitted": 7.338275
         },
         "tuning": {
           "neutral": 8.267588323509182,
-          "fitted": 2.427215
+          "fitted": 2.47798
         },
         "pitch_trajectory": {
           "neutral": 0.6100492795473387,
-          "fitted": 0.626666
+          "fitted": 0.504136
         },
         "decay": {
           "neutral": 8.690178706006728,
-          "fitted": 3.182415
+          "fitted": 6.625239
         },
         "body": {
           "neutral": 13.894703320071423,
-          "fitted": 10.516018
+          "fitted": 15.839682
         },
         "dynamics": {
           "neutral": null,
@@ -233,7 +239,7 @@
         }
       },
       "neutral_score": 9.309314823108725,
-      "change_percent": -12.773720147017487,
+      "change_percent": -12.773720147017483,
       "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
     }
   },
@@ -1240,5 +1246,51 @@
       8.120169
     ],
     "flat_top_note": "the halo masked the played strings over-damping; string losses and bridge mobility want a refit around the new termination"
+  },
+  "per_material_measured_guitars": {
+    "change": "each string material plays the guitar its own banks were measured on: steel keeps g21 (a 2018 DeVoe flamenca blanca, measured in a school music room), nylon moves to g34 (a 1971 Manuel Contreras classical Spanish, measured anechoic in the HAW Hamburg class-1 free-field laboratory)",
+    "windows": "g21 keeps DAFx-26's 3000-sample body window because its first reflection returns at 17.6 ms; g34's anechoic record converges at 12000 samples, where every mode below 700 Hz holds its Q to 1.8 percent at twice that window",
+    "mode_counts": {
+      "g21_bridge": 50,
+      "g21_body": 96,
+      "g34_bridge": 42,
+      "g34_body": 103
+    },
+    "fit_errors": {
+      "g34_bridge_complex": 0.197341,
+      "g34_bridge_median_db": 1.094127,
+      "g34_body_channel0": [
+        0.219,
+        1.241,
+        3.744
+      ],
+      "g34_body_channel1": [
+        0.1675,
+        0.819,
+        2.622
+      ],
+      "g34_body_stereo_p90_db": 4.054
+    },
+    "rejected": "g35 (1978 M. L. Bellido) missed the bridge fit's relative-complex limit at 0.2603 against 0.24; g36 (2001 J. L. Bellido) fits but scores 8.0279 and 7.6586 on the nylon splits against g34's 7.9594 and 7.1613",
+    "scores_before": [
+      6.606652,
+      6.521525,
+      8.120169
+    ],
+    "scores_after": [
+      6.632018,
+      6.420769,
+      8.120169
+    ],
+    "nylon_split_before": [
+      7.877642,
+      7.43161
+    ],
+    "nylon_split_after": [
+      7.959385,
+      7.161313
+    ],
+    "steel_unchanged": "all 40 non-nylon model renders are byte-identical to the previous engine's",
+    "anchor_reswept": "worst separable chord note, cents early/late: 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at 17.2 mm, 25.8/98.2 with no anchor"
   }
 }
