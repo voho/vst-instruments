@@ -328,6 +328,7 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     = engine.strumDelaySamples (rank, meanVelocity);
             }
             strumUpstroke = ! strumUpstroke;
+            engine.beginStrum();
         }
         for (int index = 0; index < pendingNoteOnCount; ++index)
         {

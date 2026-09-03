@@ -9,10 +9,16 @@ JAMS ``note_midi`` annotations per string (``annotation_metadata.data_source``
 0 = low E .. 5 = high e), themselves onset/offset-detected on the hex
 channels. This tool re-derives strum events from those onsets rather than
 trusting a single detector: a same-stroke group is 3 or more distinct
-strings whose annotated onsets fall within 150 ms, the same clustering
-Acustra's own note allocator uses to decide a MIDI chord is a strum
-(PluginProcessor.cpp's flushNoteGroup). "Comp" (comping) tracks are used;
-"solo" tracks rarely strum.
+strings whose annotated onsets fall within a clustering window. "Comp"
+(comping) tracks are used; "solo" tracks rarely strum.
+
+The window itself is derived from the tracks, not chosen: GuitarSet's comp
+filenames carry their annotated tempo (``<style>-<bpm>-<key>_comp``, e.g.
+``01_Rock2-142-D_comp``), and no chord in 4/4 comping is voiced faster than a
+sixteenth note, so a window at or under the shortest sixteenth note among the
+tracks used cannot merge two distinct strokes into one. STRUM_WINDOW is set
+at runtime to that bound (main() takes the minimum sixteenth-note duration,
+15/bpm seconds, over the tracks actually loaded), not hand-picked.
 
 Two measurements come out clean, and one does not carry across:
 
@@ -20,9 +26,14 @@ Two measurements come out clean, and one does not carry across:
     traversal speed at the shipping 10.8 mm steel saddle spacing -- these
     resolve far above the ~1 ms onset-detector floor (median interval
     7 ms, 5% below 1 ms) and show no resolvable dependence on stroke level
-    (Pearson r about 0.04 across three level terciles), so AcustraEngine's
-    strumDelaySamples keeps its by-ear functional form but its two speed
-    endpoints are re-pinned to the measured range.
+    (plain Pearson r of stroke speed against each stroke's mean level in dB,
+    about 0.03; that mean level is averaged across strings on the hex
+    pickup's uncalibrated per-coil sensitivity, which biases a cross-string
+    correlation toward zero, so this null is weaker evidence than a
+    same-channel measurement -- the conservative reading, keeping the
+    by-ear velocity map rather than fitting one, is unaffected either way),
+    so AcustraEngine's strumDelaySamples keeps its by-ear functional form
+    but its two speed endpoints are re-pinned to the measured range.
   * Stroke-to-stroke variability, from runs of 3+ consecutive strokes that
     repeat one chord and direction within a 2 s gap (a rhythmic strumming
     pattern): a stroke's total span (10-90% traversal time) and a single
@@ -31,10 +42,12 @@ Two measurements come out clean, and one does not carry across:
     channel, so it cancels out of a same-string, same-channel comparison
     across repeats (unlike a cross-string comparison within one stroke,
     which this tool does not use for a level bound). The pooled deviation
-    (each repeat's value minus its own run's mean, pooled over every run)
-    gives AcustraEngine's per-string release-time and level jitter their
-    bounds (Source/DSP/AcustraEngine.cpp, initialisePluck and noteOn's
-    strumMember path).
+    (each repeat's value minus its own run's mean, pooled over every run --
+    for span, as a fraction of that run's own mean span, since it is the
+    pick's speed that repeats, and a stroke's whole span scales with it)
+    gives AcustraEngine's per-stroke pick-speed and per-string level jitter
+    their bounds (Source/DSP/AcustraEngine.cpp, beginStrum and
+    initialisePluck's strumMember path).
   * A real repeated stroke's own waveform does NOT stay highly correlated
     with its predecessor: two separate strikes of the same strings have no
     shared phase reference, so the raw-sample Pearson correlation of the
@@ -57,17 +70,28 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
 import zipfile
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
-STRUM_WINDOW = 0.150   # s: matches PluginProcessor.cpp's chord-boundary grouping
 STRING_SPACING = 0.0108  # m: the shipping steel saddle spacing (AcustraEngine.cpp)
 LEVEL_WINDOW = 0.040    # s: matches the pluck-point measurement window (decisions.md)
 CORR_WINDOW = 0.250     # s: matches the prior same-note repeat measurement (decisions.md)
 REPEAT_GAP = 2.0        # s: a rest this short is still one rhythmic pattern
+
+_TEMPO_RE = re.compile(r"-(\d+)-")
+
+
+def sixteenth_note_window(stems) -> float:
+    """The clustering window: at or under the shortest sixteenth note among
+    the tracks used, so it cannot merge two distinct comped strokes into one
+    group. GuitarSet's comp filenames carry their annotated tempo directly
+    (``<style>-<bpm>-<key>_comp``)."""
+    bpms = [int(_TEMPO_RE.search(stem).group(1)) for stem in stems]
+    return min(15.0 / bpm for bpm in bpms)
 
 
 def load_track(stem: str, ann_dir: Path, audio_dir: Path):
@@ -84,7 +108,7 @@ def load_track(stem: str, ann_dir: Path, audio_dir: Path):
     return strings_data, audio, rate
 
 
-def cluster(strings_data, use_offset: bool):
+def cluster(strings_data, use_offset: bool, window: float):
     events = []
     for string_index, notes in strings_data:
         for note in notes:
@@ -100,7 +124,7 @@ def cluster(strings_data, use_offset: bool):
         group = [events[i]]
         seen = {events[i][1]}
         j = i + 1
-        while j < len(events) and events[j][0] - group[0][0] <= STRUM_WINDOW:
+        while j < len(events) and events[j][0] - group[0][0] <= window:
             if events[j][1] not in seen:
                 group.append(events[j])
                 seen.add(events[j][1])
@@ -122,16 +146,16 @@ def peak_level(audio, rate, t, string_index):
     return float(np.max(np.abs(window))) if len(window) else 0.0
 
 
-def measure_strokes(stems, ann_dir, audio_dir):
+def measure_strokes(stems, ann_dir, audio_dir, window: float):
     strokes = []
     release_intervals_ms = []
     for stem in stems:
         strings_data, audio, rate = load_track(stem, ann_dir, audio_dir)
-        for group in cluster(strings_data, use_offset=True):
+        for group in cluster(strings_data, use_offset=True, window=window):
             times = [t for t, _ in group]
             release_intervals_ms.extend(
                 (b - a) * 1000.0 for a, b in zip(times, times[1:]))
-        for group in cluster(strings_data, use_offset=False):
+        for group in cluster(strings_data, use_offset=False, window=window):
             onsets = [t for t, _ in group]
             order = [s for _, s in group]
             span = onsets[-1] - onsets[0]
@@ -175,7 +199,8 @@ def repeated_pattern_runs(strokes):
     return runs
 
 
-def report(strokes, release_intervals_ms, runs):
+def report(strokes, release_intervals_ms, runs, window: float):
+    print(f"clustering window: {window * 1000.0:.1f} ms")
     print(f"strokes clustered: {len(strokes)}")
 
     onset_gap_ms = np.array([
@@ -201,12 +226,23 @@ def report(strokes, release_intervals_ms, runs):
     print(f"repeated-pattern runs (>=3 repeats): {len(runs)}")
 
     span_devs_ms = []
+    span_devs_relative = []
     for run in runs:
         spans = np.array([r["span"] for r in run]) * 1000.0
         span_devs_ms.extend(spans - spans.mean())
+        span_devs_relative.extend((spans - spans.mean()) / spans.mean())
     span_devs_ms = np.array(span_devs_ms)
+    span_devs_relative = np.array(span_devs_relative)
     print(f"pooled stroke-span deviation std: {span_devs_ms.std():.2f} ms "
           f"(n={len(span_devs_ms)})")
+    # Each run's own span mean sets the pick speed for that repeat; a stroke
+    # that draws a k-times-slower or -faster speed than its run's own mean
+    # scales every string's delay by the same k, so the coherent quantity a
+    # single per-stroke draw should match is this relative deviation, not
+    # the absolute ms figure above (which is tied to this corpus's own
+    # tempo and chord width).
+    print(f"pooled stroke-span deviation, relative to its run's own mean "
+          f"std: {span_devs_relative.std():.4f} (n={len(span_devs_relative)})")
 
     level_devs_db = []
     for run in runs:
@@ -241,8 +277,10 @@ def report(strokes, release_intervals_ms, runs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--annotation-zip", type=Path, required=True,
-                         help="GuitarSet's annotation.zip")
+    parser.add_argument("--annotation-zip", type=Path, default=None,
+                         help="GuitarSet's annotation.zip (not needed if "
+                              "--extract-dir already holds every track's "
+                              ".jams)")
     parser.add_argument("--audio-dir", type=Path, required=True,
                          help="directory of <track>_hex_cln.wav files")
     parser.add_argument("--tracks", type=str, default=None,
@@ -259,14 +297,20 @@ def main():
                         for p in args.audio_dir.glob("*_hex_cln.wav"))
 
     args.extract_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(args.annotation_zip) as zf:
-        for stem in stems:
-            if not (args.extract_dir / f"{stem}.jams").exists():
+    missing = [stem for stem in stems
+               if not (args.extract_dir / f"{stem}.jams").exists()]
+    if missing:
+        if args.annotation_zip is None:
+            raise SystemExit(f"--annotation-zip required to fetch: {missing}")
+        with zipfile.ZipFile(args.annotation_zip) as zf:
+            for stem in missing:
                 zf.extract(f"{stem}.jams", args.extract_dir)
 
-    strokes, release_intervals_ms = measure_strokes(stems, args.extract_dir, args.audio_dir)
+    window = sixteenth_note_window(stems)
+    strokes, release_intervals_ms = measure_strokes(
+        stems, args.extract_dir, args.audio_dir, window)
     runs = repeated_pattern_runs(strokes)
-    report(strokes, release_intervals_ms, runs)
+    report(strokes, release_intervals_ms, runs, window)
 
 
 if __name__ == "__main__":

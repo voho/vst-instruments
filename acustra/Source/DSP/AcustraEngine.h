@@ -87,13 +87,21 @@ public:
     // calibration resets the engine; do not call it from the audio thread.
     void setPhysicalCalibration(const PhysicalCalibration&) noexcept;
 
+    // Call once before the noteOn() calls for one strum's strings (not for a
+    // single note): draws this stroke's own pick-speed variation, shared by
+    // every string noteOn() schedules with strumMember set until the next
+    // beginStrum() call. Scaling every string's delay by the same drawn
+    // factor is what keeps a stroke's own strings in order even though its
+    // total span varies stroke to stroke -- see noteOn.
+    void beginStrum() noexcept;
     // A pluck can be scheduled: the string is taken and fretted now, the
     // fretting hand having formed the chord, and released this many samples
     // later, which is how a strum reaches its strings one after another.
     // strumMember marks a note as one string of a strum (including its
-    // first, undelayed string): it draws its own release-time offset and
-    // level, bounded to what repeated real strums vary by; a single note
-    // leaves it false and is unaffected down to the bit.
+    // first, undelayed string): its scheduled delay is scaled by the
+    // stroke's beginStrum() draw and its level draws its own jitter,
+    // bounded to what repeated real strums vary by; a single note leaves it
+    // false and is unaffected down to the bit.
     void noteOn(int midiNote, float velocity, int midiChannel = 1,
                 int pluckDelaySamples = 0, bool strumMember = false) noexcept;
     // Samples after the first string that a strum's k-th string sounds, from
@@ -384,11 +392,11 @@ private:
         // Where this pluck landed, as a fraction of the sounding length.
         float pluckPoint { 0.0f };
         // Set by noteOn's strumMember argument and read once by
-        // initialisePluck: a strum's k-th string draws its own release-time
-        // offset (applied to pluckDelay before scheduling) and its own
-        // level, on top of the pluck point every note already draws. A
-        // single note leaves this false, so it draws exactly as it did
-        // before and stays bit-identical.
+        // initialisePluck for its own level jitter; noteOn itself reads it
+        // to scale this string's delay by the stroke's shared
+        // strumSpeedScale_ (see beginStrum). Both are on top of the pluck
+        // point every note already draws. A single note leaves this false,
+        // so it draws exactly as it did before and stays bit-identical.
         bool strumming { false };
     };
 
@@ -519,6 +527,22 @@ private:
     bool prepared_ { false };
     bool bodyConfigured_ { false };
     std::uint64_t noteOrder_ { 0 };
+    // Shared across every string of one strum: drawn once by beginStrum(),
+    // read by noteOn's strumMember path. A per-string draw here (rather than
+    // each voice's own generator) is what keeps the pick's speed for the
+    // whole stroke coherent, so a slower or faster draw scales every
+    // string's delay together and never reorders them.
+    std::uint32_t strumRandomState_ { 0x9e3779b9u };
+    float strumSpeedScale_ { 1.0f };
+    // Half-width of the uniform draw beginStrum() applies to strumSpeedScale_.
+    // GuitarSet's comping tracks (Tools/MeasureStrums.py), pooled over runs
+    // of >=3 repeats of one chord and direction, put a stroke's own total
+    // span at a 36.47% standard deviation relative to its run's own mean
+    // span -- a stroke that repeats at k times its run's usual pick speed
+    // scales every string's delay by 1/k, so this relative figure, not the
+    // corpus's absolute-ms one, is what a single per-stroke speed draw
+    // should match. std of h*U(-1,1) is h/sqrt(3), so h = 0.3647*sqrt(3).
+    static constexpr float strumSpeedJitterHalfWidth = 0.6317f;
 };
 
 } // namespace acustra

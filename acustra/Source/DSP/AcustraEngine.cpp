@@ -1758,15 +1758,34 @@ float AcustraEngine::effectiveTouch(const Voice& voice) const noexcept
         * (voice.velocity - 0.5f), 0.0f, 1.0f);
 }
 
-float AcustraEngine::nextNoise(Voice& voice) noexcept
+namespace
 {
-    std::uint32_t state = voice.randomState;
+float xorshiftNoise(std::uint32_t& state) noexcept
+{
     state ^= state << 13;
     state ^= state >> 17;
     state ^= state << 5;
-    voice.randomState = state == 0 ? 0x6d2b79f5u : state;
-    return static_cast<float>(static_cast<std::int32_t>(voice.randomState))
+    state = state == 0 ? 0x6d2b79f5u : state;
+    return static_cast<float>(static_cast<std::int32_t>(state))
          / static_cast<float>(std::numeric_limits<std::int32_t>::max());
+}
+} // namespace
+
+float AcustraEngine::nextNoise(Voice& voice) noexcept
+{
+    return xorshiftNoise(voice.randomState);
+}
+
+void AcustraEngine::beginStrum() noexcept
+{
+    // A stroke's own pick speed varies stroke to stroke (GuitarSet's
+    // comping tracks, Tools/MeasureStrums.py -- see strumDelaySamples and
+    // noteOn's strumMember path for the measured figures this scale is
+    // fitted to). Drawn from the engine's own generator, not any one
+    // voice's, so it is one shared value applied to every string of this
+    // stroke regardless of which voice noteOn happens to land it on.
+    strumSpeedScale_ = 1.0f + strumSpeedJitterHalfWidth
+        * xorshiftNoise(strumRandomState_);
 }
 
 void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
@@ -1802,12 +1821,12 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     // A strummed string's own level varies stroke to stroke too, at the
     // one nominal velocity a strum's mean gives every string: GuitarSet's
     // comping tracks put the pooled deviation of a repeated string's own
-    // level, across 24 runs of >=3 repeats of one chord and direction, at
-    // a 4.36 dB standard deviation, matched here by uniform jitter at a
+    // level, across 25 runs of >=3 repeats of one chord and direction, at
+    // a 4.47 dB standard deviation, matched here by uniform jitter at a
     // half-width of std*sqrt(3). A single note never sets voice.strumming,
     // so it never draws this and stays exactly as it was.
     const float strumLevelGain = voice.strumming
-        ? std::pow(10.0f, 7.55f * nextNoise(voice) / 20.0f) : 1.0f;
+        ? std::pow(10.0f, 7.74f * nextNoise(voice) / 20.0f) : 1.0f;
     const float amplitude = (steel ? 0.24f : 0.29f)
         * std::pow(v, velocityExponent) * (0.92f + 0.08f * touch)
         * strumLevelGain;
@@ -2547,19 +2566,17 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
     int delaySamples = pluckDelaySamples;
     if (strumMember)
     {
-        // A string's release time varies stroke to stroke even at one
-        // nominal strum speed: GuitarSet's comping tracks (six players,
-        // Tools/MeasureStrums.py on the hex-pickup channels and JAMS note
-        // onsets, Zenodo 3371780 CC BY 4.0), clustered into 576 same-stroke
-        // onset groups and 24 runs of >=3 repeats of one chord and
-        // direction, put the pooled stroke-to-stroke deviation of a
-        // stroke's span at a 16.3 ms standard deviation. Matched by adding
-        // independent uniform jitter to each string's own release time at
-        // this half-width (std of U(-h,h) minus U(-h,h) is h*sqrt(2/3)).
-        constexpr float releaseJitterSeconds = 0.0200f;
-        const float jitterSeconds = releaseJitterSeconds * nextNoise(voice);
-        delaySamples = std::max(0, pluckDelaySamples + static_cast<int>(
-            std::round(jitterSeconds * static_cast<float>(sampleRate_))));
+        // The pick's own speed varies stroke to stroke even at one nominal
+        // strum velocity (GuitarSet's comping tracks, Tools/MeasureStrums.py
+        // -- see beginStrum, which draws strumSpeedScale_ once per stroke
+        // and shares it across every string). Scaling the deterministic
+        // delay by that one shared factor, instead of jittering each
+        // string's release time independently, is what keeps the strings
+        // of a stroke in the pick's own order: a slower or faster draw
+        // stretches or compresses the whole stroke together, it never lets
+        // a later string catch up with an earlier one.
+        delaySamples = std::max(0, static_cast<int>(
+            std::round(static_cast<float>(pluckDelaySamples) * strumSpeedScale_)));
     }
     if (delaySamples > 0)
     {
@@ -2588,17 +2605,24 @@ int AcustraEngine::strumDelaySamples(int stringRank,
     // reaches sounds k spacings later. The spacing is the set-up dimension
     // at the saddle: 2 1/8" across the six on a steel-string, 58 mm on a
     // classical. The pick's speed is the one number MIDI does not carry;
-    // GuitarSet's comping tracks (six players, Tools/MeasureStrums.py on
-    // the hex-pickup channels and JAMS note onsets, Zenodo 3371780 CC BY
-    // 4.0) put 576 same-stroke (>=3 strings within 150 ms) onset clusters'
+    // GuitarSet's comping tracks (Tools/MeasureStrums.py on the hex-pickup
+    // channels and JAMS note onsets, Zenodo 3371780 CC BY 4.0), clustered
+    // into 641 same-stroke (>=3 strings within a window derived from each
+    // track's own annotated tempo -- a sixteenth note at its fastest, so
+    // the window cannot merge two distinct strokes) onset clusters, put the
     // pooled 10-90% traversal speed, at the shipping 10.8 mm steel spacing,
-    // at 0.38 to 2.47 m/s (113 ms to 17 ms across six strings); the speed
-    // showed no resolvable dependence on stroke level (r=0.04 against
-    // three level terciles), so the map from MIDI velocity to speed across
-    // that measured range stays a player's map, not a fitted dependence.
+    // at 0.51 to 2.46 m/s (five 10.8 mm gaps across six strings: 106 ms to
+    // 22 ms); the speed showed no resolvable dependence on stroke level
+    // (plain Pearson r of speed against mean stroke level, about -0.03 --
+    // that mean level is averaged across strings on the hex pickup's
+    // uncalibrated per-coil sensitivity, which biases the correlation
+    // toward zero, so this null is weaker evidence than a same-channel
+    // measurement would give), so the map from MIDI velocity to speed
+    // across that measured range stays a player's map, not a fitted
+    // dependence.
     const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
     const float spacing = steel ? 0.0540f / 5.0f : 0.0580f / 5.0f;
-    const float speed = 0.38f + 2.09f * clamp(velocity, 0.0f, 1.0f);
+    const float speed = 0.51f + 1.95f * clamp(velocity, 0.0f, 1.0f);
     return static_cast<int>(static_cast<float>(std::max(stringRank, 0))
         * spacing / speed * static_cast<float>(sampleRate_) + 0.5f);
 }
