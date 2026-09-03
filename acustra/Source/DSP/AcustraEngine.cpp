@@ -123,15 +123,20 @@ constexpr std::array<float, AcustraEngine::stringCount> nylonYoungsModulus {{
     2.5e9f, 2.5e9f, 2.5e9f, 2.7e9f, 2.7e9f, 2.7e9f
 }};
 
-// Woodhouse, Acta Acustica 90 (2004) 945-965, Table I (corrected), Pro Arte
-// hard tension - the EJ45 family the density/modulus tables above already
-// use. EI in N*m^2, published E4/B3/G3/D3/A2/E2 130/160/310/51/40/57 x1e-6
-// reversed into engine order (E2..E4). Measured directly rather than
-// inferred from the outside diameter and a handbook nylon modulus: bending
-// stiffness of a wound bass or a plasticised jacket is not E*pi*d^4/64 on
-// the outside diameter, and Lynch-Aird and Woodhouse (Materials 10(5):497,
-// 2017) attribute plain nylon's own dynamic bending modulus (~13 GPa
-// implied) exceeding the handbook static 2.7 GPa to the same effect.
+// Woodhouse, Acta Acustica 90 (2004) 945-965, Table I (corrected), D'Addario
+// Pro Arte "Composites, hard tension" strings at L = 0.65 m - a different
+// set from the EJ45 family the density/modulus tables above use, so this
+// pairs Woodhouse's measured EI with the engine's own EJ45-derived tensions
+// rather than his (his string tensions are 71.6/73.9/71.2/58.3/53.4/70.3 N,
+// E2..E4, against the engine's 70.3/78.6/80.4/58.1/62.0/73.8 N - up to a 16%
+// shift in B on B3). EI in N*m^2, published E4/B3/G3/D3/A2/E2
+// 130/160/310/51/40/57 x1e-6 reversed into engine order (E2..E4). Measured
+// directly rather than inferred from the outside diameter and a handbook
+// nylon modulus: bending stiffness of a wound bass or a plasticised jacket
+// is not E*pi*d^4/64 on the outside diameter, and Lynch-Aird and Woodhouse
+// (Materials 10(5):497, 2017) attribute plain nylon's own dynamic bending
+// modulus (~13 GPa implied) exceeding the handbook static 2.7 GPa to the
+// same effect.
 constexpr std::array<float, AcustraEngine::stringCount> nylonBendingEI {{
     57.0e-6f, 40.0e-6f, 51.0e-6f, 310.0e-6f, 160.0e-6f, 130.0e-6f
 }};
@@ -509,11 +514,12 @@ DispersionCalibration calibrateDispersion(
     // identically. It is a Newton solve on a non-convex residual, so it can
     // stall on the poleRatio bound instead of reaching the near-zero
     // residual a well-posed collocation admits: seen on a nylon treble at
-    // the top fret, where Woodhouse's corrected per-string EI raises B well
-    // past what the default starting point was tuned against (Docs/
-    // decisions.md has the measurement). Nylon alone gets a fallback:
-    // restart the same cheap three-parameter solve from a spread of pole
-    // ratios and keep the lowest-residual run.
+    // the top fret (MIDI 84), where Woodhouse's corrected per-string EI
+    // raises B well past what the default starting point was tuned against
+    // - the single-start solve stalls there at 12.00 cents of H2-H12 error
+    // at 48 kHz. Nylon alone gets a fallback: restart the same cheap
+    // three-parameter solve from a spread of pole ratios and keep the
+    // lowest-residual run, which brings that same case down to 2.82 cents.
     if (tryAlternateStarts)
     {
         double residuals[3] {};
