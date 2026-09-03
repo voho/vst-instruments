@@ -293,6 +293,12 @@ struct EngineParameters
     // exactly like the resistor floors -- the exact-silence endpoint at 0 is
     // product policy, not a statement that the floor is a tolerance.
     bool enableCommonVcaNoise { true };
+    // On by default: each voice card's filter input carries the Johnson noise
+    // of its own 68k/560 stage network, referred through that stage's
+    // attenuator -- the same thermal law already applied to IC6's resistor
+    // groups, on resistors p. 9 prints. False restores the former voiced 20 uV
+    // seed bit-exactly for controlled A/B renders. Not serialised.
+    bool enableCardJohnsonFloor { true };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one

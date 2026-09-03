@@ -195,11 +195,46 @@ constexpr float outputWiperInternalLoadOhms =
     outputSelectorLadderOhms * headphoneInputOhms
     / (outputSelectorLadderOhms + headphoneInputOhms);
 
-// Voiced microscopic excitation at the filter input. It is distinct from the
-// shared audible TP8 noise and gives an otherwise perfectly silent numerical
-// filter a deterministic self-oscillation seed. No healthy-card capture fixes
-// its 20 uV compatibility value yet.
-constexpr float filterNoiseVolts = 2.0e-5f;
+// The card's own thermal floor at the filter input. This is not the shared
+// audible TP8 noise; it is what the voice card's own resistors do, and it is
+// also what gives an otherwise perfectly silent numerical filter its
+// self-oscillation seed.
+//
+// It used to be a voiced 20 uV compatibility amplitude, on the grounds that no
+// healthy-card capture fixes it. That was the wrong bar: nothing needs to be
+// captured, because the resistors are printed and the law is the same
+// Johnson-Nyquist one already applied to IC6's five resistor groups (see
+// outputSummerResistorNoiseDensity). Each transconductor stage's input node is
+// the 68 kOhm feedback against the 560 Ohm shunt, so the source resistance is
+// their parallel combination, 555.43 Ohm, giving sqrt(4kTR) = 3.02 nV/rtHz at
+// the same 25 C the adjacent anchors use. That node sits behind the stage's own
+// 560/(68000+560) attenuator, so referred to the filter-module input coordinate
+// the model works in it is 3.02 nV / 0.0081680 = 370.2 nV/rtHz.
+//
+// Only stage 1's source is injected. The other three stages are uncorrelated
+// and enter after one or more poles, so summing all four at the input would
+// overstate them; a per-stage injection is the honest form and is a larger
+// change than this one. Evidence class: anchored resistors, derived density.
+//
+// The generator is a bipolar uniform sequence at the 192 kHz reference rate, so
+// amplitude A gives RMS A/sqrt(3) over an fs/2 band: A = sqrt(3) * density *
+// sqrt(fs/2) = 198.7 uV, which is 19.9 dB above the retired value.
+constexpr float filterNoiseSourceOhms = 68000.0f * 560.0f / (68000.0f + 560.0f);
+constexpr float filterNoiseStageAttenuation = 560.0f / (68000.0f + 560.0f);
+const float filterNoiseVoltsDerived = []
+{
+    const float density =
+        std::sqrt(4.0f * YouKnow106Engine::boltzmannConstant
+                  * YouKnow106Engine::outputNoiseTemperatureKelvin
+                  * filterNoiseSourceOhms)
+        / filterNoiseStageAttenuation;
+    // 192 kHz is YouKnow106Engine::noiseReferenceRateHz, which is private to
+    // the class; the static_assert beside the injection site keeps the two
+    // from drifting apart.
+    return std::sqrt(3.0f) * density * std::sqrt(192000.0f * 0.5f);
+}();
+// The retired voiced amplitude, kept bit-exactly for controlled A/B renders.
+constexpr float filterNoiseVoltsVoiced = 2.0e-5f;
 
 float clamp01(float value) noexcept
 {
@@ -7773,9 +7808,14 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration)
            * agedNoiseGain_;
 
+    static_assert(noiseReferenceRateHz == 192000.0,
+                  "filterNoiseVoltsDerived hard-codes the 192 kHz reference "
+                  "rate because it is computed at namespace scope");
     voice.noiseState = xorshift32(voice.noiseState);
     const float microscopicNoise =
-        bipolarFromState(voice.noiseState) * filterNoiseVolts;
+        bipolarFromState(voice.noiseState)
+        * (parameters.enableCardJohnsonFloor ? filterNoiseVoltsDerived
+                                             : filterNoiseVoltsVoiced);
 
     // --- Filter, amplifier -------------------------------------------------
     // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the

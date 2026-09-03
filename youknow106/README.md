@@ -700,6 +700,15 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   noise terms are deterministic, quality-invariant and remain around the
   analogue circuit's roughly -120 dBFS floor rather than becoming a sound-
   design hiss control.
+- Each voice card's filter input now carries the Johnson noise of its own
+  68 kΩ/560 Ω stage network rather than a voiced 20 µV seed: 555.4 Ω gives
+  3.02 nV/√Hz, and referring that through the stage's own attenuator puts
+  370 nV/√Hz at the module input, 19.9 dB above the retired value. Ordinary
+  patches are unchanged to −90 dBc or better and a silent instrument is
+  bit-identical, because a shut voice VCA passes none of it; what moves is the
+  filter at and near self-oscillation, where the loop amplifies its own card
+  noise — −10.4 dBc on a self-oscillating chord and −11.9 dBc on a stepped
+  resonance ramp.
 - The resonance input-side compensation moved off its former underived 0.2296
   to 0.2751, the floor of the bracket the two sibling readings of the network
   span. Resonance-0 renders are unchanged; the instrument keeps more bottom as
