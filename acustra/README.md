@@ -61,7 +61,7 @@ reverb, room effect or recorded-note layer.
 | `05-alternate-tunings.wav` | Drop D, DADGAD and Open G chords | 12.3 s | −11.9 dBFS | +8.9 dB |
 | `06-playing-behaviours.wav` | A chord change over a ringing chord, CC2 bridge-hand damping, then two natural harmonics above the fretted range | 10.7 s | −12.4 dBFS | +9.4 dB |
 | `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −15.1 dBFS | +12.1 dB |
-| `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −7.5 dBFS | +4.5 dB |
+| `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −2.2 dBFS | −0.8 dB |
 <!-- peaks-table-end -->
 
 ## Real dry-note benchmark

@@ -1799,8 +1799,18 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     // reference-response 0.82 as the same fitted depth rises.
     const float velocityExponent = 1.32f
         - 0.50f * physical.velocityBrightnessDepth;
+    // A strummed string's own level varies stroke to stroke too, at the
+    // one nominal velocity a strum's mean gives every string: GuitarSet's
+    // comping tracks put the pooled deviation of a repeated string's own
+    // level, across 24 runs of >=3 repeats of one chord and direction, at
+    // a 4.36 dB standard deviation, matched here by uniform jitter at a
+    // half-width of std*sqrt(3). A single note never sets voice.strumming,
+    // so it never draws this and stays exactly as it was.
+    const float strumLevelGain = voice.strumming
+        ? std::pow(10.0f, 7.55f * nextNoise(voice) / 20.0f) : 1.0f;
     const float amplitude = (steel ? 0.24f : 0.29f)
-        * std::pow(v, velocityExponent) * (0.92f + 0.08f * touch);
+        * std::pow(v, velocityExponent) * (0.92f + 0.08f * touch)
+        * strumLevelGain;
     const float randomAngle = 0.025f * nextNoise(voice);
     voice.polarisationMix = clamp(0.91f - 0.08f * touch + randomAngle,
                                   0.78f, 0.96f);
@@ -2414,7 +2424,7 @@ AcustraEngine::chooseHarmonic(int midiNote) const noexcept
 }
 
 void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
-                           int pluckDelaySamples) noexcept
+                           int pluckDelaySamples, bool strumMember) noexcept
 {
     if (!prepared_ || midiNote < 0 || midiNote > 127
         || !std::isfinite(velocity) || velocity <= 0.0f
@@ -2454,6 +2464,7 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
             if (voice.level > 2.0e-7f)
                 captureTail(voice);
             configureVoice(voice, string, midiNote, true);
+            voice.strumming = strumMember;
             initialisePluck(voice, string, velocity);
             bridgeDerivativesCrossRelease_ = true;
             configureVoice(voice, string, midiNote, false);
@@ -2532,13 +2543,31 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
             / (0.075f * static_cast<float>(sampleRate_)));
     }
     configureVoice(voice, string, midiNote, true);
-    if (pluckDelaySamples > 0)
+    voice.strumming = strumMember;
+    int delaySamples = pluckDelaySamples;
+    if (strumMember)
+    {
+        // A string's release time varies stroke to stroke even at one
+        // nominal strum speed: GuitarSet's comping tracks (six players,
+        // Tools/MeasureStrums.py on the hex-pickup channels and JAMS note
+        // onsets, Zenodo 3371780 CC BY 4.0), clustered into 576 same-stroke
+        // onset groups and 24 runs of >=3 repeats of one chord and
+        // direction, put the pooled stroke-to-stroke deviation of a
+        // stroke's span at a 16.3 ms standard deviation. Matched by adding
+        // independent uniform jitter to each string's own release time at
+        // this half-width (std of U(-h,h) minus U(-h,h) is h*sqrt(2/3)).
+        constexpr float releaseJitterSeconds = 0.0200f;
+        const float jitterSeconds = releaseJitterSeconds * nextNoise(voice);
+        delaySamples = std::max(0, pluckDelaySamples + static_cast<int>(
+            std::round(jitterSeconds * static_cast<float>(sampleRate_))));
+    }
+    if (delaySamples > 0)
     {
         // Fretted and waiting: a junction member with nothing on it until
         // the pick arrives. The countdown fires at the top of that sample,
         // exactly where a note-on issued then would have put the shape.
         voice.excitationEnvelope = 0.0f;
-        voice.pluckDelay = pluckDelaySamples + 1;
+        voice.pluckDelay = delaySamples + 1;
         return;
     }
     firePluck(voice, string);
@@ -2558,12 +2587,18 @@ int AcustraEngine::strumDelaySamples(int stringRank,
     // The pick crosses the strings at one speed, so the k-th string it
     // reaches sounds k spacings later. The spacing is the set-up dimension
     // at the saddle: 2 1/8" across the six on a steel-string, 58 mm on a
-    // classical. The pick's speed is the one number MIDI does not carry; it
-    // is a player's map of velocity set by ear, from 0.5 m/s for the softest
-    // strum (108 ms across six strings) to 3 m/s for the hardest (18 ms).
+    // classical. The pick's speed is the one number MIDI does not carry;
+    // GuitarSet's comping tracks (six players, Tools/MeasureStrums.py on
+    // the hex-pickup channels and JAMS note onsets, Zenodo 3371780 CC BY
+    // 4.0) put 576 same-stroke (>=3 strings within 150 ms) onset clusters'
+    // pooled 10-90% traversal speed, at the shipping 10.8 mm steel spacing,
+    // at 0.38 to 2.47 m/s (113 ms to 17 ms across six strings); the speed
+    // showed no resolvable dependence on stroke level (r=0.04 against
+    // three level terciles), so the map from MIDI velocity to speed across
+    // that measured range stays a player's map, not a fitted dependence.
     const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
     const float spacing = steel ? 0.0540f / 5.0f : 0.0580f / 5.0f;
-    const float speed = 0.5f + 2.5f * clamp(velocity, 0.0f, 1.0f);
+    const float speed = 0.38f + 2.09f * clamp(velocity, 0.0f, 1.0f);
     return static_cast<int>(static_cast<float>(std::max(stringRank, 0))
         * spacing / speed * static_cast<float>(sampleRate_) + 0.5f);
 }

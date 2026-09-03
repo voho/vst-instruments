@@ -117,7 +117,7 @@ public:
         {
             const int rank = upstroke ? count - 1 - index : index;
             engine_.noteOn(ordered[static_cast<std::size_t>(index)], velocity, 1,
-                           engine_.strumDelaySamples(rank, velocity));
+                           engine_.strumDelaySamples(rank, velocity), true);
         }
     }
 

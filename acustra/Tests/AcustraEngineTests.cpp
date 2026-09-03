@@ -545,6 +545,32 @@ struct AcustraEngineTestAccess
     {
         return AcustraEngine::controlPeriod;
     }
+
+    // Fires one strum of chord (rank order = array order) and returns each
+    // string's actually-scheduled release delay in samples, jitter included:
+    // strumDelaySamples() alone only returns the deterministic baseline.
+    template <std::size_t Count>
+    static std::array<int, Count> strumSchedule(
+        AcustraEngine& engine, const std::array<int, Count>& chord,
+        float velocity) noexcept
+    {
+        std::array<int, Count> delays {};
+        for (std::size_t i = 0; i < Count; ++i)
+        {
+            const int baseline = engine.strumDelaySamples(static_cast<int>(i), velocity);
+            engine.noteOn(chord[i], velocity, 1, baseline, true);
+            const AcustraEngine::Voice* latest = nullptr;
+            for (const auto& voice : engine.voices_)
+                if (voice.played && voice.midiNote == chord[i]
+                    && (latest == nullptr || voice.startOrder > latest->startOrder))
+                    latest = &voice;
+            // pluckDelay is (scheduled delay + 1) while waiting, 0 once fired
+            // (rank 0 at minimum jitter can fire on the same sample).
+            delays[i] = latest == nullptr ? 0
+                : std::max(0, latest->pluckDelay - 1);
+        }
+        return delays;
+    }
 };
 } // namespace acustra
 
@@ -3592,8 +3618,139 @@ void testStrumTimingFollowsThePickAcrossTheStrings()
                "a harder strum did not cross the strings faster");
     const double softest = engine.strumDelaySamples(5, 0.0f) / sampleRate;
     const double hardest = engine.strumDelaySamples(5, 1.0f) / sampleRate;
-    expect(std::abs(softest - 0.108) < 0.004 && std::abs(hardest - 0.018) < 0.002,
-           "the strum's endpoints moved from the player's map");
+    // 0.38 to 2.47 m/s, GuitarSet's comping tracks' pooled 10-90% traversal
+    // speed (Tools/MeasureStrums.py); five 10.8 mm gaps at each endpoint.
+    expect(std::abs(softest - 0.1421) < 0.004 && std::abs(hardest - 0.02187) < 0.002,
+           "the strum's endpoints moved from the measured map");
+}
+
+void testRepeatedStrumsVaryLikeRepeatedRealStrums()
+{
+    // GuitarSet's comping tracks (Tools/MeasureStrums.py), pooled over runs
+    // of >=3 repeats of one chord and direction on the hex-pickup channels,
+    // put a stroke's own span deviation at a 16.35 ms std, a repeated
+    // string's own level deviation at a 4.36 dB std, and two adjacent real
+    // strokes' raw first-250-ms correlation at a mean of -0.02 (min -0.51,
+    // max 0.43) rather than phase-locked. Eight repeats of one chord,
+    // hand-damped between strokes like the prior single-note measurement.
+    acustra::AcustraEngine engine;
+    acustra::EngineParameters parameters;
+    parameters.stringMaterial = acustra::StringMaterial::Steel;
+    engine.setParameters(parameters);
+    engine.prepare(sampleRate, blockSize);
+    engine.setParameters(parameters);
+    const std::array<int, 6> chord { 40, 47, 52, 55, 59, 64 };
+    const float velocity = 0.84f;
+    constexpr int repeats = 8;
+    constexpr int strokeSamples = static_cast<int>(0.3 * sampleRate);
+    constexpr int quietSamples = static_cast<int>(1.0 * sampleRate);
+    std::vector<float> left(static_cast<std::size_t>(
+        std::max(strokeSamples, quietSamples)));
+    std::vector<float> right(left.size());
+    std::array<double, repeats> spanMs {};
+    std::array<double, repeats> peakDb {};
+    std::vector<std::vector<float>> strokeSum(repeats);
+
+    for (int r = 0; r < repeats; ++r)
+    {
+        const auto delays = acustra::AcustraEngineTestAccess::strumSchedule(
+            engine, chord, velocity);
+        const int maxDelay = *std::max_element(delays.begin(), delays.end());
+        const int minDelay = *std::min_element(delays.begin(), delays.end());
+        spanMs[static_cast<std::size_t>(r)] =
+            static_cast<double>(maxDelay - minDelay) / sampleRate * 1000.0;
+
+        std::vector<float> sum(static_cast<std::size_t>(strokeSamples));
+        for (int done = 0; done < strokeSamples; )
+        {
+            const int n = std::min(blockSize, strokeSamples - done);
+            engine.process(left.data(), right.data(), n);
+            for (int s = 0; s < n; ++s)
+                sum[static_cast<std::size_t>(done + s)] = left[static_cast<std::size_t>(s)]
+                    + right[static_cast<std::size_t>(s)];
+            done += n;
+        }
+        double peak = 0.0;
+        const int levelWindow = std::min(strokeSamples,
+            static_cast<int>(0.040 * sampleRate));
+        for (int s = 0; s < levelWindow; ++s)
+            peak = std::max(peak, static_cast<double>(std::fabs(sum[static_cast<std::size_t>(s)])));
+        peakDb[static_cast<std::size_t>(r)] = 20.0 * std::log10(std::max(peak, 1e-9));
+        strokeSum[static_cast<std::size_t>(r)] = std::move(sum);
+
+        for (const int note : chord)
+            engine.noteOff(note, 1, 1.0f);
+        for (int done = 0; done < quietSamples; )
+        {
+            const int n = std::min(blockSize, quietSamples - done);
+            engine.process(left.data(), right.data(), n);
+            done += n;
+        }
+    }
+
+    const auto meanOf = [] (const auto& values)
+    {
+        double sum = 0.0;
+        for (double v : values) sum += v;
+        return sum / static_cast<double>(values.size());
+    };
+    const auto stdOf = [&] (const auto& values)
+    {
+        const double mean = meanOf(values);
+        double variance = 0.0;
+        for (double v : values) variance += (v - mean) * (v - mean);
+        return std::sqrt(variance / static_cast<double>(values.size()));
+    };
+
+    const double spanStd = stdOf(spanMs);
+    expect(spanStd > 3.0,
+           "repeated strums scheduled with no resolvable timing spread");
+    expect(spanStd < 40.0,
+           "repeated strums' timing spread ran far past GuitarSet's measured 16.35 ms std");
+
+    const double levelStd = stdOf(peakDb);
+    expect(levelStd > 1.0,
+           "repeated strums scheduled with no resolvable level spread");
+    expect(levelStd < 12.0,
+           "repeated strums' level spread ran far past GuitarSet's measured 4.36 dB std");
+
+    // Same-direction stroke correlation, matched to the real-corpus method
+    // (Tools/MeasureStrums.py): raw-sample Pearson correlation of the first
+    // 250 ms, summed across strings, between adjacent repeats.
+    const int corrWindow = std::min(strokeSamples, static_cast<int>(0.250 * sampleRate));
+    std::vector<double> correlations;
+    for (int r = 0; r + 1 < repeats; ++r)
+    {
+        const auto& a = strokeSum[static_cast<std::size_t>(r)];
+        const auto& b = strokeSum[static_cast<std::size_t>(r + 1)];
+        double meanA = 0.0, meanB = 0.0;
+        for (int s = 0; s < corrWindow; ++s)
+        {
+            meanA += a[static_cast<std::size_t>(s)];
+            meanB += b[static_cast<std::size_t>(s)];
+        }
+        meanA /= corrWindow; meanB /= corrWindow;
+        double numerator = 0.0, varianceA = 0.0, varianceB = 0.0;
+        for (int s = 0; s < corrWindow; ++s)
+        {
+            const double x = a[static_cast<std::size_t>(s)] - meanA;
+            const double y = b[static_cast<std::size_t>(s)] - meanB;
+            numerator += x * y;
+            varianceA += x * x;
+            varianceB += y * y;
+        }
+        correlations.push_back(
+            numerator / std::sqrt(varianceA * varianceB + 1e-30));
+    }
+    const double meanCorrelation = meanOf(correlations);
+    // The shipping engine's own same-direction repeats correlated 0.93 to
+    // 0.995 (decisions.md, 2026-09-02): still phase-locked, since a
+    // deterministic model with no timing spread repeats its own waveform
+    // almost exactly. GuitarSet's real adjacent same-direction strokes
+    // instead centre near zero (mean -0.02, max 0.43 across 93 pairs); the
+    // gate is that the engine's own repeats fall under that prior 0.93.
+    expect(meanCorrelation < 0.93,
+           "repeated strums stayed as phase-locked as the unvaried engine");
 }
 
 void testNoTwoPlucksLandInTheSamePlace()
@@ -4053,6 +4210,7 @@ int main()
     testNoteOffOnlyRemovesEnergy();
     testAScheduledPluckIsANoteOnIssuedThen();
     testStrumTimingFollowsThePickAcrossTheStrings();
+    testRepeatedStrumsVaryLikeRepeatedRealStrums();
     testNoTwoPlucksLandInTheSamePlace();
     testFrettingHandFollowsThePluckLaw();
     testEachStringMaterialPlaysItsOwnMeasuredGuitar();

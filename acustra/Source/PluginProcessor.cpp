@@ -333,7 +333,7 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         {
             const auto& note = pendingNoteOns[static_cast<std::size_t> (index)];
             engine.noteOn (note.note, note.velocity, note.channel,
-                           strum ? note.pluckDelay : 0);
+                           strum ? note.pluckDelay : 0, strum);
         }
         pendingNoteOnCount = 0;
 

@@ -90,8 +90,12 @@ public:
     // A pluck can be scheduled: the string is taken and fretted now, the
     // fretting hand having formed the chord, and released this many samples
     // later, which is how a strum reaches its strings one after another.
+    // strumMember marks a note as one string of a strum (including its
+    // first, undelayed string): it draws its own release-time offset and
+    // level, bounded to what repeated real strums vary by; a single note
+    // leaves it false and is unaffected down to the bit.
     void noteOn(int midiNote, float velocity, int midiChannel = 1,
-                int pluckDelaySamples = 0) noexcept;
+                int pluckDelaySamples = 0, bool strumMember = false) noexcept;
     // Samples after the first string that a strum's k-th string sounds, from
     // the pick's speed for this velocity and the string spacing.
     [[nodiscard]] int strumDelaySamples(int stringRank,
@@ -379,6 +383,13 @@ private:
         int pluckDelay { 0 };
         // Where this pluck landed, as a fraction of the sounding length.
         float pluckPoint { 0.0f };
+        // Set by noteOn's strumMember argument and read once by
+        // initialisePluck: a strum's k-th string draws its own release-time
+        // offset (applied to pluckDelay before scheduling) and its own
+        // level, on top of the pluck point every note already draws. A
+        // single note leaves this false, so it draws exactly as it did
+        // before and stays bit-identical.
+        bool strumming { false };
     };
 
     struct BodyOutput
