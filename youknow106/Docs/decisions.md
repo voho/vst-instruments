@@ -5,6 +5,52 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-03 — First measurement of an original 80017A, and why nothing moved yet
+
+A technician's ohmmeter survey of a **de-potted original A1QH80017A**
+([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)) is the
+first measured-on-an-original evidence this project has held. Everything before
+it was a factory drawing of a sibling instrument or a clone's reconstruction.
+
+**What it confirms**, independently of the sources the model already used: 68 kΩ
+between the IR3109 stages, 560 Ω shunts to ground, 100 kΩ resonance feedback
+from VCF OUT with 1.5 kΩ to ground, and **47 kΩ on the VCA BA662's output** —
+the same value the voice-VCA headroom was derived from on 2026-09-02, now
+corroborated on a real part rather than on the JUNO-6/60 drawing alone.
+
+**What it closes.** All four stage capacitors read ~250 pF, which is the 240 pF
+the sibling schematic prints within a hand-meter's tolerance. The competing
+270 pF turns out to be the Analogue Renaissance *clone's* value, not Roland's, so
+it is not evidence about the original at all. `poleCapacitorFarads` stays at
+240 pF and OQ-18's 64.8 kHz branch is retired.
+
+**What it unsettles.** The resonance OTA's non-inverting leg reads 5.1 kΩ against
+1.5 kΩ, not 47 kΩ, and the stage-1 series input reads 3.9 kΩ, not 10 kΩ. Those
+give c = (3.9/68)·(101.5/6.6) = 0.882, three times the shipped floor and 6.9 dB
+more passband compensation at full resonance. The bracket has therefore *widened*,
+and for the first time its top is a measurement rather than a drawing.
+
+**It is not adopted, for one structural reason and two evidential ones.**
+Structurally, the same reading puts stage 1's gain at 68/3.9 = 17.4 where
+`filterInputAttenuation` assumes 6.8, so it moves OQ-15's drive coordinate by the
+same act. Changing one without the other is incoherent, and the pair has to be
+re-derived together and reconciled against the anchored 6 Vp-p TP8 VCA GAIN trim
+— the same trim that killed the earlier proposal to move the drive coordinate on
+its own. Evidentially, it is a single in-circuit hand measurement, self-described
+as "roughly", standing against two independent 900 dpi reads of the sibling
+factory drawing. In-circuit ohmmetry reads low through parallel paths; the same
+meter did return 68 kΩ, 100 kΩ and 47 kΩ correctly, so a nine-fold error on the
++ leg is not a simple meter artefact, but one sample is one sample.
+
+One further caution from the same page, worth carrying: it reports that the
+Service Notes' **BA662 pin numbering is wrong** for this module. That cuts both
+ways — it weakens the drawing as a detail source, and it shows the author was
+working against a document he already distrusted.
+
+This is an evidence-recording entry, not a change. Nothing in the DSP moves.
+The next piece of work it defines is the coupled OQ-09/OQ-15 re-derivation, which
+is the highest-value item now open.
+
 ## 2026-09-03 — The resonance pair sees one difference, not two separate terms
 
 The resonance BA662 is a single differential pair. It takes **one** tanh of the

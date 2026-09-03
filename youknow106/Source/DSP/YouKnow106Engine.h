@@ -591,6 +591,35 @@ public:
         // Roland-drawn value kept beside it for the A/B the bracket invites.
         // The 80017A's own thick-film resistors are unmarked and unmeasured;
         // OQ-09's measured family still owns the point value.
+        // A third reading now exists, and it is the first measured on an
+        // ORIGINAL rather than read off a drawing or a clone: a technician's
+        // ohmmeter survey of a de-potted 80017A
+        // (https://sounddoctorin.com/synthtec/roland/juno106.htm) reads the
+        // resonance OTA's non-inverting leg as 5.1k against 1.5k and the
+        // stage-1 series input as 3.9k, giving c = (3.9/68)(101.5/6.6) =
+        // 0.882 -- three times the floor below, 6.9 dB more passband
+        // compensation at full resonance. The same survey independently
+        // confirms three things this model already ships: 68k between the
+        // IR3109 stages, 560 ohm shunts, and 47k on the VCA BA662's output
+        // (see VoiceVcaSignalLaw::loadOhms), plus ~250 pF stage capacitors,
+        // which settles poleCapacitorFarads on 240 pF and makes 270 pF the
+        // clone's value rather than Roland's.
+        //
+        // It is NOT adopted here, for one structural reason and two
+        // evidential ones. Structural: the same reading puts stage 1's gain
+        // at 68/3.9 = 17.4 where filterInputAttenuation assumes 6.8, so it
+        // moves OQ-15's drive coordinate by the same act; changing one
+        // without the other is incoherent, and the pair has to be reconciled
+        // against the anchored 6 Vp-p TP8 VCA GAIN trim. Evidential: it is a
+        // single in-circuit hand measurement, self-described as "roughly",
+        // against two independent 900 dpi reads of the sibling factory
+        // drawing. In-circuit ohmmetry reads low through parallel paths --
+        // though notably the same meter returned 68k, 100k and 47k correctly,
+        // so a nine-fold error on the + leg is not a simple meter artefact.
+        //
+        // So the bracket has widened rather than closed, and its top is now a
+        // measurement. The shipped value stays at the floor until the coupled
+        // re-derivation is done.
         static constexpr float drawnInputCompensationPerFeedback =
             (10000.0f / 68000.0f)
             * ((100000.0f + 1500.0f) / (47000.0f + 1500.0f));
