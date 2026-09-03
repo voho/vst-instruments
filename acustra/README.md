@@ -55,7 +55,7 @@ reverb, room effect or recorded-note layer.
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-steel-sustain-range.wav` | Steel sustain from open E2 to B5, one held pluck at a time | 9.5 s | −13.3 dBFS | +10.3 dB |
-| `02-nylon-fingerstyle.wav` | A fingertip nylon arpeggio with overlapping held notes | 4.2 s | −18.0 dBFS | +15.0 dB |
+| `02-nylon-fingerstyle.wav` | A fingertip nylon arpeggio with overlapping held notes | 4.2 s | −17.8 dBFS | +14.8 dB |
 | `03-shape-material-anchors.wav` | One chord: Parlor/Jumbo, then Cedar/Maple anchor settings | 13.7 s | −9.7 dBFS | +6.7 dB |
 | `04-string-age.wav` | The same steel phrase with fresh strings, then fully aged strings | 6.5 s | −10.7 dBFS | +7.7 dB |
 | `05-alternate-tunings.wav` | Drop D, DADGAD and Open G chords | 12.3 s | −11.9 dBFS | +8.9 dB |
@@ -486,8 +486,8 @@ Lower is better in the robust descriptor score:
 
 | Split | Rows | Neutral baseline | Fitted | Shipping | Change |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Training | 83 | 8.768535 | 6.441362 | 6.632018 | −24.37% |
-| Development validation | 24 | 8.145301 | 6.427690 | 6.420769 | −21.17% |
+| Training | 83 | 8.768535 | 6.441362 | 6.575180 | −25.01% |
+| Development validation | 24 | 8.145301 | 6.427690 | 6.381324 | −21.66% |
 | Flat top (reported only) | 8 | 9.309315 | 7.428581 | 8.120169 | −12.77% |
 
 The shipping column is not the fitted one. Five of the twenty-seven values were

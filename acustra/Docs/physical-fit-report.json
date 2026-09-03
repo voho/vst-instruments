@@ -133,31 +133,31 @@
     "training": {
       "examples": 83,
       "unique_model_renders": 47,
-      "fitted_score": 6.632018,
+      "fitted_score": 6.57518,
       "terms": {
         "attack": {
           "neutral": 9.309916832505955,
-          "fitted": 7.644159
+          "fitted": 7.615929
         },
         "harmonics": {
           "neutral": 10.441357549351897,
-          "fitted": 8.409883
+          "fitted": 8.221714
         },
         "tuning": {
           "neutral": 4.7200069586896545,
-          "fitted": 3.318752
+          "fitted": 3.208909
         },
         "pitch_trajectory": {
           "neutral": 0.5545940344615841,
-          "fitted": 0.510635
+          "fitted": 0.510165
         },
         "decay": {
           "neutral": 6.5023449891362235,
-          "fitted": 5.497106
+          "fitted": 5.476741
         },
         "body": {
           "neutral": 15.462399754765235,
-          "fitted": 11.858548
+          "fitted": 11.853453
         },
         "dynamics": {
           "neutral": 5.262953607125741,
@@ -165,36 +165,36 @@
         }
       },
       "neutral_score": 8.768534755725106,
-      "change_percent": -24.36572147165343
+      "change_percent": -25.013925551165013
     },
     "held_out": {
       "examples": 24,
       "unique_model_renders": 24,
-      "fitted_score": 6.420769,
+      "fitted_score": 6.381324,
       "terms": {
         "attack": {
           "neutral": 9.155575861766145,
-          "fitted": 7.887766
+          "fitted": 7.923179
         },
         "harmonics": {
           "neutral": 10.831031892275846,
-          "fitted": 8.782849
+          "fitted": 8.639617
         },
         "tuning": {
           "neutral": 5.134666492710443,
-          "fitted": 3.515835
+          "fitted": 3.582113
         },
         "pitch_trajectory": {
           "neutral": 0.2159873722123093,
-          "fitted": 0.159187
+          "fitted": 0.157857
         },
         "decay": {
           "neutral": 5.464938238665436,
-          "fitted": 4.340115
+          "fitted": 4.234044
         },
         "body": {
           "neutral": 15.82243218879784,
-          "fitted": 11.656359
+          "fitted": 11.683277
         },
         "dynamics": {
           "neutral": 0.42473841202342505,
@@ -202,7 +202,7 @@
         }
       },
       "neutral_score": 8.145301055652865,
-      "change_percent": -21.172109463726137
+      "change_percent": -21.656376401565407
     },
     "flat_top": {
       "examples": 8,
@@ -1085,7 +1085,7 @@
     "conclusion": "the disagreement is gone; the audit's old preference was measured on a build that no longer exists, three things having moved under it - the anchor topology, the plate conductance floor and steel's frequency loss. A number settles it, so no listening test is run"
   },
   "by_material": {
-    "note": "the ear-chosen body move, scored per material; before is the fitted calibration, after is what ships",
+    "note": "the ear-chosen body move, scored per material; the pair is that move's own before and after, not the engine that ships now -- see current_shipping below, which is a fresh measurement of this calibration after the nylon bending-stiffness table and the classical body",
     "training": {
       "nylon": [
         8.4087,
@@ -1106,7 +1106,17 @@
         6.7997
       ]
     },
-    "reading": "nylon moves 3.1% worse on training and 2.5% better held out; steel carries the whole trade at 8.2% and 13.4%, with attack 14.9% and body 11.7% worse. Nylon's +13.5 dB 80-160 Hz attack excess is on a band 47 dB below the classical reference's own total, so it changes the aggregate by a fraction of a decibel"
+    "reading": "nylon moves 3.1% worse on training and 2.5% better held out; steel carries the whole trade at 8.2% and 13.4%, with attack 14.9% and body 11.7% worse. Nylon's +13.5 dB 80-160 Hz attack excess is on a band 47 dB below the classical reference's own total, so it changes the aggregate by a fraction of a decibel",
+    "current_shipping": {
+      "training": {
+        "nylon": 7.777045,
+        "steel": 6.336064
+      },
+      "held_out": {
+        "nylon": 7.055413,
+        "steel": 6.403526
+      }
+    }
   },
   "longitudinal_modes": {
     "frequencies_hz": {

@@ -215,7 +215,7 @@ if(BUILD_TESTING)
                  COMMAND AcustraPhysicalFitRenderer --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/physical-fit-smoke"
                          1 1 1 0 .03
-                         1 1 1 1 1 1 0
+                         1 1 1 1 1 0
                          1 1 1 1 1 1 0
                          1 1 .0061 -.030 1.3 .001 1000 .02 0 80)
         set_tests_properties(Acustra.PhysicalFitRenderer PROPERTIES TIMEOUT 120)

@@ -351,23 +351,53 @@ void testSameSampleChordsAreStrummedAndAlternate()
                 return static_cast<double> (index) * 0.001;
         return 1.0;
     };
-    const double down = topStringDelay (false, 0.5);
-    const double up = topStringDelay (false, 0.5);
-    const double downAgain = topStringDelay (false, 2.5);
-    const double afterRest = topStringDelay (false, 0.5);
-    const double hammered = topStringDelay (true, 0.5);
+    // Read over repeated strokes, not one. A strum now draws one pick speed
+    // per stroke and one level per string (both measured from GuitarSet --
+    // AcustraEngine's beginStrum and initialisePluck), so a single stroke no
+    // longer pins the sweep: the top string's 370 Hz band also carries the
+    // two lowest strings' 349 Hz partials, and those strings sound first on
+    // a downstroke, so when the level draw makes them loud the band crosses
+    // its threshold before the top string has sounded at all. Twenty Hz
+    // apart needs a 48 ms window to separate, which is longer than the sweep
+    // itself, so the leakage cannot be filtered out here and the median over
+    // eight strokes is what carries the contract instead.
+    const auto median = [] (std::vector<double> values)
+    {
+        std::sort (values.begin(), values.end());
+        return values[values.size() / 2];
+    };
+    std::vector<double> downs, ups, downAgains, hammereds;
+    for (int stroke = 0; stroke < 8; ++stroke)
+    {
+        // Each triple is a downstroke (the 2.5 s rest that closed the last
+        // triple restarts the alternation), its return, and the third in a
+        // row alternating back.
+        downs.push_back (topStringDelay (false, 0.5));
+        ups.push_back (topStringDelay (false, 0.5));
+        downAgains.push_back (topStringDelay (false, 2.5));
+    }
+    for (int group = 0; group < 4; ++group)
+        hammereds.push_back (topStringDelay (true, 2.5));
+    const double down = median (downs);
+    const double up = median (ups);
+    const double downAgain = median (downAgains);
+    const double hammered = median (hammereds);
     // The heterodyne needs a couple of cycles to register a string that
     // sounds at once, so the comparisons are against the downstroke's own
     // delay rather than against zero.
-    // Measured: down 13 ms, up 4 ms, down again 13 ms, after the rest 12 ms,
-    // legato 7 ms (six strings at once, the band's maximum raised by the
-    // others' partials).
-    expect (down > 0.010, "a same-sample chord was not swept across its strings");
-    expect (up < 0.5 * down, "the second of two strums did not start from the top string");
-    expect (downAgain > 0.8 * down,
+    // Measured medians: down 8 ms, up 3 ms, down again 7.5 ms, legato 6 ms.
+    // These were 13, 4, 13 and 7 ms on one stroke each before the strum
+    // carried its measured variation; the downstroke's median fell because
+    // the level draw floods the band early, not because the pick crosses
+    // any faster -- its rank-5 delay is 26 ms nominal at this velocity.
+    // The legato clause is the thinnest of the four: a legato group draws
+    // no level jitter at all, so it reads the band's own floor, and that
+    // floor sits close to a leakage-shortened downstroke.
+    expect (down > 0.006, "a same-sample chord was not swept across its strings");
+    expect (up < 0.6 * down, "the second of two strums did not start from the top string");
+    expect (downAgain > 0.7 * down,
             "the third strum in a row did not alternate back to a downstroke");
-    expect (afterRest > 0.8 * down, "the first strum after a rest was not a downstroke");
-    expect (hammered < 0.7 * down, "a legato group was swept like a strum");
+    expect (hammered < 0.85 * down, "a legato group was swept like a strum");
 }
 
 void testSameSampleNoteOnOffDoesNotStick()
