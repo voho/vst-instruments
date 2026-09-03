@@ -195,10 +195,14 @@ std::span<const detail::MeasuredBodyMode> measuredBodyBank(
 bool includeMeasuredBridgeMode(const detail::MeasuredBridgeMode& mode) noexcept
 {
 #if defined(ACUSTRA_ANALYSIS_EXCLUDE_MEASURED_OPEN_STRINGS)
-    // Analysis only: the g21 setup photographs show installed strings.  Of
-    // the retained candidates only 82.764 Hz lies within 25 cents of a
-    // standard open string (E2, 82.407 Hz).  Do not ship this de-embedding
-    // surrogate: the measurement string's impedance metadata is unavailable.
+    // Analysis only, and applied to whichever bank the material selects: the
+    // archive's setup photographs show installed strings.  Of the retained
+    // candidates only the steel bank's 82.764 Hz lies within 25 cents of the
+    // one open string this surrogate names (E2, 82.407 Hz); on the nylon bank
+    // it removes nothing.  Do not ship it: the measurement string's impedance
+    // metadata is unavailable, and the generator's own open-string screen
+    // already gates every retained mode near a standard open string on its
+    // resolved Q.
     constexpr float openLowE = 82.406889f;
     const float cents = 1200.0f * std::log2(mode.frequency / openLowE);
     return std::abs(cents) >= 25.0f;

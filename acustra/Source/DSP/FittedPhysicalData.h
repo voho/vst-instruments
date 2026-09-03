@@ -49,12 +49,18 @@ struct PhysicalCalibration
     // behind the saddle instead - roughly 12-16 mm at a steel-string's pins,
     // further at a classical's tie block - and the distance is not part of
     // the g21 measurement, so it is bounded and fitted rather than assumed.
-    // Re-swept on the classical bridge rather than inherited from g21: over
-    // E, G, Am, D and C chords, the worst separable note's pull early/late in
-    // cents reads 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at
-    // 17.2 mm and 25.8/98.2 with no anchor at all, so the bound's floor -
-    // DAFx-26's own attachment, xi_b = 0.995 on a 650 mm scale - stays the
-    // shipping value on the new guitar as it was on g21.
+    // Re-swept on the classical bridge rather than inherited from g21, over
+    // E, G, Am, D and C chords. Worst separable note's pull early/late in
+    // cents: 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at
+    // 17.2 mm, 25.8/98.2 with no anchor at all. The coincident pairs of the
+    // same sweep - a played fundamental landing on a lower played note's
+    // partial, where the tracker reads the beat between them and not a pull -
+    // run the other way: 58.1/12.4 at 3.25 mm, 28.2/10.2 at 8 mm, 14.1/26.7
+    // at 17.2 mm. So the sweep settles that an anchor is needed and not which
+    // length: 3.25 mm loses the late window to 8 mm and loses the coincident
+    // column outright. It ships because it is the bound's floor and DAFx-26's
+    // own attachment, xi_b = 0.995 on a 650 mm scale - the only published
+    // dimension among the candidates - not because it won the sweep.
     float bridgeTailLengthMetres { 0.020f };
     // Transverse motion stretches the string; DAFx-26's tension increase
     // EA/(2L) times the mean square slope is a force at the saddle, and it
