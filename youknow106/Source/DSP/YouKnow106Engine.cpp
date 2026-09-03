@@ -102,6 +102,14 @@ constexpr float noiseOtaLoadResistanceOhms = 330000.0f;   // R79
 constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
 constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
 constexpr float highPassCutBleedResistanceOhms = 1000000.0f; // R21 / R23
+// How much of a departed cut leg reaches IC4a, and how much slower it decays.
+// Both are the same ratio of two p. 15 resistances: with the mux open the
+// leg's timing resistance becomes R23+R28 (= R21+R26) instead of R28 alone, so
+// its corner falls by R29/(R23+R28) -- and because R29 equals R28, that same
+// figure is the output-referred fraction of the stored capacitor voltage the
+// leg delivers through its own 47 kOhm. 47/1047 = 0.0448902, or -26.96 dB.
+constexpr float highPassDepartRatio =
+    47000.0f / (highPassCutBleedResistanceOhms + 47000.0f);
 
 // Per-voice module-input coupling, module board p. 13: the summed WAVE node
 // reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
@@ -5085,6 +5093,16 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
     updateSharedHighPass(activeParameters_);
+    // The two cut legs' undriven corners: each leg's own passband corner
+    // scaled by highPassDepartRatio. 225.8 Hz -> 10.14 Hz leaving Two,
+    // 720.5 Hz -> 32.34 Hz leaving Three. Both sit far below every supported
+    // internal Nyquist, so they need no design-corner clamp.
+    highPassTwoDepartG_ = std::tan(
+        pi * highPassCornerHz(HighPassMode::Two) * highPassDepartRatio
+        * inverseOversampledRate_);
+    highPassThreeDepartG_ = std::tan(
+        pi * highPassCornerHz(HighPassMode::Three) * highPassDepartRatio
+        * inverseOversampledRate_);
     moduleCouplingG_ = std::tan(
         pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
@@ -5273,6 +5291,8 @@ void YouKnow106Engine::clearRateDependentOutputPath(
     {
         voiceBusCoupling_.reset();
         highPass_.reset();
+        highPassTwoLeg_.reset();
+        highPassThreeLeg_.reset();
         commonVcaInputCoupling_.reset();
         noiseSourceHighPass_.reset();
         noiseSourceLowPass_.reset();
@@ -8887,9 +8907,43 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             }
             const float coupled = voiceBusCoupling_.process(
                 busIn, effectiveCouplingG, 0.0f, 1.0f);
-            const float shaped = highPass_.process(coupled,
-                                                   highPassG_,
-                                                   highPassShelf_, highPassHigh_);
+            // IC3 selects which leg IC4a's summing node is driven from, but
+            // it does not disconnect the leg it just left: that leg's 47 kOhm
+            // is unswitched, so its capacitor keeps discharging through its
+            // own 1 MOhm bleed into the same summing node. The shared filter
+            // still runs every sample whichever leg is selected -- One is a
+            // bare wire and Boost's own C8 tail is not modelled here, so
+            // freezing it would manufacture a stale-state step on the next
+            // entry to Boost larger than the tail this models.
+            const float sharedLeg = highPass_.process(coupled,
+                                                      highPassG_,
+                                                      highPassShelf_,
+                                                      highPassHigh_);
+            float shaped = sharedLeg;
+            if (parameters.enableHighPassDepartingLegTail)
+            {
+                const bool twoActive =
+                    parameters.highPass == HighPassMode::Two;
+                const bool threeActive =
+                    parameters.highPass == HighPassMode::Three;
+                const float twoLeg = twoActive
+                    ? highPassTwoLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
+                    : highPassTwoLeg_.process(0.0f, highPassTwoDepartG_,
+                                              1.0f, 0.0f);
+                const float threeLeg = threeActive
+                    ? highPassThreeLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
+                    : highPassThreeLeg_.process(0.0f, highPassThreeDepartG_,
+                                                1.0f, 0.0f);
+                shaped = twoActive ? twoLeg
+                       : threeActive ? threeLeg
+                       : sharedLeg;
+                // output = +R29 * i and the departing current is
+                // i = -Vc / (R_bleed + R_sum), hence the sign.
+                if (!twoActive)
+                    shaped -= highPassDepartRatio * twoLeg;
+                if (!threeActive)
+                    shaped -= highPassDepartRatio * threeLeg;
+            }
 
             // VCA LEVEL is the one common uPC1252H2 on the jack board, after
             // the voice sum and HPF. The six voice-module VCAs above are driven

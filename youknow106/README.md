@@ -572,7 +572,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-16 | Installed main-noise spectrum and self-oscillation startup. Level is settled; Roland's p. 13 designators settle the shape class and state ordering (C42's 33.9 Hz high-pass, scanned BA662 level OTA, then C41/R79's 4822.877 Hz pole). Installed-device PSD and startup remain capture questions, as do IC5's output noise versus VCA LEVEL (−16.3..+4.7 dB; NEC publishes NV only at 0 dB) and the six voice cards' contribution to the dry floor: a silent-patch capture at the mono jack with chorus Off would close both. VR32's installed position (hence the NOISE deadband, 4–11 % of travel) and Tr21's selected amplitude are unmeasured; a TP8-versus-NOISE level sweep or a trimmer reading closes both, and a TP8 crest-factor capture would settle whether the BA662 input saturates | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy. The integrator capacitor no longer splits the saturation bracket: a de-potted original measures ~250 pF across all four stages ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)), which is the 240 pF the sibling schematic prints, and the competing 270 pF is the Analogue Renaissance clone's own value rather than Roland's. The shipped 240 pF stands and the 64.8 kHz branch of the bracket can be retired | P2 |
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled | P2 |
-| OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056° | P2 |
+| OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. **Two switching transients remain open, and the larger is unmodelled:** Boost's own departing tail runs C8 through R22+R25 into IC4b and back through R24, derived at about 2.35× the stored C8 voltage with τ ≈ 940 µs — roughly 34 dB larger than the cut-leg tails, though 5–16× shorter — and the TC4052's own on-resistance and charge injection are unmodelled | P2 |
 | OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model is settled policy: zero inter-voice spread, zero drift, with all seeded variation living in Unit Character as voiced sound design | P3 |
 | OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled and the ladder's ideal taps land within 1.2 dB of the published steps | P3 |
 
@@ -678,6 +678,13 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 ## Release history
 
 ### 1.1.0 — unreleased
+
+- The switched high-pass no longer discards the leg it leaves. Selecting a new
+  position steps as before, but the departing cut leg's capacitor keeps
+  discharging into the same summing node, adding a soft low tail of −26.96 dB
+  of its stored charge over 15.71 ms leaving position Two and 4.92 ms leaving
+  Three. It fires on any program change whose HPF byte differs; with the
+  selector held still, renders are bit-identical to before.
 
 - NOISE level follows the drawn Tr22 grounded-base control law: silent
   through the first ~4 % of travel (stored bytes 0–5), linear above; the

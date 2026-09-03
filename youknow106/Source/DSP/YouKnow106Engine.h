@@ -266,6 +266,19 @@ struct EngineParameters
     // does not change capacitance; leave the candidate off until an installed
     // 10 uF non-polar part is measured under the OQ-21 conditions.
     bool enableElectrolyticC14Nonlinearity { false };
+    // On by default: the switched HPF's departing cut leg keeps discharging
+    // its own capacitor -- C10 15 nF behind R21, C11 4.7 nF behind R23 --
+    // through its own 1 MOhm bleed and its own always-connected 47 kOhm into
+    // IC4a's summing node, instead of vanishing the instant IC3 points
+    // elsewhere. IC3 selects which leg the node is DRIVEN from; it does not
+    // disconnect the leg it just left. The tail is R29/(R21+R26) = 0.0448902,
+    // or -26.96 dB, of the stored capacitor voltage, decaying with 15.71 ms
+    // leaving Two and 4.92 ms leaving Three. False restores the former
+    // single-shared-state swap for controlled A/B renders; with the selector
+    // held still the two paths are bit-identical either way. Boost's own
+    // departing tail (C8 through R22+R25 into IC4b) is larger and shorter and
+    // is still unmodelled; OQ-21 owns the switching transient.
+    bool enableHighPassDepartingLegTail { true };
     // On by default: uses CircuitDerivedResonanceProfile's
     // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
     // BA662-family linear gm, 2026-08-20) instead of the voiced quadratic-then-
@@ -2856,6 +2869,16 @@ private:
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };
     float highPassHigh_ { 1.0f };
+    // R23/C11 (Three) and R21/C10 (Two) each hold their own charge. While a
+    // leg is selected its state is driven by the coupled bus at that leg's own
+    // passband corner -- highPassG_ already is that corner -- so its state is
+    // exactly the capacitor voltage. While it is not, it is fed silence at its
+    // own much slower undriven corner, and its residual current still reaches
+    // the summing node through its 47 kOhm. See the switch above.
+    HighPass highPassTwoLeg_ {};
+    HighPass highPassThreeLeg_ {};
+    float highPassTwoDepartG_ { 0.001f };
+    float highPassThreeDepartG_ { 0.001f };
 
     // C12/R36 immediately before the shared uPC1252H2 VCA.
     HighPass commonVcaInputCoupling_ {};
