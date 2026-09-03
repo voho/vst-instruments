@@ -36,7 +36,9 @@ Usage:
 
 ``--floor`` scores each recorded take against another take of the same note and
 layer instead of against a model, which is the only number that says how small
-a term can honestly get: see ``floor_report``.
+a term can honestly get: see ``floor_report``. It also rescores the model, and
+the ``--control`` manifest when one is given, against the same trim-corrected
+targets, so every column of that table is a distance to the same signal.
 
 NumPy and SciPy are required; both are already used by Acustra's measurement
 tools. The JSON report's ``weighted_residuals`` can be returned directly from a
@@ -702,6 +704,7 @@ class PreparedManifest:
         *,
         material: str | None = None,
         identifiers: set[str] | None = None,
+        undo_playback_trim: bool = False,
     ) -> dict[str, Any]:
         selected = [
             example
@@ -725,6 +728,13 @@ class PreparedManifest:
                 model_cache[model_key] = model
             examples.append({
                 **source,
+                # The floor undoes the export's per-zone playback trim on the
+                # target, so a model score meant to be read against that floor
+                # has to be measured against the same target; see floor_report.
+                "target_features": (
+                    _trim_corrected(source["target_features"],
+                                    source["playback_trim"])
+                    if undo_playback_trim else source["target_features"]),
                 "model_features": model,
             })
         report = score_examples(examples, self.analysis_rate)
@@ -809,6 +819,11 @@ def floor_report(
     and is skipped in the other; the two sides agreeing is the check that no
     such asymmetry dominates a term.
 
+    The model, and the control when one is given, are scored here as well
+    rather than taken from the ordinary run, because the floor undoes the
+    export's per-zone playback trim on the target and a column read against it
+    has to be measured against that same target. Only the level term moves.
+
     Nylon and the flat-top rows were captured once per note, so they have no
     floor here and are reported as such.
     """
@@ -853,15 +868,31 @@ def floor_report(
             if forward_report["terms"][name]["score"] is not None
             and reverse_report["terms"][name]["score"] is not None
         )
+        identifiers = {
+            example["id"] for example in prepared.examples
+            if example["material"] == material
+            and example["round_robin"] is not None
+        }
+        # The model column of this table has to be measured against the same
+        # target the floor is, or the two numbers in a row are distances to two
+        # different signals. Only the level descriptor moves: every other one is
+        # normalised to its own mean, or is a frequency or a rate.
+        model_report = prepared.score(
+            material=material, identifiers=identifiers,
+            undo_playback_trim=node["level_terms_trim_corrected"])
+        node["model"] = {
+            "level_terms_trim_corrected": node["level_terms_trim_corrected"],
+            "score": model_report["score"],
+            "terms": {name: value["score"]
+                      for name, value in model_report["terms"].items()},
+        }
         if control is not None:
-            identifiers = {
-                example["id"] for example in prepared.examples
-                if example["material"] == material
-                and example["round_robin"] is not None
-            }
             control_report = control.score(
-                material=material, identifiers=identifiers)
+                material=material, identifiers=identifiers,
+                undo_playback_trim=node["level_terms_trim_corrected"])
             node["control"] = {
+                "level_terms_trim_corrected": node[
+                    "level_terms_trim_corrected"],
                 "score": control_report["score"],
                 "terms": {name: value["score"]
                           for name, value in control_report["terms"].items()},
@@ -1040,7 +1071,8 @@ def self_test() -> None:
             trim = 2.0 if velocity > 0.5 else 1.0
             second_path = root / f"take2-{suffix}.f32"
             (second * trim).astype("<f4").tofile(second_path)
-            for take, entry in ((0, {"path": f"target-{suffix}.wav"}),
+            for take, entry in ((0, {"path": f"target-{suffix}.wav",
+                                     "playback_trim": 1.0}),
                                 (1, {"path": second_path.name,
                                      "sample_rate": rate, "channels": 1,
                                      "playback_trim": trim})):
@@ -1050,6 +1082,9 @@ def self_test() -> None:
                     "midi": 45,
                     "velocity": velocity,
                     "round_robin": take,
+                    # Both velocities of one take are one dynamic group, so the
+                    # model column below has a level term to correct.
+                    "dynamic_group": f"synthetic-rr{take}",
                     "target": entry,
                     # Floor mode reads only the target side; the model side is
                     # required by the manifest schema.
@@ -1075,6 +1110,18 @@ def self_test() -> None:
                 "undoing the playback trim did not lower the level floor: "
                 f"{trimmed['floor']['terms']['dynamics']} vs "
                 f"{uncorrected['floor']['terms']['dynamics']}")
+        # The model column has to move with the floor and only on the level
+        # term, or the table's two numbers are measured against two targets.
+        if (trimmed["model"]["terms"]["dynamics"]
+                == uncorrected["model"]["terms"]["dynamics"]):
+            raise AssertionError(
+                "the trim correction did not reach the model column")
+        for name, value in trimmed["model"]["terms"].items():
+            other = uncorrected["model"]["terms"][name]
+            if name != "dynamics" and value != other:
+                raise AssertionError(
+                    f"the trim correction moved the {name} term: "
+                    f"{value} vs {other}")
         print(
             "self-test passed: closer damped-harmonic model scored "
             f"{close_report['score']:.6f} < {far_report['score']:.6f}"

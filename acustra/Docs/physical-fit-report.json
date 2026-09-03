@@ -471,7 +471,7 @@
     "interpretation": "control only, not an out-of-sample realism comparison: version 1 plays the target recordings themselves, and the near-zero flat-top score reflects especially direct source playback. The nonzero scores measure the sampler envelope, interpolation, stereo path and finite analysis rather than distance from independent real takes. The physical model's higher score is expected and cannot be read as version 1 sounding more realistic on uncaptured notes or performances."
   },
   "recording_floor": {
-    "method": "the fitter's own seven terms run recording against recording: each archtop take is scored against another take of the same note and layer, all 54 ordered pairs of the three training round robins, with the bank's per-zone playback trim undone on the level descriptor so the dynamics term measures the player and not the trim",
+    "method": "the fitter's own seven terms run recording against recording: each archtop take is scored against another take of the same note and layer, all 54 ordered pairs of the three training round robins, with the bank's per-zone playback trim undone on the level descriptor so the dynamics term measures the player and not the trim. The model and the sample-player control below are rescored against those same trim-corrected targets, since a row whose two numbers are measured against two different targets is not a ratio",
     "material": "steel",
     "split": "training",
     "example_count": 54,
@@ -491,15 +491,16 @@
       }
     },
     "model": {
-      "score": 6.336063581635963,
+      "level_terms_trim_corrected": true,
+      "score": 6.513223934454794,
       "terms": {
         "attack": 7.826746014466161,
-        "harmonics": 8.140275217025382,
-        "tuning": 3.141771126350928,
-        "pitch_trajectory": 0.7381702752700302,
-        "decay": 4.639351674263885,
         "body": 11.468220517803392,
-        "dynamics": 0.2051925199850907
+        "decay": 4.639351674263885,
+        "dynamics": 1.9767960481734173,
+        "harmonics": 8.140275217025382,
+        "pitch_trajectory": 0.7381702752700302,
+        "tuning": 3.141771126350928
       }
     },
     "sample_v1_control": {
@@ -507,27 +508,30 @@
         "attack": true,
         "body": true,
         "decay": true,
-        "dynamics": true,
+        "dynamics": false,
         "harmonics": true,
         "pitch_trajectory": true,
         "tuning": false
       },
-      "score": 0.526440835675217,
+      "level_terms_trim_corrected": true,
+      "score": 0.8094953657215316,
       "terms": {
         "attack": 0.33328570570133076,
         "body": 0.6444051860250409,
         "decay": 0.3288902833922923,
-        "dynamics": 0.00010368221739023332,
+        "dynamics": 2.8306489826805348,
         "harmonics": 0.14329767755871148,
         "pitch_trajectory": 0.0005297412540435958,
         "tuning": 3.6030649973145605
       }
     },
     "control_above_floor_terms": [
+      "dynamics",
       "tuning"
     ],
-    "control_note": "measured, not inferred: version 1 retunes each region to equal temperament while the export keeps the recording's own pitch. Over the 54 training takes the target's H1 sits at a median -4.7 cents and version 1's at +0.2, a median 4.8 cents apart against the term's 5-cent tolerance, and each row's difference is that zone's own tuningCentsFrom12Tet to 0.1 cents",
-    "interpretation": "a term's model score is only readable against this floor; the floor is not a target, since a model that reached it would be as close to one take as another take of the same note is"
+    "control_note": "both are measured, not inferred, and both are playback transforms. Tuning: version 1 retunes each region to equal temperament while the export keeps the recording's own pitch, so over the 54 training takes the target's H1 sits at a median -4.7 cents and version 1's at +0.2, a median 4.8 cents apart against the term's 5-cent tolerance, and each row's difference is that zone's own tuningCentsFrom12Tet to 0.1 cents. Dynamics: version 1 renders through the same per-zone trim the export applied, so undoing that trim on the target alone puts exactly the trim into the residual - 5.6 dB across the two training layers, measured as the span of the per-zone trims themselves",
+    "interpretation": "a term's model score is only readable against this floor; the floor is not a target, since a model that reached it would be as close to one take as another take of the same note is",
+    "level_term_basis": "measured spans of the mean level over the 54 training takes, velocity 16 to velocity 112: the export's targets 13.2 dB, which is the authored 0.55*velocity^0.82 playback gain; the trim-corrected targets 18.9 dB, that gain with the recordings' own 5.6 dB layer-to-layer spread restored on top of it; the model 14.9 dB and sample-player version 1 13.3 dB. No basis puts the recordings' own dynamics alone on the target side, so the 12.7x dynamics ratio supports the negative reading only - the level term is not the model's best-behaved term at the 1.3x an uncorrected model column against a corrected floor reported - and what the recordings' own 5.6 dB asks of the engine is an open question, not one this row answers"
   },
   "frozen_test_split": {
     "method": "AcustraPhysicalFitRenderer --test renders every captured archtop layer and take, on the sixteen roots the fit uses, that no fit, screen or refit has ever rendered: 188 of those roots' 256 regions. Root 37 is excluded because the lowest modelled string is E2/MIDI 40. Scored once per release at the shipping calibration and never fitted",
@@ -555,7 +559,8 @@
         "score": 6.403525973929313
       },
       "note": "the training and development-validation scores restricted to the same archtop material, so the test score can be read beside them"
-    }
+    },
+    "model_render_reuse": "a model render is keyed by material, note and velocity, so the take is the recording's only: 32 of the 64 renders are byte-identical (md5) to renders the fit corpus already produced, and 60 of the 188 rows score fit-optimised model audio against a take it was not fitted on. The other 128 rows are root-by-layer combinations the model has never rendered"
   },
   "plate_conductance_floor": {
     "mechanism": "one over-damped positive-real section added to the measured bridge mobility, restoring the flat conductance a plate keeps above its modal-overlap frequency",

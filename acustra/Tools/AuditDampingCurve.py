@@ -110,11 +110,20 @@ def _onset(signal: np.ndarray) -> int:
     return int(np.argmax(np.abs(signal) > 0.02 * peak))
 
 
-def partial_rates(
+def measurable_partials(
     signal: np.ndarray, rate: int, fundamental: float, maximum_partial: int = 40,
     window: int | None = None,
-) -> list[tuple[float, float]]:
-    """Return (partial frequency, decay rate in dB/s) for usable partials."""
+) -> list[tuple[int, float, np.ndarray, np.ndarray]]:
+    """Per partial that is above the record's own noise: (index, Hz, t, dB).
+
+    This is the analysis floor both estimators need and neither may skip. A
+    partial whose band never rises FLOOR_MARGIN above the interharmonic floor
+    beside it is the record's noise, and anything fitted to it is a rate for
+    noise -- with two exponentials, a doublet for noise. The returned times and
+    levels are the frames that survive the floor, the peak range and the rate
+    window, so a caller either fits those or, like the doublet estimator, takes
+    the partial's admission and re-reads the waveform its own way.
+    """
     tail = signal[_onset(signal) : _onset(signal) + round(ANALYSIS_SECONDS * rate)]
     window = min(window or WINDOW,
                  1 << int(np.floor(np.log2(max(tail.size, 2)))))
@@ -126,7 +135,7 @@ def partial_rates(
     )
     power = np.abs(spectrum) ** 2
     resolution = float(frequency[1] - frequency[0])
-    result: list[tuple[float, float]] = []
+    result: list[tuple[int, float, np.ndarray, np.ndarray]] = []
     for index in range(1, maximum_partial + 1):
         centre = fundamental * index
         if centre > min(9000.0, 0.45 * rate):
@@ -151,7 +160,19 @@ def partial_rates(
         )
         if int(np.count_nonzero(usable)) < 10:
             continue
-        slope = float(np.polyfit(times[usable], levels[usable], 1)[0])
+        result.append((index, centre, times[usable], levels[usable]))
+    return result
+
+
+def partial_rates(
+    signal: np.ndarray, rate: int, fundamental: float, maximum_partial: int = 40,
+    window: int | None = None,
+) -> list[tuple[float, float]]:
+    """Return (partial frequency, decay rate in dB/s) for usable partials."""
+    result: list[tuple[float, float]] = []
+    for _, centre, times, levels in measurable_partials(
+            signal, rate, fundamental, maximum_partial, window):
+        slope = float(np.polyfit(times, levels, 1)[0])
         if slope < -1.0:
             result.append((centre, -slope))
     return result
@@ -264,7 +285,10 @@ def partial_components(
     This fits one damped exponential and then two, and keeps the second only
     when the residual drop is significant at DOUBLET_SIGNIFICANCE. Where it is
     not, the single rate is what is reported, so this is a strict extension of
-    the one-line estimator rather than a different one.
+    the one-line estimator rather than a different one -- including its analysis
+    floor: only the partials `measurable_partials` admits are fitted here, so a
+    partial the single-line estimator throws out as noise cannot come back as a
+    doublet.
     """
     onset = _onset(signal)
     first = onset + round(RATE_WINDOW_SECONDS[0] * rate)
@@ -274,12 +298,8 @@ def partial_components(
         return []
     spectrum = np.fft.fft(window)
     result: list[dict] = []
-    for index in range(1, maximum_partial + 1):
-        centre = fundamental * index
-        if centre > min(9000.0, 0.45 * rate):
-            break
-        if masked_by_artefact(centre):
-            continue
+    for index, centre, _, _ in measurable_partials(
+            signal, rate, fundamental, maximum_partial):
         half_width = min(0.5 * fundamental, 50.0)
         band = _baseband(window, rate, centre, half_width, spectrum)
         if band is None or band[0].size < 24:
@@ -535,6 +555,14 @@ def doublet_self_test() -> int:
 
     if any(masked_by_artefact(row["centre_hz"]) for row in measured.values()):
         print("self-test failed: a masked artefact frequency was reported")
+        return 1
+    # Only partials 1 to 6 were synthesised, and 3 is masked. Everything above
+    # is the -100 dB noise floor, and a fit to noise returns a rate and can
+    # call it a doublet, so the analysis floor has to reject it before the fit.
+    extra = sorted(index for index in measured if index > 6)
+    if extra:
+        print(f"self-test failed: partials {extra} are noise and were fitted "
+              "anyway")
         return 1
     if 3 in measured:
         print("self-test failed: partial 3 at 660 Hz sits 21 cents from the "

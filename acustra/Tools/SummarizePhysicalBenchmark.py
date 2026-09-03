@@ -29,7 +29,10 @@ def _floor_lines(report: dict[str, Any]) -> list[str]:
     small it can be, and that spread is different for every term. The archtop
     was captured four times per note and layer, so the same scorer can be run
     recording against recording, and the ratio below says how much of each term
-    is still the model.
+    is still the model. Both columns of a row are measured against the same
+    targets -- the floor undoes the export's per-zone playback trim on the
+    level descriptor, so the model column is rescored against the corrected
+    targets too, and ``level_term_basis`` says what that leaves on each side.
     """
     floor = report.get("recording_floor")
     if not isinstance(floor, dict):
@@ -40,7 +43,8 @@ def _floor_lines(report: dict[str, Any]) -> list[str]:
         "",
         f'Recording-versus-recording floor ({floor["material"]}, '
         f'{floor["pair_count"]} take pairs from {floor["example_count"]} '
-        f'{floor["split"]} takes):',
+        f'{floor["split"]} takes, model and control on the floor\'s own '
+        f'targets):',
         "| Term | Model | Floor | Model/floor |",
         "| --- | ---: | ---: | ---: |",
     ]
@@ -56,9 +60,14 @@ def _floor_lines(report: dict[str, Any]) -> list[str]:
     if isinstance(above, list) and above:
         lines.append(
             "The sample-player control scores below this floor on every term "
-            "except " + ", ".join(str(term) for term in above)
-            + ", which therefore measures the player rather than bounding the "
+            "except " + " and ".join(
+                filter(None, [", ".join(str(term) for term in above[:-1]),
+                              str(above[-1])]))
+            + ", which therefore measure the player rather than bounding the "
               "model: " + str(floor.get("control_note", "")))
+    basis = floor.get("level_term_basis")
+    if basis:
+        lines.append("Level term: " + str(basis))
     return lines
 
 

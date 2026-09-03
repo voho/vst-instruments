@@ -13,12 +13,17 @@ otherwise dominate. A positive difference means the model puts more of its
 attack energy in that band than the recording does.
 
 Everything is reported per captured velocity layer. A pooled figure over the
-corpus's four archtop layers is not evidence about any one of them: pooled, the
-2560-10000 Hz shape reads within 0.1 dB of the recordings, while per layer it
-runs from +3.3/-2.7 dB at the softest to -10.3/-17.5 dB at the loudest, and a
-mechanism that grows with velocity is exactly what those two readings tell
-apart. The 2026-09-02 audit entry asked for this split after a pooled median
-was read as though it described the loudest layer.
+corpus's four archtop layers is not evidence about any one of them. Pooled over
+the 68 archtop rows the 2560-5120 Hz band reads -0.2 dB against the recordings
+on the shipping corpus (+0.1 dB on the 2026-09-01 one), which says the model
+has that band right; per layer the same rows run +4.4 dB at the softest to
+-8.5 dB at the loudest (+3.3 to -10.3), so it has that band right at no
+velocity. The band above it is not hidden the same way -- 5120-10000 Hz pools
+to -8.6 dB (-7.9) and runs -4.2 to -14.2 dB (-2.7 to -17.5) -- but its pooled
+figure still averages a deficit that trebles with velocity. A mechanism that
+grows with velocity is exactly what a pooled median cannot show, and the
+2026-09-02 audit entry asked for this split after one was read as though it
+described the loudest layer.
 
 The difference column is the median of the per-example model-minus-recording
 differences, not the difference of the two medians beside it: the comparison is
@@ -37,9 +42,11 @@ beside the bands because the log quotes them and they are cheap here:
   unlimited centroid would compare two different Nyquist frequencies;
 * the H5-H12 balance over 80-250 ms: the mean level of partials 5 to 12 minus
   the mean level of partials 1 to 4, each peak-picked within 35 cents of its
-  harmonic. On the shipping corpus this reproduces the audit's per-layer
-  reading of the recordings (-15.9, -13.2, -11.3 dB for the three louder
-  layers) and of the model (-23.7, -23.3, -22.5, -22.8 dB).
+  harmonic. It reproduces the audit's per-layer reading of the recordings
+  (-20.4, -15.9, -13.2, -11.3 dB, softest layer first), which do not move.
+  The model reads -21.6, -21.3, -21.3, -22.4 dB on the shipping corpus; the
+  -23.7, -23.3, -22.5, -22.8 dB the log quotes are the 2026-09-01 corpus,
+  before the two-way junction and the stub anchor.
 
 Usage:
 
