@@ -5,6 +5,47 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-03 — Correction: the de-potted original corroborates the shipped value
+
+The entry below records the Sound Doctorin teardown as widening the resonance
+compensation bracket to 0.882 and defining a coupled OQ-09/OQ-15 re-derivation.
+**That conclusion was wrong, and this entry supersedes it.** Cloning the
+Open80017a repository and reading Herpoel's KiCad schematic directly — R1 24k,
+R2 1.5k, R3 4.7k, R25 100k, R26 1.5k, R27 4.7k, R30 47k — made the arithmetic
+that settles it available.
+
+The teardown's readings are **in-circuit**, and in-circuit ohmmetry reads low
+through parallel paths. Against that topology the predicted readings are what he
+saw, to better than a tenth of a kilohm:
+
+    R1  24k  in parallel with (4.7 + 1.5 + 0.56)k = 5.27k   he read 5.1k
+    R3  4.7k in parallel with (24 + 1.5)k         = 3.97k   he read 3.9k
+
+And the pattern is not selective. Every value the two sources agree on — 68 kΩ
+between the stages, 100 kΩ resonance feedback, 47 kΩ VCA load, 1.5 kΩ, 560 Ω,
+and the 4.7 kΩ VCA input — is one whose parallel path is negligible; both
+disagreements are in the direction a parallel path forces, and both land where
+it predicts. That is the signature of a measurement artefact, not of a different
+circuit.
+
+So the teardown is not a third competing reading. It is a **second independent
+original consistent with 4.7 kΩ and 24 kΩ**, which is the reading that already
+ships. What it reclassifies is the sibling drawing: 10 kΩ and 47 kΩ describe the
+discrete JUNO-6/60's own proportioning, not the potted hybrid's, which is exactly
+what one would expect of a re-implementation.
+
+Three consequences. The shipped 0.275116 stops being merely the conservative end
+of a bracket and becomes the best-supported reading of the 106's own module. The
+coupled OQ-09/OQ-15 re-derivation named below is **not** owed — the drive
+coordinate is not moved by this evidence after all. And the Drawn shape stays
+selectable as the sibling instrument's value, which is what it now is.
+
+Everything the previous entry recorded as confirmed still stands: 68 kΩ, 560 Ω,
+100 kΩ, the 47 kΩ VCA load, and ~250 pF settling the integrator capacitor on
+240 pF with 270 pF identified as the clone's value.
+
+Documentation only; no constant moves.
+
 ## 2026-09-03 — First measurement of an original 80017A, and why nothing moved yet
 
 A technician's ohmmeter survey of a **de-potted original A1QH80017A**

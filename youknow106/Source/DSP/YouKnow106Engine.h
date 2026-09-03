@@ -605,21 +605,23 @@ public:
         // which settles poleCapacitorFarads on 240 pF and makes 270 pF the
         // clone's value rather than Roland's.
         //
-        // It is NOT adopted here, for one structural reason and two
-        // evidential ones. Structural: the same reading puts stage 1's gain
-        // at 68/3.9 = 17.4 where filterInputAttenuation assumes 6.8, so it
-        // moves OQ-15's drive coordinate by the same act; changing one
-        // without the other is incoherent, and the pair has to be reconciled
-        // against the anchored 6 Vp-p TP8 VCA GAIN trim. Evidential: it is a
-        // single in-circuit hand measurement, self-described as "roughly",
-        // against two independent 900 dpi reads of the sibling factory
-        // drawing. In-circuit ohmmetry reads low through parallel paths --
-        // though notably the same meter returned 68k, 100k and 47k correctly,
-        // so a nine-fold error on the + leg is not a simple meter artefact.
+        // Taken at face value that would be three times the floor below. It
+        // is not, and the arithmetic that shows why also settles which reading
+        // describes this module. Those are IN-CIRCUIT readings, and in-circuit
+        // ohmmetry reads low through parallel paths. Against the Open80017a
+        // topology the predicted readings are what he actually saw:
+        //   R1  24k  in parallel with (4.7 + 1.5 + 0.56)k = 5.27k, read 5.1k
+        //   R3  4.7k in parallel with (24 + 1.5)k          = 3.97k, read 3.9k
+        // and every value the two sources agree on -- 68k, 100k, 47k, 1.5k,
+        // 560 and the 4.7k VCA input -- is one whose parallel path is
+        // negligible, while both disagreements are in the direction a parallel
+        // path forces. A second independent original is therefore consistent
+        // with 4.7k and 24k, which is the reading shipped below, and the
+        // sibling drawing's 10k/47k is the discrete JUNO-6/60's own
+        // proportioning rather than the potted hybrid's.
         //
-        // So the bracket has widened rather than closed, and its top is now a
-        // measurement. The shipped value stays at the floor until the coupled
-        // re-derivation is done.
+        // So the bracket did not widen. The floor is the best-supported
+        // reading of the 106's own module, and it is what ships.
         static constexpr float drawnInputCompensationPerFeedback =
             (10000.0f / 68000.0f)
             * ((100000.0f + 1500.0f) / (47000.0f + 1500.0f));
