@@ -30,8 +30,8 @@
     ]
   ],
   "split_role": "held_out is development validation used for promotion gates, not an untouched final test",
-  "stored_calibration_values": 29,
-  "active_fit_parameters": 28,
+  "stored_calibration_values": 28,
+  "active_fit_parameters": 27,
   "inactive_parameters": [
     "directGain"
   ],
@@ -41,7 +41,6 @@
     "bridgeMobilityScale",
     "residueTiltDbPerOctave",
     "directGain",
-    "nylon.stiffnessScale",
     "nylon.fundamentalT60Scale",
     "nylon.frequencyLossScale",
     "nylon.apertureScale",
@@ -70,7 +69,6 @@
     0.754677154,
     -1.0,
     0.0,
-    1.94971856,
     1.13984718,
     1.42440079,
     1.69750718,
@@ -101,7 +99,6 @@
       1.0,
       0.0,
       0.0,
-      1.0,
       1.0,
       1.0,
       1.0,

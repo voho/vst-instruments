@@ -123,6 +123,19 @@ constexpr std::array<float, AcustraEngine::stringCount> nylonYoungsModulus {{
     2.5e9f, 2.5e9f, 2.5e9f, 2.7e9f, 2.7e9f, 2.7e9f
 }};
 
+// Woodhouse, Acta Acustica 90 (2004) 945-965, Table I (corrected), Pro Arte
+// hard tension - the EJ45 family the density/modulus tables above already
+// use. EI in N*m^2, published E4/B3/G3/D3/A2/E2 130/160/310/51/40/57 x1e-6
+// reversed into engine order (E2..E4). Measured directly rather than
+// inferred from the outside diameter and a handbook nylon modulus: bending
+// stiffness of a wound bass or a plasticised jacket is not E*pi*d^4/64 on
+// the outside diameter, and Lynch-Aird and Woodhouse (Materials 10(5):497,
+// 2017) attribute plain nylon's own dynamic bending modulus (~13 GPa
+// implied) exceeding the handbook static 2.7 GPa to the same effect.
+constexpr std::array<float, AcustraEngine::stringCount> nylonBendingEI {{
+    57.0e-6f, 40.0e-6f, 51.0e-6f, 310.0e-6f, 160.0e-6f, 130.0e-6f
+}};
+
 constexpr float steelYoungsModulus = 2.0e11f;
 
 float stringImpedance(bool steel, int stringIndex, int openMidi) noexcept
@@ -367,7 +380,8 @@ DispersionCalibration calibrateDispersion(
     double inharmonicity, double fundamental, double sampleRate,
     double broadCoefficient, double broadMix,
     double highCoefficient, double highMix,
-    double initialDecayRatio, double initialPoleRatio) noexcept
+    double initialDecayRatio, double initialPoleRatio,
+    bool tryAlternateStarts) noexcept
 {
     constexpr double piDouble = 3.14159265358979323846;
     constexpr double twoPiDouble = 2.0 * piDouble;
@@ -405,15 +419,6 @@ DispersionCalibration calibrateDispersion(
         static_cast<double>(highest) - 0.5
     };
 
-    double parameters[] {
-        128.0, calibration.decayRatio, calibration.poleRatio
-    };
-    secondOrderAllpassCoefficients(
-        omega0, parameters[1], parameters[2], calibration.a1, calibration.a2);
-    parameters[0] = tunedCatmullDelay(
-        fundamental, sampleRate, broadCoefficient, broadMix,
-        highCoefficient, highMix, calibration.a1, calibration.a2);
-
     const auto evaluate = [&] (const double values[3], double residuals[3])
     {
         double a1 = 0.0;
@@ -436,6 +441,15 @@ DispersionCalibration calibrateDispersion(
         return std::max({ std::abs(residuals[0]), std::abs(residuals[1]),
                           std::abs(residuals[2]) });
     };
+
+    double parameters[] {
+        128.0, calibration.decayRatio, calibration.poleRatio
+    };
+    secondOrderAllpassCoefficients(
+        omega0, parameters[1], parameters[2], calibration.a1, calibration.a2);
+    parameters[0] = tunedCatmullDelay(
+        fundamental, sampleRate, broadCoefficient, broadMix,
+        highCoefficient, highMix, calibration.a1, calibration.a2);
 
     constexpr double steps[] { 0.02, 0.01, 0.01 };
     for (int iteration = 0; iteration < 9; ++iteration)
@@ -487,6 +501,100 @@ DispersionCalibration calibrateDispersion(
         }
         if (!accepted)
             break;
+    }
+
+    // The block above is byte-for-byte the original single-start damped
+    // Gauss-Newton solve, kept untouched so steel - whose shipped
+    // calibration was fitted against exactly this solve - renders
+    // identically. It is a Newton solve on a non-convex residual, so it can
+    // stall on the poleRatio bound instead of reaching the near-zero
+    // residual a well-posed collocation admits: seen on a nylon treble at
+    // the top fret, where Woodhouse's corrected per-string EI raises B well
+    // past what the default starting point was tuned against (Docs/
+    // decisions.md has the measurement). Nylon alone gets a fallback:
+    // restart the same cheap three-parameter solve from a spread of pole
+    // ratios and keep the lowest-residual run.
+    if (tryAlternateStarts)
+    {
+        double residuals[3] {};
+        evaluate(parameters, residuals);
+        double bestNorm = maximumResidual(residuals);
+        for (const double startPoleRatio : { 1.0, 2.0, 4.0, 8.0 })
+        {
+            if (bestNorm < 1.0e-9)
+                break;
+            double a1 = 0.0;
+            double a2 = 0.0;
+            secondOrderAllpassCoefficients(
+                omega0, calibration.decayRatio, startPoleRatio, a1, a2);
+            double candidate[] {
+                tunedCatmullDelay(fundamental, sampleRate, broadCoefficient,
+                    broadMix, highCoefficient, highMix, a1, a2),
+                calibration.decayRatio, startPoleRatio
+            };
+            for (int iteration = 0; iteration < 9; ++iteration)
+            {
+                double innerResiduals[3] {};
+                evaluate(candidate, innerResiduals);
+                const double oldNorm = maximumResidual(innerResiduals);
+                if (oldNorm < 1.0e-10)
+                    break;
+
+                double jacobian[3][3] {};
+                for (int column = 0; column < 3; ++column)
+                {
+                    double higher[] { candidate[0], candidate[1], candidate[2] };
+                    double lower[] { candidate[0], candidate[1], candidate[2] };
+                    higher[column] += steps[column];
+                    lower[column] -= steps[column];
+                    double higherResiduals[3] {};
+                    double lowerResiduals[3] {};
+                    evaluate(higher, higherResiduals);
+                    evaluate(lower, lowerResiduals);
+                    for (int row = 0; row < 3; ++row)
+                        jacobian[row][column] = (higherResiduals[row]
+                            - lowerResiduals[row]) / (2.0 * steps[column]);
+                }
+
+                const double rhs[] {
+                    -innerResiduals[0], -innerResiduals[1], -innerResiduals[2]
+                };
+                double update[3] {};
+                if (!solveThreeByThree(jacobian, rhs, update))
+                    break;
+
+                bool accepted = false;
+                for (double amount = 1.0; amount >= 0.03125; amount *= 0.5)
+                {
+                    double stepped[] {
+                        std::clamp(candidate[0] + amount * update[0], 3.0,
+                            static_cast<double>(localMaximumDelaySamples - 3)),
+                        std::clamp(candidate[1] + amount * update[1], 0.1, 30.0),
+                        std::clamp(candidate[2] + amount * update[2], 0.05, 15.0)
+                    };
+                    double steppedResiduals[3] {};
+                    evaluate(stepped, steppedResiduals);
+                    if (maximumResidual(steppedResiduals) < oldNorm)
+                    {
+                        std::copy(std::begin(stepped), std::end(stepped),
+                            candidate);
+                        accepted = true;
+                        break;
+                    }
+                }
+                if (!accepted)
+                    break;
+            }
+            double candidateResiduals[3] {};
+            evaluate(candidate, candidateResiduals);
+            const double candidateNorm = maximumResidual(candidateResiduals);
+            if (candidateNorm < bestNorm)
+            {
+                bestNorm = candidateNorm;
+                std::copy(std::begin(candidate), std::end(candidate),
+                    parameters);
+            }
+        }
     }
 
     calibration.delay = parameters[0];
@@ -1342,10 +1450,17 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
             ? steelTensionNewtons[index]
             : std::max(linearMass * openWaveSpeed * openWaveSpeed, 1.0f))
         : std::max(linearMass * openWaveSpeed * openWaveSpeed, 1.0f);
-    const float stiffness = pi * pi * pi * youngsModulus
-        * bendingDiameter * bendingDiameter * bendingDiameter * bendingDiameter
-        / 64.0f;
-    const float inharmonicity = clamp(stiffness * physical.stiffnessScale
+    // Steel keeps the E*I = E*(pi*d^4/64) solid-cylinder model on its fitted
+    // effective bending diameter and stiffnessScale. Nylon reads Woodhouse's
+    // measured E*I directly (see nylonBendingEI above) rather than deriving
+    // it from a diameter and a handbook modulus, so nylon.stiffnessScale is
+    // not part of the calibration.
+    const float stiffness = steel
+        ? pi * pi * pi * youngsModulus * bendingDiameter * bendingDiameter
+            * bendingDiameter * bendingDiameter / 64.0f
+        : pi * pi * nylonBendingEI[index];
+    const float stiffnessScale = steel ? physical.stiffnessScale : 1.0f;
+    const float inharmonicity = clamp(stiffness * stiffnessScale
         / (tension * soundingLength * soundingLength), 0.0f, 0.004f);
     const float age = parameters_.stringAge;
     // Preserve the material/age law while allowing one shared fitted cutoff
@@ -1419,7 +1534,7 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         const auto calibration = calibrateDispersion(
             inharmonicity, unbentFrequency, sampleRate_,
             designBroadLossCoefficient, broadLoss,
-            lowpassCoefficient, highLoss, 10.0, 4.0);
+            lowpassCoefficient, highLoss, 10.0, 4.0, !steel);
         voice.dispersionDecayRatio = static_cast<float>(calibration.decayRatio);
         voice.dispersionPoleRatio = static_cast<float>(calibration.poleRatio);
         voice.dispersionDesignFrequency = unbentFrequency;

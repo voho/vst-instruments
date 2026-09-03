@@ -1788,6 +1788,9 @@ void testDispersionAcrossRatesMaterialsAndNotes()
         const double density = bass ? 5900.0 : 1140.0;
         const double youngsModulus = steel ? 2.0e11
             : (bass ? 2.5e9 : 2.7e9);
+        // Woodhouse, Acta Acustica 90 (2004) 945-965, Table I: E2 57e-6,
+        // E4 130e-6 N*m^2 - see nylonBendingEI in AcustraEngine.cpp.
+        const double nylonEI = bass ? 57.0e-6 : 130.0e-6;
         const double tension = [&]
         {
             if (steel)
@@ -1801,13 +1804,13 @@ void testDispersionAcrossRatesMaterialsAndNotes()
         }();
         const double soundingLength = scaleLength
             * std::exp2(-static_cast<double>(fret) / 12.0);
-        const double stiffnessScale = steel
+        const double inharmonicity = steel
             ? acustra::fittedPhysicalCalibration.steel.stiffnessScale
-            : acustra::fittedPhysicalCalibration.nylon.stiffnessScale;
-        const double inharmonicity = stiffnessScale
-            * std::pow(std::numbers::pi, 3.0)
-            * youngsModulus * std::pow(diameter, 4.0)
-            / (64.0 * tension * soundingLength * soundingLength);
+                * std::pow(std::numbers::pi, 3.0)
+                * youngsModulus * std::pow(diameter, 4.0)
+                / (64.0 * tension * soundingLength * soundingLength)
+            : std::numbers::pi * std::numbers::pi * nylonEI
+                / (tension * soundingLength * soundingLength);
         const double fundamental = 440.0
             * std::exp2((static_cast<double>(midiNote) - 69.0) / 12.0);
         const auto loop = acustra::AcustraEngineTestAccess::configuredLoop(
@@ -1824,7 +1827,12 @@ void testDispersionAcrossRatesMaterialsAndNotes()
                 / (1.0 + inharmonicity));
             const double actual = loopResonance(loop, partial, expected);
             const double cents = 1200.0 * std::log2(actual / expected);
-            expect(std::abs(cents) < 1.5,
+            // Woodhouse's corrected per-string EI raises the trebles'
+            // stiffness several-fold (see nylonBendingEI in AcustraEngine.cpp),
+            // which widens the H1/H7/H11.5 collocation's own approximation
+            // error at a top-fret treble note from the old ~1.2 cents to
+            // ~2.8; still under a third of the H16+ gap already documented.
+            expect(std::abs(cents) < 3.0,
                    std::string(steel ? "steel" : "nylon") + "/"
                        + std::to_string(static_cast<int>(rate)) + " MIDI "
                        + std::to_string(midiNote) + " partial "

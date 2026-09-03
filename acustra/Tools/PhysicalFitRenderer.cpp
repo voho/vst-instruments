@@ -43,7 +43,7 @@ using acustra::dense::ZoneView;
 constexpr int modelSampleRate = 48000;
 constexpr int renderBlockSize = 127;
 constexpr double renderSeconds = 4.2;
-constexpr std::size_t calibrationValueCount = 29;
+constexpr std::size_t calibrationValueCount = 28;
 constexpr float int16Scale = 1.0f / 32768.0f;
 
 enum class Material
@@ -102,7 +102,7 @@ using SampleModelKey = std::tuple<Material, int, int, int>;
 // calibration that was actually rendered. These mirror AcustraEngine's bounds.
 constexpr CalibrationValues calibrationMinimums {{
     0.96f, 0.05f, 0.25f, -6.0f, 0.0f,
-    0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
+    0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
     0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
     -1.0f, 0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f, 0.00325f,
     0.0f, 10.0f,
@@ -110,7 +110,7 @@ constexpr CalibrationValues calibrationMinimums {{
 
 constexpr CalibrationValues calibrationMaximums {{
     1.04f, 1.8f, 4.0f, 6.0f, 0.12f,
-    4.0f, 2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
+    2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
     4.0f, 2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
     1.0f, 32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f, 0.060f,
     0.5f, 400.0f,
@@ -390,18 +390,26 @@ PhysicalCalibration makeCalibration(const CalibrationValues& values)
         material.pluckDistanceScale = values[offset + 5];
         material.velocityBrightnessDepth = values[offset + 6];
     };
-    setMaterial(calibration.nylon, 5);
-    setMaterial(calibration.steel, 12);
-    calibration.apertureRegisterExponent = values[19];
-    calibration.lowBodyModeGain = values[20];
-    calibration.steelDisplacementScaleMetres = values[21];
-    calibration.steelFretT60Slope = values[22];
-    calibration.highLossCutoffScale = values[23];
-    calibration.bridgeConductanceFloor = values[24];
-    calibration.bridgeConductanceCornerHz = values[25];
-    calibration.bridgeTailLengthMetres = values[26];
-    calibration.longitudinalGain = values[27];
-    calibration.longitudinalQ = values[28];
+    // Nylon has no stiffnessScale in the calibration array (its bending
+    // stiffness is Woodhouse's measured EI, not a fitted scale - see
+    // nylonBendingEI in AcustraEngine.cpp), so it gets six values, not seven.
+    calibration.nylon.fundamentalT60Scale = values[5];
+    calibration.nylon.frequencyLossScale = values[6];
+    calibration.nylon.apertureScale = values[7];
+    calibration.nylon.transientScale = values[8];
+    calibration.nylon.pluckDistanceScale = values[9];
+    calibration.nylon.velocityBrightnessDepth = values[10];
+    setMaterial(calibration.steel, 11);
+    calibration.apertureRegisterExponent = values[18];
+    calibration.lowBodyModeGain = values[19];
+    calibration.steelDisplacementScaleMetres = values[20];
+    calibration.steelFretT60Slope = values[21];
+    calibration.highLossCutoffScale = values[22];
+    calibration.bridgeConductanceFloor = values[23];
+    calibration.bridgeConductanceCornerHz = values[24];
+    calibration.bridgeTailLengthMetres = values[25];
+    calibration.longitudinalGain = values[26];
+    calibration.longitudinalQ = values[27];
     return calibration;
 }
 
@@ -511,7 +519,7 @@ void writeManifest(const std::filesystem::path& path,
         << "  \"analysis_sample_rate\": 48000,\n"
         << "  \"calibration_order\": [\"bodyFrequencyScale\", \"bodyQScale\", "
            "\"bridgeMobilityScale\", \"residueTiltDbPerOctave\", \"directGain\", "
-           "\"nylon.stiffnessScale\", \"nylon.fundamentalT60Scale\", "
+           "\"nylon.fundamentalT60Scale\", "
            "\"nylon.frequencyLossScale\", \"nylon.apertureScale\", "
            "\"nylon.transientScale\", \"nylon.pluckDistanceScale\", "
            "\"nylon.velocityBrightnessDepth\", \"steel.stiffnessScale\", "
@@ -527,7 +535,7 @@ void writeManifest(const std::filesystem::path& path,
         << "    \"target_timing\": \"source frame 0; recorded pre-roll/onset retained; cropped or zero-padded to 4.2 seconds\",\n"
         << "    \"target_gain\": \"dense::Sampler calibrated playback gain: layer/peak normalisation times (velocity/127)^0.82\",\n"
         << "    \"target_processing\": \"calibrated gain only; no age, tone, or pan processing\",\n"
-        << "    \"calibration_source\": \"29 positional CLI values in calibration_order\",\n"
+        << "    \"calibration_source\": \"28 positional CLI values in calibration_order\",\n"
         << "    \"model_render\": \""
         << (sampleBaseline
             ? "frozen version-1 dense::Sampler; exact captured MIDI, velocity and round robin; 48000 Hz; 127-sample blocks"

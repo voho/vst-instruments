@@ -7,6 +7,10 @@ namespace acustra
 
 struct MaterialCalibration
 {
+    // Nylon's bending stiffness comes from Woodhouse's measured per-string
+    // EI table (nylonBendingEI in AcustraEngine.cpp), not a fitted scale on
+    // a diameter-derived value, so nylon.stiffnessScale is inert: it stays
+    // 1.0 and is not part of the calibration array. Steel still uses it.
     float stiffnessScale;
     float fundamentalT60Scale;
     float frequencyLossScale;
@@ -61,7 +65,7 @@ struct PhysicalCalibration
 
 inline constexpr PhysicalCalibration fittedPhysicalCalibration {
     1.04f, 0.097990747f, 0.754677154f, -1.0f, 0.0f,
-    { 1.94971856f, 1.13984718f, 1.42440079f, 1.69750718f,
+    { 1.0f, 1.13984718f, 1.42440079f, 1.69750718f,
       0.182559111f, 1.09385889f, 0.000716432382f },
     { 1.48177734f, 1.53f, 0.52f, 0.65992123f,
       0.523383307f, 1.03116387f, 0.948115221f },

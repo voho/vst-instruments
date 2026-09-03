@@ -486,8 +486,8 @@ Lower is better in the robust descriptor score:
 
 | Split | Rows | Neutral baseline | Fitted | Shipping | Change |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Training | 83 | 8.768535 | 6.441362 | 6.606652 | −24.66% |
-| Development validation | 24 | 8.145301 | 6.427690 | 6.521525 | −19.94% |
+| Training | 83 | 8.768535 | 6.441362 | 6.537701 | −25.44% |
+| Development validation | 24 | 8.145301 | 6.427690 | 6.493827 | −20.28% |
 | Flat top (reported only) | 8 | 9.309315 | 7.428581 | 8.120169 | −12.77% |
 
 The shipping column is not the fitted one. Five of the twenty-seven values were
