@@ -470,6 +470,93 @@
     "flat_top": 0.12855464509924194,
     "interpretation": "control only, not an out-of-sample realism comparison: version 1 plays the target recordings themselves, and the near-zero flat-top score reflects especially direct source playback. The nonzero scores measure the sampler envelope, interpolation, stereo path and finite analysis rather than distance from independent real takes. The physical model's higher score is expected and cannot be read as version 1 sounding more realistic on uncaptured notes or performances."
   },
+  "recording_floor": {
+    "method": "the fitter's own seven terms run recording against recording: each archtop take is scored against another take of the same note and layer, all 54 ordered pairs of the three training round robins, with the bank's per-zone playback trim undone on the level descriptor so the dynamics term measures the player and not the trim",
+    "material": "steel",
+    "split": "training",
+    "example_count": 54,
+    "pair_count": 54,
+    "level_terms_trim_corrected": true,
+    "symmetry_max_term_difference": 0.0,
+    "floor": {
+      "score": 1.2780036055265953,
+      "terms": {
+        "attack": 0.8821279477325311,
+        "body": 1.7941844487151906,
+        "decay": 0.9334804215356665,
+        "dynamics": 0.15602105149175655,
+        "harmonics": 2.213658502830456,
+        "pitch_trajectory": 0.21993955585117325,
+        "tuning": 1.9164035842584455
+      }
+    },
+    "model": {
+      "score": 6.336063581635963,
+      "terms": {
+        "attack": 7.826746014466161,
+        "harmonics": 8.140275217025382,
+        "tuning": 3.141771126350928,
+        "pitch_trajectory": 0.7381702752700302,
+        "decay": 4.639351674263885,
+        "body": 11.468220517803392,
+        "dynamics": 0.2051925199850907
+      }
+    },
+    "sample_v1_control": {
+      "at_or_below_floor": {
+        "attack": true,
+        "body": true,
+        "decay": true,
+        "dynamics": true,
+        "harmonics": true,
+        "pitch_trajectory": true,
+        "tuning": false
+      },
+      "score": 0.526440835675217,
+      "terms": {
+        "attack": 0.33328570570133076,
+        "body": 0.6444051860250409,
+        "decay": 0.3288902833922923,
+        "dynamics": 0.00010368221739023332,
+        "harmonics": 0.14329767755871148,
+        "pitch_trajectory": 0.0005297412540435958,
+        "tuning": 3.6030649973145605
+      }
+    },
+    "control_above_floor_terms": [
+      "tuning"
+    ],
+    "control_note": "measured, not inferred: version 1 retunes each region to equal temperament while the export keeps the recording's own pitch. Over the 54 training takes the target's H1 sits at a median -4.7 cents and version 1's at +0.2, a median 4.8 cents apart against the term's 5-cent tolerance, and each row's difference is that zone's own tuningCentsFrom12Tet to 0.1 cents",
+    "interpretation": "a term's model score is only readable against this floor; the floor is not a target, since a model that reached it would be as close to one take as another take of the same note is"
+  },
+  "frozen_test_split": {
+    "method": "AcustraPhysicalFitRenderer --test renders every captured archtop layer and take, on the sixteen roots the fit uses, that no fit, screen or refit has ever rendered: 188 of those roots' 256 regions. Root 37 is excluded because the lowest modelled string is E2/MIDI 40. Scored once per release at the shipping calibration and never fitted",
+    "examples": 188,
+    "unique_model_renders": 64,
+    "overlap_with_fit_splits": 0,
+    "score": 6.324463277024044,
+    "terms": {
+      "attack": 8.110001,
+      "harmonics": 8.204574,
+      "tuning": 3.018647,
+      "pitch_trajectory": 0.315467,
+      "decay": 4.421479,
+      "body": 11.506383,
+      "dynamics": 0.094517
+    },
+    "sample_v1_control": 0.5426648207988745,
+    "steel_only_reference": {
+      "training": {
+        "examples": 54,
+        "score": 6.336063581635963
+      },
+      "held_out": {
+        "examples": 14,
+        "score": 6.403525973929313
+      },
+      "note": "the training and development-validation scores restricted to the same archtop material, so the test score can be read beside them"
+    }
+  },
   "plate_conductance_floor": {
     "mechanism": "one over-damped positive-real section added to the measured bridge mobility, restoring the flat conductance a plate keeps above its modal-overlap frequency",
     "why": "a 50-mode positive-real fit of a 60-10000 Hz driving-point measurement reproduces |Y| but loses Re(Y) between modes, where a real top plate has dense modal overlap; Cremer and Heckl give the high-frequency limit of a plate driving-point mobility as a real constant",

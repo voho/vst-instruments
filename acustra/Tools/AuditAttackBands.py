@@ -12,11 +12,34 @@ dynamics term, and the recordings carry a per-zone playback trim that would
 otherwise dominate. A positive difference means the model puts more of its
 attack energy in that band than the recording does.
 
+Everything is reported per captured velocity layer. A pooled figure over the
+corpus's four archtop layers is not evidence about any one of them: pooled, the
+2560-10000 Hz shape reads within 0.1 dB of the recordings, while per layer it
+runs from +3.3/-2.7 dB at the softest to -10.3/-17.5 dB at the loudest, and a
+mechanism that grows with velocity is exactly what those two readings tell
+apart. The 2026-09-02 audit entry asked for this split after a pooled median
+was read as though it described the loudest layer.
+
+The difference column is the median of the per-example model-minus-recording
+differences, not the difference of the two medians beside it: the comparison is
+paired, one render against the recording it was rendered for.
+
 This exists because a single number cannot say where an attack differs. A
 spectral centroid can be dragged down by an excess at the bottom or a shortfall
 at the top, and those call for opposite corrections; reading one as the other
 sent an earlier investigation after the pluck's brightness when the difference
-was in the body's low end. Bands separate the two.
+was in the body's low end. Bands separate the two. Two scalars are reported
+beside the bands because the log quotes them and they are cheap here:
+
+* the 0-12 ms spectral centroid over 80 Hz to 10 kHz, in cents, which is the
+  descriptor the 2026-08-30 take-to-take entry measured; the band limit is not
+  cosmetic, since targets are 44.1 kHz and model renders 48 kHz and an
+  unlimited centroid would compare two different Nyquist frequencies;
+* the H5-H12 balance over 80-250 ms: the mean level of partials 5 to 12 minus
+  the mean level of partials 1 to 4, each peak-picked within 35 cents of its
+  harmonic. On the shipping corpus this reproduces the audit's per-layer
+  reading of the recordings (-15.9, -13.2, -11.3 dB for the three louder
+  layers) and of the model (-23.7, -23.3, -22.5, -22.8 dB).
 
 Usage:
 
@@ -39,6 +62,12 @@ BAND_EDGES = np.asarray([80, 160, 320, 640, 1280, 2560, 5120, 10000], dtype=floa
 ATTACK_SECONDS = 0.35
 ONSET_FRACTION = 0.02
 STABILITY_TOLERANCE_DB = 1.0
+CENTROID_SECONDS = 0.012
+CENTROID_STABILITY_CENTS = 50.0
+BALANCE_WINDOW = (0.080, 0.250)
+BALANCE_LOW_PARTIALS = 4
+BALANCE_MAX_PARTIAL = 12
+PARTIAL_HALF_WIDTH_CENTS = 35.0
 
 
 def _read(path: Path, channels: int) -> np.ndarray:
@@ -46,6 +75,24 @@ def _read(path: Path, channels: int) -> np.ndarray:
     if channels == 2:
         data = data.reshape(-1, 2).mean(axis=1)
     return data.astype(np.float64)
+
+
+def _onset(signal: np.ndarray) -> int | None:
+    peak = float(np.max(np.abs(signal))) if signal.size else 0.0
+    if peak <= 0.0:
+        return None
+    return int(np.argmax(np.abs(signal) > ONSET_FRACTION * peak))
+
+
+def _power_spectrum(signal: np.ndarray, rate: int, first: int,
+                    last: int) -> tuple[np.ndarray, np.ndarray] | None:
+    segment = signal[max(0, first) : min(signal.size, last)]
+    if segment.size < 32:
+        return None
+    segment = segment - float(np.mean(segment))
+    padded = 1 << max(8, int(np.ceil(np.log2(segment.size * 4))))
+    spectrum = np.abs(np.fft.rfft(segment * np.hanning(segment.size), padded)) ** 2
+    return np.fft.rfftfreq(padded, 1.0 / rate), spectrum
 
 
 def _shape_once(signal: np.ndarray, rate: int, onset: int,
@@ -77,10 +124,9 @@ def band_shape_db(signal: np.ndarray, rate: int) -> np.ndarray | None:
     5% apart and a band is returned as NaN unless they agree within
     STABILITY_TOLERANCE_DB.
     """
-    peak = float(np.max(np.abs(signal))) if signal.size else 0.0
-    if peak <= 0.0:
+    onset = _onset(signal)
+    if onset is None:
         return None
-    onset = int(np.argmax(np.abs(signal) > ONSET_FRACTION * peak))
     length = round(ATTACK_SECONDS * rate)
     first = _shape_once(signal, rate, onset, length)
     second = _shape_once(signal, rate, onset, round(1.05 * length))
@@ -90,8 +136,82 @@ def band_shape_db(signal: np.ndarray, rate: int) -> np.ndarray | None:
     return np.where(unstable, np.nan, first)
 
 
-def collect(directory: Path) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
-    pooled: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {}
+def _centroid_once(signal: np.ndarray, rate: int, onset: int,
+                   length: int) -> float:
+    measured = _power_spectrum(signal, rate, onset, onset + length)
+    if measured is None:
+        return float("nan")
+    frequency, spectrum = measured
+    selected = (frequency >= BAND_EDGES[0]) & (frequency < BAND_EDGES[-1])
+    total = float(spectrum[selected].sum())
+    if not np.isfinite(total) or total <= 0.0:
+        return float("nan")
+    return float((frequency[selected] * spectrum[selected]).sum() / total)
+
+
+def attack_centroid_hz(signal: np.ndarray, rate: int) -> float:
+    """Power centroid of the first 12 ms over 80 Hz to 10 kHz, or NaN.
+
+    Same window-stability rule as the bands: two lengths 5% apart must agree,
+    here within CENTROID_STABILITY_CENTS.
+    """
+    onset = _onset(signal)
+    if onset is None:
+        return float("nan")
+    length = round(CENTROID_SECONDS * rate)
+    first = _centroid_once(signal, rate, onset, length)
+    second = _centroid_once(signal, rate, onset, round(1.05 * length))
+    if not (np.isfinite(first) and np.isfinite(second)):
+        return float("nan")
+    if abs(1200.0 * np.log2(second / first)) > CENTROID_STABILITY_CENTS:
+        return float("nan")
+    return first
+
+
+def harmonic_balance_db(signal: np.ndarray, rate: int, midi: int) -> float:
+    """Mean level of partials 5-12 minus the mean level of partials 1-4, dB."""
+    onset = _onset(signal)
+    if onset is None:
+        return float("nan")
+    measured = _power_spectrum(
+        signal, rate,
+        onset + round(BALANCE_WINDOW[0] * rate),
+        onset + round(BALANCE_WINDOW[1] * rate),
+    )
+    if measured is None:
+        return float("nan")
+    frequency, spectrum = measured
+    fundamental = 440.0 * 2.0 ** ((midi - 69.0) / 12.0)
+    ratio = 2.0 ** (PARTIAL_HALF_WIDTH_CENTS / 1200.0)
+    levels = np.full(BALANCE_MAX_PARTIAL, np.nan)
+    for index in range(BALANCE_MAX_PARTIAL):
+        expected = (index + 1) * fundamental
+        if expected >= 0.46 * rate:
+            continue
+        selected = (frequency >= expected / ratio) & (frequency <= expected * ratio)
+        if np.any(selected):
+            levels[index] = 10.0 * np.log10(
+                max(float(spectrum[selected].max()), 1.0e-30))
+    low = levels[:BALANCE_LOW_PARTIALS]
+    high = levels[BALANCE_LOW_PARTIALS:]
+    if not np.any(np.isfinite(low)) or not np.any(np.isfinite(high)):
+        return float("nan")
+    return float(np.nanmean(high) - np.nanmean(low))
+
+
+def describe(signal: np.ndarray, rate: int, midi: int) -> dict | None:
+    shape = band_shape_db(signal, rate)
+    if shape is None:
+        return None
+    return {
+        "bands": shape,
+        "centroid_hz": attack_centroid_hz(signal, rate),
+        "balance_db": harmonic_balance_db(signal, rate, midi),
+    }
+
+
+def collect(directory: Path) -> dict[tuple[str, float], list[tuple[dict, dict]]]:
+    pooled: dict[tuple[str, float], list[tuple[dict, dict]]] = {}
     for split in ("train", "validation"):
         manifest_path = directory / f"{split}.json"
         if not manifest_path.is_file():
@@ -101,13 +221,15 @@ def collect(directory: Path) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
             pair = []
             for role in ("target", "model"):
                 entry = example[role]
-                pair.append(band_shape_db(
+                pair.append(describe(
                     _read(directory / entry["path"], int(entry["channels"])),
                     int(entry["sample_rate"]),
+                    int(example["midi"]),
                 ))
             if pair[0] is None or pair[1] is None:
                 continue
-            pooled.setdefault(example["material"], []).append((pair[0], pair[1]))
+            key = (example["material"], float(example["velocity"]))
+            pooled.setdefault(key, []).append((pair[0], pair[1]))
     return pooled
 
 
@@ -119,54 +241,100 @@ def _median(values: np.ndarray) -> float | None:
     return float(np.median(finite))
 
 
-def report(pooled: dict[str, list[tuple[np.ndarray, np.ndarray]]]) -> dict:
+def _layer_report(rows: list[tuple[dict, dict]]) -> dict:
+    recorded = np.asarray([a["bands"] for a, _ in rows])
+    modelled = np.asarray([b["bands"] for _, b in rows])
+    difference = modelled - recorded
+    node: dict = {
+        "examples": len(rows),
+        "bands": [
+            {
+                "low_hz": float(low), "high_hz": float(high),
+                "recording_db": _median(recorded[:, index]),
+                "model_db": _median(modelled[:, index]),
+                "difference_db": _median(difference[:, index]),
+                "stable_examples": int(np.count_nonzero(
+                    np.isfinite(difference[:, index]))),
+            }
+            for index, (low, high)
+            in enumerate(zip(BAND_EDGES[:-1], BAND_EDGES[1:]))
+        ],
+    }
+    recorded_centroid = np.asarray([a["centroid_hz"] for a, _ in rows])
+    modelled_centroid = np.asarray([b["centroid_hz"] for _, b in rows])
+    node["centroid"] = {
+        "recording_hz": _median(recorded_centroid),
+        "model_hz": _median(modelled_centroid),
+        "difference_cents": _median(
+            1200.0 * np.log2(modelled_centroid / recorded_centroid)),
+    }
+    recorded_balance = np.asarray([a["balance_db"] for a, _ in rows])
+    modelled_balance = np.asarray([b["balance_db"] for _, b in rows])
+    node["balance"] = {
+        "recording_db": _median(recorded_balance),
+        "model_db": _median(modelled_balance),
+        "difference_db": _median(modelled_balance - recorded_balance),
+    }
+    return node
+
+
+def report(pooled: dict[tuple[str, float], list[tuple[dict, dict]]]) -> dict:
     out: dict = {"band_edges_hz": BAND_EDGES.tolist(), "materials": {}}
-    for material, rows in sorted(pooled.items()):
-        recorded = np.asarray([a for a, _ in rows])
-        modelled = np.asarray([b for _, b in rows])
-        out["materials"][material] = {
-            "examples": len(rows),
-            "bands": [
-                {
-                    "low_hz": float(low), "high_hz": float(high),
-                    "recording_db": _median(recorded[:, index]),
-                    "model_db": _median(modelled[:, index]),
-                    "difference_db": (
-                        None if _median(modelled[:, index]) is None
-                        or _median(recorded[:, index]) is None
-                        else _median(modelled[:, index])
-                        - _median(recorded[:, index])),
-                    "stable_examples": int(np.count_nonzero(
-                        np.isfinite(recorded[:, index])
-                        & np.isfinite(modelled[:, index]))),
-                }
-                for index, (low, high)
-                in enumerate(zip(BAND_EDGES[:-1], BAND_EDGES[1:]))
-            ],
-        }
+    for material, velocity in sorted(pooled):
+        out["materials"].setdefault(material, {})[f"{velocity:g}"] = (
+            _layer_report(pooled[(material, velocity)]))
     return out
 
 
 def _print(result: dict) -> None:
-    for material, node in result["materials"].items():
-        print(f"== {material}   attack band shape, first "
-              f"{ATTACK_SECONDS * 1000:.0f} ms, n={node['examples']}")
-        print(f'{"band Hz":>14}{"recording":>12}{"model":>10}'
-              f'{"model-rec":>12}{"stable n":>8}')
-        for row in node["bands"]:
-            if row["difference_db"] is None:
+    for material, layers in result["materials"].items():
+        for velocity, node in layers.items():
+            print(f"== {material} velocity {velocity}   attack band shape, "
+                  f"first {ATTACK_SECONDS * 1000:.0f} ms, n={node['examples']}")
+            print(f'{"band Hz":>14}{"recording":>12}{"model":>10}'
+                  f'{"model-rec":>12}{"stable n":>8}')
+            for row in node["bands"]:
+                if row["difference_db"] is None:
+                    print(f'{row["low_hz"]:6.0f}-{row["high_hz"]:6.0f}'
+                          f'{"below the analysis floor":>34}')
+                    continue
                 print(f'{row["low_hz"]:6.0f}-{row["high_hz"]:6.0f}'
-                      f'{"below the analysis floor":>34}')
-                continue
-            print(f'{row["low_hz"]:6.0f}-{row["high_hz"]:6.0f}'
-                  f'{row["recording_db"]:12.1f}{row["model_db"]:10.1f}'
-                  f'{row["difference_db"]:+12.1f}'
-                  f'{row["stable_examples"]:8d}')
+                      f'{row["recording_db"]:12.1f}{row["model_db"]:10.1f}'
+                      f'{row["difference_db"]:+12.1f}'
+                      f'{row["stable_examples"]:8d}')
+            centroid = node["centroid"]
+            if centroid["difference_cents"] is not None:
+                print(f'{"0-12 ms centroid":>14}'
+                      f'{centroid["recording_hz"]:10.0f} Hz'
+                      f'{centroid["model_hz"]:8.0f} Hz'
+                      f'{centroid["difference_cents"]:+10.0f} cents')
+            balance = node["balance"]
+            if balance["difference_db"] is not None:
+                print(f'{"H5-H12 balance":>14}{balance["recording_db"]:12.1f}'
+                      f'{balance["model_db"]:10.1f}'
+                      f'{balance["difference_db"]:+12.1f}')
+
+
+def _harmonic_note(rate: int, fundamental: float, seconds: float,
+                   high_gain: float) -> np.ndarray:
+    """A decaying harmonic note whose partials above 2560 Hz are scaled."""
+    time = np.arange(int(seconds * rate)) / rate
+    signal = np.zeros_like(time)
+    for index in range(1, 41):
+        frequency = fundamental * index
+        if frequency >= 0.45 * rate:
+            break
+        amplitude = 1.0 / index ** 2
+        if frequency >= 2560.0:
+            amplitude *= high_gain
+        signal += amplitude * np.exp(-3.0 * time) * np.sin(
+            2.0 * np.pi * frequency * time)
+    return signal
 
 
 def self_test() -> int:
-    """A tone moved one octave up must move its energy one band up, and level
-    alone must leave the shape untouched."""
+    """Shape must be level-invariant and track pitch, and a velocity-dependent
+    difference must survive per layer while a pooled median hides it."""
     rate = 48000
     time = np.arange(int(1.0 * rate)) / rate
     quiet = np.sin(2.0 * np.pi * 220.0 * time)
@@ -190,9 +358,54 @@ def self_test() -> int:
         print("self-test failed: a pure tone reported signal in "
               f"{int(np.isfinite(a).sum())} bands")
         return 1
-    print(f"self-test passed: shape is level-invariant, bands track pitch, and "
-          f"a pure tone reports only {int(np.isfinite(a).sum())} of "
-          f"{a.size} bands")
+
+    # Two synthetic velocity layers, three notes each. The recording is the same
+    # note in both; the model loses 2 dB above 2560 Hz in the soft layer and
+    # 12 dB in the loud one, so the two layers disagree by 10 dB and their pool
+    # reports neither.
+    soft_deficit, loud_deficit = -2.0, -12.0
+    pooled: dict[tuple[str, float], list[tuple[dict, dict]]] = {}
+    for velocity, deficit in ((16.0, soft_deficit), (112.0, loud_deficit)):
+        for midi in (57, 60, 64):
+            fundamental = 440.0 * 2.0 ** ((midi - 69.0) / 12.0)
+            recording = describe(
+                _harmonic_note(rate, fundamental, 1.0, 1.0), rate, midi)
+            model = describe(
+                _harmonic_note(rate, fundamental, 1.0,
+                               10.0 ** (deficit / 20.0)), rate, midi)
+            if recording is None or model is None:
+                print("self-test failed: a synthetic layer could not be measured")
+                return 1
+            pooled.setdefault(("synthetic", velocity), []).append((recording, model))
+    layers = report(pooled)["materials"]["synthetic"]
+    measured = {}
+    for name, node in layers.items():
+        for row in node["bands"]:
+            if row["low_hz"] == 5120.0:
+                measured[name] = row["difference_db"]
+    if len(measured) != 2 or any(value is None for value in measured.values()):
+        print("self-test failed: the 5120-10000 Hz band was not reported "
+              "for both layers")
+        return 1
+    if abs(measured["16"] - soft_deficit) > 0.5 or abs(
+            measured["112"] - loud_deficit) > 0.5:
+        print(f"self-test failed: per-layer 5120-10000 Hz read "
+              f"{measured['16']:+.2f} and {measured['112']:+.2f} dB against "
+              f"{soft_deficit:+.1f} and {loud_deficit:+.1f}")
+        return 1
+    combined = _layer_report(pooled[("synthetic", 16.0)]
+                             + pooled[("synthetic", 112.0)])
+    pooled_difference = [row["difference_db"] for row in combined["bands"]
+                         if row["low_hz"] == 5120.0][0]
+    if abs(pooled_difference - measured["112"]) < 3.0:
+        print("self-test failed: pooling the two layers did not hide the "
+              "loud layer's deficit")
+        return 1
+    print(f"self-test passed: shape is level-invariant, bands track pitch, a "
+          f"pure tone reports only {int(np.isfinite(a).sum())} of {a.size} "
+          f"bands, and two velocity layers read {measured['16']:+.2f} and "
+          f"{measured['112']:+.2f} dB where their pool reads "
+          f"{pooled_difference:+.2f}")
     return 0
 
 

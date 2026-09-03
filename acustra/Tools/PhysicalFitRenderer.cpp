@@ -2,6 +2,9 @@
 // Targets retain their recorded pre-roll/onset and use the same calibrated
 // playback gain as dense::Sampler. Model renders use default public controls;
 // the supplied vector changes only the physical calibration named below.
+// --test renders the frozen test split instead: the archtop layers and takes no
+// fit has ever rendered, scored once per release and never fitted. See
+// makeTestSchedule.
 
 #include "DSP/AcustraEngine.h"
 #include "DSP/SampleBank/EmbeddedGuitarBank.h"
@@ -14,6 +17,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <locale>
 #include <map>
@@ -83,6 +87,11 @@ struct ManifestRow
     AudioFile target;
     AudioFile model;
     AudioFile sampleModel;
+    // Library::prepare equalises one-second energy across every zone of an
+    // archtop root, so the exported takes of a note have all been made the same
+    // loudness. Recording this lets the scorer's floor mode undo it and measure
+    // what the player did rather than what the trim did.
+    float playbackTrim { 1.0f };
 };
 
 using CalibrationValues = std::array<float, calibrationValueCount>;
@@ -191,6 +200,47 @@ Schedule makeSchedule(bool smoke)
     appendCartesian(result.flatTop, Material::SteelFlatTop,
                     std::array { 40, 46, 52, 58, 64, 71, 77, 83 },
                     std::array { 91 }, std::array { 0 });
+    return result;
+}
+
+// The frozen test split: every captured archtop layer and take, on the roots
+// the fit already uses, that the fit itself never renders. Shinyguitar captured
+// four velocity layers and four round robins for each root, 16 regions; the fit
+// renders layers 1 and 4 at takes 1-3 on nine roots and layers 2-3 at take 4 on
+// seven others, 68 regions, which leaves 188 of those roots' 256 untouched by
+// every fit, screen and refit this instrument has run. It is scored once per
+// release and never fitted, so it is the only split that has not been selected
+// on. The bank's seventeenth root (37) is left out: the lowest modelled string
+// is E2/MIDI 40 and a MIDI 37 row would compare a C#2 recording with an open
+// low E, measuring the transposition rather than the model.
+std::vector<Example> makeTestSchedule()
+{
+    const Schedule fit = makeSchedule(false);
+    std::vector<std::tuple<int, int, int>> used;
+    std::vector<int> roots;
+    for (const auto* examples : { &fit.train, &fit.validation })
+        for (const auto& example : *examples)
+        {
+            if (example.material != Material::Steel)
+                continue;
+            used.push_back({ example.midi, example.velocity,
+                             example.roundRobin });
+            roots.push_back(example.midi);
+        }
+    std::sort(roots.begin(), roots.end());
+    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    std::sort(used.begin(), used.end());
+
+    std::vector<Example> result;
+    for (const int midi : roots)
+        // The centre of each captured velocity range: 1-32, 33-64, 65-96 and
+        // 97-127, the same four the fit schedule addresses.
+        for (const int velocity : { 16, 48, 80, 112 })
+            for (const int roundRobin : { 0, 1, 2, 3 })
+                if (!std::binary_search(used.begin(), used.end(),
+                                        std::tuple { midi, velocity, roundRobin }))
+                    result.push_back({ Material::Steel, midi, velocity,
+                                       roundRobin });
     return result;
 }
 
@@ -440,6 +490,14 @@ std::vector<float> renderSampleModel(const Library& library,
     return output;
 }
 
+std::string formatTrim(float value)
+{
+    std::ostringstream text;
+    text.imbue(std::locale::classic());
+    text << std::setprecision(9) << value;
+    return text.str();
+}
+
 void writeManifest(const std::filesystem::path& path,
                    const std::vector<ManifestRow>& rows,
                    bool sampleBaseline = false)
@@ -493,6 +551,7 @@ void writeManifest(const std::filesystem::path& path,
             << "      \"target\": {\"path\": \"" << row.target.path
             << "\", \"sample_rate\": " << row.target.sampleRate
             << ", \"channels\": " << static_cast<int>(row.target.channels)
+            << ", \"playback_trim\": " << formatTrim(row.playbackTrim)
             << "},\n"
             << "      \"model\": {\"path\": \""
             << (sampleBaseline ? row.sampleModel.path : row.model.path)
@@ -573,7 +632,7 @@ std::vector<ManifestRow> renderExamples(
 
         rows.push_back({ example, id, dynamicGroup(example),
             { targetName, zone.sampleRate, zone.channels }, model->second,
-            sampleModel->second });
+            sampleModel->second, zone.playbackTrim });
     }
     return rows;
 }
@@ -863,6 +922,30 @@ void renderCorpus(const std::filesystem::path& directory,
                 directory.string().c_str());
 }
 
+void renderTestCorpus(const std::filesystem::path& directory,
+                      const CalibrationValues& values)
+{
+    prepareOutputDirectory(directory);
+    Library library;
+    std::string decodeError;
+    if (!library.prepare(&decodeError))
+        throw std::runtime_error("could not decode reference bank: " + decodeError);
+
+    const auto calibration = makeCalibration(values);
+    std::map<ModelKey, AudioFile> models;
+    std::map<SampleModelKey, AudioFile> sampleModels;
+    std::vector<std::filesystem::path> writtenFiles;
+    bool determinismChecked = false;
+    const auto rows = renderExamples(
+        makeTestSchedule(), library, calibration, directory, models,
+        sampleModels, writtenFiles, determinismChecked);
+    writeManifest(directory / "test.json", rows);
+    writeManifest(directory / "test-sample-v1.json", rows, true);
+    std::printf("Wrote %zu frozen test examples (%zu unique model renders) "
+                "to %s\n",
+                rows.size(), models.size(), directory.string().c_str());
+}
+
 void renderModelsOnlyCorpus(const std::filesystem::path& directory,
                             const CalibrationValues& values)
 {
@@ -887,7 +970,7 @@ bool parseFloat(const char* text, float& value)
 void printUsage()
 {
     std::printf(
-        "usage: AcustraPhysicalFitRenderer [--smoke|--models-only] OUTPUT "
+        "usage: AcustraPhysicalFitRenderer [--smoke|--models-only|--test] OUTPUT "
         "BODY_FREQUENCY BODY_Q BRIDGE_MOBILITY RESIDUE_TILT DIRECT_GAIN "
         "NYLON_STIFFNESS NYLON_T60 NYLON_FREQUENCY_LOSS NYLON_APERTURE "
         "NYLON_TRANSIENT NYLON_PLUCK_DISTANCE NYLON_VELOCITY_BRIGHTNESS "
@@ -913,6 +996,7 @@ int main(int argc, char** argv)
     int first = 1;
     bool smoke = false;
     bool modelsOnly = false;
+    bool test = false;
     if (argc > 1 && std::string(argv[1]) == "--smoke")
     {
         smoke = true;
@@ -921,6 +1005,11 @@ int main(int argc, char** argv)
     else if (argc > 1 && std::string(argv[1]) == "--models-only")
     {
         modelsOnly = true;
+        ++first;
+    }
+    else if (argc > 1 && std::string(argv[1]) == "--test")
+    {
+        test = true;
         ++first;
     }
     if (argc - first != static_cast<int>(calibrationValueCount + 1))
@@ -957,6 +1046,8 @@ int main(int argc, char** argv)
         const auto directory = normaliseDirectory(argv[first]);
         if (modelsOnly)
             renderModelsOnlyCorpus(directory, values);
+        else if (test)
+            renderTestCorpus(directory, values);
         else
             renderCorpus(directory, values, smoke);
         return 0;

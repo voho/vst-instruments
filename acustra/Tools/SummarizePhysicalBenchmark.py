@@ -21,6 +21,47 @@ def _number(value: Any, label: str) -> float:
     return float(value)
 
 
+def _floor_lines(report: dict[str, Any]) -> list[str]:
+    """The model's distance from the recordings, in units of the distance two
+    recordings of the same note already are from each other.
+
+    A term's score is not readable on its own: the corpus's own spread sets how
+    small it can be, and that spread is different for every term. The archtop
+    was captured four times per note and layer, so the same scorer can be run
+    recording against recording, and the ratio below says how much of each term
+    is still the model.
+    """
+    floor = report.get("recording_floor")
+    if not isinstance(floor, dict):
+        raise ValueError("report has no recording_floor evidence")
+    model_terms = floor["model"]["terms"]
+    floor_terms = floor["floor"]["terms"]
+    lines = [
+        "",
+        f'Recording-versus-recording floor ({floor["material"]}, '
+        f'{floor["pair_count"]} take pairs from {floor["example_count"]} '
+        f'{floor["split"]} takes):',
+        "| Term | Model | Floor | Model/floor |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for term in list(model_terms) + ["score"]:
+        model = (_number(floor["model"]["score"], "recording_floor.model.score")
+                 if term == "score" else _number(model_terms[term], term))
+        value = (_number(floor["floor"]["score"], "recording_floor.floor.score")
+                 if term == "score" else _number(floor_terms[term], term))
+        label = "aggregate" if term == "score" else term
+        lines.append(f"| {label} | {model:.4f} | {value:.4f} | "
+                     f"{model / value:.2f}x |")
+    above = floor.get("control_above_floor_terms")
+    if isinstance(above, list) and above:
+        lines.append(
+            "The sample-player control scores below this floor on every term "
+            "except " + ", ".join(str(term) for term in above)
+            + ", which therefore measures the player rather than bounding the "
+              "model: " + str(floor.get("control_note", "")))
+    return lines
+
+
 def summarize(report: dict[str, Any]) -> str:
     splits = report.get("splits")
     if not isinstance(splits, dict):
@@ -71,6 +112,7 @@ def summarize(report: dict[str, Any]) -> str:
         "Control only: v1 plays the benchmark recordings themselves, so its "
         "score is not an out-of-sample realism result."
     )
+    lines.extend(_floor_lines(report))
 
     lines.extend(["", "Promoted realism paths retained in the shipping engine:"])
     paths = (
