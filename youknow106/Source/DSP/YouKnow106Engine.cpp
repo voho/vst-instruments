@@ -7185,8 +7185,11 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     voice.vcaGain = parameters.useSoftplusVoiceVcaCompatibilityLaw
                         ? VoiceVcaControlLaw::softplusGain(vcaControl)
                         : VoiceVcaControlLaw::gain(vcaControl);
-    voice.vca = voice.vcaGain
-              * (1.0f + card.vcaGainError * 0.03f * tolerance);
+    voice.vca = voice.vcaGain;
+    // The card's VCA GAIN spread is VR27's setting, and VR27 sits on the
+    // input. Keeping it here rather than on the output leaves the small-signal
+    // product identical and lets a hot card drive its own pair harder.
+    voice.vcaInputTrim = 1.0f + card.vcaGainError * 0.03f * tolerance;
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
     // from values that never change. They now live in
@@ -8034,8 +8037,9 @@ float YouKnow106Engine::finishVoiceFilter(Voice& voice,
     // The pair itself saturates ahead of the control multiply (see
     // VoiceVcaSignalLaw); the switch only retains the linear multiply for
     // A/B renders.
+    const float trimmed = vcaInput * voice.vcaInputTrim;
     const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
-        ? VoiceVcaSignalLaw::shape(vcaInput) : vcaInput;
+        ? VoiceVcaSignalLaw::shape(trimmed) : trimmed;
     const float output = shaped * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);

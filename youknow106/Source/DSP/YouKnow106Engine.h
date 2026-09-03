@@ -2265,6 +2265,12 @@ private:
         // that check the lookup updateVoiceAudio already paid for every
         // active voice, every internal sample.
         float vcaGain { 0.0f };
+        // VR27 is an input attenuator, not an output one: p. 13 puts it
+        // between C59 off pin 3 VCF OUT and pin 9 VCA IN, through R108. A card
+        // trimmed hot therefore drives its BA662 pair harder rather than
+        // scaling what the pair already produced, so this rides ahead of
+        // VoiceVcaSignalLaw and `vca` carries only the control law.
+        float vcaInputTrim { 1.0f };
         float pulseDuty { 0.5f };
         // Physical comparator threshold. `pulseDuty` remains the public/
         // diagnostic nominal duty, but its endpoint clamps lose reachable
