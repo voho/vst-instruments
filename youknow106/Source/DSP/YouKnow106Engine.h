@@ -1428,6 +1428,13 @@ private:
     // own comment for why the constant nonetheless stands.) The suites solve
     // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
+    // Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 prints the four IR3109 stage
+    // capacitors as "240PJ" -- C1, C2, C3, C4 alongside the seven 68K -- so
+    // both the value and its tolerance class come from the drawing rather than
+    // from an analyst's summary of it. The competing 270 pF in circulation is
+    // the Analogue Renaissance clone's own value, re-proportioned around
+    // different actives, and a de-potted original reads ~250 pF on a hand
+    // meter, which is 240 within tolerance. Anchored.
     static constexpr float poleCapacitorFarads = 240.0e-12f;
     // Each stage attenuates its differential input by 560 / (68000 + 560)
     // before the transconductor's differential pair sees it. That attenuator
@@ -1435,11 +1442,22 @@ private:
     // input coordinate; the upstream WAVE-to-input level remains OQ-15.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
-    // Half-span of the integrating capacitors' tolerance. The four 240 pF
-    // parts are discrete, so nothing trims them into agreement; a few percent
-    // is the ordinary class. Voiced under OQ-10, like the other card
-    // dispersions -- no measured population fixes it.
+    // Half-span of the integrating capacitors' tolerance. The four parts are
+    // discrete, so nothing trims them into agreement.
+    //
+    // The BOUND is no longer unsourced: the drawing's "240PJ" carries the J
+    // tolerance code, which is +/-5 %, so Roland specifies the band these
+    // parts are bought to. What the drawing cannot say is how a real
+    // population fills it -- a purchase tolerance is a guaranteed maximum, not
+    // a standard deviation, and parts habitually cluster well inside it. So
+    // this stays voiced, but voiced INSIDE an anchored bound of 0.05 rather
+    // than against nothing at all, and it stays at the end that claims least.
+    // OQ-10's population data still owns the point value.
+    static constexpr float vcfStageCapacitorToleranceBound = 0.05f;
     static constexpr float vcfStageCapacitorTolerance = 0.02f;
+    static_assert(vcfStageCapacitorTolerance <= vcfStageCapacitorToleranceBound,
+                  "the seeded capacitor spread must stay inside the J class "
+                  "tolerance Roland prints on the part");
     // The two VCF trims are the exception among the card dispersions: Roland
     // prints their acceptance. ADJUSTMENT procedures 7/8 (p. 19) repeat the
     // FREQ trim (248 Hz with C4 held, converter code 6272) and the WIDTH
