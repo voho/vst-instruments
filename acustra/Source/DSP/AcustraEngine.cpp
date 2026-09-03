@@ -282,28 +282,39 @@ double mixedOnePolePhase(double coefficient, double mix,
                        (1.0 - mix) + mix * lowReal);
 }
 
-double catmullRomDelayPhase(double samples, double omega) noexcept
+// The loop's fractional delay is a second-order Thiran allpass read from the
+// line at an integer tap: an allpass has magnitude exactly one at every
+// frequency, and Thiran's coefficients make its phase delay maximally flat at
+// D samples around DC (Valimaki and Laakso, "Splitting the unit delay", IEEE
+// Signal Processing Magazine 13(1), 1996, 30-60, Eq. 44). The four-point
+// Catmull-Rom read it replaces lost 0.23 and 0.53 dB per pass at 8 and 10 kHz
+// at a half-sample fraction and nothing at an integer one, so a string's
+// upper partials decayed at a rate set by the accidental fraction of its loop
+// length and by the host rate.
+//
+// D is kept in [1.1, 2.1). Both edges of that band sit next to a delay at
+// which the section is exact - at D = 2 it is two unit delays, at D = 1 one -
+// so the loop phase steps by only 0.038 rad at half the Nyquist rate when a
+// slewing delay crosses a band edge and the tap moves, and by a higher power
+// of frequency below it; its largest phase-delay error inside the band is
+// 0.043 rad there, against 0.142 for a first-order section on its own best
+// band. Going nearer D = 1 shrinks both further, but the pole radius is
+// already 0.87 at 1.1 and at D = 1 exactly a pole sits on the unit circle
+// with only a zero to cancel it. The band is one sample wide, so the tap is a
+// function of the delay alone: the loop and the design that tunes it split
+// the same delay the same way, which a hysteretic band would not, and a
+// crossing moves D a whole sample to the far edge, so a slewing delay cannot
+// chatter across it.
+int delayAnchor(double samples) noexcept
 {
-    const double bounded = std::clamp(
-        samples, 3.0, static_cast<double>(localMaximumDelaySamples - 3));
-    const int whole = static_cast<int>(bounded);
-    const double fraction = bounded - static_cast<double>(whole);
-    const double squared = fraction * fraction;
-    const double cubed = squared * fraction;
-    const double weights[] {
-        -0.5 * fraction + squared - 0.5 * cubed,
-         1.0 - 2.5 * squared + 1.5 * cubed,
-         0.5 * fraction + 2.0 * squared - 1.5 * cubed,
-        -0.5 * squared + 0.5 * cubed
-    };
-    const double kernelReal = weights[0] * std::cos(omega) + weights[1]
-                            + weights[2] * std::cos(omega)
-                            + weights[3] * std::cos(2.0 * omega);
-    const double kernelImaginary = weights[0] * std::sin(omega)
-                                 - weights[2] * std::sin(omega)
-                                 - weights[3] * std::sin(2.0 * omega);
-    return static_cast<double>(whole) * omega
-         - std::atan2(kernelImaginary, kernelReal);
+    return static_cast<int>(std::floor(samples - 1.1));
+}
+
+void thiranCoefficients(double samples, double& a1, double& a2) noexcept
+{
+    a1 = -2.0 * (samples - 2.0) / (samples + 1.0);
+    a2 = (samples - 2.0) * (samples - 1.0)
+       / ((samples + 1.0) * (samples + 2.0));
 }
 
 void secondOrderAllpassCoefficients(double omega, double decayRatio,
@@ -336,10 +347,26 @@ double secondOrderAllpassPhase(double a1, double a2,
     return lag;
 }
 
-double tunedCatmullDelay(double fundamental, double sampleRate,
-                         double broadCoefficient, double broadMix,
-                         double highCoefficient, double highMix,
-                         double a1, double a2) noexcept
+// Phase lag of tap plus allpass. The tap is passed in rather than derived
+// from the delay: folding delayAnchor() into this leaves the residual the
+// tuning solves discontinuous where D crosses its band edge, and the
+// collocation stalls on it. Every solve below instead pins one tap, which
+// makes its residual smooth in the delay and lets the delay travel as far as
+// the pole pair moves it, and then re-derives the tap from its own answer and
+// solves again at that tap.
+double thiranDelayPhase(double samples, int anchor, double omega) noexcept
+{
+    double a1 = 0.0;
+    double a2 = 0.0;
+    thiranCoefficients(samples - static_cast<double>(anchor), a1, a2);
+    return static_cast<double>(anchor) * omega
+         + secondOrderAllpassPhase(a1, a2, omega);
+}
+
+double tunedLoopDelay(double fundamental, double sampleRate,
+                      double broadCoefficient, double broadMix,
+                      double highCoefficient, double highMix,
+                      double a1, double a2) noexcept
 {
     constexpr double twoPiDouble = 2.0 * 3.14159265358979323846;
     const double omega = twoPiDouble * fundamental / sampleRate;
@@ -350,20 +377,27 @@ double tunedCatmullDelay(double fundamental, double sampleRate,
     double delay = std::clamp(sampleRate / fundamental - fixedPhase / omega,
                               3.0,
                               static_cast<double>(localMaximumDelaySamples - 3));
-    for (int iteration = 0; iteration < 6; ++iteration)
+    for (int round = 0; round < 3; ++round)
     {
-        const double residual = catmullRomDelayPhase(delay, omega)
-                              + fixedPhase - twoPiDouble;
-        if (std::abs(residual) < 1.0e-11)
+        const int anchor = delayAnchor(delay);
+        for (int iteration = 0; iteration < 6; ++iteration)
+        {
+            const double residual = thiranDelayPhase(delay, anchor, omega)
+                                  + fixedPhase - twoPiDouble;
+            if (std::abs(residual) < 1.0e-11)
+                break;
+            constexpr double step = 0.01;
+            const double slope
+                = (thiranDelayPhase(delay + step, anchor, omega)
+                 - thiranDelayPhase(delay - step, anchor, omega))
+                / (2.0 * step);
+            if (std::abs(slope) < 1.0e-12)
+                break;
+            delay = std::clamp(delay - residual / slope, 3.0,
+                static_cast<double>(localMaximumDelaySamples - 3));
+        }
+        if (delayAnchor(delay) == anchor)
             break;
-        constexpr double step = 0.01;
-        const double slope = (catmullRomDelayPhase(delay + step, omega)
-                            - catmullRomDelayPhase(delay - step, omega))
-                           / (2.0 * step);
-        if (std::abs(slope) < 1.0e-12)
-            break;
-        delay = std::clamp(delay - residual / slope, 3.0,
-            static_cast<double>(localMaximumDelaySamples - 3));
     }
     return delay;
 }
@@ -414,8 +448,7 @@ DispersionCalibration calibrateDispersion(
     double inharmonicity, double fundamental, double sampleRate,
     double broadCoefficient, double broadMix,
     double highCoefficient, double highMix,
-    double initialDecayRatio, double initialPoleRatio,
-    bool tryAlternateStarts) noexcept
+    double initialDecayRatio, double initialPoleRatio) noexcept
 {
     constexpr double piDouble = 3.14159265358979323846;
     constexpr double twoPiDouble = 2.0 * piDouble;
@@ -428,7 +461,7 @@ DispersionCalibration calibrateDispersion(
     {
         calibration.a1 = 0.0;
         calibration.a2 = 0.0;
-        calibration.delay = tunedCatmullDelay(
+        calibration.delay = tunedLoopDelay(
             fundamental, sampleRate, broadCoefficient, broadMix,
             highCoefficient, highMix, calibration.a1, calibration.a2);
         return calibration;
@@ -453,6 +486,10 @@ DispersionCalibration calibrateDispersion(
         static_cast<double>(highest) - 0.5
     };
 
+    // The integer tap the delay is split at. It is held fixed inside a
+    // solve, so the residual stays smooth in the delay (see
+    // thiranDelayPhase), and re-derived from each answer by solve() below.
+    int splitAnchor = 0;
     const auto evaluate = [&] (const double values[3], double residuals[3])
     {
         double a1 = 0.0;
@@ -463,7 +500,7 @@ DispersionCalibration calibrateDispersion(
         {
             const double partial = anchors[index];
             const double omega = stretchedOmega(partial);
-            residuals[index] = catmullRomDelayPhase(values[0], omega)
+            residuals[index] = thiranDelayPhase(values[0], splitAnchor, omega)
                 + mixedOnePolePhase(broadCoefficient, broadMix, omega)
                 + mixedOnePolePhase(highCoefficient, highMix, omega)
                 + secondOrderAllpassPhase(a1, a2, omega)
@@ -476,84 +513,113 @@ DispersionCalibration calibrateDispersion(
                           std::abs(residuals[2]) });
     };
 
+    // Nine damped Gauss-Newton steps on (delay, decayRatio, poleRatio)
+    // against the three collocation residuals, at the tap splitAnchor
+    // currently holds. The delay is free: the pole pair's own lag at the
+    // fundamental moves it by several samples from the starting point, so a
+    // solve that could not leave its tap's fraction band could not converge.
+    constexpr double steps[] { 0.02, 0.01, 0.01 };
+    const auto refine = [&] (double values[3])
+    {
+        for (int iteration = 0; iteration < 9; ++iteration)
+        {
+            double residuals[3] {};
+            evaluate(values, residuals);
+            const double oldNorm = maximumResidual(residuals);
+            if (oldNorm < 1.0e-10)
+                break;
+
+            double jacobian[3][3] {};
+            for (int column = 0; column < 3; ++column)
+            {
+                double higher[] { values[0], values[1], values[2] };
+                double lower[] { values[0], values[1], values[2] };
+                higher[column] += steps[column];
+                lower[column] -= steps[column];
+                double higherResiduals[3] {};
+                double lowerResiduals[3] {};
+                evaluate(higher, higherResiduals);
+                evaluate(lower, lowerResiduals);
+                for (int row = 0; row < 3; ++row)
+                    jacobian[row][column] = (higherResiduals[row]
+                        - lowerResiduals[row]) / (2.0 * steps[column]);
+            }
+
+            const double rhs[] { -residuals[0], -residuals[1], -residuals[2] };
+            double update[3] {};
+            if (!solveThreeByThree(jacobian, rhs, update))
+                break;
+
+            bool accepted = false;
+            for (double amount = 1.0; amount >= 0.03125; amount *= 0.5)
+            {
+                double candidate[] {
+                    std::clamp(values[0] + amount * update[0], 3.0,
+                        static_cast<double>(localMaximumDelaySamples - 3)),
+                    std::clamp(values[1] + amount * update[1], 0.1, 30.0),
+                    std::clamp(values[2] + amount * update[2], 0.05, 15.0)
+                };
+                double candidateResiduals[3] {};
+                evaluate(candidate, candidateResiduals);
+                if (maximumResidual(candidateResiduals) < oldNorm)
+                {
+                    std::copy(std::begin(candidate), std::end(candidate),
+                        values);
+                    accepted = true;
+                    break;
+                }
+            }
+            if (!accepted)
+                break;
+        }
+    };
+    // Re-derive the tap from the answer and solve again if it moved, so the
+    // split the collocation was fitted at is the split the loop reads with.
+    // The first round starts from a tap the pole pair has not yet moved the
+    // delay off, so it is the one that walks; the second finds its own
+    // answer's tap unchanged and only trims the delay by about a thousandth
+    // of a sample.
+    const auto solve = [&] (double values[3])
+    {
+        for (int round = 0; round < 4; ++round)
+        {
+            splitAnchor = delayAnchor(values[0]);
+            refine(values);
+            if (delayAnchor(values[0]) == splitAnchor)
+                break;
+        }
+        splitAnchor = delayAnchor(values[0]);
+    };
+
     double parameters[] {
         128.0, calibration.decayRatio, calibration.poleRatio
     };
     secondOrderAllpassCoefficients(
         omega0, parameters[1], parameters[2], calibration.a1, calibration.a2);
-    parameters[0] = tunedCatmullDelay(
+    parameters[0] = tunedLoopDelay(
         fundamental, sampleRate, broadCoefficient, broadMix,
         highCoefficient, highMix, calibration.a1, calibration.a2);
+    solve(parameters);
 
-    constexpr double steps[] { 0.02, 0.01, 0.01 };
-    for (int iteration = 0; iteration < 9; ++iteration)
-    {
-        double residuals[3] {};
-        evaluate(parameters, residuals);
-        const double oldNorm = maximumResidual(residuals);
-        if (oldNorm < 1.0e-10)
-            break;
-
-        double jacobian[3][3] {};
-        for (int column = 0; column < 3; ++column)
-        {
-            double higher[] { parameters[0], parameters[1], parameters[2] };
-            double lower[] { parameters[0], parameters[1], parameters[2] };
-            higher[column] += steps[column];
-            lower[column] -= steps[column];
-            double higherResiduals[3] {};
-            double lowerResiduals[3] {};
-            evaluate(higher, higherResiduals);
-            evaluate(lower, lowerResiduals);
-            for (int row = 0; row < 3; ++row)
-                jacobian[row][column] = (higherResiduals[row]
-                    - lowerResiduals[row]) / (2.0 * steps[column]);
-        }
-
-        const double rhs[] { -residuals[0], -residuals[1], -residuals[2] };
-        double update[3] {};
-        if (!solveThreeByThree(jacobian, rhs, update))
-            break;
-
-        bool accepted = false;
-        for (double amount = 1.0; amount >= 0.03125; amount *= 0.5)
-        {
-            double candidate[] {
-                std::clamp(parameters[0] + amount * update[0], 3.0,
-                    static_cast<double>(localMaximumDelaySamples - 3)),
-                std::clamp(parameters[1] + amount * update[1], 0.1, 30.0),
-                std::clamp(parameters[2] + amount * update[2], 0.05, 15.0)
-            };
-            double candidateResiduals[3] {};
-            evaluate(candidate, candidateResiduals);
-            if (maximumResidual(candidateResiduals) < oldNorm)
-            {
-                std::copy(std::begin(candidate), std::end(candidate), parameters);
-                accepted = true;
-                break;
-            }
-        }
-        if (!accepted)
-            break;
-    }
-
-    // The block above is byte-for-byte the original single-start damped
-    // Gauss-Newton solve, kept untouched so steel - whose shipped
-    // calibration was fitted against exactly this solve - renders
-    // identically. It is a Newton solve on a non-convex residual, so it can
-    // stall on the poleRatio bound instead of reaching the near-zero
-    // residual a well-posed collocation admits: seen on a nylon treble at
-    // the top fret (MIDI 84), where Woodhouse's corrected per-string EI
-    // raises B well past what the default starting point was tuned against
-    // - the single-start solve stalls there at 12.00 cents of H2-H12 error
-    // at 48 kHz. Nylon alone gets a fallback: restart the same cheap
-    // three-parameter solve from a spread of pole ratios and keep the
-    // lowest-residual run, which brings that same case down to 2.82 cents.
-    if (tryAlternateStarts)
+    // This is a Newton solve on a non-convex residual, so it can stall in a
+    // corner of the (decayRatio, poleRatio) box instead of reaching the
+    // near-zero residual a well-posed collocation admits. Which starting
+    // points stall is not a property of the string: at 384 kHz a top-fret
+    // treble stalls at a residual of 0.40 rad from the default start on
+    // steel and 0.22 on nylon, where a coarse sweep of the box shows a
+    // solution within 0.014 rad of exact, and moving to the Thiran read
+    // moved which notes land in which basin. So the fallback restarts the
+    // same cheap three-parameter solve from a spread of both starting ratios
+    // and keeps the lowest-residual run, which puts every note of the
+    // rate/material/fret matrix back inside 3.0 cents of H2-H12 placement.
+    // It costs nothing on a note whose first solve converged: the sweep is
+    // skipped entirely once the residual is below 1e-9.
     {
         double residuals[3] {};
         evaluate(parameters, residuals);
         double bestNorm = maximumResidual(residuals);
+        int bestAnchor = splitAnchor;
+        for (const double startDecayRatio : { 5.0, 10.0, 20.0 })
         for (const double startPoleRatio : { 1.0, 2.0, 4.0, 8.0 })
         {
             if (bestNorm < 1.0e-9)
@@ -561,75 +627,27 @@ DispersionCalibration calibrateDispersion(
             double a1 = 0.0;
             double a2 = 0.0;
             secondOrderAllpassCoefficients(
-                omega0, calibration.decayRatio, startPoleRatio, a1, a2);
+                omega0, startDecayRatio, startPoleRatio, a1, a2);
             double candidate[] {
-                tunedCatmullDelay(fundamental, sampleRate, broadCoefficient,
+                tunedLoopDelay(fundamental, sampleRate, broadCoefficient,
                     broadMix, highCoefficient, highMix, a1, a2),
-                calibration.decayRatio, startPoleRatio
+                startDecayRatio, startPoleRatio
             };
-            for (int iteration = 0; iteration < 9; ++iteration)
-            {
-                double innerResiduals[3] {};
-                evaluate(candidate, innerResiduals);
-                const double oldNorm = maximumResidual(innerResiduals);
-                if (oldNorm < 1.0e-10)
-                    break;
-
-                double jacobian[3][3] {};
-                for (int column = 0; column < 3; ++column)
-                {
-                    double higher[] { candidate[0], candidate[1], candidate[2] };
-                    double lower[] { candidate[0], candidate[1], candidate[2] };
-                    higher[column] += steps[column];
-                    lower[column] -= steps[column];
-                    double higherResiduals[3] {};
-                    double lowerResiduals[3] {};
-                    evaluate(higher, higherResiduals);
-                    evaluate(lower, lowerResiduals);
-                    for (int row = 0; row < 3; ++row)
-                        jacobian[row][column] = (higherResiduals[row]
-                            - lowerResiduals[row]) / (2.0 * steps[column]);
-                }
-
-                const double rhs[] {
-                    -innerResiduals[0], -innerResiduals[1], -innerResiduals[2]
-                };
-                double update[3] {};
-                if (!solveThreeByThree(jacobian, rhs, update))
-                    break;
-
-                bool accepted = false;
-                for (double amount = 1.0; amount >= 0.03125; amount *= 0.5)
-                {
-                    double stepped[] {
-                        std::clamp(candidate[0] + amount * update[0], 3.0,
-                            static_cast<double>(localMaximumDelaySamples - 3)),
-                        std::clamp(candidate[1] + amount * update[1], 0.1, 30.0),
-                        std::clamp(candidate[2] + amount * update[2], 0.05, 15.0)
-                    };
-                    double steppedResiduals[3] {};
-                    evaluate(stepped, steppedResiduals);
-                    if (maximumResidual(steppedResiduals) < oldNorm)
-                    {
-                        std::copy(std::begin(stepped), std::end(stepped),
-                            candidate);
-                        accepted = true;
-                        break;
-                    }
-                }
-                if (!accepted)
-                    break;
-            }
+            solve(candidate);
             double candidateResiduals[3] {};
             evaluate(candidate, candidateResiduals);
             const double candidateNorm = maximumResidual(candidateResiduals);
             if (candidateNorm < bestNorm)
             {
                 bestNorm = candidateNorm;
+                bestAnchor = splitAnchor;
                 std::copy(std::begin(candidate), std::end(candidate),
                     parameters);
             }
         }
+        // Every candidate is compared at its own tap, which is the tap the
+        // loop would read it with; the winner's has to be put back.
+        splitAnchor = bestAnchor;
     }
 
     calibration.delay = parameters[0];
@@ -833,6 +851,8 @@ void AcustraEngine::StringLoop::reset() noexcept
 {
     delay.fill(0.0f);
     writeIndex = 0;
+    allpassY1 = 0.0f;
+    allpassY2 = 0.0f;
     broadLossFilter.reset();
     lossFilter.reset();
     dispersion.reset();
@@ -899,11 +919,11 @@ float AcustraEngine::FixedDerivative::processAcrossRelease(
     return process(input, sampleRateRatio);
 }
 
-float AcustraEngine::StringLoop::readDelay(float samples) const noexcept
+float AcustraEngine::StringLoop::readDelay(float samples) noexcept
 {
     const float bounded = AcustraEngine::clamp(
         samples, 3.0f, static_cast<float>(maximumDelaySamples - 3));
-    const int whole = static_cast<int>(bounded);
+    const int whole = delayAnchor(bounded);
     const float fraction = bounded - static_cast<float>(whole);
     const auto at = [&] (int samplesAgo)
     {
@@ -911,19 +931,27 @@ float AcustraEngine::StringLoop::readDelay(float samples) const noexcept
             wrapDelayIndex(writeIndex - samplesAgo))];
     };
 
-    // Four-point Catmull-Rom interpolation.  Its small overshoot is bounded by
-    // the loop's sub-unity T60 gain; it is substantially less dispersive than
-    // linear interpolation while a changing pitch remains state-free.
-    const float p0 = at(whole - 1);
-    const float p1 = at(whole);
-    const float p2 = at(whole + 1);
-    const float p3 = at(whole + 2);
-    const float f2 = fraction * fraction;
-    const float f3 = f2 * fraction;
-    return 0.5f * ((2.0f * p1)
-        + (-p0 + p2) * fraction
-        + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * f2
-        + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * f3);
+    // Second-order Thiran allpass, exactly lossless at every frequency (see
+    // delayAnchor). Direct form I: the only state is the two previous
+    // outputs, and the previous inputs are read from the line at whichever
+    // tap is current, so when a slewing delay crosses a band edge and moves
+    // the tap and the coefficients together, the filter's memory of its input
+    // is already the memory it would have had at the new tap - the transient
+    // elimination of Valimaki, Laakso and Mackenzie, "Elimination of
+    // transients in time-varying allpass fractional delay filters with
+    // application to digital waveguide modeling", ICMC 1995, 327-334, which
+    // for a line-read section is exactly this signal-valued state.
+    double a1 = 0.0;
+    double a2 = 0.0;
+    thiranCoefficients(static_cast<double>(fraction), a1, a2);
+    const float first = static_cast<float>(a1);
+    const float second = static_cast<float>(a2);
+    const float output = second * at(whole) + first * at(whole + 1)
+                       + at(whole + 2)
+                       - first * allpassY1 - second * allpassY2;
+    allpassY2 = allpassY1;
+    allpassY1 = output;
+    return output;
 }
 
 float AcustraEngine::StringLoop::advance(float delaySmoothing,
@@ -1588,7 +1616,7 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         const auto calibration = calibrateDispersion(
             inharmonicity, unbentFrequency, sampleRate_,
             designBroadLossCoefficient, broadLoss,
-            lowpassCoefficient, highLoss, 10.0, 4.0, !steel);
+            lowpassCoefficient, highLoss, 10.0, 4.0);
         voice.dispersionDecayRatio = static_cast<float>(calibration.decayRatio);
         voice.dispersionPoleRatio = static_cast<float>(calibration.poleRatio);
         voice.dispersionDesignFrequency = unbentFrequency;
@@ -1613,7 +1641,7 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         * physical.fundamentalT60Scale;
     if (handRate > 0.0f)
         fundamentalT60 = 1.0f / (1.0f / fundamentalT60 + handRate);
-    const float rawDelay = static_cast<float>(tunedCatmullDelay(
+    const float rawDelay = static_cast<float>(tunedLoopDelay(
         frequency, sampleRate_, broadLossCoefficient, broadLoss,
         lowpassCoefficient, mutedHighLoss, dispersionA1, dispersionA2));
     // The segment between saddle and anchor does not move when a string is

@@ -56,11 +56,11 @@ reverb, room effect or recorded-note layer.
 | --- | --- | ---: | ---: | ---: |
 | `01-steel-sustain-range.wav` | Steel sustain from open E2 to B5, one held pluck at a time | 9.5 s | −13.3 dBFS | +10.3 dB |
 | `02-nylon-fingerstyle.wav` | A fingertip nylon arpeggio with overlapping held notes | 4.2 s | −17.8 dBFS | +14.8 dB |
-| `03-shape-material-anchors.wav` | One chord: Parlor/Jumbo, then Cedar/Maple anchor settings | 13.7 s | −9.7 dBFS | +6.7 dB |
+| `03-shape-material-anchors.wav` | One chord: Parlor/Jumbo, then Cedar/Maple anchor settings | 13.7 s | −9.6 dBFS | +6.6 dB |
 | `04-string-age.wav` | The same steel phrase with fresh strings, then fully aged strings | 6.5 s | −10.7 dBFS | +7.7 dB |
 | `05-alternate-tunings.wav` | Drop D, DADGAD and Open G chords | 12.3 s | −11.9 dBFS | +8.9 dB |
 | `06-playing-behaviours.wav` | A chord change over a ringing chord, CC2 bridge-hand damping, then two natural harmonics above the fretted range | 10.7 s | −12.4 dBFS | +9.4 dB |
-| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −15.1 dBFS | +12.1 dB |
+| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −15.2 dBFS | +12.2 dB |
 | `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −3.7 dBFS | +0.7 dB |
 <!-- peaks-table-end -->
 
@@ -486,9 +486,9 @@ Lower is better in the robust descriptor score:
 
 | Split | Rows | Neutral baseline | Fitted | Shipping | Change |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Training | 83 | 8.768535 | 6.441362 | 6.575180 | −25.01% |
-| Development validation | 24 | 8.145301 | 6.427690 | 6.381324 | −21.66% |
-| Flat top (reported only) | 8 | 9.309315 | 7.428581 | 8.120169 | −12.77% |
+| Training | 83 | 8.768535 | 6.441362 | 6.452449 | −26.41% |
+| Development validation | 24 | 8.145301 | 6.427690 | 6.142083 | −24.59% |
+| Flat top (reported only) | 8 | 9.309315 | 7.428581 | 8.290640 | −10.94% |
 
 The shipping column is not the fitted one. Five of the twenty-seven values were
 moved off the fit's answer by a listening verdict — the body's low-mode gain

@@ -228,6 +228,9 @@ private:
         OnePole broadLossFilter {};
         OnePole lossFilter {};
         SecondOrderAllpass dispersion {};
+        // The fractional-delay allpass's state: its two previous outputs.
+        float allpassY1 { 0.0f };
+        float allpassY2 { 0.0f };
         FixedDerivative bridgeDerivative {};
         bool derivativeNeedsPriming { true };
         bool derivativeCrossesRelease { false };
@@ -240,7 +243,7 @@ private:
         float releaseGainStep { 0.0f };
 
         void reset() noexcept;
-        [[nodiscard]] float readDelay(float samples) const noexcept;
+        [[nodiscard]] float readDelay(float samples) noexcept;
         float advance(float delaySmoothing, float releaseGain) noexcept;
         // A plucked string is released from rest, so the wave the bridge
         // reads was already standing there when the finger let go. Prime the

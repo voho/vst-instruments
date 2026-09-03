@@ -967,15 +967,16 @@ double spectralPeakFrequency(const Audio& audio, double expectedHz,
 }
 
 double spectralAmplitudeAt(const Audio& audio, double frequency,
-                           double beginSeconds, double endSeconds)
+                           double beginSeconds, double endSeconds,
+                           double rate = sampleRate)
 {
     const int begin = std::clamp(
-        static_cast<int>(beginSeconds * sampleRate), 0,
+        static_cast<int>(beginSeconds * rate), 0,
         static_cast<int>(audio.left.size()));
     const int end = std::clamp(
-        static_cast<int>(endSeconds * sampleRate), begin,
+        static_cast<int>(endSeconds * rate), begin,
         static_cast<int>(audio.left.size()));
-    const double angle = -2.0 * std::numbers::pi * frequency / sampleRate;
+    const double angle = -2.0 * std::numbers::pi * frequency / rate;
     const double stepReal = std::cos(angle);
     const double stepImaginary = std::sin(angle);
     double oscillatorReal = 1.0;
@@ -1763,24 +1764,25 @@ double loopPhase(const acustra::AcustraEngineTestAccess::StringLoopSnapshot& loo
                            (1.0 - mix) + mix * lowReal);
     };
 
-    const int whole = static_cast<int>(loop.delay);
-    const double fraction = loop.delay - static_cast<double>(whole);
-    const double squared = fraction * fraction;
-    const double cubed = squared * fraction;
-    const double weights[] {
-        -0.5 * fraction + squared - 0.5 * cubed,
-         1.0 - 2.5 * squared + 1.5 * cubed,
-         0.5 * fraction + 2.0 * squared - 1.5 * cubed,
-        -0.5 * squared + 0.5 * cubed
-    };
-    const double kernelReal = weights[0] * std::cos(omega) + weights[1]
-                            + weights[2] * std::cos(omega)
-                            + weights[3] * std::cos(2.0 * omega);
-    const double kernelImaginary = weights[0] * std::sin(omega)
-                                 - weights[2] * std::sin(omega)
-                                 - weights[3] * std::sin(2.0 * omega);
-    const double delayPhase = static_cast<double>(whole) * omega
-                            - std::atan2(kernelImaginary, kernelReal);
+    // The loop's fractional delay: an integer tap plus a second-order Thiran
+    // allpass, split the way delayAnchor() in AcustraEngine.cpp splits it.
+    const int anchor = static_cast<int>(std::floor(loop.delay - 1.1));
+    const double fraction = loop.delay - static_cast<double>(anchor);
+    const double thiran1 = -2.0 * (fraction - 2.0) / (fraction + 1.0);
+    const double thiran2 = (fraction - 2.0) * (fraction - 1.0)
+                         / ((fraction + 1.0) * (fraction + 2.0));
+    const double thiranNumerator = std::atan2(
+        -thiran1 * std::sin(omega) - std::sin(2.0 * omega),
+        thiran2 + thiran1 * std::cos(omega) + std::cos(2.0 * omega));
+    const double thiranDenominator = std::atan2(
+        -thiran1 * std::sin(omega) - thiran2 * std::sin(2.0 * omega),
+        1.0 + thiran1 * std::cos(omega) + thiran2 * std::cos(2.0 * omega));
+    double thiranLag = thiranDenominator - thiranNumerator;
+    while (thiranLag < 0.0)
+        thiranLag += 2.0 * std::numbers::pi;
+    while (thiranLag >= 2.0 * std::numbers::pi)
+        thiranLag -= 2.0 * std::numbers::pi;
+    const double delayPhase = static_cast<double>(anchor) * omega + thiranLag;
 
     const double cosine = std::cos(omega);
     const double sine = std::sin(omega);
@@ -1820,6 +1822,164 @@ double loopResonance(
             upper = middle;
     }
     return 0.5 * (lower + upper);
+}
+
+void testTheFractionalDelayReadIsLossless()
+{
+    // Reading a fractional delay by interpolation is not lossless. The
+    // four-point Catmull-Rom read this replaces lost 0.23 and 0.53 dB per
+    // pass at 8 and 10 kHz at a half-sample fraction and nothing at an
+    // integer one, so H8 on steel MIDI 76 to 84 decayed at 3.0 to 96.5 dB/s
+    // at 44.1 kHz - a factor of 47 in loss per round trip - set by nothing
+    // but the accidental fraction of each note's loop length, and MIDI 84's
+    // H8 decayed at 3.0, 89.8 and 93.6 dB/s at 44.1, 48 and 96 kHz. A Thiran
+    // allpass has magnitude exactly one at every frequency, so what is left
+    // is the string's own loss: it rises smoothly with the partial's
+    // frequency and it barely moves with the host rate. What rate dependence
+    // remains is the high-loss corner, which is clamped to 0.44 of the
+    // sample rate at 44.1 and 48 kHz and not at 96 kHz; it leaves H8 within
+    // 13% across the three rates and the fundamental within 1%.
+    struct Reading { double perSecond; double perPass; };
+    const auto decay = [] (int midiNote, double rate, int partial)
+    {
+        acustra::AcustraEngine engine;
+        engine.prepare(rate, blockSize);
+        engine.setBridgeCouplingEnabled(false);
+        engine.setSympatheticStringsEnabled(false);
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = acustra::StringMaterial::Steel;
+        engine.setParameters(parameters);
+        engine.noteOn(midiNote, 0.8f);
+        const int samples = static_cast<int>(1.6 * rate);
+        Audio audio { std::vector<float>(static_cast<std::size_t>(samples)),
+                      std::vector<float>(static_cast<std::size_t>(samples)) };
+        for (int offset = 0; offset < samples; offset += blockSize)
+            engine.process(audio.left.data() + offset,
+                           audio.right.data() + offset,
+                           std::min(blockSize, samples - offset));
+        const double fundamental = 440.0
+            * std::exp2((static_cast<double>(midiNote) - 69.0) / 12.0);
+        // Stiffness puts H8 above 8*f0; find it before measuring it.
+        const double frequency = spectralPeakFrequency(
+            audio, partial * fundamental, 60.0, 0.20, 0.60, rate);
+        const double early = spectralAmplitudeAt(
+            audio, frequency, 0.20, 0.60, rate);
+        const double late = spectralAmplitudeAt(
+            audio, frequency, 1.00, 1.40, rate);
+        const double perSecond = 20.0 * std::log10(early / late) / 0.6;
+        return Reading { perSecond, perSecond / fundamental };
+    };
+
+    for (const int partial : { 1, 8 })
+    {
+        double lowestPass = 1.0e9;
+        double highestPass = 0.0;
+        for (int midiNote = 76; midiNote <= 84; ++midiNote)
+        {
+            double lowest = 1.0e9;
+            double highest = -1.0e9;
+            for (const double rate : { 44100.0, 48000.0, 96000.0 })
+            {
+                const auto reading = decay(midiNote, rate, partial);
+                expect(reading.perSecond > 0.0,
+                       "steel MIDI " + std::to_string(midiNote) + " H"
+                           + std::to_string(partial) + " did not decay at "
+                           + std::to_string(static_cast<int>(rate)));
+                lowest = std::min(lowest, reading.perSecond);
+                highest = std::max(highest, reading.perSecond);
+                lowestPass = std::min(lowestPass, reading.perPass);
+                highestPass = std::max(highestPass, reading.perPass);
+            }
+            const double spread = 2.0 * (highest - lowest) / (highest + lowest);
+            expect(spread < (partial == 1 ? 0.015 : 0.15),
+                   "steel MIDI " + std::to_string(midiNote) + " H"
+                       + std::to_string(partial)
+                       + " decayed at rates that differ by "
+                       + std::to_string(100.0 * spread) + "%");
+        }
+        // Loss per round trip across the nine notes and three rates. It is
+        // physical - a higher note's H8 sits at a higher frequency, where the
+        // string loses more - so it is a smooth 1.7:1 rise, not the 47:1 the
+        // interpolated read produced out of loop fractions alone.
+        expect(highestPass / lowestPass < 2.5,
+               "steel H" + std::to_string(partial)
+                   + " loss per round trip ranged over a factor of "
+                   + std::to_string(highestPass / lowestPass));
+    }
+}
+
+void testASlewingDelayDoesNotClickAboveFourteenKilohertz()
+{
+    // The loop's integer tap moves whenever a slewing delay carries the
+    // Thiran allpass's own delay out of its band, and the allpass's
+    // coefficients move with it. Read in direct form I from the line, the
+    // filter's memory of its input is the memory the new tap would have had,
+    // so the move costs no transient. Measured where a transient would show:
+    // the top band, in 5 ms frames, against the same string held still.
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const int block = 64;
+        const auto bent = [&] (bool bend)
+        {
+            acustra::AcustraEngine engine;
+            acustra::EngineParameters parameters;
+            parameters.stringMaterial = acustra::StringMaterial::Steel;
+            engine.setParameters(parameters);
+            engine.prepare(rate, block);
+            engine.setBridgeCouplingEnabled(false);
+            engine.setSympatheticStringsEnabled(false);
+            engine.noteOn(52, 0.8f);
+            const int samples = static_cast<int>(2.0 * rate);
+            Audio audio {
+                std::vector<float>(static_cast<std::size_t>(samples)),
+                std::vector<float>(static_cast<std::size_t>(samples)) };
+            for (int offset = 0; offset < samples; offset += block)
+            {
+                if (bend)
+                    engine.setPitchBend(static_cast<float>(2.0 * std::clamp(
+                        (offset / rate - 0.2) / 1.0, 0.0, 1.0)));
+                engine.process(audio.left.data() + offset,
+                               audio.right.data() + offset,
+                               std::min(block, samples - offset));
+            }
+            return audio;
+        };
+        // 200 cents over a second: about eighteen tap moves on this string.
+        const auto slewing = bent(true);
+        const auto still = bent(false);
+        const auto frames = [&] (const Audio& audio, double begin, double end)
+        {
+            std::vector<double> result;
+            for (double at = begin; at + 0.005 < end; at += 0.0025)
+                result.push_back(tailBandRms(audio, rate, at, at + 0.005,
+                                             14000.0, 0.45 * rate));
+            return result;
+        };
+        const auto slewingFrames = frames(slewing, 0.25, 1.15);
+        const auto stillFrames = frames(still, 0.25, 1.15);
+        const double loudest = *std::max_element(
+            slewingFrames.begin(), slewingFrames.end());
+        const double reference = *std::max_element(
+            stillFrames.begin(), stillFrames.end());
+        expect(reference > 0.0, "the unbent reference string was silent");
+        expect(loudest < 1.5 * reference,
+               "a 200-cent bend at "
+                   + std::to_string(static_cast<int>(rate))
+                   + " Hz put " + std::to_string(loudest / reference)
+                   + " times the unbent string's top-band peak into one frame");
+        // And the steel attack glide, which slews the delay by its own few
+        // cents while the pluck is still loud: no frame rises on the two
+        // before it by more than the ordinary beating of the band does.
+        const auto attack = frames(bent(false), 0.005, 0.30);
+        double rise = 0.0;
+        for (std::size_t i = 2; i < attack.size(); ++i)
+            rise = std::max(rise, attack[i] / std::max(attack[i - 2], 1.0e-30));
+        expect(rise < 2.0,
+               "the steel attack glide at "
+                   + std::to_string(static_cast<int>(rate))
+                   + " Hz raised the top band by a factor of "
+                   + std::to_string(rise) + " in one frame");
+    }
 }
 
 void testDispersionAcrossRatesMaterialsAndNotes()
@@ -1884,7 +2044,11 @@ void testDispersionAcrossRatesMaterialsAndNotes()
             // stiffness several-fold (see nylonBendingEI in AcustraEngine.cpp),
             // which widens the H1/H7/H11.5 collocation's own approximation
             // error at a top-fret treble note from the old ~1.2 cents to
-            // ~2.8; still under a third of the H16+ gap already documented.
+            // ~2.8, and the Thiran read's own phase-delay curvature between
+            // those three points adds the rest: the worst of the whole
+            // matrix plus MIDI 76/80/82 is 2.98 cents, on nylon MIDI 84 at
+            // 48 kHz. Still under a third of the H16+ gap already
+            // documented.
             expect(std::abs(cents) < 3.0,
                    std::string(steel ? "steel" : "nylon") + "/"
                        + std::to_string(static_cast<int>(rate)) + " MIDI "
@@ -4266,6 +4430,8 @@ int main()
     testLoadedE2IsCentredAndNotSplit();
     testSteelDispersionTracksTheStiffStringLaw();
     testDispersionAcrossRatesMaterialsAndNotes();
+    testTheFractionalDelayReadIsLossless();
+    testASlewingDelayDoesNotClickAboveFourteenKilohertz();
     testBlockPartitionIsDeterministic();
     testSampleRatesAndAutomationStayBounded();
     testHostileParametersAreSanitised();

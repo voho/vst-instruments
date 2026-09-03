@@ -133,105 +133,105 @@
     "training": {
       "examples": 83,
       "unique_model_renders": 47,
-      "fitted_score": 6.57518,
+      "fitted_score": 6.452449,
       "terms": {
         "attack": {
           "neutral": 9.309916832505955,
-          "fitted": 7.615929
+          "fitted": 7.272781
         },
         "harmonics": {
           "neutral": 10.441357549351897,
-          "fitted": 8.221714
+          "fitted": 8.117547
         },
         "tuning": {
           "neutral": 4.7200069586896545,
-          "fitted": 3.208909
+          "fitted": 3.368746
         },
         "pitch_trajectory": {
           "neutral": 0.5545940344615841,
-          "fitted": 0.510165
+          "fitted": 0.515256
         },
         "decay": {
           "neutral": 6.5023449891362235,
-          "fitted": 5.476741
+          "fitted": 5.459964
         },
         "body": {
           "neutral": 15.462399754765235,
-          "fitted": 11.853453
+          "fitted": 11.583668
         },
         "dynamics": {
           "neutral": 5.262953607125741,
-          "fitted": 0.205193
+          "fitted": 0.205718
         }
       },
       "neutral_score": 8.768534755725106,
-      "change_percent": -25.013925551165013
+      "change_percent": -26.413600678413232
     },
     "held_out": {
       "examples": 24,
       "unique_model_renders": 24,
-      "fitted_score": 6.381324,
+      "fitted_score": 6.142083,
       "terms": {
         "attack": {
           "neutral": 9.155575861766145,
-          "fitted": 7.923179
+          "fitted": 7.423657
         },
         "harmonics": {
           "neutral": 10.831031892275846,
-          "fitted": 8.639617
+          "fitted": 8.268787
         },
         "tuning": {
           "neutral": 5.134666492710443,
-          "fitted": 3.582113
+          "fitted": 3.5344
         },
         "pitch_trajectory": {
           "neutral": 0.2159873722123093,
-          "fitted": 0.157857
+          "fitted": 0.160715
         },
         "decay": {
           "neutral": 5.464938238665436,
-          "fitted": 4.234044
+          "fitted": 4.166603
         },
         "body": {
           "neutral": 15.82243218879784,
-          "fitted": 11.683277
+          "fitted": 11.38287
         },
         "dynamics": {
           "neutral": 0.42473841202342505,
-          "fitted": 0.022788
+          "fitted": 0.022837
         }
       },
       "neutral_score": 8.145301055652865,
-      "change_percent": -21.656376401565407
+      "change_percent": -24.59354223945627
     },
     "flat_top": {
       "examples": 8,
       "unique_model_renders": 8,
-      "fitted_score": 8.120169,
+      "fitted_score": 8.29064,
       "terms": {
         "attack": {
           "neutral": 9.036944038636934,
-          "fitted": 8.09826
+          "fitted": 8.01018
         },
         "harmonics": {
           "neutral": 8.586058487630032,
-          "fitted": 7.338275
+          "fitted": 7.823644
         },
         "tuning": {
           "neutral": 8.267588323509182,
-          "fitted": 2.47798
+          "fitted": 2.384645
         },
         "pitch_trajectory": {
           "neutral": 0.6100492795473387,
-          "fitted": 0.504136
+          "fitted": 0.509344
         },
         "decay": {
           "neutral": 8.690178706006728,
-          "fitted": 6.625239
+          "fitted": 6.635553
         },
         "body": {
           "neutral": 13.894703320071423,
-          "fitted": 15.839682
+          "fitted": 16.358116
         },
         "dynamics": {
           "neutral": null,
@@ -239,7 +239,7 @@
         }
       },
       "neutral_score": 9.309314823108725,
-      "change_percent": -12.773720147017483,
+      "change_percent": -10.942532747738268,
       "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
     }
   },
@@ -1302,5 +1302,21 @@
     ],
     "steel_unchanged": "all 40 non-nylon model renders are byte-identical to the previous engine's",
     "anchor_reswept": "worst separable chord note, cents early/late: 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at 17.2 mm, 25.8/98.2 with no anchor"
+  },
+  "lossless_fractional_delay": {
+    "change": "the string loop's fractional delay is a second-order Thiran allpass read at an integer tap, D held in [1.1, 2.1), replacing the four-point Catmull-Rom read; its phase is folded into the tuning and dispersion collocation with the tap pinned inside each solve, and the collocation's multi-start fallback now runs for both materials from a spread of both starting ratios",
+    "decided_by": "a correctness defect, not the corpus: the interpolated read lost 0.23 and 0.53 dB per pass at 8 and 10 kHz at a half-sample fraction and nothing at an integer one, so H8 on steel MIDI 76 to 84 decayed at 3.0 to 96.5 dB/s at 44.1 kHz on the loop fraction alone, and MIDI 84's H8 at 3.0, 89.8 and 93.6 dB/s at 44.1, 48 and 96 kHz. An allpass has magnitude one at every frequency: the same nine notes now decay at 36.0 to 90.6 dB/s at 44.1 kHz, a smooth 1.7:1 rise in loss per round trip against the interpolated read's 47:1, and no note's H8 varies by more than 12.9% across the three rates",
+    "scores_before": [
+      6.57518,
+      6.381324,
+      8.120169
+    ],
+    "scores_after": [
+      6.452449,
+      6.142083,
+      8.29064
+    ],
+    "restricted_refit": "highLossCutoffScale and nylon.frequencyLossScale were swept on the rendered corpus over [0.9, 3.5] x [1.15, 2.1] (24 paired rows). The training optimum, 2.3 and 1.7, scores 6.428403 training against the shipping values' 6.452449 but 6.165286 on held-out development validation against 6.142083, so gated on validation the refit is rejected and the shipping calibration stands. steel.frequencyLossScale was not swept into the calibration: it is a by-ear value and frozen in the fit",
+    "flat_top_note": "the eight flat-top rows are 2.10% worse where training is 1.87% and held-out validation 3.75% better; that disagreement is a listening set's to settle, not a refit's"
   }
 }
