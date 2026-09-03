@@ -27,15 +27,22 @@ What is measured, per take:
                  80-250 ms window that earlier audits had to use, in which
                  the loop's own loss and the idle strings' partials sit.
   p              plucking point, from the comb the pluck leaves in A0_n
-                 (Traube and Smith, ICMC 2000): the p in [0.03, 0.36] whose
-                 |sin(n pi p)| leaves the flattest residual (L1, cubic in
-                 log n for the body) is taken. Within a root the takes share
-                 one excitation shape per layer, so p is refined jointly:
-                 the layer's shape is the median over its round robins of
-                 each take's comb-divided level, and each take's p is then
-                 re-fitted against it. Harmonics with |sin(n pi p)| below
-                 COMB_GUARD are dropped: dividing by a comb null amplifies
-                 whatever filled it.
+                 (Traube and Smith, "Estimating the plucking point on a
+                 guitar string", Proc. COST G-6 Conference on Digital Audio
+                 Effects, DAFx-00, Verona, 7-9 December 2000, pp. 153-158,
+                 https://www.dafx.de/paper-archive/2000/pdf/Caroline_Traube.pdf):
+                 the p in PLUCK_RANGE = [0.03, 0.36] whose |sin(n pi p)|
+                 leaves the flattest residual (L1, cubic in log n for the
+                 body) is taken, searched on a PLUCK_STEP = 0.0004 grid. The
+                 comb is symmetric under p -> 1 - p, so that range is what
+                 picks the reading as a distance from the bridge; it is a
+                 choice of branch, not a measurement, and it is reported.
+                 Within a root the takes share one excitation shape per
+                 layer, so p is refined jointly: the layer's shape is the
+                 median over its round robins of each take's comb-divided
+                 level, and each take's p is then re-fitted against it.
+                 Harmonics with |sin(n pi p)| below COMB_GUARD are dropped:
+                 dividing by a comb null amplifies whatever filled it.
   aperiodic      the attack's energy in every bin further than two bins from
                  any f_n, over one 6/f0 (never under 46 ms) Hann window at the
                  onset, as a share of the whole 50 Hz-10 kHz attack, with that
@@ -576,7 +583,15 @@ def measure_corpus(root_dir: Path, roots: dict[str, int],
                 # the sensor that heard it. The pickup reads the comb without
                 # the body's modes sitting on the partials, so the microphone
                 # takes the pickup's plucking points rather than re-fitting a
-                # second, noisier set for the same hand.
+                # second, noisier set for the same hand. The pickup lays its
+                # own position comb |sin(n pi d)| over the string's motion, so
+                # this could import a bias; measured, it does not. Fitting p on
+                # the microphone takes alone over the five lowest roots and
+                # differencing against the borrowed values gives medians
+                # +0.0116, +0.0010, +0.0002, +0.0054 and +0.0166 of the string
+                # length with MADs 0.0114 to 0.0358 -- at or inside the 0.02
+                # take-to-take spread the decision log already measures, and so
+                # under the second pass's half width below.
                 pluck = [out["pickup"][name]["takes"][k].pluck
                          if k in out["pickup"][name]["takes"] else float("nan")
                          for k in keys]
@@ -1012,6 +1027,14 @@ def main() -> int:
         "residual_band_hz": [50.0, RESIDUAL_TOP_HZ],
         "residual_split_hz": RESIDUAL_SPLIT_HZ,
         "harmonics": REPORT_HARMONICS,
+        "min_fit_frames": MIN_FIT_FRAMES,
+        "min_fit_span_seconds": MIN_FIT_SPAN_SECONDS,
+        # The comb is symmetric under p -> 1 - p, so this range is what makes
+        # every reported plucking point a distance from the bridge rather than
+        # from the nut. It bounds a reported result, so it is reported with it.
+        "pluck_range": list(PLUCK_RANGE),
+        "pluck_step": PLUCK_STEP,
+        "pluck_second_pass_half_width": PLUCK_SECOND_PASS_HALF_WIDTH,
     }
     args.output.write_text(json.dumps(reports, indent=2, sort_keys=True) + "\n")
     return 0

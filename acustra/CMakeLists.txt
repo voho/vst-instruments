@@ -225,6 +225,30 @@ if(BUILD_TESTING)
                          "${CMAKE_CURRENT_BINARY_DIR}/bridge-probe-smoke.f32"
                          nylon on 0.5 auditorium 40)
         set_tests_properties(Acustra.BridgeProbe PROPERTIES TIMEOUT 30)
+
+        # ExtractExcitation.py's self-test fails only on a synthesised note
+        # whose excitation is known exactly, so what this pins is the
+        # estimator, not the engine; the probe renders beside it are reported,
+        # not gated (the engine's own released shape departs from the ideal
+        # comb, which the tool's docstring records). Registered only where the
+        # interpreter and the two libraries it imports are present, so a build
+        # without them still configures.
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            execute_process(COMMAND "${Python3_EXECUTABLE}" -c
+                                    "import numpy, scipy.io.wavfile"
+                            RESULT_VARIABLE ACUSTRA_EXCITATION_PY_DEPS
+                            OUTPUT_QUIET ERROR_QUIET)
+            if(ACUSTRA_EXCITATION_PY_DEPS EQUAL 0)
+                add_test(NAME Acustra.ExtractExcitation
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/ExtractExcitation.py"
+                                 --self-test
+                                 --probe "$<TARGET_FILE:AcustraBridgeProbe>"
+                                 --work "${CMAKE_CURRENT_BINARY_DIR}/excitation-selftest")
+                set_tests_properties(Acustra.ExtractExcitation PROPERTIES TIMEOUT 180)
+            endif()
+        endif()
     endif()
 
     if(ACUSTRA_BUILD_PLUGIN)
