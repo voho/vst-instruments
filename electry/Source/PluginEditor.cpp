@@ -1151,6 +1151,10 @@ bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
 
         moving = moving || changed;
     }
+    const auto currentSoloMask = processor.getSoloStringMask();
+    const bool soloMaskChanged = currentSoloMask != soloMask;
+    soloMask = currentSoloMask;
+    moving = moving || soloMaskChanged;
     if (selectedStateChanged)
         updateAccessibilityTitle();
     return moving;
@@ -1205,6 +1209,21 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
             focused ? 0.78f : 0.34f));
         graphics.drawRoundedRectangle (selectedBounds.reduced (0.5f), 2.0f,
                                        focused ? 1.2f : 0.7f);
+    }
+
+    if (soloMask != 0)
+    {
+        for (int s = 0; s < electry::ElectryEngine::stringCount; ++s)
+        {
+            if ((soloMask & (1u << s)) != 0 && s != selectedString)
+            {
+                const auto soloBounds = rowBounds (s);
+                graphics.setColour (colours::accentBright.withAlpha (0.08f));
+                graphics.fillRoundedRectangle (soloBounds, 2.0f);
+                graphics.setColour (colours::accentBright.withAlpha (0.42f));
+                graphics.drawRoundedRectangle (soloBounds.reduced (0.5f), 2.0f, 0.8f);
+            }
+        }
     }
 
     if (hoveredString >= 0 && hoveredString != selectedString)
@@ -1349,7 +1368,8 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
         auto stringNumberBounds = labelBounds.removeFromLeft (14.0f);
         // Keep the 8.8 px figures above 4.5:1 over both endpoints of the
         // panel gradient without competing with the selected-string accent.
-        graphics.setColour (stringIndex == selectedString
+        const bool soloed = soloMask != 0 && (soloMask & (1u << stringIndex)) != 0;
+        graphics.setColour (stringIndex == selectedString || soloed
                                 ? colours::accentBright
                                 : colours::dimText.withAlpha (0.72f));
         graphics.setFont (juce::FontOptions (8.8f, juce::Font::bold));

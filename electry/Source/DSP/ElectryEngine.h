@@ -310,14 +310,21 @@ public:
     // audio thread; ordinary MIDI/UI attack groups are far smaller.
     static constexpr int maximumChordEvents = 128;
 
-    // Keyswitches occupy one contiguous group below the playable range,
-    // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
-    // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics/Pinch/
-    // Slide/Dead). The two banks latch independently, so any of the twenty-one
-    // combinations can be reached in two keyswitches at most. A#0 (22) is the
-    // plug-in's momentary fretting-vibrato gesture and B0 (23) its momentary
-    // tremolo-picking wrist; the remaining notes before the playable range
-    // (24..27) are ignored.
+    // Keyswitches occupy the lowest octaves below the playable range.
+    // Solo-string keyswitches occupy Octave -1: MIDI notes 0..7 correspond to
+    // physical strings 8..1 (lowest to highest, matching repick keys).
+    // Note 8 is the Solo Clear / All Strings keyswitch.
+    static constexpr int firstSoloStringKeyswitchNote = 0;
+    static constexpr int soloStringKeyswitchCount = stringCount;
+    static constexpr int soloClearKeyswitchNote = 8;
+
+    // Articulation keyswitches start at 12 (C0): first the picking-style bank
+    // (Down/Up/Alternate), then the play-style bank (Sustain/PalmMute/Hammer/
+    // Harmonics/Pinch/Slide/Dead). The two banks latch independently, so any
+    // of the twenty-one combinations can be reached in two keyswitches at most.
+    // A#0 (22) is the plug-in's momentary fretting-vibrato gesture and B0 (23)
+    // its momentary tremolo-picking wrist; the remaining notes before the
+    // playable range (24..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
@@ -341,6 +348,10 @@ public:
     // without shifting, so the hand covers `position .. position + reach`.
     static constexpr int frettingHandReach = 4;
 
+    static_assert(firstSoloStringKeyswitchNote + soloStringKeyswitchCount <= soloClearKeyswitchNote,
+                  "solo string keys must precede the clear key");
+    static_assert(soloClearKeyswitchNote < firstKeyswitchNote,
+                  "solo string keys must stay below the articulation keyswitch banks");
     static_assert(keyswitchCount == 10,
                   "three picking styles and seven play styles need one keyswitch each");
     static_assert(firstKeyswitchNote + keyswitchCount == vibratoGestureNote,
@@ -465,6 +476,23 @@ public:
     {
         return midiNote >= firstKeyswitchNote
             && midiNote < firstKeyswitchNote + keyswitchCount;
+    }
+    [[nodiscard]] static bool isSoloStringKeyswitchNote(int midiNote) noexcept
+    {
+        return midiNote >= firstSoloStringKeyswitchNote
+            && midiNote < firstSoloStringKeyswitchNote + soloStringKeyswitchCount;
+    }
+    [[nodiscard]] static bool isSoloClearKeyswitchNote(int midiNote) noexcept
+    {
+        return midiNote == soloClearKeyswitchNote;
+    }
+    void setSoloStringMask(std::uint8_t mask) noexcept
+    {
+        soloStringMask_ = mask;
+    }
+    [[nodiscard]] std::uint8_t getSoloStringMask() const noexcept
+    {
+        return soloStringMask_;
     }
     [[nodiscard]] static bool isVibratoGestureNote(int midiNote) noexcept
     {
@@ -1617,6 +1645,7 @@ private:
     PickStyle pickStyle_ { PickStyle::Down };
     PlayStyle playStyle_ { PlayStyle::Sustain };
     bool alternateNextStrokeIsUp_ { false };
+    std::uint8_t soloStringMask_ { 0 };
     std::uint64_t variationSeed_ { 0 };
     std::uint64_t noteSequence_ { 0 };
     int activeVoiceCount_ { 0 };

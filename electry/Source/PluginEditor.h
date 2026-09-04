@@ -165,6 +165,7 @@ private:
     std::array<StringRow, electry::ElectryEngine::stringCount> rows {};
     int selectedString = -1;
     int hoveredString = -1;
+    std::uint8_t soloMask = 0;
 
     void updateAccessibilityTitle();
     void selectString (int stringIndex);

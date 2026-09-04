@@ -120,6 +120,10 @@ public:
     {
         return playStyleKeysHold.load (std::memory_order_relaxed);
     }
+    std::uint8_t getSoloStringMask() const noexcept
+    {
+        return soloStringMaskForDisplay.load (std::memory_order_relaxed);
+    }
     int getMidiMutePressureForDisplay() const noexcept
     {
         return midiMutePressureForDisplay.load (std::memory_order_relaxed);
@@ -263,6 +267,9 @@ private:
     void applyPlayStyle (int styleIndex) noexcept;
     int latestHeldPlayStyle() const noexcept;
     void clearHeldPlayStyles() noexcept;
+    void applySoloStringMask (std::uint8_t mask) noexcept;
+    std::uint8_t computeHeldSoloStringMask() const noexcept;
+    void clearHeldSoloStrings() noexcept;
     void synchronisePlayStyleKeyMode() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
     void resetEngineWithArticulations (int pickStyle, int playStyle) noexcept;
@@ -305,6 +312,11 @@ private:
                electry::ElectryEngine::playStyleKeyswitchCount>
         heldPlayStyleOrder {};
     std::uint64_t heldPlayStyleSequence = 0;
+    std::atomic<std::uint8_t> soloStringMaskForDisplay { 0 };
+    std::atomic<std::uint8_t> latchedSoloStringMask { 0 };
+    std::array<std::uint16_t,
+               electry::ElectryEngine::stringCount>
+        heldSoloStringCounts {};
     std::uint16_t vibratoGestureOwners = 0;
     std::uint16_t tremoloGestureOwners = 0;
     bool sustainPedalDown = false;

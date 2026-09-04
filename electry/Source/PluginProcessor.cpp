@@ -92,7 +92,9 @@ bool isAttackConditioningNote (int note) noexcept
 {
     return electry::ElectryEngine::isKeyswitchNote (note)
         || electry::ElectryEngine::isVibratoGestureNote (note)
-        || electry::ElectryEngine::isTremoloGestureNote (note);
+        || electry::ElectryEngine::isTremoloGestureNote (note)
+        || electry::ElectryEngine::isSoloStringKeyswitchNote (note)
+        || electry::ElectryEngine::isSoloClearKeyswitchNote (note);
 }
 
 bool isRpnStateMidiEvent (const juce::MidiMessageMetadata& metadata) noexcept
@@ -500,6 +502,8 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     // the first block, so it can never be discarded after changing the UI.
     discardUiMidiEvents();
     clearHeldPlayStyles();
+    clearHeldSoloStrings();
+    applySoloStringMask (0);
     appliedPlayStyleKeysHold = playStyleKeysHold.load (std::memory_order_relaxed);
     appliedBasePlayStyleIndex = juce::jlimit (
         0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
@@ -550,6 +554,8 @@ void ElectryAudioProcessor::releaseResources()
     effects.reset();
     discardUiMidiEvents();
     clearHeldPlayStyles();
+    clearHeldSoloStrings();
+    applySoloStringMask (0);
     appliedBasePlayStyleIndex = juce::jlimit (
         0, electry::ElectryEngine::playStyleKeyswitchCount - 1,
         playStyleIndex.load (std::memory_order_relaxed));
@@ -589,6 +595,8 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // lost after its immediate display latch has changed.
         discardUiMidiEvents();
         clearHeldPlayStyles();
+        clearHeldSoloStrings();
+        applySoloStringMask (0);
         clearVibratoGesture();
         clearTremoloGesture();
         appliedBasePlayStyleIndex = juce::jlimit (
@@ -863,6 +871,11 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             // ring-out remains musical. In HOLD mode the play-style
             // keyswitches are notes too, so they return to the saved base.
             clearHeldPlayStyles();
+            if (appliedPlayStyleKeysHold)
+            {
+                clearHeldSoloStrings();
+                applySoloStringMask (0);
+            }
             clearVibratoGesture();
             clearTremoloGesture();
             applyPlayStyle (appliedBasePlayStyleIndex);
@@ -1235,6 +1248,33 @@ void ElectryAudioProcessor::dispatchNoteOn (
         return;
     }
 
+    if (electry::ElectryEngine::isSoloClearKeyswitchNote (note))
+    {
+        clearHeldSoloStrings();
+        applySoloStringMask (0);
+        return;
+    }
+
+    if (electry::ElectryEngine::isSoloStringKeyswitchNote (note))
+    {
+        const int stringIndex = note - electry::ElectryEngine::firstSoloStringKeyswitchNote;
+        if (appliedPlayStyleKeysHold)
+        {
+            auto& count = heldSoloStringCounts[static_cast<std::size_t> (stringIndex)];
+            if (count < std::numeric_limits<std::uint16_t>::max())
+                ++count;
+            applySoloStringMask (computeHeldSoloStringMask());
+        }
+        else
+        {
+            const auto toggleBit = static_cast<std::uint8_t> (1u << stringIndex);
+            const std::uint8_t nextMask = latchedSoloStringMask.load (std::memory_order_relaxed) ^ toggleBit;
+            latchedSoloStringMask.store (nextMask, std::memory_order_relaxed);
+            applySoloStringMask (nextMask);
+        }
+        return;
+    }
+
     const int articulation = note - electry::ElectryEngine::firstKeyswitchNote;
     if (articulation < 0
         || articulation >= electry::ElectryEngine::keyswitchCount)
@@ -1299,6 +1339,24 @@ void ElectryAudioProcessor::dispatchNoteOff (int note) noexcept
         return;
     }
 
+    if (electry::ElectryEngine::isSoloClearKeyswitchNote (note))
+        return;
+
+    if (electry::ElectryEngine::isSoloStringKeyswitchNote (note))
+    {
+        if (appliedPlayStyleKeysHold)
+        {
+            const int stringIndex = note - electry::ElectryEngine::firstSoloStringKeyswitchNote;
+            auto& count = heldSoloStringCounts[static_cast<std::size_t> (stringIndex)];
+            if (count > 0)
+            {
+                --count;
+                applySoloStringMask (computeHeldSoloStringMask());
+            }
+        }
+        return;
+    }
+
     if (electry::ElectryEngine::isPlayableNote (note))
         static_cast<void> (takeNoteOwnership (note, 0, true));
 
@@ -1358,6 +1416,31 @@ void ElectryAudioProcessor::clearHeldPlayStyles() noexcept
     heldPlayStyleSequence = 0;
 }
 
+void ElectryAudioProcessor::applySoloStringMask (std::uint8_t mask) noexcept
+{
+    engine.setSoloStringMask (mask);
+    if (doubleModeActive)
+        doubleEngine->setSoloStringMask (mask);
+    soloStringMaskForDisplay.store (mask, std::memory_order_relaxed);
+}
+
+std::uint8_t ElectryAudioProcessor::computeHeldSoloStringMask() const noexcept
+{
+    std::uint8_t mask = 0;
+    for (int s = 0; s < electry::ElectryEngine::stringCount; ++s)
+    {
+        if (heldSoloStringCounts[static_cast<std::size_t> (s)] > 0)
+            mask |= static_cast<std::uint8_t> (1u << s);
+    }
+    return mask;
+}
+
+void ElectryAudioProcessor::clearHeldSoloStrings() noexcept
+{
+    heldSoloStringCounts.fill (0);
+    latchedSoloStringMask.store (0, std::memory_order_relaxed);
+}
+
 void ElectryAudioProcessor::applyVibratoGesture (float amount) noexcept
 {
     amount = juce::jlimit (0.0f, 1.0f, std::isfinite (amount) ? amount : 0.0f);
@@ -1405,6 +1488,8 @@ void ElectryAudioProcessor::synchronisePlayStyleKeyMode() noexcept
 
     appliedPlayStyleKeysHold = requested;
     clearHeldPlayStyles();
+    clearHeldSoloStrings();
+    applySoloStringMask (0);
     applyPlayStyle (appliedBasePlayStyleIndex);
 }
 
@@ -1422,6 +1507,9 @@ void ElectryAudioProcessor::resetEngineWithArticulations (int pickStyle,
     doubleEngine->noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
                               + playStyle, 1.0f);
     effectivePlayStyleIndex.store (playStyle, std::memory_order_relaxed);
+    const auto mask = soloStringMaskForDisplay.load (std::memory_order_relaxed);
+    engine.setSoloStringMask (mask);
+    doubleEngine->setSoloStringMask (mask);
 }
 
 float ElectryAudioProcessor::decodePitchBend14 (juce::uint8 data1, juce::uint8 data2) noexcept
@@ -1493,6 +1581,7 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
         doubleEngine->noteOn (electry::ElectryEngine::firstPlayStyleKeyswitchNote
                                   + playStyle, 1.0f);
         doubleEngine->setSustainPedal (sustainPedalDown);
+        doubleEngine->setSoloStringMask (engine.getSoloStringMask());
     }
     doubleModeActive = requestedDouble;
 }

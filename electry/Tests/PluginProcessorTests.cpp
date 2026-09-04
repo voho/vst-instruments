@@ -1348,6 +1348,112 @@ void testPlayStyleHoldContract()
     processor.releaseResources();
 }
 
+void testSoloStringProcessorKeyswitches()
+{
+    ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+
+    const auto render = [&] ()
+    {
+        audio.setSize (2, blockSize);
+        audio.clear();
+        processor.processBlock (audio, midi);
+        midi.clear();
+    };
+
+    expect (processor.getSoloStringMask() == 0,
+            "default solo string mask in processor is not 0");
+
+    // Test 1: HOLD mode
+    processor.setPlayStyleKeysHold (true);
+
+    // Press MIDI note 0 (Solo string 8, index 0)
+    midi.addEvent (juce::MidiMessage::noteOn (1, 0, (juce::uint8) 127), 0);
+    render();
+    expect (processor.getSoloStringMask() == 1,
+            "HOLD note on 0 did not set solo mask to 1");
+
+    // Press MIDI note 1 (Solo string 7, index 1) simultaneously
+    midi.addEvent (juce::MidiMessage::noteOn (1, 1, (juce::uint8) 127), 0);
+    render();
+    expect (processor.getSoloStringMask() == 3,
+            "holding notes 0 and 1 did not set mask to 3");
+
+    // Release note 1
+    midi.addEvent (juce::MidiMessage::noteOff (1, 1), 0);
+    render();
+    expect (processor.getSoloStringMask() == 1,
+            "releasing note 1 did not leave note 0 held");
+
+    // Release note 0 -> returns to 0
+    midi.addEvent (juce::MidiMessage::noteOff (1, 0), 0);
+    render();
+    expect (processor.getSoloStringMask() == 0,
+            "releasing note 0 did not clear solo mask to 0 in HOLD mode");
+
+    // Test 2: LATCH mode
+    processor.setPlayStyleKeysHold (false);
+    expect (processor.getSoloStringMask() == 0,
+            "switching to LATCH did not clear solo mask");
+
+    // Tap note 2 (Solo string 6, index 2)
+    midi.addEvent (juce::MidiMessage::noteOn (1, 2, (juce::uint8) 127), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (1, 2), 0);
+    render();
+    expect (processor.getSoloStringMask() == (1u << 2),
+            "tapping note 2 in LATCH mode did not latch string 6");
+
+    // Tap note 8 (Clear / All strings)
+    midi.addEvent (juce::MidiMessage::noteOn (1, 8, (juce::uint8) 127), 0);
+    render();
+    expect (processor.getSoloStringMask() == 0,
+            "tapping note 8 did not clear solo mask in LATCH mode");
+
+    // Test 3: Same-sample conditioning with playable note
+    processor.setPlayStyleKeysHold (true);
+    // On the same sample: Note On for solo string 8 (note 0), and note 40 (playable on string 8)
+    midi.addEvent (juce::MidiMessage::noteOn (1, 40, (juce::uint8) 110), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 0, (juce::uint8) 127), 0);
+    render();
+    expect (processor.getStringVisualState (0).sounding,
+            "same-sample solo keyswitch did not condition attack to string 0");
+
+    // On same sample: play note 64 (unplayable on string 8) while string 8 is soloed
+    midi.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 110), 0);
+    render();
+    expect (! processor.getStringVisualState (7).sounding,
+            "unplayable note 64 sounded on string 7 despite solo string 8 active");
+    expect (processor.getStringVisualState (0).sounding,
+            "playing unplayable note 64 interrupted active note on string 0");
+
+    // Test 4: CC123 (All Notes Off) in HOLD mode clears solo mask
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 123, 0), 0);
+    render();
+    expect (processor.getSoloStringMask() == 0,
+            "CC123 in HOLD mode did not clear solo string mask");
+
+    // Test 5: Double Mode retains active solo mask
+    processor.setPlayStyleKeysHold (false);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 0, (juce::uint8) 127), 0);
+    render();
+    expect (processor.getSoloStringMask() == 1,
+            "latching string 0 did not set mask to 1");
+
+    auto* const outputModeParam = processor.parameters.getParameter (electry::parameters::outputMode);
+    expect (outputModeParam != nullptr, "outputMode parameter missing");
+    if (outputModeParam != nullptr)
+    {
+        outputModeParam->setValueNotifyingHost (outputModeParam->convertTo0to1 (2.0f));
+        render();
+        expect (processor.getSoloStringMask() == 1,
+                "switching to double mode lost solo string mask");
+    }
+
+    processor.releaseResources();
+}
+
 void testSameSampleMuteKeyswitchOrder()
 {
     struct Attack
@@ -5446,6 +5552,7 @@ int main()
     testSameSampleChordAllocationIsCanonical();
     testKeyswitchContract();
     testPlayStyleHoldContract();
+    testSoloStringProcessorKeyswitches();
     testSameSampleMuteKeyswitchOrder();
     testMidiControllersAndVoiceLifecycle();
     testSameSamplePalmMutePressureAttack();

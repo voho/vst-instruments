@@ -1434,6 +1434,7 @@ void ElectryEngine::reset()
     pickStyle_ = PickStyle::Down;
     playStyle_ = PlayStyle::Sustain;
     alternateNextStrokeIsUp_ = false;
+    soloStringMask_ = 0;
     noteSequence_ = variationSeed_;
     activeVoiceCount_ = 0;
     sympatheticStringCount_ = 0;
@@ -2101,6 +2102,8 @@ void ElectryEngine::noteOnChord(std::span<const NoteOnEvent> events)
         for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
         {
             const unsigned int stringBit = 1u << stringIndex;
+            if (soloStringMask_ != 0 && (soloStringMask_ & stringBit) == 0)
+                continue;
             const int fret = midiNote
                            - specs[static_cast<std::size_t>(stringIndex)].openMidiNote;
             if ((usedStrings & stringBit) != 0 || fret < 0 || fret > fretCount)
@@ -2307,6 +2310,19 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
         expressionId = legacyExpressionId;
 
     velocity = clampf(std::isfinite(velocity) ? velocity : 0.0f, 0.0f, 1.0f);
+
+    if (isSoloClearKeyswitchNote(midiNote))
+    {
+        soloStringMask_ = 0;
+        return;
+    }
+
+    if (isSoloStringKeyswitchNote(midiNote))
+    {
+        const int stringIndex = midiNote - firstSoloStringKeyswitchNote;
+        soloStringMask_ = static_cast<std::uint8_t>(1u << stringIndex);
+        return;
+    }
 
     if (isKeyswitchNote(midiNote))
     {
@@ -2529,7 +2545,9 @@ void ElectryEngine::noteOnInternal(int midiNote, float velocity,
 
 void ElectryEngine::noteOff(int midiNote, ExpressionId expressionId)
 {
-    if (! prepared_ || isKeyswitchNote(midiNote))
+    if (! prepared_ || isKeyswitchNote(midiNote)
+        || isSoloStringKeyswitchNote(midiNote)
+        || isSoloClearKeyswitchNote(midiNote))
         return;
     if (expressionId > maximumExpressionId)
         expressionId = legacyExpressionId;
@@ -2606,12 +2624,19 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle,
                                 ExpressionId expressionId) const noexcept
 {
     const auto& specs = stringSpecs();
+    const auto stringAllowed = [this] (int stringIndex)
+    {
+        return soloStringMask_ == 0
+            || (soloStringMask_ & (1u << stringIndex)) != 0;
+    };
     const auto fretOn = [&specs, midiNote] (int stringIndex)
     {
         return midiNote - specs[static_cast<std::size_t>(stringIndex)].openMidiNote;
     };
-    const auto playable = [&fretOn] (int stringIndex)
+    const auto playable = [&fretOn, &stringAllowed] (int stringIndex)
     {
+        if (! stringAllowed(stringIndex))
+            return false;
         const int fret = fretOn(stringIndex);
         return fret >= 0 && fret <= fretCount;
     };

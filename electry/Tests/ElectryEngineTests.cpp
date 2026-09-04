@@ -4178,10 +4178,131 @@ void testKeyswitchesSelectStylesSilently()
            "MIDI 28 did not play open E1 on the lowest string");
 
     // Notes outside both the keyswitch and playable ranges are ignored.
-    engine.noteOn(0, 0.9f);
+    engine.noteOn(24, 0.9f);
     engine.noteOn(87, 0.9f);
     expect(engine.getActiveVoiceCount() == 1,
            "notes outside keyswitches and E1..D6 were not ignored");
+}
+
+void testSoloStringKeyswitches()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+    engine.reset();
+
+    expect(ElectryEngine::firstSoloStringKeyswitchNote == 0,
+           "solo string keyswitch range does not start at MIDI 0");
+    expect(ElectryEngine::soloStringKeyswitchCount == 8,
+           "solo string keyswitches do not cover 8 strings");
+    expect(ElectryEngine::soloClearKeyswitchNote == 8,
+           "solo clear keyswitch is not at MIDI 8");
+    expect(engine.getSoloStringMask() == 0,
+           "default solo string mask is not 0 (all strings allowed)");
+
+    // Solo keyswitches alone must never produce audio or voices.
+    StereoBuffer buffer(static_cast<int>(0.1 * sampleRate));
+    for (int note = 0; note <= ElectryEngine::soloClearKeyswitchNote; ++note)
+        engine.noteOn(note, 1.0f);
+    renderInto(engine, buffer);
+    expect(peakAbs(buffer.left) == 0.0f, "solo keyswitches produced audio");
+    expect(engine.getActiveVoiceCount() == 0, "solo keyswitches created voices");
+
+    engine.reset();
+
+    // 1. Single string solo via keyswitch (String 8 / index 0, low E, range 28..50).
+    engine.noteOn(ElectryEngine::firstSoloStringKeyswitchNote, 1.0f);
+    expect(engine.getSoloStringMask() == (1u << 0),
+           "MIDI note 0 did not solo string 8 (index 0)");
+
+    // In-range note 40 (E2, fret 12 on string 8) must play on string 8.
+    engine.noteOn(40, 0.8f);
+    expect(TestAccess::stringForNote(engine, 40) == 0,
+           "in-range note 40 was not assigned to solo string 8");
+    expect(engine.getActiveVoiceCount() == 1,
+           "in-range note did not create a voice");
+
+    // Out-of-range note 64 (E4, open string 1, fret 36 on string 8) must be ignored / dropped.
+    engine.noteOn(64, 0.8f);
+    expect(TestAccess::stringForNote(engine, 64) == -1,
+           "out-of-range note 64 was assigned to a string despite solo mask");
+    expect(engine.getActiveVoiceCount() == 1,
+           "out-of-range note 64 created a voice on another string");
+
+    // Note 40 on string 8 is still ringing undisturbed.
+    expect(TestAccess::stringForNote(engine, 40) == 0,
+           "ignoring note 64 interrupted active note on solo string");
+
+    // Note Off for note 40 releases it.
+    engine.noteOff(40);
+    engine.reset();
+
+    // 2. Solo Clear keyswitch returns to all strings.
+    engine.noteOn(ElectryEngine::firstSoloStringKeyswitchNote + 2, 1.0f); // solo string 6 (index 2)
+    expect(engine.getSoloStringMask() == (1u << 2),
+           "MIDI note 2 did not solo string 6");
+    engine.noteOn(ElectryEngine::soloClearKeyswitchNote, 1.0f); // clear
+    expect(engine.getSoloStringMask() == 0,
+           "solo clear keyswitch did not reset solo mask to 0");
+    // Now note 64 can be played normally (on string 1 / index 7).
+    engine.noteOn(64, 0.8f);
+    expect(TestAccess::stringForNote(engine, 64) == 7,
+           "note 64 was not assigned to high string after solo clear");
+    engine.noteOff(64);
+    engine.reset();
+
+    // 3. Multi-string solo mask (e.g. strings 8 & 7: indices 0 & 1, ranges 28..50 and 35..57).
+    engine.setSoloStringMask((1u << 0) | (1u << 1));
+    expect(engine.getSoloStringMask() == 3, "multi-string solo mask not set");
+
+    // Play note 30 (F#1, fits string 8) and note 42 (F#2, fits string 7).
+    engine.noteOn(30, 0.8f);
+    engine.noteOn(42, 0.8f);
+    expect(TestAccess::stringForNote(engine, 30) == 0,
+           "note 30 not placed on string 8");
+    expect(TestAccess::stringForNote(engine, 42) == 1,
+           "note 42 not placed on string 7");
+    expect(engine.getActiveVoiceCount() == 2,
+           "multi-string solo did not allocate two voices");
+
+    // Now try note 64 (E4): cannot fit on either string 8 or 7.
+    engine.noteOn(64, 0.8f);
+    expect(TestAccess::stringForNote(engine, 64) == -1,
+           "out-of-range note was played on multi-string solo");
+    expect(engine.getActiveVoiceCount() == 2,
+           "out-of-range note created extra voice");
+
+    // 4. Ringing notes on non-soloed strings are NOT muted.
+    engine.reset();
+    // Play note 64 on high E string with no solo mask.
+    engine.noteOn(64, 0.8f);
+    expect(TestAccess::stringForNote(engine, 64) == 7,
+           "note 64 was not played on string 7");
+    expect(engine.getActiveVoiceCount() == 1, "note 64 did not create voice");
+
+    // Now activate solo on string 8 (index 0).
+    engine.setSoloStringMask(1u << 0);
+
+    // String 7 should STILL be sounding!
+    expect(TestAccess::stringForNote(engine, 64) == 7,
+           "activating solo string mask choked an already ringing voice on string 7");
+    expect(engine.getActiveVoiceCount() == 1,
+           "ringing voice was lost when solo mask changed");
+
+    // Play note 30 on soloed string 8.
+    engine.noteOn(30, 0.8f);
+    expect(TestAccess::stringForNote(engine, 30) == 0,
+           "note 30 was not played on solo string 8");
+    expect(TestAccess::stringForNote(engine, 64) == 7,
+           "playing note on solo string 8 interrupted ringing voice on string 7");
+    expect(engine.getActiveVoiceCount() == 2,
+           "both strings should be sounding concurrently");
+
+    // Release note 64: it releases cleanly while string 8 continues ringing.
+    engine.noteOff(64);
+    expect(TestAccess::stringForNote(engine, 30) == 0,
+           "releasing note 64 disturbed note on string 8");
 }
 
 void testOverlappingSameNoteOffKeepsLatestRepickHeld()
@@ -21084,6 +21205,7 @@ int main()
     testProcessRejectsInvalidBuffers();
     testDeterminism();
     testKeyswitchesSelectStylesSilently();
+    testSoloStringKeyswitches();
     testOverlappingSameNoteOffKeepsLatestRepickHeld();
     testHeldStringRepickKeys();
     testHeldTremoloPickingGesture();

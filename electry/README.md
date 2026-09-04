@@ -223,6 +223,20 @@ accessibility title uses its complete host parameter name (for example,
 
 ### Keyswitches, playable range and repick triggers
 
+MIDI notes 0..7 are solo-string keyswitches in Octave -1 corresponding to physical strings 8..1 (lowest E1 to highest E4), and note 8 is Solo Clear (All Strings). When any solo string keyswitch is active (either held in HOLD mode or latched in LATCH mode), played notes and chords are voiced only on those active strings; notes outside their playable 22-fret range are ignored without sounding. Voices already sounding or decaying on unselected strings continue ringing naturally.
+
+| MIDI note | Key | Solo string keyswitch |
+| --- | --- | --- |
+| 0 | C-1 | Solo String 8 (low E1, open pitch 28) |
+| 1 | C#-1 | Solo String 7 (B1, open pitch 35) |
+| 2 | D-1 | Solo String 6 (E2, open pitch 40) |
+| 3 | D#-1 | Solo String 5 (A2, open pitch 45) |
+| 4 | E-1 | Solo String 4 (D3, open pitch 50) |
+| 5 | F-1 | Solo String 3 (G3, open pitch 55) |
+| 6 | F#-1 | Solo String 2 (B3, open pitch 59) |
+| 7 | G-1 | Solo String 1 (high E4, open pitch 64) |
+| 8 | G#-1 | Solo Clear (All Strings) — resets string restriction to normal polyphony |
+
 MIDI notes 12..21 are two independent banks of silent keyswitches. Notes
 12..14 (C0..D0) always latch how the pick moves. Notes 15..21 (D#0..A0) either
 latch what the hands do or, in HOLD mode, override the PLAY STYLE strip's saved
