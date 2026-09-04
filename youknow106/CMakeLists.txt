@@ -252,6 +252,11 @@ if(YOUKNOW106_BUILD_TOOLS)
         "YOUKNOW106_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
         "YOUKNOW106_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
 
+    add_executable(YouKnow106MakeCalibrationTakes Tools/MakeCalibrationTakes.cpp)
+    target_link_libraries(YouKnow106MakeCalibrationTakes
+        PRIVATE YouKnow106DSP Threads::Threads)
+    target_compile_features(YouKnow106MakeCalibrationTakes PRIVATE cxx_std_20)
+
     add_executable(YouKnow106AuditFactoryPresets Tools/AuditFactoryPresets.cpp)
     target_link_libraries(YouKnow106AuditFactoryPresets
         PRIVATE YouKnow106DSP Threads::Threads)
