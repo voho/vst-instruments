@@ -1663,10 +1663,26 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     const std::complex<float> a01 = -mobilityCross + ratio * stiffness1;
     const std::complex<float> a11 = mobilityHeave + ratio * stiffness2;
     const std::complex<float> inner = a00 * a11 - a01 * a01;
-    if (!(std::abs(inner) > 0.0f))
-        return 0.0f;
-    const std::complex<float> effectiveMobility = determinant
-        * (a11 - 2.0f * arm * a01 + arm * arm * a00) / inner;
+    std::complex<float> effectiveMobility {};
+    if (std::abs(inner) > 0.0f)
+    {
+        effectiveMobility = determinant
+            * (a11 - 2.0f * arm * a01 + arm * arm * a00) / inner;
+    }
+    else
+    {
+        // A bank with no rocking residue anywhere leaves the determinant, and
+        // with it the whole adjugate above, exactly zero.  The rocking
+        // coordinate is then immovable, every string sees the same heave port
+        // with the anchor springs in parallel, and the load is the scalar
+        // (1/Yhh + k0/s)^-1 the one-point junction used.  Neither committed
+        // bank reaches this, but AuditBridgeFits.py emits heave-only banks.
+        const std::complex<float> denominator
+            = s + stiffness0 * mobilityHeave;
+        if (!(std::abs(denominator) > 0.0f))
+            return 0.0f;
+        effectiveMobility = mobilityHeave * s / denominator;
+    }
     // This is the folded full-round-trip multiplier -b/a.  Its phase is the
     // phase contributed by both measured body motion and the saddle anchor; the
     // speaking-string delay is shortened by exactly that amount when tuned.

@@ -61,7 +61,6 @@ import textwrap
 import numpy as np
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import nnls
 from scipy.signal import find_peaks
 
 

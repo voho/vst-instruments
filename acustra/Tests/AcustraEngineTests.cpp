@@ -5347,8 +5347,11 @@ void testEachStringMaterialPlaysItsOwnMeasuredGuitar()
     // u at once. This guards a hand-edited header, not the fit.
     const auto passive = [] (const auto& bank, const char* name)
     {
+        int rocking = 0;
         for (const auto& mode : bank)
         {
+            if (mode.rock > 0.0f)
+                ++rocking;
             expect(mode.q > 0.0f && mode.frequency >= 60.0f
                        && mode.frequency <= 10000.0f,
                    std::string(name) + " bridge bank left the fit's range");
@@ -5360,6 +5363,13 @@ void testEachStringMaterialPlaysItsOwnMeasuredGuitar()
             expect(mode.heave > 0.0f || mode.rock > 0.0f,
                    std::string(name) + " bridge bank has an empty mode");
         }
+        // A bank with no rocking residue at all is a one-degree-of-freedom
+        // bridge, and bridgePhaseDelay's 2x2 adjugate collapses to zero on it
+        // and falls back to the scalar port. Both shipped banks carry rocking
+        // modes (30 of 47 steel, 40 of 46 nylon), so the shipped tuning
+        // compensation is always the two-point one.
+        expect(rocking > 0,
+               std::string(name) + " bridge bank carries no rocking mode");
     };
     passive(acustra::detail::measuredNylonBridgeModes, "the nylon");
     passive(acustra::detail::measuredSteelBridgeModes, "the steel");
