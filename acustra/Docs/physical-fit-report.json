@@ -133,105 +133,105 @@
     "training": {
       "examples": 83,
       "unique_model_renders": 47,
-      "fitted_score": 6.452449,
+      "fitted_score": 6.322154,
       "terms": {
         "attack": {
           "neutral": 9.309916832505955,
-          "fitted": 7.272781
+          "fitted": 6.9609
         },
         "harmonics": {
           "neutral": 10.441357549351897,
-          "fitted": 8.117547
+          "fitted": 8.1862
         },
         "tuning": {
           "neutral": 4.7200069586896545,
-          "fitted": 3.368746
+          "fitted": 3.4751
         },
         "pitch_trajectory": {
           "neutral": 0.5545940344615841,
-          "fitted": 0.515256
+          "fitted": 0.5209
         },
         "decay": {
           "neutral": 6.5023449891362235,
-          "fitted": 5.459964
+          "fitted": 5.2476
         },
         "body": {
           "neutral": 15.462399754765235,
-          "fitted": 11.583668
+          "fitted": 11.3226
         },
         "dynamics": {
           "neutral": 5.262953607125741,
-          "fitted": 0.205718
+          "fitted": 0.2357
         }
       },
       "neutral_score": 8.768534755725106,
-      "change_percent": -26.413600678413232
+      "change_percent": -27.89953879270226
     },
     "held_out": {
       "examples": 24,
       "unique_model_renders": 24,
-      "fitted_score": 6.142083,
+      "fitted_score": 6.319706,
       "terms": {
         "attack": {
           "neutral": 9.155575861766145,
-          "fitted": 7.423657
+          "fitted": 7.5635
         },
         "harmonics": {
           "neutral": 10.831031892275846,
-          "fitted": 8.268787
+          "fitted": 8.5598
         },
         "tuning": {
           "neutral": 5.134666492710443,
-          "fitted": 3.5344
+          "fitted": 3.3923
         },
         "pitch_trajectory": {
           "neutral": 0.2159873722123093,
-          "fitted": 0.160715
+          "fitted": 0.1587
         },
         "decay": {
           "neutral": 5.464938238665436,
-          "fitted": 4.166603
+          "fitted": 4.575
         },
         "body": {
           "neutral": 15.82243218879784,
-          "fitted": 11.38287
+          "fitted": 11.3782
         },
         "dynamics": {
           "neutral": 0.42473841202342505,
-          "fitted": 0.022837
+          "fitted": 0.0233
         }
       },
       "neutral_score": 8.145301055652865,
-      "change_percent": -24.59354223945627
+      "change_percent": -22.412861638624104
     },
     "flat_top": {
       "examples": 8,
       "unique_model_renders": 8,
-      "fitted_score": 8.29064,
+      "fitted_score": 7.950448,
       "terms": {
         "attack": {
           "neutral": 9.036944038636934,
-          "fitted": 8.01018
+          "fitted": 7.5354
         },
         "harmonics": {
           "neutral": 8.586058487630032,
-          "fitted": 7.823644
+          "fitted": 7.8745
         },
         "tuning": {
           "neutral": 8.267588323509182,
-          "fitted": 2.384645
+          "fitted": 2.4401
         },
         "pitch_trajectory": {
           "neutral": 0.6100492795473387,
-          "fitted": 0.509344
+          "fitted": 0.5257
         },
         "decay": {
           "neutral": 8.690178706006728,
-          "fitted": 6.635553
+          "fitted": 6.0733
         },
         "body": {
           "neutral": 13.894703320071423,
-          "fitted": 16.358116
+          "fitted": 15.7902
         },
         "dynamics": {
           "neutral": null,
@@ -239,7 +239,7 @@
         }
       },
       "neutral_score": 9.309314823108725,
-      "change_percent": -10.942532747738268,
+      "change_percent": -14.596851099455554,
       "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
     }
   },
@@ -1391,5 +1391,48 @@
     ],
     "restricted_refit": "highLossCutoffScale and nylon.frequencyLossScale were swept on the rendered corpus over [0.9, 3.5] x [1.15, 2.1] (24 paired rows at 22 distinct points; the shipping point and (2.45, 1.7) were each rendered in two sweeps). The training optimum, 2.3 and 1.7, scores 6.428403 training against the shipping values' 6.452449 but 6.165286 on held-out development validation against 6.142083, so gated on validation the refit is rejected and the shipping calibration stands. steel.frequencyLossScale was not swept into the calibration: it is a by-ear value and frozen in the fit",
     "flat_top_note": "the eight flat-top rows are 2.10% worse where training is 1.87% and held-out validation 3.75% better; that disagreement is a listening set's to settle, not a refit's"
+  },
+  "two_point_bridge": {
+    "change": "the bridge has two degrees of freedom, heave and rock, fitted to the archive's bass and treble impacts and the accelerometer at each of those ends (Method.pdf 2b: the two sensors 'taken together allow to trace two of the degrees of freedom of the bridge'); one pole set with a positive-semidefinite residue matrix [[heave, cross], [cross, rock]] per mode, so a string at lever arm u sees heave + 2u*cross + u^2*rock, which is the measured treble driving point at u = +1 and the measured bass one at u = -1; the six strings sit at u = (i - 2.5)/2 from the impacts' half-separation; a 2x2 junction solve per sample; each stub anchor at its own string's point, so the six springs are a stiffness matrix and a string at the end finds the anchor softer than one in the middle; bridgePhaseDelay reads (Y^-1 + K/s)^-1 at that string's own point",
+    "corner": "above the frequency where the archive's two records of the bass-to-treble transfer differ by as much as the transfer itself, no reciprocal 2x2 is identifiable, so the target is the mean of the two ends and no mode there carries a cross or rocking residue. Measured in third octaves: 2245 Hz on g21, 5657 Hz on g34",
+    "mode_counts": {
+      "g21_bridge": 47,
+      "g21_rocking": 30,
+      "g34_bridge": 46,
+      "g34_rocking": 40
+    },
+    "fit_errors": {
+      "g21_relative_complex": 0.198546,
+      "g21_median_db_per_string": [
+        0.943,
+        0.947,
+        1.256,
+        1.263,
+        0.985,
+        0.849
+      ],
+      "g34_relative_complex": 0.235357,
+      "g34_median_db_per_string": [
+        1.149,
+        1.148,
+        1.276,
+        1.336,
+        0.95,
+        1.227
+      ]
+    },
+    "decided_by": "the chord-tuning measurement, not the corpus. Over E, G, Am, D and C, 26 notes a material, worst separable note's pull early/late in cents: steel 2.6/1.4 to 2.2/3.0 and nylon 1.3/4.9 to 2.8/1.7; mean pull steel 1.1/0.4 to 0.9/0.6 and nylon 0.6/0.8 to 0.7/0.6; the coincident pairs, where the tracker reads a beat rather than a pull, 85.8/6.6 to 65.7/8.4 (steel) and 52.3/13.2 to 28.2/9.4 (nylon). The open low E's H1 decays at 7.93 dB/s against 7.89, inside the recordings' 4.5 to 8.6. E3 played over the open low E splits into a pair 0.463 Hz wide with the upper member 8 dB down, where the one-point bridge left one unresolved peak; the archtop's own open E2 H2 doublet is 0.8 Hz",
+    "scores_before": [
+      6.452449,
+      6.142083,
+      8.29064
+    ],
+    "scores_after": [
+      6.322154,
+      6.319706,
+      7.950448
+    ],
+    "cost": "held-out development validation is 2.89% worse, on its attack, harmonics and decay terms, where training is 2.02% and the flat-top rows 4.10% better. Idle open-string content over 0.5-2.0 s, measured as the power in +/-25-cent bands at the idle open strings' partials against the played fundamental, has a worse median share: -11.1 to -8.3 dB on the steel rows, -20.3 to -18.2 on nylon and -16.5 to -14.9 on the flat-top rows, against recorded targets of -28.2, -19.5 and -13.5. The idle bands' own median level barely moves (0.2 to 0.3 dB); what changes is which rows carry the content, and the softer end anchor is the route",
+    "cost_note": "the plan's fuller gate asked for that share not to get worse; it did. The chord-tuning gate, the doublet and the low-E decay all passed"
   }
 }

@@ -44,7 +44,9 @@ def fit(frequency: np.ndarray, mobility: np.ndarray, candidate_count: int,
     assert best is not None
     error, advance, weights, target, model = best
     keep = weights > np.max(weights) * 1.0e-8
-    retained = [(mode[0], mode[1], float(weight))
+    # This screen fits the treble driving point alone, so every retained mode
+    # is heave-only in the two-point header's terms: a rigid bridge.
+    retained = [(mode[0], mode[1], float(weight), 0.0, 0.0)
                 for mode, weight, use in zip(candidates, weights, keep) if use]
     model = basis[:, keep] @ weights[keep]
     magnitude_error = np.abs(20.0 * np.log10(
@@ -98,6 +100,8 @@ def main() -> int:
                     "phase_advance": result["advance"],
                     "relative_error": result["complex"],
                     "magnitude_error": result["median"],
+                    "corner": bridge.MINIMUM_FREQUENCY,
+                    "rocking": 0,
                 },
                 nylon,
             )

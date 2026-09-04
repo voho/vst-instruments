@@ -296,21 +296,54 @@ private:
         }
     };
 
+    // What the six strings and their anchors present to the saddle, in the
+    // two coordinates the archive measures: sum over strings of Z*2a and of
+    // u*Z*2a, of Z, u*Z and u^2*Z, and the same three moments of the anchor
+    // stiffness. u is saddleLeverArm(string).
+    struct BridgeDrive
+    {
+        float incidentHeave { 0.0f };
+        float incidentRock { 0.0f };
+        float impedance0 { 0.0f };
+        float impedance1 { 0.0f };
+        float impedance2 { 0.0f };
+        float stiffness0 { 0.0f };
+        float stiffness1 { 0.0f };
+        float stiffness2 { 0.0f };
+    };
+
     struct BridgeLoad
     {
         // One slot past the measured modes carries the plate
-        // conductance floor described in FittedPhysicalData.h.
-        std::array<BridgeMode, bridgeModeCount + 1> modes {};
-        float immediateAdmittance { 0.0f };
-        float delayedPastResponse { 0.0f };
+        // conductance floor described in FittedPhysicalData.h. Every mode is
+        // one pole pair carrying the residue matrix [[heave, cross],
+        // [cross, rock]] of MeasuredBridgeData.h, so it needs two states:
+        // one driven by the net force and one by the moment. A mode with no
+        // rocking residue leaves its second state alone.
+        std::array<BridgeMode, bridgeModeCount + 1> heaveModes {};
+        std::array<BridgeMode, bridgeModeCount + 1> rockModes {};
+        std::array<float, bridgeModeCount + 1> residueHeave {};
+        std::array<float, bridgeModeCount + 1> residueCross {};
+        std::array<float, bridgeModeCount + 1> residueRock {};
+        std::array<bool, bridgeModeCount + 1> rocking {};
+        float immediateHeave { 0.0f };
+        float immediateCross { 0.0f };
+        float immediateRock { 0.0f };
+        float pastHeave { 0.0f };
+        float pastRock { 0.0f };
         float tailIntegratedForce { 0.0f };
+        float tailIntegratedMoment { 0.0f };
         float previousDisplacement { 0.0f };
+        float previousRotation { 0.0f };
+        float displacement { 0.0f };
+        float rotation { 0.0f };
         float mainIntegratedForce { 0.0f };
+        float mainIntegratedMoment { 0.0f };
         float bodyIntegratedForce { 0.0f };
+        float bodyIntegratedMoment { 0.0f };
 
         void reset() noexcept;
-        float process(float incident, float characteristicAdmittance,
-                      float tailStiffness, float samplePeriod) noexcept;
+        void process(const BridgeDrive& drive, float samplePeriod) noexcept;
     };
 
     struct BodyMode
@@ -464,7 +497,10 @@ private:
     void configureBody() noexcept;
     void configureBridge() noexcept;
     float bridgePhaseDelay(float frequency, int stringIndex) const noexcept;
-    [[nodiscard]] float bridgeAnchorStiffness() const noexcept;
+    // The six anchor stubs as the three moments of one stiffness matrix in
+    // the saddle's two coordinates: sum K, sum uK, sum u^2 K.
+    void bridgeAnchorMoments(float& stiffness0, float& stiffness1,
+                             float& stiffness2) const noexcept;
     void configureVoice(Voice& voice, int stringIndex, int midiNote,
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
@@ -532,6 +568,12 @@ private:
     std::array<BodyMode, bodyModeCount> fadingBodyModes_ {};
     BridgeLoad bridgeLoad_ {};
     FixedDerivative bridgeVelocityDerivative_ {};
+    FixedDerivative bridgeRotationDerivative_ {};
+    // The junction's power is the sum over both coordinates, so the moments
+    // are differenced alongside the forces; the passivity tests read it.
+    FixedDerivative bridgeForceMomentDerivative_ {};
+    FixedDerivative bridgeBodyMomentDerivative_ {};
+    FixedDerivative bridgeTailMomentDerivative_ {};
     FixedDerivative bridgeForceDerivative_ {};
     FixedDerivative bridgeBodyForceDerivative_ {};
     FixedDerivative bridgeTailForceDerivative_ {};
@@ -578,6 +620,8 @@ private:
     // keeps the port they present rather than switching it out from under a
     // body that is still ringing.
     float lastImpedanceSum_ { 0.0f };
+    float lastImpedanceMoment_ { 0.0f };
+    float lastImpedanceInertia_ { 0.0f };
     bool bridgeDerivativesNeedPriming_ { true };
     bool bridgeDerivativesCrossRelease_ { false };
     bool legato_ { false };

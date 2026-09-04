@@ -239,6 +239,18 @@ std::span<const detail::MeasuredBodyMode> measuredBodyBank(
     return detail::measuredNylonBodyModes;
 }
 
+// Where a string crosses the saddle, in units of the half-separation between
+// the archive's two bridge impacts. Method.pdf section 2b puts the treble
+// impact between B3 and E4 and the bass impact between E2 and A2, so they are
+// the midpoints of string pairs (4,5) and (0,1) and sit at u = +1 and -1; the
+// six strings are then at (i - 2.5)/2. Only the ratio enters, so the set-up
+// spacing at the saddle -- the one strumDelaySamples uses -- cancels.
+// Tools/GenerateMeasuredBridge.py fits the bank against these same arms.
+constexpr float saddleLeverArm(int stringIndex) noexcept
+{
+    return 0.5f * (static_cast<float>(stringIndex) - 2.5f);
+}
+
 bool includeMeasuredBridgeMode(const detail::MeasuredBridgeMode& mode) noexcept
 {
 #if defined(ACUSTRA_ANALYSIS_EXCLUDE_MEASURED_OPEN_STRINGS)
@@ -1061,66 +1073,116 @@ float AcustraEngine::BridgeMode::processPast(float input) noexcept
 
 void AcustraEngine::BridgeLoad::reset() noexcept
 {
-    delayedPastResponse = 0.0f;
+    pastHeave = 0.0f;
+    pastRock = 0.0f;
     tailIntegratedForce = 0.0f;
+    tailIntegratedMoment = 0.0f;
     previousDisplacement = 0.0f;
+    previousRotation = 0.0f;
+    displacement = 0.0f;
+    rotation = 0.0f;
     mainIntegratedForce = 0.0f;
+    mainIntegratedMoment = 0.0f;
     bodyIntegratedForce = 0.0f;
-    for (auto& mode : modes)
+    bodyIntegratedMoment = 0.0f;
+    for (auto& mode : heaveModes)
+        mode.reset();
+    for (auto& mode : rockModes)
         mode.reset();
 }
 
-float AcustraEngine::BridgeLoad::process(
-    float incident, float characteristicAdmittance,
-    float tailStiffness, float samplePeriod) noexcept
+void AcustraEngine::BridgeLoad::process(const BridgeDrive& drive,
+                                        float samplePeriod) noexcept
 {
+    // The saddle has two degrees of freedom, heave and rock, because that is
+    // what the archive measures: two impacts and two accelerometers, "taken
+    // together allow to trace two of the degrees of freedom of the bridge"
+    // (Method.pdf 2b). A string at lever arm u ends on x_u = x + u*theta and
+    // pushes F_u = Z(2a_u - x_u) there, so the strings contribute the force
+    // sum and its first moment, and the same for the anchor stubs, each of
+    // which sits at its own string's u. Solving
+    //     [x; theta] = Y (b - G [x; theta]),  G = string + anchor moments,
+    // is one 2x2 per sample and stays algebraic-loop-free because Y here is
+    // only the immediate part of the modal bank.
+    //
     // DAFx-26 attaches the measured body a short distance from the string's
-    // end, leaving a fixed-end tail.  Below its first resonance that segment
-    // is the passive spring K=T/L_t, and this stiffness is the sum over all
-    // six strings, since every one of them is anchored behind the saddle at
-    // all times.  Trapezoidal integration gives the spring's current-step
-    // impedance c=K*dt/2; solving it together with the immediate mobility
-    // keeps the scattering junction algebraic-loop-free.
-    const float springImpedance = 0.5f * tailStiffness * samplePeriod;
-    const float tailHistory = tailIntegratedForce
-                            + springImpedance * previousDisplacement;
-    const float springScale = 1.0f
-                            + characteristicAdmittance * springImpedance;
-    const float denominator = characteristicAdmittance
-                            + immediateAdmittance * springScale;
-    if (!(denominator > 1.0e-8f) || !std::isfinite(incident))
+    // end, leaving a fixed-end tail. Below its first resonance that segment
+    // is the passive spring K=T/L_t; trapezoidal integration gives its
+    // current-step impedance K*dt/2. Its three moments are the anchor's
+    // stiffness matrix in the same two coordinates.
+    const float half = 0.5f * samplePeriod;
+    const float c0 = half * drive.stiffness0;
+    const float c1 = half * drive.stiffness1;
+    const float c2 = half * drive.stiffness2;
+    const float historyForce = tailIntegratedForce
+        + c0 * previousDisplacement + c1 * previousRotation;
+    const float historyMoment = tailIntegratedMoment
+        + c1 * previousDisplacement + c2 * previousRotation;
+
+    const float g00 = drive.impedance0 + c0;
+    const float g01 = drive.impedance1 + c1;
+    const float g11 = drive.impedance2 + c2;
+    const float b0 = drive.incidentHeave - historyForce;
+    const float b1 = drive.incidentRock - historyMoment;
+
+    // (I + Y G) [x; theta] = Y b + past
+    const float m00 = 1.0f + immediateHeave * g00 + immediateCross * g01;
+    const float m01 = immediateHeave * g01 + immediateCross * g11;
+    const float m10 = immediateCross * g00 + immediateRock * g01;
+    const float m11 = 1.0f + immediateCross * g01 + immediateRock * g11;
+    const float r0 = immediateHeave * b0 + immediateCross * b1 + pastHeave;
+    const float r1 = immediateCross * b0 + immediateRock * b1 + pastRock;
+    const float determinant = m00 * m11 - m01 * m10;
+    if (!(std::abs(determinant) > 1.0e-12f) || !std::isfinite(b0)
+        || !std::isfinite(b1))
     {
         reset();
-        return -incident;
+        return;
     }
 
-    const float displacement = (delayedPastResponse
-        + 2.0f * immediateAdmittance * incident
-        - immediateAdmittance * characteristicAdmittance * tailHistory)
-        / denominator;
-    const float reflected = displacement - incident;
-    if (!std::isfinite(reflected))
+    const float nextDisplacement = (r0 * m11 - r1 * m01) / determinant;
+    const float nextRotation = (r1 * m00 - r0 * m10) / determinant;
+    if (!std::isfinite(nextDisplacement) || !std::isfinite(nextRotation))
     {
         reset();
-        return -incident;
+        return;
     }
+    displacement = nextDisplacement;
+    rotation = nextRotation;
 
-    const float nextTailIntegratedForce = tailHistory
-                                        + springImpedance * displacement;
-    const float bodyForceWave = 2.0f * incident - displacement
-        - characteristicAdmittance * nextTailIntegratedForce;
-    float nextPastResponse = 0.0f;
-    for (auto& mode : modes)
-        nextPastResponse += mode.processPast(bodyForceWave);
-    delayedPastResponse = std::isfinite(nextPastResponse)
-        ? nextPastResponse : 0.0f;
+    const float nextTailForce = historyForce
+        + c0 * displacement + c1 * rotation;
+    const float nextTailMoment = historyMoment
+        + c1 * displacement + c2 * rotation;
+    // The string force less what the anchor takes, in both coordinates.
+    const float bodyForce = b0 - g00 * displacement - g01 * rotation;
+    const float bodyMoment = b1 - g01 * displacement - g11 * rotation;
+
+    float nextPastHeave = 0.0f;
+    float nextPastRock = 0.0f;
+    for (std::size_t index = 0; index < heaveModes.size(); ++index)
+    {
+        const float heaveState = heaveModes[index].processPast(bodyForce);
+        nextPastHeave += residueHeave[index] * heaveState;
+        if (!rocking[index])
+            continue;
+        const float rockState = rockModes[index].processPast(bodyMoment);
+        nextPastHeave += residueCross[index] * rockState;
+        nextPastRock += residueCross[index] * heaveState
+                      + residueRock[index] * rockState;
+    }
+    pastHeave = std::isfinite(nextPastHeave) ? nextPastHeave : 0.0f;
+    pastRock = std::isfinite(nextPastRock) ? nextPastRock : 0.0f;
     previousDisplacement = displacement;
-    tailIntegratedForce = nextTailIntegratedForce;
-    const float portImpedance = 1.0f / characteristicAdmittance;
-    mainIntegratedForce = portImpedance
-                        * (2.0f * incident - displacement);
-    bodyIntegratedForce = portImpedance * bodyForceWave;
-    return reflected;
+    previousRotation = rotation;
+    tailIntegratedForce = nextTailForce;
+    tailIntegratedMoment = nextTailMoment;
+    mainIntegratedForce = drive.incidentHeave
+        - drive.impedance0 * displacement - drive.impedance1 * rotation;
+    mainIntegratedMoment = drive.incidentRock
+        - drive.impedance1 * displacement - drive.impedance2 * rotation;
+    bodyIntegratedForce = bodyForce;
+    bodyIntegratedMoment = bodyMoment;
 }
 
 void AcustraEngine::prepare(double sampleRate, int)
@@ -1199,9 +1261,13 @@ void AcustraEngine::resetSoundState() noexcept
 {
     bridgeLoad_.reset();
     bridgeVelocityDerivative_.reset();
+    bridgeRotationDerivative_.reset();
     bridgeForceDerivative_.reset();
+    bridgeForceMomentDerivative_.reset();
     bridgeBodyForceDerivative_.reset();
+    bridgeBodyMomentDerivative_.reset();
     bridgeTailForceDerivative_.reset();
+    bridgeTailMomentDerivative_.reset();
     lastBridgeVelocity_ = 0.0f;
     lastBridgeReactionForce_ = 0.0f;
     lastBridgeBodyForce_ = 0.0f;
@@ -1214,6 +1280,8 @@ void AcustraEngine::resetSoundState() noexcept
     bridgeDerivativesNeedPriming_ = true;
     bridgeDerivativesCrossRelease_ = false;
     lastImpedanceSum_ = 0.0f;
+    lastImpedanceMoment_ = 0.0f;
+    lastImpedanceInertia_ = 0.0f;
     for (auto& mode : bodyModes_)
         mode.reset();
     for (auto& mode : fadingBodyModes_)
@@ -1438,58 +1506,89 @@ void AcustraEngine::configureBody() noexcept
 
 void AcustraEngine::configureBridge() noexcept
 {
-    bridgeLoad_.immediateAdmittance = 0.0f;
+    bridgeLoad_.immediateHeave = 0.0f;
+    bridgeLoad_.immediateCross = 0.0f;
+    bridgeLoad_.immediateRock = 0.0f;
     const float rate = static_cast<float>(sampleRate_);
     const float bilinear = 2.0f * rate;
-    // Each stored positive weight multiplies the continuous mobility
-    // s/(s^2 + 2 damping s + omega^2).  A per-mode prewarped bilinear
-    // transform preserves its measured centre frequency and PR property.
-    const auto configure = [&] (BridgeMode& mode, float frequency, float q,
-                                float weight)
+    // Each mode's residue matrix multiplies the continuous mobility
+    // s/(s^2 + 2 damping s + omega^2), which is shared by both coordinates.
+    // A per-mode prewarped bilinear transform preserves its measured centre
+    // frequency, and a positive semidefinite residue matrix keeps every
+    // string's own combination of the three positive real.
+    const auto configure = [&] (std::size_t index, float frequency, float q,
+                                float heave, float cross, float rock)
     {
-        if (!(weight > 0.0f) || frequency >= 0.45f * rate)
+        auto& heaveMode = bridgeLoad_.heaveModes[index];
+        auto& rockMode = bridgeLoad_.rockModes[index];
+        bridgeLoad_.residueHeave[index] = 0.0f;
+        bridgeLoad_.residueCross[index] = 0.0f;
+        bridgeLoad_.residueRock[index] = 0.0f;
+        bridgeLoad_.rocking[index] = false;
+        const bool active = (heave > 0.0f || rock > 0.0f)
+                          && frequency < 0.45f * rate;
+        if (!active)
         {
-            mode.denominator1 = mode.denominator2 = 0.0f;
-            mode.numerator1 = mode.numerator2 = 0.0f;
-            mode.reset();
+            for (auto* mode : { &heaveMode, &rockMode })
+            {
+                mode->denominator1 = mode->denominator2 = 0.0f;
+                mode->numerator1 = mode->numerator2 = 0.0f;
+                mode->reset();
+            }
             return;
         }
         const float omega = bilinear * std::tan(pi * frequency / rate);
         const float damping = omega / (2.0f * q);
         const float denominator0 = bilinear * bilinear
             + 2.0f * damping * bilinear + omega * omega;
-        mode.denominator1 = (-2.0f * bilinear * bilinear
+        const float denominator1 = (-2.0f * bilinear * bilinear
             + 2.0f * omega * omega) / denominator0;
-        mode.denominator2 = (bilinear * bilinear
+        const float denominator2 = (bilinear * bilinear
             - 2.0f * damping * bilinear + omega * omega) / denominator0;
-        const float immediate = weight * bilinear / denominator0;
-        mode.numerator1 = -immediate * mode.denominator1;
-        mode.numerator2 = -immediate * (1.0f + mode.denominator2);
-        bridgeLoad_.immediateAdmittance += immediate;
-        mode.reset();
+        const float immediate = bilinear / denominator0;
+        for (auto* mode : { &heaveMode, &rockMode })
+        {
+            mode->denominator1 = denominator1;
+            mode->denominator2 = denominator2;
+            mode->numerator1 = -immediate * denominator1;
+            mode->numerator2 = -immediate * (1.0f + denominator2);
+            mode->reset();
+        }
+        bridgeLoad_.residueHeave[index] = heave;
+        bridgeLoad_.residueCross[index] = cross;
+        bridgeLoad_.residueRock[index] = rock;
+        bridgeLoad_.rocking[index] = rock > 0.0f || cross != 0.0f;
+        bridgeLoad_.immediateHeave += heave * immediate;
+        bridgeLoad_.immediateCross += cross * immediate;
+        bridgeLoad_.immediateRock += rock * immediate;
     };
 
     const auto bank = measuredBridgeBank(parameters_.stringMaterial);
+    const float scale = physicalCalibration_.bridgeMobilityScale;
     for (std::size_t index = 0;
          index < static_cast<std::size_t>(bridgeModeCount); ++index)
     {
         if (index >= bank.size())
         {
-            configure(bridgeLoad_.modes[index], 0.0f, 1.0f, 0.0f);
+            configure(index, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f);
             continue;
         }
         const auto& measured = bank[index];
-        configure(bridgeLoad_.modes[index], measured.frequency, measured.q,
-                  includeMeasuredBridgeMode(measured)
-                      ? measured.weight
-                            * physicalCalibration_.bridgeMobilityScale
-                      : 0.0f);
+        const bool include = includeMeasuredBridgeMode(measured);
+        configure(index, measured.frequency, measured.q,
+                  include ? measured.heave * scale : 0.0f,
+                  include ? measured.cross * scale : 0.0f,
+                  include ? measured.rock * scale : 0.0f);
     }
 
+    // The plate conductance floor is the dense overlap of a plate's own
+    // driving-point response, which the archive never resolves into a
+    // rocking pair, so it enters as heave alone.
     const auto plate = plateConductanceMode(physicalCalibration_);
-    configure(bridgeLoad_.modes[static_cast<std::size_t>(bridgeModeCount)],
-              plate.frequency, plate.q, plate.weight);
-    bridgeLoad_.delayedPastResponse = 0.0f;
+    configure(static_cast<std::size_t>(bridgeModeCount), plate.frequency,
+              plate.q, plate.weight, 0.0f, 0.0f);
+    bridgeLoad_.pastHeave = 0.0f;
+    bridgeLoad_.pastRock = 0.0f;
 }
 
 float AcustraEngine::bridgePhaseDelay(float frequency,
@@ -1503,7 +1602,13 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     const float digitalOmega = twoPi * frequency / rate;
     const std::complex<float> s(
         0.0f, bilinear * std::tan(0.5f * digitalOmega));
-    std::complex<float> mobility {};
+    // Each string ends at its own point on the saddle, so it is its own
+    // combination of the heaving and rocking banks that folds into its tuned
+    // delay, not one shared driving point.
+    const float arm = saddleLeverArm(stringIndex);
+    std::complex<float> mobilityHeave {};
+    std::complex<float> mobilityCross {};
+    std::complex<float> mobilityRock {};
     for (const auto& measured
          : measuredBridgeBank(parameters_.stringMaterial))
     {
@@ -1513,9 +1618,12 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
         const float omega = bilinear * std::tan(
             pi * measured.frequency / rate);
         const float damping = omega / (2.0f * measured.q);
-        mobility += measured.weight
-            * physicalCalibration_.bridgeMobilityScale * s
+        const std::complex<float> shape
+            = physicalCalibration_.bridgeMobilityScale * s
             / (s * s + 2.0f * damping * s + omega * omega);
+        mobilityHeave += measured.heave * shape;
+        mobilityCross += measured.cross * shape;
+        mobilityRock += measured.rock * shape;
     }
 
     const auto plate = plateConductanceMode(physicalCalibration_);
@@ -1523,7 +1631,7 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     {
         const float omega = bilinear * std::tan(pi * plate.frequency / rate);
         const float damping = omega / (2.0f * plate.q);
-        mobility += plate.weight * s
+        mobilityHeave += plate.weight * s
             / (s * s + 2.0f * damping * s + omega * omega);
     }
 
@@ -1536,10 +1644,29 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     // return impedance, avoiding a second count of the strings already visible
     // in the Mores bridge measurement.
     const float characteristicAdmittance = 1.0f / impedance;
-    const std::complex<float> bodyImpedance = 1.0f / mobility;
-    const std::complex<float> tailImpedance = bridgeAnchorStiffness() / s;
-    const std::complex<float> effectiveMobility
-        = 1.0f / (bodyImpedance + tailImpedance);
+    // Body and anchor are in parallel at the saddle, but on a bridge with two
+    // degrees of freedom that parallel has to be taken as matrices and only
+    // then read at this string's own point: the anchor a string finds is
+    // softer at the ends, where it can rock the bridge against the others,
+    // than in the middle.
+    float stiffness0 = 0.0f;
+    float stiffness1 = 0.0f;
+    float stiffness2 = 0.0f;
+    bridgeAnchorMoments(stiffness0, stiffness1, stiffness2);
+    // (Y^-1 + K/s)^-1 = det(Y) * (adj(Y) + det(Y) K/s)^-1, which needs no
+    // division by a determinant that goes to zero wherever the bank has no
+    // rocking residue.
+    const std::complex<float> determinant
+        = mobilityHeave * mobilityRock - mobilityCross * mobilityCross;
+    const std::complex<float> ratio = determinant / s;
+    const std::complex<float> a00 = mobilityRock + ratio * stiffness0;
+    const std::complex<float> a01 = -mobilityCross + ratio * stiffness1;
+    const std::complex<float> a11 = mobilityHeave + ratio * stiffness2;
+    const std::complex<float> inner = a00 * a11 - a01 * a01;
+    if (!(std::abs(inner) > 0.0f))
+        return 0.0f;
+    const std::complex<float> effectiveMobility = determinant
+        * (a11 - 2.0f * arm * a01 + arm * arm * a00) / inner;
     // This is the folded full-round-trip multiplier -b/a.  Its phase is the
     // phase contributed by both measured body motion and the saddle anchor; the
     // speaking-string delay is shortened by exactly that amount when tuned.
@@ -1549,12 +1676,23 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     return -std::arg(selfReflection) / digitalOmega;
 }
 
-float AcustraEngine::bridgeAnchorStiffness() const noexcept
+void AcustraEngine::bridgeAnchorMoments(float& stiffness0,
+                                        float& stiffness1,
+                                        float& stiffness2) const noexcept
 {
-    float sum = 0.0f;
-    for (const auto& voice : voices_)
-        sum += voice.bridgeTailStiffness;
-    return sum;
+    // Every string is anchored behind the saddle whether or not it is being
+    // played, but each stub stands at its own point on it, so the six springs
+    // are one stiffness matrix rather than one sum.
+    stiffness0 = stiffness1 = stiffness2 = 0.0f;
+    for (int string = 0; string < stringCount; ++string)
+    {
+        const float arm = saddleLeverArm(string);
+        const float stiffness
+            = voices_[static_cast<std::size_t>(string)].bridgeTailStiffness;
+        stiffness0 += stiffness;
+        stiffness1 += arm * stiffness;
+        stiffness2 += arm * arm * stiffness;
+    }
 }
 
 void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
@@ -3172,9 +3310,13 @@ void AcustraEngine::setBridgeCouplingEnabled(bool enabled) noexcept
     bridgeCouplingEnabled_ = enabled;
     bridgeLoad_.reset();
     bridgeVelocityDerivative_.reset();
+    bridgeRotationDerivative_.reset();
     bridgeForceDerivative_.reset();
+    bridgeForceMomentDerivative_.reset();
     bridgeBodyForceDerivative_.reset();
+    bridgeBodyMomentDerivative_.reset();
     bridgeTailForceDerivative_.reset();
+    bridgeTailMomentDerivative_.reset();
     lastBridgeVelocity_ = 0.0f;
     lastBridgeReactionForce_ = 0.0f;
     lastBridgeBodyForce_ = 0.0f;
@@ -3396,9 +3538,7 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         std::array<float, stringCount> horizontalIncident {};
         std::array<float, stringCount> excitation {};
         std::array<float, stringCount> tailIncident {};
-        float impedanceSum = 0.0f;
-        float tailStiffnessSum = 0.0f;
-        float weightedIncident = 0.0f;
+        BridgeDrive drive {};
         for (int string = 0; string < stringCount; ++string)
         {
             auto& voice = voices_[static_cast<std::size_t>(string)];
@@ -3431,11 +3571,16 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                 tailIncident[static_cast<std::size_t>(string)]
                     = voice.tailLoop.advance(delaySmoothing_, voice.tailDamping);
             // Every string is anchored behind the saddle whether or not it
-            // is being played, and springs between the same two nodes add, so
-            // the anchor the junction sees is a constant of the instrument.
-            // Summing only the played ones made it stiffen with each voice
-            // held, which more than doubled a note's sustain inside a chord.
-            tailStiffnessSum += voice.bridgeTailStiffness;
+            // is being played, so the anchor the junction sees is a constant
+            // of the instrument. Summing only the played ones made it stiffen
+            // with each voice held, which more than doubled a note's sustain
+            // inside a chord. Each stub stands at its own string's point on
+            // the saddle, so the six enter as the three moments of a
+            // stiffness matrix rather than as one sum.
+            const float arm = saddleLeverArm(string);
+            drive.stiffness0 += voice.bridgeTailStiffness;
+            drive.stiffness1 += arm * voice.bridgeTailStiffness;
+            drive.stiffness2 += arm * arm * voice.bridgeTailStiffness;
             // Every string on the bridge is a member of the junction, played
             // or not: an idle string on a moving bridge carries a wave, and
             // at its resonance it presents thousands of times its
@@ -3449,10 +3594,14 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             {
                 const float port = voice.characteristicImpedance
                                  * voice.appliedBendImpedanceScale;
-                impedanceSum += port;
-                weightedIncident += port
+                const float incident = 2.0f * port
                     * (verticalIncident[static_cast<std::size_t>(string)]
                        + tailIncident[static_cast<std::size_t>(string)]);
+                drive.impedance0 += port;
+                drive.impedance1 += arm * port;
+                drive.impedance2 += arm * arm * port;
+                drive.incidentHeave += incident;
+                drive.incidentRock += arm * incident;
             }
         }
 
@@ -3464,28 +3613,38 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         // that arrived as a transient of 0.96 against a 0.008 background, and
         // it stored the modes' energy until the next note released it as a
         // click.
-        const bool hasActivePort = impedanceSum > 1.0e-6f;
-        if (hasActivePort)
-            lastImpedanceSum_ = impedanceSum;
+        if (drive.impedance0 > 1.0e-6f)
+        {
+            lastImpedanceSum_ = drive.impedance0;
+            lastImpedanceMoment_ = drive.impedance1;
+            lastImpedanceInertia_ = drive.impedance2;
+        }
         else if (lastImpedanceSum_ > 1.0e-6f)
-            impedanceSum = lastImpedanceSum_;
-        const bool portIsLoaded = impedanceSum > 1.0e-6f;
-        const float aggregateIncident = portIsLoaded
-            ? weightedIncident / impedanceSum : 0.0f;
+        {
+            drive.impedance0 = lastImpedanceSum_;
+            drive.impedance1 = lastImpedanceMoment_;
+            drive.impedance2 = lastImpedanceInertia_;
+        }
+        const bool portIsLoaded = drive.impedance0 > 1.0e-6f;
         float bridgeDisplacement = 0.0f;
-        float reactionWave = portIsLoaded
-            ? impedanceSum * 2.0f * aggregateIncident : 0.0f;
+        float bridgeRotation = 0.0f;
+        float reactionWave = portIsLoaded ? drive.incidentHeave : 0.0f;
+        float reactionMoment = portIsLoaded ? drive.incidentRock : 0.0f;
         float bodyForceWave = reactionWave;
+        float bodyMomentWave = reactionMoment;
         float tailForceWave = 0.0f;
+        float tailMomentWave = 0.0f;
         if (bridgeCouplingEnabled_ && portIsLoaded)
         {
-            const float reflected = bridgeLoad_.process(
-                aggregateIncident, 1.0f / impedanceSum,
-                tailStiffnessSum, inverseSampleRate_);
-            bridgeDisplacement = aggregateIncident + reflected;
+            bridgeLoad_.process(drive, inverseSampleRate_);
+            bridgeDisplacement = bridgeLoad_.displacement;
+            bridgeRotation = bridgeLoad_.rotation;
             reactionWave = bridgeLoad_.mainIntegratedForce;
+            reactionMoment = bridgeLoad_.mainIntegratedMoment;
             bodyForceWave = bridgeLoad_.bodyIntegratedForce;
+            bodyMomentWave = bridgeLoad_.bodyIntegratedMoment;
             tailForceWave = bridgeLoad_.tailIntegratedForce;
+            tailMomentWave = bridgeLoad_.tailIntegratedMoment;
         }
         const float sampleRateRatio = static_cast<float>(sampleRate_) / 48000.0f;
         if (bridgeDerivativesNeedPriming_
@@ -3493,9 +3652,13 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                 > 1.0e-12f))
         {
             bridgeVelocityDerivative_.reset(bridgeDisplacement);
+            bridgeRotationDerivative_.reset(bridgeRotation);
             bridgeForceDerivative_.reset(reactionWave);
+            bridgeForceMomentDerivative_.reset(reactionMoment);
             bridgeBodyForceDerivative_.reset(bodyForceWave);
+            bridgeBodyMomentDerivative_.reset(bodyMomentWave);
             bridgeTailForceDerivative_.reset(tailForceWave);
+            bridgeTailMomentDerivative_.reset(tailMomentWave);
             for (int string = 0; string < stringCount; ++string)
             {
                 auto& voice = voices_[static_cast<std::size_t>(string)];
@@ -3521,26 +3684,47 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         };
         lastBridgeVelocity_ = motion(
             bridgeVelocityDerivative_, bridgeDisplacement);
+        // The saddle's rocking rate. A string reads its own end's motion as
+        // the heave plus its lever arm times this; the derivative is linear,
+        // so two of them serve all six.
+        const float bridgeRotationRate = motion(
+            bridgeRotationDerivative_, bridgeRotation);
         lastBridgeReactionForce_ = motion(bridgeForceDerivative_, reactionWave);
         lastBridgeBodyForce_ = motion(bridgeBodyForceDerivative_, bodyForceWave);
         lastBridgeTailForce_ = motion(bridgeTailForceDerivative_, tailForceWave);
-        lastBridgePower_ = lastBridgeVelocity_ * lastBridgeReactionForce_;
-        lastBridgeBodyPower_ = lastBridgeVelocity_ * lastBridgeBodyForce_;
-        lastBridgeTailPower_ = lastBridgeVelocity_ * lastBridgeTailForce_;
+        // Power crosses the saddle in both coordinates, so each branch's is
+        // the heave product plus the rocking one; reading only the first
+        // would let the tail spring look like it stored negative energy.
+        const float reactionMomentRate
+            = motion(bridgeForceMomentDerivative_, reactionMoment);
+        const float bodyMomentRate
+            = motion(bridgeBodyMomentDerivative_, bodyMomentWave);
+        const float tailMomentRate
+            = motion(bridgeTailMomentDerivative_, tailMomentWave);
+        lastBridgePower_ = lastBridgeVelocity_ * lastBridgeReactionForce_
+            + bridgeRotationRate * reactionMomentRate;
+        lastBridgeBodyPower_ = lastBridgeVelocity_ * lastBridgeBodyForce_
+            + bridgeRotationRate * bodyMomentRate;
+        lastBridgeTailPower_ = lastBridgeVelocity_ * lastBridgeTailForce_
+            + bridgeRotationRate * tailMomentRate;
 
         float directLeft = 0.0f;
         float directRight = 0.0f;
         float sympatheticForce = 0.0f;
         float longitudinalForce = 0.0f;
         for (int string = 0; string < stringCount; ++string)
+        {
+            const float arm = saddleLeverArm(string);
             finishVoice(voices_[static_cast<std::size_t>(string)], string,
                 verticalIncident[static_cast<std::size_t>(string)],
                 horizontalIncident[static_cast<std::size_t>(string)],
                 excitation[static_cast<std::size_t>(string)],
                 tailIncident[static_cast<std::size_t>(string)],
-                bridgeDisplacement, lastBridgeVelocity_,
+                bridgeDisplacement + arm * bridgeRotation,
+                lastBridgeVelocity_ + arm * bridgeRotationRate,
                 directLeft, directRight, sympatheticForce,
                 longitudinalForce);
+        }
 
         // DAFx-26 Eq. (45): only Fb participates in the measured body
         // compliance, while unplayed open-string voices are summed one-way

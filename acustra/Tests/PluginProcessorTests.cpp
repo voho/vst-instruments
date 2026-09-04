@@ -397,7 +397,19 @@ void testSameSampleChordsAreStrummedAndAlternate()
     expect (up < 0.6 * down, "the second of two strums did not start from the top string");
     expect (downAgain > 0.7 * down,
             "the third strum in a row did not alternate back to a downstroke");
-    expect (hammered < 0.85 * down, "a legato group was swept like a strum");
+    // On the two-point bridge the medians read down 8, up 2, down again 8 and
+    // legato 7 ms, where the one-point bridge read 8, 3, 7.5 and 6. The legato
+    // floor rose by one 1 ms analysis hop: nothing about the sweep changed,
+    // but the top string's 370 Hz band reaches a fifth of its own maximum a
+    // hop later now that every string drives the bridge through its own point
+    // on the saddle. The sample-exact form of this contract - a scheduled
+    // pluck sounds on the sample it was scheduled for - is in the engine
+    // suite; what is left here is that a legato group is not swept.
+    expect (hammered < 0.9 * down, "a legato group was swept like a strum");
+    std::cout << "Acustra strum sweep medians: down " << down * 1000.0
+              << " ms, up " << up * 1000.0 << " ms, down again "
+              << downAgain * 1000.0 << " ms, legato " << hammered * 1000.0
+              << " ms\n";
 }
 
 void testSameSampleNoteOnOffDoesNotStick()
