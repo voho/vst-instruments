@@ -987,6 +987,48 @@ public:
                       == std::bit_cast<std::uint32_t> (internalVoltsPerUnit),
                   "the chorus and the engine disagree about the node volt scale");
     static constexpr float minus18DbfsAmplitude = 0.125892541f;
+    // How much of the digital range the product actually uses, in decibels
+    // above the strict analogue-ceiling convention below.
+    //
+    // Until 2026-09-04 digital full scale was the output summer's own
+    // clipping asymptote and nothing else. That is the most defensible
+    // ceiling a model can pick -- it invents no limit the circuit does not
+    // have -- but it is a headroom policy, not a loudness one, and it left
+    // this instrument about 19 dB quieter than a peer JUNO-106 emulation
+    // measured on the same patch and notes (KR-106 at its own default:
+    // -17.5 dBFS RMS; this engine at maximum volume: -36.2). A real 106 only
+    // approaches that rail when driven hard, so ordinary patches sat 22 dB
+    // below full scale and the plug-in read as broken beside other
+    // instruments.
+    //
+    // Output calibration is explicitly a product convention rather than a
+    // JUNO-106 voltage (see internalVoltsPerUnit), so this is a product
+    // decision and not an evidence one. The figure is not chosen by taste
+    // either, and the first attempt got it wrong in a way worth recording.
+    // Sizing it against the FACTORY BANK's own peak headroom gives 8.5 dB,
+    // because the bank's presets carry their own VR1 attenuation -- but the
+    // instrument's headroom is not the bank's. A six-voice chord with saw,
+    // pulse and sub on and both VCA LEVEL and VOLUME at maximum, which is
+    // ordinary playing rather than an extreme, peaks 3.0 dB below full scale.
+    // That, not the bank, is the binding constraint: an instrument that
+    // clips when a player holds a chord with the volume up has traded one
+    // defect for a worse one. 2.5 dB leaves that chord at -0.51 dBFS and the
+    // loudest factory preset at -7.04, comfortably inside the -1 dBFS
+    // contract the bank is audited against.
+    //
+    // This closes 2.5 dB of an 18.7 dB gap and no more. The rest of that gap
+    // is not headroom this instrument has: the peer runs its own output hot
+    // enough that its mixed patches measure +10.7 dBFS, i.e. it overflows
+    // full scale and relies on the host to pull it back. Following it there
+    // is a product decision this constant deliberately leaves unmade.
+    //
+    // It is a pure post-clip output scalar -- applied after outputSummerClip
+    // and after every modelled nonlinearity -- so no timbre, no saturation
+    // point and no headroom relationship inside the instrument moves with it.
+    // What does move is every session's loudness, which is why it landed in
+    // the unreleased 1.1.0 rather than in a patch release.
+    static constexpr float outputLevelPolicyDb = 2.5f;
+    static constexpr float outputLevelPolicyGain = 1.33352143f;  // 10^(2.5/20)
     static constexpr float compatibilityOutputReferenceRmsVolts =
         internalVoltsPerUnit * minus18DbfsAmplitude;
     [[nodiscard]] static float outputReferenceGain(float referenceRmsVolts) noexcept;

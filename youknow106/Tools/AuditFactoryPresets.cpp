@@ -53,7 +53,11 @@ constexpr int auditOversampleFactor = 4;
 // decibels above the untrimmed corpus median, which is what actually shapes
 // the bank.
 constexpr double factoryPeakCeilingDbfs = -1.0;
-constexpr double factoryGatedCeilingDbfs = -31.0;
+// Moved -31.0 -> -28.5 with the 2.5 dB output level policy
+// (YouKnow106Engine::outputLevelPolicyDb). This is an ABSOLUTE figure, so it
+// has to travel with the output reference or it stops describing the same
+// loudness; the bank's own balance is unchanged, only where full scale sits.
+constexpr double factoryGatedCeilingDbfs = -28.5;
 constexpr int rmsWindowFrames = 19200; // 400 ms
 constexpr int rmsHopFrames = 4800;     // 100 ms
 constexpr double meterFloorDb = -140.0;

@@ -9340,8 +9340,14 @@ void testFixedOutputBoundaryCorpus()
         // the filter and the pair's compression take back. The waveform-free
         // self-oscillation row is the negative control and is unchanged to
         // six figures, because that fixture runs subLevel = 0.
-        Baseline { 0.0925013, 0.194228, 0.195779, 0, 0 },
-        Baseline { 0.234607, 0.70749, 0.715655, 0, 0 },
+        // Re-pinned with the 2.5 dB output level policy
+        // (YouKnow106Engine::outputLevelPolicyDb). Every floating figure below
+        // is exactly the previous one times 1.33352143 and nothing else moved:
+        // the policy is a post-clip output scalar, so the instrument's
+        // behaviour is identical and only where 0 dBFS sits changed. The
+        // overload counts are not scalable and were re-measured.
+        Baseline { 0.123353, 0.259007, 0.261076, 0, 0 },
+        Baseline { 0.312853, 0.943451, 0.954339, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
         // physical C54/comparator event walk. Only this six-card Unison
@@ -9351,13 +9357,13 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.473655, 1.05995, 1.06431, 268, 1074 },
+        Baseline { 0.631629, 1.41347, 1.41929, 1194, 4762 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.0452256, 0.0635756, 0.0635756, 0, 0 },
-        Baseline { 0.155818, 0.352486, 0.355873, 0, 0 },
-        Baseline { 0.116854, 0.268294, 0.269308, 0, 0 },
+        Baseline { 0.0603095, 0.0847796, 0.0847796, 0, 0 },
+        Baseline { 0.207787, 0.470048, 0.474565, 0, 0 },
+        Baseline { 0.155827, 0.357776, 0.359128, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;

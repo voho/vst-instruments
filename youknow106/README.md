@@ -545,7 +545,11 @@ Not to be reopened without contradictory primary evidence:
 - The noise calibration point (4.0 Vpp at TP8 via VR32) exists.
 - Published selector levels L −30 / M −15 / H 0 dBm stand.
 - The output-reference convention — −18 dBFS RMS, floating samples, no
-  limiter — is settled.
+  limiter — is settled as a *convention*. Where full scale sits against it is
+  product policy, not evidence: since 2026-09-04 the output carries a 2.5 dB
+  level policy above the strict analogue-ceiling reading, sized so a
+  six-voice chord at maximum VCA LEVEL and VOLUME still peaks below full
+  scale.
 
 ## Known gaps
 
@@ -722,6 +726,14 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### 1.1.0 — unreleased
 
+- The instrument is 2.5 dB louder. Digital full scale used to be the output
+  summer's clipping asymptote and nothing else, which left ordinary patches
+  22 dB below it and the plug-in far quieter than peer emulations. Full scale
+  is now that ceiling less a 2.5 dB level policy, sized against the
+  instrument's own headroom rather than the bank's: a six-voice chord with
+  every source on and both VCA LEVEL and VOLUME at maximum peaks at
+  −0.51 dBFS, and the loudest factory preset at −7.04. It is a post-clip
+  output scalar, so nothing about the sound moves except its level.
 - The sub oscillator is 3.6 dB louder against the saw. Its mixer coordinate
   was the one source level with no end-to-end anchor — the 106 sums saw, pulse
   and sub inside a potted custom chip, so no drawing gives the ratio — and two

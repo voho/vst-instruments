@@ -1841,8 +1841,11 @@ float YouKnow106Engine::outputBoundaryGain() noexcept
         return 1.0f;
     // Expressed through the same Vref helper every other boundary question
     // uses: the reference is the RMS that lands on -18 dBFS once full scale is
-    // the model asymptote, so the two cannot drift apart.
-    return outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
+    // the model asymptote, so the two cannot drift apart. The product level
+    // policy then scales the whole output by the headroom the factory audit
+    // measured as unused; see outputLevelPolicyDb.
+    return outputLevelPolicyGain
+         * outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
 }
 
 float YouKnow106Engine::outputSummerResistorNoiseDensity() noexcept

@@ -5657,7 +5657,11 @@ void testNoiseSourceShapingFollowsItsCircuit()
     // coordinate onto the source ahead of the shaping instead -- which a
     // previous revision did -- reads
     // 11.4 dB low here, and a dead source falls through the floor.
-    expect(std::isfinite(rms) && rms > 0.0035 && rms < 0.0070,
+    // Stated against the output level policy rather than as bare numbers: the
+    // window describes a SHAPED RAIL, and a post-clip output scalar moves what
+    // that rail reads at the output without moving the rail.
+    const double policy = YouKnow106Engine::outputLevelPolicyGain;
+    expect(std::isfinite(rms) && rms > 0.0035 * policy && rms < 0.0070 * policy,
            "full-level main-noise RMS left its shaped +/-2 V range: "
                + std::to_string(rms));
     expect(differenceEnergy / energy < 1.2,

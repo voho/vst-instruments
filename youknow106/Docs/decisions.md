@@ -5,6 +5,56 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — The output uses 2.5 dB more of the range, and why not 18.7
+
+The owner reported that KR-106 is much louder, and it is: on A11 with the same
+notes, each instrument at its own default, KR-106 reads −17.5 dBFS RMS where
+this engine at **maximum** volume reads −36.2. An 18.7 dB gap, and the volume
+knob is not the cause — maxing it changes nothing, because the gap is in where
+0 dBFS sits.
+
+**The cause is this project's own convention, not a defect.** Digital full
+scale was the output summer's clipping asymptote and nothing else, which is the
+most defensible ceiling a model can pick because it invents no limit the circuit
+does not have. But it is a headroom policy, not a loudness one, and a real 106
+only approaches that rail when driven hard, so ordinary patches sat 22 dB below
+full scale. Output calibration is explicitly a product convention rather than a
+JUNO-106 voltage, so this is a product decision, not an evidence one.
+
+**The first sizing was wrong and the suite caught it.** Sized against the
+factory bank's own peak headroom the answer is 8.5 dB, because the loudest
+preset peaked at −9.54 dBFS against the −1 dBFS ceiling the audit enforces. But
+the bank's presets carry their own VR1 attenuation, so the bank's headroom is
+not the instrument's. A six-voice chord with saw, pulse and sub on and both VCA
+LEVEL and VOLUME at maximum — ordinary playing, not an extreme — peaks 3.0 dB
+below full scale. At +8 dB that chord reads +4.99 dBFS. An instrument that
+clips when a player holds a chord with the volume up has traded one defect for
+a worse one, and the output corpus's overload guards fired on exactly that.
+
+**2.5 dB ships.** The chord lands at −0.51 dBFS with zero overloads, the
+loudest factory preset at −7.04, and the only fixture still crossing full scale
+is the solo-unison headroom probe that crossed it before. It is a pure
+post-clip scalar applied after every modelled nonlinearity, so no timbre, no
+saturation point and no internal headroom relationship moves; only where 0 dBFS
+sits, which is why it belongs in the unreleased 1.1.0. The absolute −31 dBFS
+gated ceiling moved to −28.5 with it, because an absolute figure that does not
+travel with the reference stops describing the same loudness.
+
+**The remaining 16 dB is not headroom this instrument has.** KR-106's own mixed
+patches measure +10.7 dBFS at its default master: it overflows full scale and
+relies on the host to pull it back. That is a legitimate choice for a float
+output with no limiter, and it is available here for the asking, but it is not
+made silently.
+
+**Bank balance is unchanged, deliberately.** The 27.85 dB spread is dominated by
+patches that are genuinely quiet — Hand Claps at −58.9 dBFS gated, Dust Storm
+−54.3, Shaker −49.0 — and A11 sits at the 0.80 trim cap already, so it is quiet
+because the patch is quiet rather than because anything attenuated it. Raising
+those means inventing gain the instrument does not have, against this project's
+own stated position that the bank's level differences are measurements rather
+than targets, and VR1's remaining 2.25 dB of travel could not close 28 dB in
+any case.
+
 ## 2026-09-04 — The sub coordinate moves to KR-106's reading, on the owner's decision
 
 `subMixVolts` 5.0 -> 7.57. **Chosen by the owner** from four options after the
