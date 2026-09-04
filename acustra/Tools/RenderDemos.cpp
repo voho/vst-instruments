@@ -113,11 +113,12 @@ public:
         std::vector<int> ordered(notes);
         std::sort(ordered.begin(), ordered.end());
         const int count = static_cast<int>(ordered.size());
+        engine_.beginStrum();
         for (int index = 0; index < count; ++index)
         {
             const int rank = upstroke ? count - 1 - index : index;
             engine_.noteOn(ordered[static_cast<std::size_t>(index)], velocity, 1,
-                           engine_.strumDelaySamples(rank, velocity));
+                           engine_.strumDelaySamples(rank, velocity), true);
         }
     }
 
@@ -383,7 +384,7 @@ Audio strummedChords()
     // Two bars of a strummed progression at 108 beats per minute, eighths.
     for (const auto* chord : { &e, &e, &a, &a, &d, &d, &a, &a })
     {
-        take.strumAtOnce(*chord, upstroke ? 0.62f : 0.80f, upstroke);
+        take.strumAtOnce(*chord, upstroke ? 0.52f : 0.68f, upstroke);
         take.rest(0.278);
         take.release(*chord);
         upstroke = !upstroke;
@@ -393,7 +394,7 @@ Audio strummedChords()
     upstroke = false;
     for (int repeat = 0; repeat < 8; ++repeat)
     {
-        take.strumAtOnce(e, 0.78f, upstroke);
+        take.strumAtOnce(e, 0.62f, upstroke);
         take.rest(0.24);
         take.release(e);
         take.rest(0.04);

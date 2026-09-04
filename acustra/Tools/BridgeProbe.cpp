@@ -42,11 +42,11 @@ bool parseInt(const char* text, int& value) noexcept
 
 int main(int argc, char** argv)
 {
-    if (argc < 4 || argc > 7)
+    if (argc < 4 || argc > 8)
     {
         std::cerr << "usage: BridgeProbe output.f32 steel|nylon on|off "
                      "[pluck-position-0-to-1] [auditorium|dreadnought] "
-                     "[midi-note]\n";
+                     "[midi-note] [sympathy-on|off]\n";
         return EXIT_FAILURE;
     }
 
@@ -107,10 +107,23 @@ int main(int argc, char** argv)
     engine.setParameters(parameters);
     engine.setBridgeCouplingEnabled(coupling == "on");
     int midiNote = 40;
-    if (argc == 7 && !parseInt(argv[6], midiNote))
+    if (argc >= 7 && !parseInt(argv[6], midiNote))
     {
         std::cerr << "MIDI note must be an integer between 0 and 127\n";
         return EXIT_FAILURE;
+    }
+    // The idle strings' one-way radiation sum, separable from the bridge so a
+    // probe can hold the excitation fixed and change only what the played
+    // string's wave meets on its way out.
+    if (argc == 8)
+    {
+        const std::string sympathy(argv[7]);
+        if (sympathy != "on" && sympathy != "off")
+        {
+            std::cerr << "sympathy must be on or off\n";
+            return EXIT_FAILURE;
+        }
+        engine.setSympatheticStringsEnabled(sympathy == "on");
     }
     engine.noteOn(midiNote, 0.72f);
 

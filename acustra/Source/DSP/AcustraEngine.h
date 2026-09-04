@@ -11,8 +11,14 @@
 #include <cstddef>
 #include <cstdint>
 
+// Capacity of the per-material measured banks: the larger of the two banks in
+// each generated header. AcustraEngine.cpp static-asserts that both fit, so a
+// regenerated header that grows fails to build rather than to sound.
 #if !defined(ACUSTRA_BRIDGE_MODE_COUNT)
 #define ACUSTRA_BRIDGE_MODE_COUNT 50
+#endif
+#if !defined(ACUSTRA_BODY_MODE_COUNT)
+#define ACUSTRA_BODY_MODE_COUNT 103
 #endif
 
 namespace acustra
@@ -81,11 +87,23 @@ public:
     // calibration resets the engine; do not call it from the audio thread.
     void setPhysicalCalibration(const PhysicalCalibration&) noexcept;
 
+    // Call once before the noteOn() calls for one strum's strings (not for a
+    // single note): draws this stroke's own pick-speed variation, shared by
+    // every string noteOn() schedules with strumMember set until the next
+    // beginStrum() call. Scaling every string's delay by the same drawn
+    // factor is what keeps a stroke's own strings in order even though its
+    // total span varies stroke to stroke -- see noteOn.
+    void beginStrum() noexcept;
     // A pluck can be scheduled: the string is taken and fretted now, the
     // fretting hand having formed the chord, and released this many samples
     // later, which is how a strum reaches its strings one after another.
+    // strumMember marks a note as one string of a strum (including its
+    // first, undelayed string): its scheduled delay is scaled by the
+    // stroke's beginStrum() draw and its level draws its own jitter,
+    // bounded to what repeated real strums vary by; a single note leaves it
+    // false and is unaffected down to the bit.
     void noteOn(int midiNote, float velocity, int midiChannel = 1,
-                int pluckDelaySamples = 0) noexcept;
+                int pluckDelaySamples = 0, bool strumMember = false) noexcept;
     // Samples after the first string that a strum's k-th string sounds, from
     // the pick's speed for this velocity and the string spacing.
     [[nodiscard]] int strumDelaySamples(int stringRank,
@@ -108,10 +126,34 @@ public:
     // an exact no-op, which is the default.
     void setLegato(bool on) noexcept;
     void setPitchBend(float semitones, int midiChannel = 1) noexcept;
+    // MIDI's Modulation Wheel, CC1, as the left hand's vibrato. Zero is an
+    // exact no-op, which is the default; see the vibrato map in
+    // AcustraEngine.cpp for what the wheel is bounded by.
+    void setVibrato(float amount) noexcept;
     // Acustra implements the MPE lower zone only: channel 1 is its manager
     // and the contiguous channels above it are members. Zero restores
     // conventional, fully independent MIDI channels.
     void setLowerZoneMemberCount(int memberCount) noexcept;
+    // MPE Timbre, CC74, on a lower-zone member channel: where the string is
+    // met this note (Traube and Smith DAFx-00; Traube and Depalle DAFx-03),
+    // in place of the panel Pluck Position for that one pluck. value is 0-1
+    // MIDI CC74; a negative value clears it back to the panel control. Read
+    // once, at the pluck, like the panel control it replaces; inert on a
+    // conventional or manager channel and inert with no lower zone.
+    void setMpeTimbre(float value, int midiChannel) noexcept;
+    // MPE channel pressure, 0xD0, on a lower-zone member channel: the
+    // fretting hand's grip. It biases how readily a pull-off's lift energy
+    // clears the fret (see liftFinger) and how deep the wheel's vibrato
+    // reaches (see vibratoSemitones); it adds no string energy of its own.
+    // 0-1; inert on a conventional or manager channel and inert with no
+    // lower zone.
+    void setMpePressure(float value, int midiChannel) noexcept;
+    // Opt-in guitar-controller mode, the convention Roland's GK and
+    // Fishman's TriplePlay send in "mono mode": channels 1-6 are the six
+    // strings directly, bypassing chooseString's fret-distance guess. A note
+    // on channel 1-6 with no playable fret on that channel's string is
+    // dropped rather than reassigned. Off, the default, is an exact no-op.
+    void setStringPerChannelMode(bool enabled) noexcept;
     void allNotesOff(int midiChannel = 1) noexcept;
     void allSoundOff(int midiChannel = 1) noexcept;
     void setBridgeCouplingEnabled(bool enabled) noexcept;
@@ -139,7 +181,7 @@ private:
     friend struct AcustraEngineTestAccess;
 
     static constexpr int maximumDelaySamples = 8192;
-    static constexpr int bodyModeCount = 96;
+    static constexpr int bodyModeCount = ACUSTRA_BODY_MODE_COUNT;
     static constexpr int bridgeModeCount = ACUSTRA_BRIDGE_MODE_COUNT;
     static constexpr int controlPeriod = 32;
     static constexpr int midiChannelCount = 16;
@@ -210,6 +252,9 @@ private:
         OnePole broadLossFilter {};
         OnePole lossFilter {};
         SecondOrderAllpass dispersion {};
+        // The fractional-delay allpass's state: its two previous outputs.
+        float allpassY1 { 0.0f };
+        float allpassY2 { 0.0f };
         FixedDerivative bridgeDerivative {};
         bool derivativeNeedsPriming { true };
         bool derivativeCrossesRelease { false };
@@ -222,7 +267,7 @@ private:
         float releaseGainStep { 0.0f };
 
         void reset() noexcept;
-        [[nodiscard]] float readDelay(float samples) const noexcept;
+        [[nodiscard]] float readDelay(float samples) noexcept;
         float advance(float delaySmoothing, float releaseGain) noexcept;
         // A plucked string is released from rest, so the wave the bridge
         // reads was already standing there when the finger let go. Prime the
@@ -251,21 +296,54 @@ private:
         }
     };
 
+    // What the six strings and their anchors present to the saddle, in the
+    // two coordinates the archive measures: sum over strings of Z*2a and of
+    // u*Z*2a, of Z, u*Z and u^2*Z, and the same three moments of the anchor
+    // stiffness. u is saddleLeverArm(string).
+    struct BridgeDrive
+    {
+        float incidentHeave { 0.0f };
+        float incidentRock { 0.0f };
+        float impedance0 { 0.0f };
+        float impedance1 { 0.0f };
+        float impedance2 { 0.0f };
+        float stiffness0 { 0.0f };
+        float stiffness1 { 0.0f };
+        float stiffness2 { 0.0f };
+    };
+
     struct BridgeLoad
     {
         // One slot past the measured modes carries the plate
-        // conductance floor described in FittedPhysicalData.h.
-        std::array<BridgeMode, bridgeModeCount + 1> modes {};
-        float immediateAdmittance { 0.0f };
-        float delayedPastResponse { 0.0f };
+        // conductance floor described in FittedPhysicalData.h. Every mode is
+        // one pole pair carrying the residue matrix [[heave, cross],
+        // [cross, rock]] of MeasuredBridgeData.h, so it needs two states:
+        // one driven by the net force and one by the moment. A mode with no
+        // rocking residue leaves its second state alone.
+        std::array<BridgeMode, bridgeModeCount + 1> heaveModes {};
+        std::array<BridgeMode, bridgeModeCount + 1> rockModes {};
+        std::array<float, bridgeModeCount + 1> residueHeave {};
+        std::array<float, bridgeModeCount + 1> residueCross {};
+        std::array<float, bridgeModeCount + 1> residueRock {};
+        std::array<bool, bridgeModeCount + 1> rocking {};
+        float immediateHeave { 0.0f };
+        float immediateCross { 0.0f };
+        float immediateRock { 0.0f };
+        float pastHeave { 0.0f };
+        float pastRock { 0.0f };
         float tailIntegratedForce { 0.0f };
+        float tailIntegratedMoment { 0.0f };
         float previousDisplacement { 0.0f };
+        float previousRotation { 0.0f };
+        float displacement { 0.0f };
+        float rotation { 0.0f };
         float mainIntegratedForce { 0.0f };
+        float mainIntegratedMoment { 0.0f };
         float bodyIntegratedForce { 0.0f };
+        float bodyIntegratedMoment { 0.0f };
 
         void reset() noexcept;
-        float process(float incident, float characteristicAdmittance,
-                      float tailStiffness, float samplePeriod) noexcept;
+        void process(const BridgeDrive& drive, float samplePeriod) noexcept;
     };
 
     struct BodyMode
@@ -335,6 +413,18 @@ private:
         float excitationColour { 0.0f };
         float excitationLowpass { 0.0f };
         float characteristicImpedance { 0.5f };
+        // A bend is a tension change at fixed length, so the port the string
+        // presents moves with it: Z = sqrt(T mu) = Z0 times the frequency
+        // ratio (see configureVoice). The junction sums impedances every
+        // sample, so the requested scale is followed at the delay's own 6 ms
+        // rate rather than stepping once per control period. Both are 1
+        // without a bend, and a scale of exactly 1 leaves every product
+        // bit-identical to the unbent engine.
+        float bendImpedanceScale { 1.0f };
+        float appliedBendImpedanceScale { 1.0f };
+        // The string's tension now, in newtons, bend included. Kept so the
+        // bend can be checked against Grimes' law rather than inferred.
+        float tensionNewtons { 0.0f };
         float bridgeTailStiffness { 10000.0f };
         float attackPitchCents { 0.0f };
         float attackPitchDecay { 1.0f };
@@ -373,6 +463,13 @@ private:
         int pluckDelay { 0 };
         // Where this pluck landed, as a fraction of the sounding length.
         float pluckPoint { 0.0f };
+        // Set by noteOn's strumMember argument and read once by
+        // initialisePluck for its own level jitter; noteOn itself reads it
+        // to scale this string's delay by the stroke's shared
+        // strumSpeedScale_ (see beginStrum). Both are on top of the pluck
+        // point every note already draws. A single note leaves this false,
+        // so it draws exactly as it did before and stays bit-identical.
+        bool strumming { false };
     };
 
     struct BodyOutput
@@ -400,11 +497,21 @@ private:
     void configureBody() noexcept;
     void configureBridge() noexcept;
     float bridgePhaseDelay(float frequency, int stringIndex) const noexcept;
-    [[nodiscard]] float bridgeAnchorStiffness() const noexcept;
+    // The six anchor stubs as the three moments of one stiffness matrix in
+    // the saddle's two coordinates: sum K, sum uK, sum u^2 K.
+    void bridgeAnchorMoments(float& stiffness0, float& stiffness1,
+                             float& stiffness2) const noexcept;
     void configureVoice(Voice& voice, int stringIndex, int midiNote,
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
     float effectiveTouch(const Voice& voice) const noexcept;
+    // MPE channel pressure for this voice's own member channel, -1 with no
+    // lower zone, no CC message received yet on that channel, or off a
+    // member channel; 0 is a real received value (light grip), not the
+    // sentinel.
+    [[nodiscard]] float mpePressureFor(const Voice& voice) const noexcept;
+    [[nodiscard]] float vibratoSemitones(const Voice& voice,
+                                         int fret) const noexcept;
     void initialisePluck(Voice& voice, int stringIndex, float velocity) noexcept;
     void returnToOpenString(Voice& voice, int stringIndex,
                             bool clearDelay) noexcept;
@@ -461,6 +568,12 @@ private:
     std::array<BodyMode, bodyModeCount> fadingBodyModes_ {};
     BridgeLoad bridgeLoad_ {};
     FixedDerivative bridgeVelocityDerivative_ {};
+    FixedDerivative bridgeRotationDerivative_ {};
+    // The junction's power is the sum over both coordinates, so the moments
+    // are differenced alongside the forces; the passivity tests read it.
+    FixedDerivative bridgeForceMomentDerivative_ {};
+    FixedDerivative bridgeBodyMomentDerivative_ {};
+    FixedDerivative bridgeTailMomentDerivative_ {};
     FixedDerivative bridgeForceDerivative_ {};
     FixedDerivative bridgeBodyForceDerivative_ {};
     FixedDerivative bridgeTailForceDerivative_ {};
@@ -470,6 +583,9 @@ private:
     float parameterSmoothing_ { 0.002f };
     float levelSmoothing_ { 0.0025f };
     std::array<float, midiChannelCount> pitchBendSemitones_ {};
+    float vibrato_ { 0.0f };
+    float vibratoPhase_ { 0.0f };
+    float vibratoOnset_ { 0.0f };
     float lastBridgeVelocity_ { 0.0f };
     float lastBridgeReactionForce_ { 0.0f };
     float lastBridgeBodyForce_ { 0.0f };
@@ -489,6 +605,14 @@ private:
     float bodyModelFadeStep_ { 1.0f / 1920.0f };
     int controlCounter_ { 0 };
     int lowerZoneMemberCount_ { 0 };
+    // -1 means no CC74 (mpeTimbre_) or channel pressure (mpePressure_) has
+    // ever been received on that channel; the panel Pluck Position control
+    // applies as it always did. Both persist across notes on the channel,
+    // the way MPE per-channel controllers do, until the lower zone is
+    // reconfigured or the engine is reset.
+    std::array<float, midiChannelCount> mpeTimbre_ {};
+    std::array<float, midiChannelCount> mpePressure_ {};
+    bool stringPerChannelMode_ { false };
     std::array<bool, midiChannelCount> sustainPedals_ {};
     bool bridgeCouplingEnabled_ { true };
     bool sympatheticStringsEnabled_ { true };
@@ -496,12 +620,30 @@ private:
     // keeps the port they present rather than switching it out from under a
     // body that is still ringing.
     float lastImpedanceSum_ { 0.0f };
+    float lastImpedanceMoment_ { 0.0f };
+    float lastImpedanceInertia_ { 0.0f };
     bool bridgeDerivativesNeedPriming_ { true };
     bool bridgeDerivativesCrossRelease_ { false };
     bool legato_ { false };
     bool prepared_ { false };
     bool bodyConfigured_ { false };
     std::uint64_t noteOrder_ { 0 };
+    // Shared across every string of one strum: drawn once by beginStrum(),
+    // read by noteOn's strumMember path. A per-string draw here (rather than
+    // each voice's own generator) is what keeps the pick's speed for the
+    // whole stroke coherent, so a slower or faster draw scales every
+    // string's delay together and never reorders them.
+    std::uint32_t strumRandomState_ { 0x9e3779b9u };
+    float strumSpeedScale_ { 1.0f };
+    // Half-width of the uniform draw beginStrum() applies to strumSpeedScale_.
+    // GuitarSet's comping tracks (Tools/MeasureStrums.py), pooled over runs
+    // of >=3 repeats of one chord and direction, put a stroke's own total
+    // span at a 36.47% standard deviation relative to its run's own mean
+    // span -- a stroke that repeats at k times its run's usual pick speed
+    // scales every string's delay by 1/k, so this relative figure, not the
+    // corpus's absolute-ms one, is what a single per-stroke speed draw
+    // should match. std of h*U(-1,1) is h/sqrt(3), so h = 0.3647*sqrt(3).
+    static constexpr float strumSpeedJitterHalfWidth = 0.6317f;
 };
 
 } // namespace acustra

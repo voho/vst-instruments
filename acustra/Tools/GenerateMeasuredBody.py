@@ -1,25 +1,41 @@
 #!/usr/bin/env python3
-"""Generate Acustra's g21 dual-radiation modal coefficient header.
+"""Generate Acustra's dual-radiation modal coefficient header.
 
 This is the complete deterministic path from Robert Mores'
-``qualified_selected_impulses.mat`` to ``MeasuredBodyData.h``. It selects the
-treble-side bridge impact on guitar g21, estimates calibrated force-to-pressure
+``qualified_selected_impulses.mat`` to ``MeasuredBodyData.h``. For each guitar
+it selects the treble-side bridge impact, estimates calibrated force-to-pressure
 H1 responses for the treble and bass microphones, reconstructs minimum phase,
-selects 96 shared pole pairs, and fits one complex residue per output and pole.
+selects shared pole pairs, and fits one complex residue per output and pole.
 The generated model must also remain within fixed complex, magnitude and stereo
 balance regression limits; finiteness alone is not accepted.
+
+Two guitars are emitted, one per string material, because a steel-string and a
+classical are different instruments; the engine selects by StringMaterial.
 
 NumPy and SciPy are required. Regenerate or check the committed header with:
 
     python3 Tools/GenerateMeasuredBody.py --raw-mat /path/to/qualified_selected_impulses.mat
     python3 Tools/GenerateMeasuredBody.py --raw-mat /path/to/qualified_selected_impulses.mat --check
 
-DAFx-26 specifies a 3000-sample truncated impulse with a raised-cosine
+Window. DAFx-26 specifies a 3000-sample truncated impulse with a raised-cosine
 fade-out, but does not publish the fade's inner length. Acustra authors the
-final 300 samples (6.25 ms, 10 percent of the retained response) as the fade.
-Robert Mores' archive script separately suggests a 240-sample microphone taper,
-explicitly noting that it was not used in the reference plots; it is supporting
-scale evidence, not the source of Acustra's exact 300-sample choice.
+final tenth of the retained response as the fade. Robert Mores' archive script
+separately suggests a 240-sample microphone taper, explicitly noting that it
+was not used in the reference plots; it is supporting scale evidence, not the
+source of Acustra's exact choice. For a record measured in a room, 3000 samples
+is the length DAFx-26 gives and a longer window would fit the room: g21's first
+reflection returns after a 6 m loop, 17.6 ms, already inside 3000 samples. For
+a record measured anechoically there is no such ceiling, and the window is
+instead the shortest of 3000, 6000, 12000, 24000 and 48000 samples at which
+every mode below 700 Hz has its Q within 10 percent of its value at twice that
+window -- the convergence rule the 2026-09-01 decision-log entry established.
+Below that length the reported Q is the window's own bandwidth, not the guitar's.
+
+Mode count. 96 poles resolve the truncated g21 response within the four
+regression limits below. A resolved anechoic response has sharper and more
+numerous peaks, so the bank grows: each guitar takes the smallest count, from
+96 upward, at which its fit meets those same limits. No limit is relaxed for a
+candidate.
 """
 
 from __future__ import annotations
@@ -29,6 +45,7 @@ import difflib
 import hashlib
 from pathlib import Path
 import sys
+import textwrap
 
 import numpy as np
 from scipy.io import loadmat
@@ -39,15 +56,30 @@ from scipy.signal import find_peaks
 SAMPLE_RATE = 48_000.0
 FFT_SIZE = 65_536
 RECORD_SAMPLES = 48_000
-GUITAR_INDEX = 20  # MATLAB g21.
 IMPACT_INDEX = 2  # Third one-second segment: treble-side bridge impact.
 FORCE_CHANNEL = 0
 TREBLE_MIC_CHANNEL = 4  # MATLAB channel 5.
 BASS_MIC_CHANNEL = 5  # MATLAB channel 6.
-KEEP_SAMPLES = 3_000
-FADE_SAMPLES = 300  # Authored adaptation; DAFx-26 does not give this length.
-MODE_COUNT = 96
+ROOM_KEEP_SAMPLES = 3_000  # DAFx-26's truncated response.
+CANDIDATE_KEEP_SAMPLES = (3_000, 6_000, 12_000, 24_000, 48_000)
+CONVERGENCE_BAND_HZ = 700.0
+CONVERGENCE_TOLERANCE = 0.10
+BASE_MODE_COUNT = 96
 MINIMUM_FREQUENCY = 80.0
+# The fit's band is the one the 2026-08-30 body regression gate was set over,
+# 80 Hz to 10 kHz, and the archive gives no reason to widen it: what thins out
+# above it is the excitation. Measuring the force channel of the same
+# one-second segment, shaped by the same full_taper this file applies to the
+# whole record, mean power per band against its own 80-1000 Hz mean, the
+# hammer is 5.4 dB (g21) and 4.4 dB (g34) down over 5-8 kHz, 15.9 and 13.5 dB
+# down over 10-12 kHz and 31.6 and 27.8 dB down over 16-20 kHz, and H1 divides
+# by it. The microphone noise floor is not the limit: taking the segment's
+# first 3000 samples as signal (the impact lands at sample 102), its last 3000
+# as noise, that same taper shape on both windows and mean power per band, the
+# treble/bass microphones read 56.6/55.1 dB (g21) and 62.1/61.6 dB (g34) over
+# 5-8 kHz and still 28.1/32.3 and 44.1/40.9 dB over 16-20 kHz. So the ceiling
+# rests on the thinning excitation and on the existing gate's band, not on any
+# claim that the record goes silent up there.
 MAXIMUM_FREQUENCY = 10_000.0
 PEAK_PROMINENCE_DB = 0.5
 Q_MINIMUM = 2.0
@@ -57,9 +89,49 @@ MAX_COMPLEX_RELATIVE_ERROR = 0.30
 MAX_MEDIAN_MAGNITUDE_ERROR_DB = 1.25
 MAX_P90_MAGNITUDE_ERROR_DB = 3.75
 MAX_STEREO_RATIO_P90_ERROR_DB = 5.0
+# Above the modal-overlap frequency the peaks stop being separable and only the
+# band level survives. Elie, Gautier and David, "Macro parameters describing
+# the mechanical behavior of classical guitars", JASA 132 (2012) 4013-4024,
+# Eq. (1), put the modal overlap factor at the half-power bandwidth over the
+# spacing to the next mode and name f30 the frequency from which it exceeds
+# 0.3; their Table IV measures f30 at 465-910 Hz over nine luthier-made and
+# 506-635 Hz over three industrial classical guitars. Applying Eq. (1) to the
+# g34 bank below puts its own first crossing at 503 Hz, inside that range.
+# Everything from 5 kHz up is therefore a decade into the statistical regime,
+# where the audible unit is the auditory filter: Glasberg and Moore,
+# "Derivation of auditory filter shapes from notched-noise data", Hearing
+# Research 47 (1990) 103-138, give it as ERB(F) = 24.7 (4.37 F + 1) Hz for F
+# in kHz, about a sixth of an octave there. So the bank must hold the measured
+# level in every whole ERB band from 5 kHz to MAXIMUM_FREQUENCY and not merely
+# in aggregate; a fit that scattered its error across those bands would be
+# heard as a change of timbre while still passing the p90 above. The committed
+# banks reach 0.34/0.46 dB (g21 treble/bass mic) and 0.62/0.37 dB (g34), which
+# is what rules out splitting the body into a modal part below f30 and a
+# separately convolved measured residual above it: that residual is the
+# quotient measured here, a filter within 0.62 dB of unity in every band it
+# would cover.
+BAND_ERROR_FLOOR_HZ = 5_000.0
+MAX_BAND_MAGNITUDE_ERROR_DB = 1.0
 RAW_MD5 = "733cb10baf5ce36d8bf333610ffbb260"
 HAMMER_NEWTONS_PER_FULL_SCALE = (10_000.0 / 92.90) * 4.4482
 MIC_PASCALS_PER_FULL_SCALE = 10_000.0 / 50.0
+DEFAULT_NYLON_GUITAR = 34
+# Provenance and measurement conditions from the archive's
+# List_of_guitars_description.pdf.
+GUITAR_DESCRIPTION = {
+    21: "a 2018 Lester DeVoe flamenca blanca, spruce/cypress, measured in a "
+        "school music room in Freiburg (first reflection after a 6 m loop)",
+    34: "a 1971 Manuel Contreras classical Spanish, cedar/Rio palisander, "
+        "measured anechoic in the class-1 free-field laboratory of the "
+        "Hamburg University of Applied Sciences",
+    35: "a 1978 Manuel Lopez Bellido classical Spanish, cedar/Rio palisander, "
+        "measured anechoic in the class-1 free-field laboratory of the "
+        "Hamburg University of Applied Sciences",
+    36: "a 2001 Jose Lopez Bellido classical Spanish, spruce/Indian "
+        "palisander, measured anechoic in the class-1 free-field laboratory "
+        "of the Hamburg University of Applied Sciences",
+}
+ANECHOIC_GUITARS = frozenset({34, 35, 36})
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parents[1] / "Source" / "DSP" / "MeasuredBodyData.h"
 )
@@ -82,7 +154,7 @@ def minimum_phase_from_magnitude(magnitude: np.ndarray) -> np.ndarray:
     return np.exp(np.fft.fft(causal))[: FFT_SIZE // 2 + 1]
 
 
-def extract_targets(path: Path) -> list[np.ndarray]:
+def load_matrix(path: Path) -> np.ndarray:
     actual_digest = digest(path)
     if actual_digest != RAW_MD5:
         raise ValueError(f"{path}: MD5 {actual_digest}, expected {RAW_MD5}")
@@ -92,11 +164,17 @@ def extract_targets(path: Path) -> list[np.ndarray]:
     ]
     if values.shape != (65, 144_000, 6):
         raise ValueError(f"{path}: unexpected source matrix shape {values.shape}")
+    return values
 
+
+def extract_targets(
+    path: Path, guitar: int = 21, keep_samples: int = ROOM_KEEP_SAMPLES
+) -> list[np.ndarray]:
+    values = load_matrix(path)
     start = IMPACT_INDEX * RECORD_SAMPLES
-    record = values[GUITAR_INDEX, start : start + RECORD_SAMPLES, :]
+    record = values[guitar - 1, start : start + RECORD_SAMPLES, :]
     if not np.all(np.isfinite(record)):
-        raise ValueError(f"{path}: g21 treble-impact record contains non-finite data")
+        raise ValueError(f"{path}: g{guitar} treble-impact record is non-finite")
 
     full_taper = 0.5 * np.cos(
         np.arange(1, RECORD_SAMPLES + 1) * np.pi / RECORD_SAMPLES
@@ -110,9 +188,10 @@ def extract_targets(path: Path) -> list[np.ndarray]:
     denominator = np.abs(force) ** 2
     denominator += np.max(denominator) * 1.0e-12
 
-    impulse_taper = np.ones(KEEP_SAMPLES)
-    impulse_taper[-FADE_SAMPLES:] = 0.5 + 0.5 * np.cos(
-        np.linspace(0.0, np.pi, FADE_SAMPLES)
+    fade_samples = keep_samples // 10
+    impulse_taper = np.ones(keep_samples)
+    impulse_taper[-fade_samples:] = 0.5 + 0.5 * np.cos(
+        np.linspace(0.0, np.pi, fade_samples)
     )
 
     targets: list[np.ndarray] = []
@@ -122,7 +201,7 @@ def extract_targets(path: Path) -> list[np.ndarray]:
         h1 = spectrum * np.conj(force) / denominator
         impulse = np.fft.irfft(h1, FFT_SIZE)
         windowed = np.zeros(FFT_SIZE)
-        windowed[:KEEP_SAMPLES] = impulse[:KEEP_SAMPLES] * impulse_taper
+        windowed[:keep_samples] = impulse[:keep_samples] * impulse_taper
         magnitude = np.abs(np.fft.rfft(windowed))
         targets.append(minimum_phase_from_magnitude(magnitude))
     return targets
@@ -224,6 +303,32 @@ def candidate_poles(targets: list[np.ndarray]) -> list[tuple[float, float, float
     return result
 
 
+def converged_keep_samples(path: Path, guitar: int) -> tuple[int, float]:
+    """Shortest window whose low-frequency Q agrees with twice that window.
+
+    A mode is matched to its counterpart at the longer window within
+    max(3 Hz, 3 percent); a mode with no counterpart has not converged either.
+    """
+    poles = {
+        keep: [item for item in candidate_poles(extract_targets(path, guitar, keep))
+               if item[0] < CONVERGENCE_BAND_HZ]
+        for keep in CANDIDATE_KEEP_SAMPLES
+    }
+    for keep in CANDIDATE_KEEP_SAMPLES[:-1]:
+        worst = 0.0
+        for frequency, q, _ in poles[keep]:
+            near = [(abs(other - frequency), other_q)
+                    for other, other_q, _ in poles[2 * keep]
+                    if abs(other - frequency) <= max(3.0, 0.03 * frequency)]
+            if not near:
+                worst = float("inf")
+                break
+            worst = max(worst, abs(min(near)[1] - q) / max(q, 1.0e-9))
+        if worst <= CONVERGENCE_TOLERANCE:
+            return keep, worst
+    raise ValueError(f"g{guitar}: no window below 1 s converged below 700 Hz")
+
+
 def fit_residues(
     target: np.ndarray, modes: list[tuple[float, float, float]]
 ) -> np.ndarray:
@@ -261,11 +366,23 @@ def fit_residues(
     return solution[0::2] + 1j * solution[1::2]
 
 
-def validate_fit(
+def erb_bands(low: float, high: float) -> list[tuple[float, float]]:
+    """Whole Glasberg-Moore ERBs tiled from low, dropping a partial last band."""
+    bands: list[tuple[float, float]] = []
+    edge = low
+    while True:
+        width = 24.7 * (4.37 * edge / 1000.0 + 1.0)
+        if edge + width > high:
+            return bands
+        bands.append((edge, edge + width))
+        edge += width
+
+
+def fit_errors(
     targets: list[np.ndarray],
     modes: list[tuple[float, float, float]],
     residues: list[np.ndarray],
-) -> None:
+) -> tuple[list[tuple[float, float, float]], float, float]:
     frequency = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
     indices = np.flatnonzero(
         (frequency >= MINIMUM_FREQUENCY) & (frequency <= MAXIMUM_FREQUENCY)
@@ -315,45 +432,75 @@ def validate_fit(
     stereo_ratio_p90_error_db = float(
         np.percentile(np.abs(model_ratio_db - desired_ratio_db), 90.0)
     )
-    if (
-        any(error[0] > MAX_COMPLEX_RELATIVE_ERROR for error in errors)
-        or any(error[1] > MAX_MEDIAN_MAGNITUDE_ERROR_DB for error in errors)
-        or any(error[2] > MAX_P90_MAGNITUDE_ERROR_DB for error in errors)
-        or stereo_ratio_p90_error_db > MAX_STEREO_RATIO_P90_ERROR_DB
-    ):
-        formatted = ", ".join(
-            f"channel {index}: complex={complex_error:.6f}, "
-            f"median={median_error:.6f} dB, p90={p90_error:.6f} dB"
-            for index, (complex_error, median_error, p90_error) in enumerate(errors)
+
+    band_frequency = frequency[indices]
+    band_error_db = 0.0
+    for low, high in erb_bands(BAND_ERROR_FLOOR_HZ, MAXIMUM_FREQUENCY):
+        selected = np.flatnonzero(
+            (band_frequency >= low) & (band_frequency < high)
         )
-        raise ValueError(
-            "measured body fit missed its regression limits: "
-            f"{formatted}, stereo-ratio p90="
-            f"{stereo_ratio_p90_error_db:.6f} dB"
-        )
+        for target, model in zip(targets, models):
+            desired_level = np.sqrt(
+                np.mean(np.abs(target[indices][selected]) ** 2)
+            )
+            model_level = np.sqrt(np.mean(np.abs(model[selected]) ** 2))
+            band_error_db = max(band_error_db, abs(20.0 * np.log10(
+                max(model_level, 1.0e-30) / max(desired_level, 1.0e-30))))
+    return errors, stereo_ratio_p90_error_db, float(band_error_db)
 
 
-def modal_fit(path: Path) -> tuple[list[tuple[float, float, float]], list[np.ndarray]]:
-    targets = extract_targets(path)
+def within_limits(
+    errors: list[tuple[float, float, float]], stereo: float, band: float
+) -> bool:
+    return (
+        all(error[0] <= MAX_COMPLEX_RELATIVE_ERROR for error in errors)
+        and all(error[1] <= MAX_MEDIAN_MAGNITUDE_ERROR_DB for error in errors)
+        and all(error[2] <= MAX_P90_MAGNITUDE_ERROR_DB for error in errors)
+        and stereo <= MAX_STEREO_RATIO_P90_ERROR_DB
+        and band <= MAX_BAND_MAGNITUDE_ERROR_DB
+    )
+
+
+def modal_fit(path: Path, guitar: int) -> dict:
+    if guitar in ANECHOIC_GUITARS:
+        keep_samples, convergence = converged_keep_samples(path, guitar)
+    else:
+        keep_samples, convergence = ROOM_KEEP_SAMPLES, float("nan")
+    targets = extract_targets(path, guitar, keep_samples)
     candidates = candidate_poles(targets)
     candidates.sort(key=lambda item: (-item[2], item[0]))
-    if len(candidates) < MODE_COUNT:
+    if len(candidates) < BASE_MODE_COUNT:
         raise ValueError(
-            f"only {len(candidates)} shared pole candidates, expected {MODE_COUNT}"
+            f"g{guitar}: only {len(candidates)} shared pole candidates, "
+            f"expected at least {BASE_MODE_COUNT}"
         )
-    modes = sorted(candidates[:MODE_COUNT], key=lambda item: item[0])
-    residues = [fit_residues(target, modes) for target in targets]
-    values = np.concatenate(
-        (
-            np.array([(mode[0], mode[1]) for mode in modes]).ravel(),
-            residues[0].view(np.float64),
-            residues[1].view(np.float64),
+    for count in range(BASE_MODE_COUNT, len(candidates) + 1):
+        modes = sorted(candidates[:count], key=lambda item: item[0])
+        residues = [fit_residues(target, modes) for target in targets]
+        values = np.concatenate(
+            (
+                np.array([(mode[0], mode[1]) for mode in modes]).ravel(),
+                residues[0].view(np.float64),
+                residues[1].view(np.float64),
+            )
         )
+        if not np.all(np.isfinite(values)):
+            continue
+        errors, stereo, band = fit_errors(targets, modes, residues)
+        if within_limits(errors, stereo, band):
+            return {
+                "guitar": guitar,
+                "keep_samples": keep_samples,
+                "convergence": convergence,
+                "modes": modes,
+                "residues": residues,
+                "errors": errors,
+                "stereo": stereo,
+                "band": band,
+            }
+    raise ValueError(
+        f"g{guitar}: no mode count up to {len(candidates)} met the fit limits"
     )
-    if not np.all(np.isfinite(values)):
-        raise ValueError("modal fit contains non-finite values")
-    validate_fit(targets, modes, residues)
-    return modes, residues
 
 
 def cpp_float(value: float) -> str:
@@ -363,30 +510,52 @@ def cpp_float(value: float) -> str:
     return text + "f"
 
 
-def render_header(
-    modes: list[tuple[float, float, float]], residues: list[np.ndarray]
-) -> str:
+def bank_block(name: str, bank: dict) -> str:
     rows = []
-    for mode, treble, bass in zip(modes, residues[0], residues[1]):
-        values = (
-            mode[0],
-            mode[1],
-            treble.real,
-            treble.imag,
-            bass.real,
-            bass.imag,
+    for mode, treble, bass in zip(bank["modes"], bank["residues"][0],
+                                  bank["residues"][1]):
+        values = (mode[0], mode[1], treble.real, treble.imag,
+                  bass.real, bass.imag)
+        rows.append("    { " + ", ".join(cpp_float(value) for value in values)
+                    + " },")
+    guitar = bank["guitar"]
+    keep = bank["keep_samples"]
+    if guitar in ANECHOIC_GUITARS:
+        window = (
+            f"{keep} samples ({keep / 48.0:.1f} ms), the shortest window whose "
+            f"modes below 700 Hz hold their Q to "
+            f"{bank['convergence'] * 100.0:.1f} percent at twice that length"
         )
-        rows.append("    { " + ", ".join(cpp_float(value) for value in values) + " },")
+    else:
+        window = f"{keep} samples ({keep / 48.0:.1f} ms), DAFx-26's length"
+    errors = "; ".join(
+        f"channel {index} complex {error[0]:.4f}, median {error[1]:.3f} dB, "
+        f"p90 {error[2]:.3f} dB"
+        for index, error in enumerate(bank["errors"])
+    )
+    comment = textwrap.fill(
+        f'g{guitar}, {GUITAR_DESCRIPTION[guitar]}. Window {window}, with the'
+        f' final tenth as the raised-cosine fade. {len(bank["modes"])} shared'
+        f' poles: {errors}; stereo-ratio p90 {bank["stereo"]:.3f} dB;'
+        f' worst ERB-band level error above 5 kHz {bank["band"]:.3f} dB.',
+        width=76, initial_indent="// ", subsequent_indent="// ")
+    return f'''{comment}
+inline constexpr std::array<MeasuredBodyMode, {len(bank["modes"])}> {name} {{{{
+{chr(10).join(rows)}
+}}}};'''
 
+
+def render_header(steel: dict, nylon: dict) -> str:
     return f'''// Generated by Tools/GenerateMeasuredBody.py; do not hand-edit.
-// Individual-guitar target: g21, a 2018 Lester DeVoe flamenca blanca with a
-// spruce top and cypress back/sides. The treble-side bridge impact drives two
-// calibrated H1 paths: left is the treble microphone, right the bass microphone.
-// Each 3000-sample causal response is converted independently to minimum phase.
-// DAFx-26 specifies the retained length and raised-cosine taper, but not its
-// inner length; Acustra authors the final 300 samples as that fade. The 96
-// shared frequency/Q pairs and independent complex residues are an authored
-// regularised fit, not coefficients published by DAFx-26.
+// The treble-side bridge impact drives two calibrated H1 paths per guitar:
+// left is the treble microphone, right the bass microphone. Each causal
+// response is converted independently to minimum phase. DAFx-26 specifies the
+// retained length and raised-cosine taper, but not its inner length; Acustra
+// authors the final tenth as that fade. The shared frequency/Q pairs and
+// independent complex residues are an authored regularised fit, not
+// coefficients published by DAFx-26. One bank per string material: a
+// steel-string and a classical are different instruments, and the engine
+// selects by StringMaterial.
 // Adapted from Robert Mores, "Archive for the acoustical documentation of
 // classical Spanish guitars, flamenco guitars and romantic guitars from
 // private and public collections -- bridge mobility" (2021),
@@ -409,9 +578,9 @@ struct MeasuredBodyMode
     float rightImaginary;
 }};
 
-inline constexpr std::array<MeasuredBodyMode, {MODE_COUNT}> measuredBodyModes {{{{
-{chr(10).join(rows)}
-}}}};
+{bank_block("measuredSteelBodyModes", steel)}
+
+{bank_block("measuredNylonBodyModes", nylon)}
 }} // namespace acustra::detail
 '''
 
@@ -441,19 +610,30 @@ def main() -> int:
     parser.add_argument("--raw-mat", required=True, type=Path)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
+        "--nylon-guitar", type=int, default=DEFAULT_NYLON_GUITAR,
+        choices=sorted(GUITAR_DESCRIPTION),
+        help="archive record for the nylon bank (default: %(default)s)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="compare generated content with --output without writing it",
     )
     arguments = parser.parse_args()
 
-    modes, residues = modal_fit(arguments.raw_mat)
-    header = render_header(modes, residues)
+    steel = modal_fit(arguments.raw_mat, 21)
+    nylon = modal_fit(arguments.raw_mat, arguments.nylon_guitar)
+    header = render_header(steel, nylon)
     if arguments.check:
         return 0 if check_output(arguments.output, header) else 1
     with arguments.output.open("w", encoding="utf-8", newline="\n") as stream:
         stream.write(header)
-    print(f"generated {arguments.output}: {MODE_COUNT} shared modes")
+    for name, bank in (("steel", steel), ("nylon", nylon)):
+        print(
+            f"generated {name} bank g{bank['guitar']}: {len(bank['modes'])} "
+            f"shared modes, window {bank['keep_samples']} samples"
+        )
+    print(f"wrote {arguments.output}")
     return 0
 
 

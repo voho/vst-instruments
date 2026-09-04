@@ -30,7 +30,15 @@ WAV metadata is read from the file. Headerless little-endian float32 files need
 Usage:
 
     python3 Tools/FitPhysicalModel.py fit-manifest.json
+    python3 Tools/FitPhysicalModel.py --floor fit-manifest.json \
+        [--control sample-manifest.json]
     python3 Tools/FitPhysicalModel.py --self-test
+
+``--floor`` scores each recorded take against another take of the same note and
+layer instead of against a model, which is the only number that says how small
+a term can honestly get: see ``floor_report``. It also rescores the model, and
+the ``--control`` manifest when one is given, against the same trim-corrected
+targets, so every column of that table is a distance to the same signal.
 
 NumPy and SciPy are required; both are already used by Acustra's measurement
 tools. The JSON report's ``weighted_residuals`` can be returned directly from a
@@ -661,6 +669,11 @@ class PreparedManifest:
                 "material": source.get("material"),
                 "midi": midi,
                 "velocity": float(velocity),
+                "round_robin": source.get("round_robin"),
+                # The renderer records the per-zone playback trim it applied to
+                # this target so the floor below can undo it; see floor_report.
+                "playback_trim": _as_file_spec(source["target"]).get(
+                    "playback_trim"),
                 "dynamic_group": source.get("dynamic_group"),
                 "target_features": target,
                 "model_spec": source["model"],
@@ -691,6 +704,7 @@ class PreparedManifest:
         *,
         material: str | None = None,
         identifiers: set[str] | None = None,
+        undo_playback_trim: bool = False,
     ) -> dict[str, Any]:
         selected = [
             example
@@ -714,6 +728,13 @@ class PreparedManifest:
                 model_cache[model_key] = model
             examples.append({
                 **source,
+                # The floor undoes the export's per-zone playback trim on the
+                # target, so a model score meant to be read against that floor
+                # has to be measured against the same target; see floor_report.
+                "target_features": (
+                    _trim_corrected(source["target_features"],
+                                    source["playback_trim"])
+                    if undo_playback_trim else source["target_features"]),
                 "model_features": model,
             })
         report = score_examples(examples, self.analysis_rate)
@@ -725,6 +746,165 @@ class PreparedManifest:
 
 def score_manifest(path: Path) -> dict[str, Any]:
     return PreparedManifest(path).score()
+
+
+def _trim_corrected(
+    features: dict[str, Any], trim: Any
+) -> dict[str, Any]:
+    """Undo the sample bank's per-zone playback trim on the level descriptor.
+
+    Every other descriptor this file extracts is normalised to its own mean, or
+    is a frequency or a decay rate, so a scalar gain on the audio reaches the
+    score through ``level_db`` alone and can be removed here rather than by
+    re-exporting the corpus. The trim matters because ``Library::prepare``
+    equalises one-second energy across every zone of an archtop root: on the
+    exported targets two takes of the same note have been made the same
+    loudness, so a level floor measured on them is the trim's, not the
+    player's.
+    """
+    if trim is None:
+        return features
+    value = float(trim)
+    if not math.isfinite(value) or value <= 0.0:
+        return features
+    return {**features, "level_db": features["level_db"] - 20.0 * math.log10(value)}
+
+
+def _floor_examples(
+    prepared: PreparedManifest, material: str, *, reverse: bool
+) -> list[dict[str, Any]]:
+    by_note: dict[tuple[int, float], dict[int, dict[str, Any]]] = {}
+    for example in prepared.examples:
+        if example["material"] != material or example["round_robin"] is None:
+            continue
+        by_note.setdefault((example["midi"], example["velocity"]), {})[
+            int(example["round_robin"])] = example
+    examples: list[dict[str, Any]] = []
+    for (midi, velocity), takes in sorted(by_note.items()):
+        for first in sorted(takes):
+            for second in sorted(takes):
+                if (first < second) == reverse or first == second:
+                    continue
+                target, model = takes[first], takes[second]
+                examples.append({
+                    "id": f"{material}-m{midi}-v{velocity:g}-rr{first}-{second}",
+                    "material": material,
+                    "midi": midi,
+                    "velocity": velocity,
+                    # One take pair is one dynamic group, so the dynamics term
+                    # compares how loudness followed velocity in take `first`
+                    # with how it did in take `second`.
+                    "dynamic_group": f"{material}-m{midi}-rr{first}-{second}",
+                    "target_features": _trim_corrected(
+                        target["target_features"], target["playback_trim"]),
+                    "model_features": _trim_corrected(
+                        model["target_features"], model["playback_trim"]),
+                })
+    return examples
+
+
+def floor_report(
+    prepared: PreparedManifest,
+    control: PreparedManifest | None = None,
+) -> dict[str, Any]:
+    """Score each take of a note against another take of the same note.
+
+    The scorer cannot tell how much of a term is the model's error and how much
+    is the spread the recordings themselves have, and the corpus answers that
+    directly: the archtop was captured four times per note and layer, so the
+    same seven terms can be run recording against recording. That is the floor
+    below which a model score means nothing about the model. Both orderings are
+    reported because the residual layout is owned by the target side, so a
+    partial one take found and the other did not scores 4.0 in one direction
+    and is skipped in the other; the two sides agreeing is the check that no
+    such asymmetry dominates a term.
+
+    The model, and the control when one is given, are scored here as well
+    rather than taken from the ordinary run, because the floor undoes the
+    export's per-zone playback trim on the target and a column read against it
+    has to be measured against that same target. Only the level term moves.
+
+    Nylon and the flat-top rows were captured once per note, so they have no
+    floor here and are reported as such.
+    """
+    materials = sorted({
+        example["material"] for example in prepared.examples
+        if example["material"] is not None
+    })
+    out: dict[str, Any] = {
+        "manifest": str(prepared.path),
+        "analysis_sample_rate": prepared.analysis_rate,
+        "materials": {},
+    }
+    for material in materials:
+        forward = _floor_examples(prepared, material, reverse=False)
+        reverse = _floor_examples(prepared, material, reverse=True)
+        node: dict[str, Any] = {"pair_count": len(forward)}
+        if not forward:
+            node["floor"] = None
+            node["note"] = "one take per note: no recording-versus-recording floor"
+            out["materials"][material] = node
+            continue
+        trims = [example["playback_trim"] for example in prepared.examples
+                 if example["material"] == material]
+        node["level_terms_trim_corrected"] = all(
+            trim is not None for trim in trims)
+        forward_report = score_examples(forward, prepared.analysis_rate)
+        reverse_report = score_examples(reverse, prepared.analysis_rate)
+        node["floor"] = {
+            "score": forward_report["score"],
+            "terms": {name: value["score"]
+                      for name, value in forward_report["terms"].items()},
+        }
+        node["reversed"] = {
+            "score": reverse_report["score"],
+            "terms": {name: value["score"]
+                      for name, value in reverse_report["terms"].items()},
+        }
+        node["symmetry_max_term_difference"] = max(
+            abs(forward_report["terms"][name]["score"]
+                - reverse_report["terms"][name]["score"])
+            for name in forward_report["terms"]
+            if forward_report["terms"][name]["score"] is not None
+            and reverse_report["terms"][name]["score"] is not None
+        )
+        identifiers = {
+            example["id"] for example in prepared.examples
+            if example["material"] == material
+            and example["round_robin"] is not None
+        }
+        # The model column of this table has to be measured against the same
+        # target the floor is, or the two numbers in a row are distances to two
+        # different signals. Only the level descriptor moves: every other one is
+        # normalised to its own mean, or is a frequency or a rate.
+        model_report = prepared.score(
+            material=material, identifiers=identifiers,
+            undo_playback_trim=node["level_terms_trim_corrected"])
+        node["model"] = {
+            "level_terms_trim_corrected": node["level_terms_trim_corrected"],
+            "score": model_report["score"],
+            "terms": {name: value["score"]
+                      for name, value in model_report["terms"].items()},
+        }
+        if control is not None:
+            control_report = control.score(
+                material=material, identifiers=identifiers,
+                undo_playback_trim=node["level_terms_trim_corrected"])
+            node["control"] = {
+                "level_terms_trim_corrected": node[
+                    "level_terms_trim_corrected"],
+                "score": control_report["score"],
+                "terms": {name: value["score"]
+                          for name, value in control_report["terms"].items()},
+                "at_or_below_floor": {
+                    name: (None if node["floor"]["terms"][name] is None
+                           or value["score"] is None
+                           else bool(value["score"] <= node["floor"]["terms"][name]))
+                    for name, value in control_report["terms"].items()
+                },
+            }
+        out["materials"][material] = node
+    return out
 
 
 def _synthetic_note(
@@ -877,6 +1057,71 @@ def self_test() -> None:
         if (not np.all(np.isfinite(high_pitch))
                 or not high_pitch[0] > high_pitch[1] > high_pitch[2] > 0.0):
             raise AssertionError("two-partial high-note pitch trajectory failed")
+
+        # Floor mode: two takes of the same note, the second written 6 dB
+        # louder at the loud velocity the way a playback trim would write it.
+        floor_examples: list[dict[str, Any]] = []
+        for velocity in (0.25, 0.90):
+            suffix = str(round(velocity * 100))
+            second = _synthetic_note(
+                rate, 45, velocity, latency=0.0043, brightness=0.71,
+                t60=4.7, inharmonicity=8.2e-5, velocity_exponent=0.83,
+                attack_pitch_cents=13.0, attack_pitch_tau=0.088,
+            )
+            trim = 2.0 if velocity > 0.5 else 1.0
+            second_path = root / f"take2-{suffix}.f32"
+            (second * trim).astype("<f4").tofile(second_path)
+            for take, entry in ((0, {"path": f"target-{suffix}.wav",
+                                     "playback_trim": 1.0}),
+                                (1, {"path": second_path.name,
+                                     "sample_rate": rate, "channels": 1,
+                                     "playback_trim": trim})):
+                floor_examples.append({
+                    "id": f"floor-{suffix}-rr{take}",
+                    "material": "synthetic",
+                    "midi": 45,
+                    "velocity": velocity,
+                    "round_robin": take,
+                    # Both velocities of one take are one dynamic group, so the
+                    # model column below has a level term to correct.
+                    "dynamic_group": f"synthetic-rr{take}",
+                    "target": entry,
+                    # Floor mode reads only the target side; the model side is
+                    # required by the manifest schema.
+                    "model": {"path": f"close-{suffix}.f32",
+                              "sample_rate": rate, "channels": 1},
+                })
+        prepared = PreparedManifest(
+            write_manifest("floor.json", floor_examples))
+        trimmed = floor_report(prepared)["materials"]["synthetic"]
+        if trimmed["pair_count"] != 2:
+            raise AssertionError(
+                f"floor built {trimmed['pair_count']} pairs, expected 2")
+        if trimmed["symmetry_max_term_difference"] > 1.0e-9:
+            raise AssertionError(
+                "floor is not symmetric: "
+                f"{trimmed['symmetry_max_term_difference']}")
+        for example in prepared.examples:
+            example["playback_trim"] = None
+        uncorrected = floor_report(prepared)["materials"]["synthetic"]
+        if not (trimmed["floor"]["terms"]["dynamics"]
+                < uncorrected["floor"]["terms"]["dynamics"]):
+            raise AssertionError(
+                "undoing the playback trim did not lower the level floor: "
+                f"{trimmed['floor']['terms']['dynamics']} vs "
+                f"{uncorrected['floor']['terms']['dynamics']}")
+        # The model column has to move with the floor and only on the level
+        # term, or the table's two numbers are measured against two targets.
+        if (trimmed["model"]["terms"]["dynamics"]
+                == uncorrected["model"]["terms"]["dynamics"]):
+            raise AssertionError(
+                "the trim correction did not reach the model column")
+        for name, value in trimmed["model"]["terms"].items():
+            other = uncorrected["model"]["terms"][name]
+            if name != "dynamics" and value != other:
+                raise AssertionError(
+                    f"the trim correction moved the {name} term: "
+                    f"{value} vs {other}")
         print(
             "self-test passed: closer damped-harmonic model scored "
             f"{close_report['score']:.6f} < {far_report['score']:.6f}"
@@ -887,12 +1132,30 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", nargs="?", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--floor", action="store_true",
+        help="score each recorded take against another take of the same note",
+    )
+    parser.add_argument(
+        "--control", type=Path,
+        help="a manifest whose model side is the sample player, scored on the "
+             "same examples for comparison with the floor",
+    )
     arguments = parser.parse_args()
     if arguments.self_test:
         self_test()
         return 0
     if arguments.manifest is None:
         parser.error("manifest is required unless --self-test is used")
+    if arguments.floor:
+        control = (PreparedManifest(arguments.control)
+                   if arguments.control is not None else None)
+        print(json.dumps(
+            floor_report(PreparedManifest(arguments.manifest), control),
+            indent=2, sort_keys=True))
+        return 0
+    if arguments.control is not None:
+        parser.error("--control is only meaningful with --floor")
     print(json.dumps(score_manifest(arguments.manifest), indent=2, sort_keys=True))
     return 0
 

@@ -328,12 +328,13 @@ void AcustraAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     = engine.strumDelaySamples (rank, meanVelocity);
             }
             strumUpstroke = ! strumUpstroke;
+            engine.beginStrum();
         }
         for (int index = 0; index < pendingNoteOnCount; ++index)
         {
             const auto& note = pendingNoteOns[static_cast<std::size_t> (index)];
             engine.noteOn (note.note, note.velocity, note.channel,
-                           strum ? note.pluckDelay : 0);
+                           strum ? note.pluckDelay : 0, strum);
         }
         pendingNoteOnCount = 0;
 
@@ -483,6 +484,15 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
         rawPitchWheels[static_cast<std::size_t> (midiChannel - 1)] = normalised;
         refreshPitchBend (midiChannel);
     }
+    else if (kind == 0xd0u && numBytes >= 2)
+    {
+        // MPE channel pressure: the fretting hand's grip on this note's own
+        // member channel. Forwarded unconditionally; the engine applies it
+        // only on a channel the lower zone actually made a member (see
+        // AcustraEngine::mpePressureFor), so it is inert without an MPE zone.
+        engine.setMpePressure (static_cast<float> (data[1] & 0x7fu) / 127.0f,
+                               midiChannel);
+    }
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
@@ -491,7 +501,14 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
             midiChannel, static_cast<int> (controller),
             static_cast<int> (value)));
 
-        if (controller == 2u)
+        if (controller == 1u)
+        {
+            // The modulation wheel is the fretting hand's vibrato. Like the
+            // bridge hand it is one gesture across the instrument rather than
+            // a per-channel setting, and zero is an exact no-op.
+            engine.setVibrato (static_cast<float> (value) / 127.0f);
+        }
+        else if (controller == 2u)
         {
             // Bridge-hand pressure. It is a playing gesture rather than a
             // construction setting, so it stays a controller and the panel
@@ -502,6 +519,35 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
         else if (controller == 64u)
         {
             engine.setSustainPedal (value >= 64u, midiChannel);
+        }
+        else if (controller == 74u)
+        {
+            // MPE Timbre: where this one note's own member channel met the
+            // string. Forwarded unconditionally; the engine reads it only on
+            // a lower-zone member channel, at that note's own pluck (see
+            // AcustraEngine::initialisePluck), so it is inert without an MPE
+            // zone.
+            engine.setMpeTimbre (static_cast<float> (value) / 127.0f,
+                                 midiChannel);
+        }
+        else if (controller == 126u && midiChannel == 1)
+        {
+            // MIDI 1.0's own Mono Mode On channel-mode message on the basic
+            // channel: value is how many consecutive channels become
+            // monophonic voices. M=6 is the standard spelling of "six
+            // channels, one voice each", which is why it is the toggle here
+            // -- not a message either Roland's GK or Fishman's TriplePlay is
+            // documented to transmit (their own manuals describe only the
+            // resulting one-string-per-channel layout, not a message that
+            // requests it), so today nothing sends this on those rigs; a
+            // future control surface or the host's own MIDI editor can. Any
+            // other value, including 0, turns the mode back off.
+            engine.setStringPerChannelMode (
+                value == static_cast<unsigned> (acustra::AcustraEngine::stringCount));
+        }
+        else if (controller == 127u && midiChannel == 1)
+        {
+            engine.setStringPerChannelMode (false);
         }
         else if (controller == 68u)
         {

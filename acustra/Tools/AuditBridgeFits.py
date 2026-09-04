@@ -44,7 +44,9 @@ def fit(frequency: np.ndarray, mobility: np.ndarray, candidate_count: int,
     assert best is not None
     error, advance, weights, target, model = best
     keep = weights > np.max(weights) * 1.0e-8
-    retained = [(mode[0], mode[1], float(weight))
+    # This screen fits the treble driving point alone, so every retained mode
+    # is heave-only in the two-point header's terms: a rigid bridge.
+    retained = [(mode[0], mode[1], float(weight), 0.0, 0.0)
                 for mode, weight, use in zip(candidates, weights, keep) if use]
     model = basis[:, keep] @ weights[keep]
     magnitude_error = np.abs(20.0 * np.log10(
@@ -72,6 +74,11 @@ def main() -> int:
     parser.add_argument("--output-directory", type=Path)
     arguments = parser.parse_args()
     frequency, mobility = bridge.extract_mobility(arguments.raw_mat)
+    # Only the steel (g21) bank is screened here. Fit the nylon bank first,
+    # while the module's candidate count and band are still the shipping ones,
+    # so a written header stays the one the engine would compile.
+    nylon = (bridge.fit_bank(arguments.raw_mat, bridge.DEFAULT_NYLON_GUITAR)
+             if arguments.output_directory is not None else None)
     configurations = ((30, 4200.0), (48, 10_000.0),
                       (64, 10_000.0), (96, 10_000.0))
     for candidates, maximum in configurations:
@@ -87,11 +94,17 @@ def main() -> int:
         if arguments.output_directory is not None:
             arguments.output_directory.mkdir(parents=True, exist_ok=True)
             header = bridge.render_header(
-                result["retained"], result["advance"], result["complex"],
-                result["median"])
-            header = header.replace(
-                f"of 30 measured", f"of {candidates} measured").replace(
-                "over 60--4200 Hz", f"over 60--{int(maximum)} Hz")
+                {
+                    "guitar": 21,
+                    "modes": result["retained"],
+                    "phase_advance": result["advance"],
+                    "relative_error": result["complex"],
+                    "magnitude_error": result["median"],
+                    "corner": bridge.MINIMUM_FREQUENCY,
+                    "rocking": 0,
+                },
+                nylon,
+            )
             path = arguments.output_directory / (
                 f"MeasuredBridgeData-{candidates}c-{len(result['retained'])}r.h")
             path.write_text(header, encoding="utf-8")
