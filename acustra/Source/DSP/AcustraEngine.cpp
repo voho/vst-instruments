@@ -2405,13 +2405,14 @@ void AcustraEngine::captureTail(Voice& voice) noexcept
     // A string is only taken or replucked while the plucking hand is on it:
     // the picking hand landing to repluck or cut a note short, not the
     // fretting finger beginRelease's 0.16 s models. Laurson, Erkut, Valimaki
-    // and Kuuskankare (CMJ 25(3), 2001, Sec. on re-excitation) report the loop
-    // gain driven to zero in about 10 ms before a re-pluck; Erkut, Karjalainen,
-    // Huang and Valimaki (AES 109th Convention, 2000) put the picking-hand
-    // flesh contact's active regime at 20-60 ms. 10 ms is the specific figure
-    // the first source gives for this contact and sits at the near edge of the
-    // second source's regime, so it is used rather than a value picked between
-    // the two.
+    // and Kuuskankare (CMJ 25(3), 2001, "Simulation of Playing Styles") give
+    // the loop gain driven to zero in about 10 ms before a re-pluck, and that
+    // is the value used directly. Erkut, Valimaki, Karjalainen and Laurson
+    // (AES 108th Convention, Paris, Feb 2000, preprint 5114, Sec. 3.2
+    // "Repeated Plucks") independently measure the finger-on-string contact
+    // regime for a repeated pluck at 20-60 ms - a different quantity (a
+    // contact-regime duration, not a decay time) that brackets the same
+    // mechanism at tens of milliseconds, consistent with the 10 ms figure.
     if (!(voice.level > 2.0e-7f))
     {
         voice.tailActive = false;

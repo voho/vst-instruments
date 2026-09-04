@@ -3609,8 +3609,9 @@ void testStolenStringKeepsRingingUnderHandDamping()
            "the tail kept less than half of the string's stored energy");
     expect(snapshot.keptInTail <= snapshot.heldBeforeSteal * 1.000001,
            "the tail held more energy than the string it came from");
-    // 10 ms of hand damping is over 150 60 dB decays in half a second, so the
-    // tail must be far down but the mechanism must not be instantaneous.
+    // The picking hand's 10 ms contact drives the loop down fast (about
+    // -10 dB at 10 ms, -21 dB at 20 ms, flooring near -33 dB) but not
+    // instantaneously, so half a second later the tail must be far down.
     expect(snapshot.tailEnergyAfterDecay < 0.01 * snapshot.keptInTail,
            "the stolen tail did not decay under the hand damping");
     // Replucking the same note is the hand landing on the string too: what
@@ -3621,7 +3622,7 @@ void testStolenStringKeepsRingingUnderHandDamping()
 
     // Repeated chord changes restart a tail on a string whose previous tail is
     // still sounding, which discards the older one. Run that hard: forty
-    // changes, some inside one tail's 160 ms, at the sample-rate extremes.
+    // changes, some inside one tail's 10 ms, at the sample-rate extremes.
     for (const double rate : { 44100.0, 384000.0 })
     {
         acustra::AcustraEngine engine;
