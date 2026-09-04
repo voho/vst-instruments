@@ -121,9 +121,38 @@ session-compatibility policy rather than anything derived. It is not adopted,
 and not only because the reference is a model: the render came from a demo
 build, and a demo that injects noise and a chorus that models more hiss are
 indistinguishable in a single take with the chorus on. One file separates
-them — take 10-chorus-01, the same instrument with chorus off. If the floor
-collapses it is chorus hiss and OQ-03 has its first comparison; if it stays it
-is the demo, and the take is void.
+them, and it was rendered: A11 again on the same instrument with the chorus
+switched off, twice.
+
+**The floor collapses, so the noise is chorus hiss and the take stands.** With
+chorus off the reference is silent in every idle window — take A reads
+−95.3 dB with none of its energy above 2 kHz, which is a release tail rather
+than a floor, and take B is literally all zeros. With chorus I the same
+instrument on the same patch reads −77.7 dB, 97.8 % of it above 2 kHz, and it
+is present *before the first note*, so it is neither a tail nor a bounce
+artefact. Engaging the chorus raises the idle floor by 17.6 dB. Two takes were
+supplied specifically so an artefact could be told from the instrument; they do
+not subtract to nothing — the oscillators free-run, so the notes differ in
+phase and level by over a decibel — but neither carries any high-frequency
+floor at all, which is what the question needed.
+
+Referred to each take's own first note so the chain cancels, signal-to-idle is
+47.6 dB on the reference against 64.4 dB here: **the reference carries 16.8 dB
+more chorus hiss.** Its spectrum differs in shape too, rising 13.3 dB into the
+4–8 kHz octave where this model's is nearly flat and falls away above 8 kHz
+under its own reconstruction filters.
+
+**It does not move the default, and the reason is arithmetic rather than
+policy.** 16.8 dB above this model's 29.86 % default is about 207 % on its own
+HISS scale, whose 100 % is pinned to the 0.2 mVrms figure Panasonic prints as a
+*maximum*. A reference sitting at roughly twice a part's own maximum row is
+voicing hiss for character, not reproducing a datasheet, so it cannot argue
+this model's default upward. What it does establish, for the first time from
+something outside this project, is that another 106 emulation treats this hiss
+as far more audible than the shipped default does — and OQ-03 already records
+that 29.86 % is session-compatibility policy rather than a derived value. The
+measurement that would settle it is unchanged: a silent-patch capture at the
+mono jack of an identified unit, chorus off then chorus I.
 
 **One take returned nothing usable.** Take 06 sweeps the cutoff with the filter
 envelope, and in the reference the high-to-low band ratio stalls 39.8 dB below
