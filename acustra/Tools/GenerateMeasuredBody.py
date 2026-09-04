@@ -107,9 +107,16 @@ MAX_STEREO_RATIO_P90_ERROR_DB = 5.0
 # heard as a change of timbre while still passing the p90 above. The committed
 # banks reach 0.34/0.46 dB (g21 treble/bass mic) and 0.62/0.37 dB (g34), which
 # is what rules out splitting the body into a modal part below f30 and a
-# separately convolved measured residual above it: that residual is the
-# quotient measured here, a filter within 0.62 dB of unity in every band it
-# would cover.
+# separately convolved measured residual above it: from 5 kHz up that
+# residual is the quotient measured here, a filter within 0.62 dB of unity
+# in every whole ERB band. Below 5 kHz, which such a residual stage would
+# also have to cover down to f30, the quotient is not that flat -- over
+# whole ERBs from 503 Hz it reaches -2.05 dB (g21 treble, 1125-1271 Hz) and
+# -2.01 dB (g21 bass, 1612-1811 Hz), with 2 and 3 of 19 bands over 1 dB;
+# g34 reaches -1.16 and -1.02 dB. There the modes are still separable, so
+# that miss is pole placement in the modal region rather than the
+# statistical behaviour a residual stage models, and the conclusion rests
+# on the 5 kHz-and-up band where a residual stage would earn its taps.
 BAND_ERROR_FLOOR_HZ = 5_000.0
 MAX_BAND_MAGNITUDE_ERROR_DB = 1.0
 RAW_MD5 = "733cb10baf5ce36d8bf333610ffbb260"

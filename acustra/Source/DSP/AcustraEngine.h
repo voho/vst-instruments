@@ -142,15 +142,18 @@ public:
     // conventional or manager channel and inert with no lower zone.
     void setMpeTimbre(float value, int midiChannel) noexcept;
     // MPE channel pressure, 0xD0, on a lower-zone member channel: the
-    // fretting hand's grip. It biases how readily a pull-off's lift energy
-    // clears the fret (see liftFinger) and how deep the wheel's vibrato
-    // reaches (see vibratoSemitones); it adds no string energy of its own.
+    // fretting hand's grip. It biases how deep the wheel's vibrato reaches
+    // (see vibratoSemitones) and nothing else; it adds no string energy of
+    // its own. It does NOT reach a pull-off's lift -- liftFinger's own
+    // comment records the energy discontinuity that took it back out.
     // 0-1; inert on a conventional or manager channel and inert with no
     // lower zone.
     void setMpePressure(float value, int midiChannel) noexcept;
-    // Opt-in guitar-controller mode, the convention Roland's GK and
-    // Fishman's TriplePlay send in "mono mode": channels 1-6 are the six
-    // strings directly, bypassing chooseString's fret-distance guess. A note
+    // Opt-in guitar-controller mode: channels 1-6 are the six strings
+    // directly, bypassing chooseString's fret-distance guess. It is the
+    // layout Roland's GK and Fishman's TriplePlay produce in "mono mode",
+    // but neither is documented to transmit a message requesting it -- see
+    // the CC126 handler in PluginProcessor.cpp for what actually toggles it. A note
     // on channel 1-6 with no playable fret on that channel's string is
     // dropped rather than reassigned. Off, the default, is an exact no-op.
     void setStringPerChannelMode(bool enabled) noexcept;

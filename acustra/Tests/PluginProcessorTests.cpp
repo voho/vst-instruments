@@ -1379,9 +1379,11 @@ void testMpeTimbreReachesTheEngineOnMemberChannelOnly()
 
 void testMpePressureReachesTheEngineOnMemberChannelOnly()
 {
-    // MPE channel pressure, status 0xD0, biases this note's own pull-off
-    // threshold and vibrato depth (see AcustraEngine::mpePressureFor) and
-    // must be inert off a member channel or with no lower zone.
+    // MPE channel pressure, status 0xD0, biases this note's own vibrato
+    // depth (see AcustraEngine::mpePressureFor) and must be inert off a
+    // member channel or with no lower zone. It does not reach a pull-off:
+    // the phrase below therefore holds CC1 up and frets the note, so the
+    // difference it asserts on comes through the vibrato path alone.
     const auto phrase = [] (int pressure, int channel, bool memberZone)
     {
         AcustraAudioProcessor processor;

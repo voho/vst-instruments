@@ -2694,8 +2694,9 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
 // finger a mass M_FG = 5e-3 kg and a collision force f = K_FG [eta_FG]^a_FG
 // with K_FG = 1e10 and a_FG = 2.3 (the caption prints no unit for K_FG; the
 // exponent makes it N/m^2.3); the real-time guitar of Bilbao, Russo, Webb
-// and Ducceschi, Proc. DAFx-24, Guildford 2024, Sec. 2.5, runs the same
-// finger ("parameters as given in [11]", [11] being that paper). Such a
+// and Ducceschi, Proc. DAFx-24, Guildford 2024, runs the same finger:
+// Sec. 2.5 defines it and the Fig. 3 caption sources its values
+// ("parameters as given in [11]", [11] being that paper). Such a
 // contact has incremental stiffness a_FG K_FG eta^(a_FG - 1), and driving
 // the string's own drive-point resistance 2T/c through it is a first-order
 // lag of rise time 2(T/c) / (a_FG K_FG eta^(a_FG - 1)) at the working
