@@ -600,6 +600,17 @@ Lower is better in the robust descriptor score:
 | Development validation | 24 | 7.597316 | 5.893771 | 6.072344 | −20.07% |
 | Flat top (reported only) | 8 | 9.315695 | 6.913712 | 8.073304 | −13.34% |
 
+The one split that answers whether the refit generalises is the frozen test
+split, which no fit, screen or refit has ever rendered: 188 archtop regions on
+the sixteen roots the fit uses. It is scored once per release and never fitted.
+The refit moves it from 6.324463 to 5.728151, 9.4% better, and every one of its
+seven terms improves — attack 8.110 to 6.870, harmonics 8.205 to 8.122, tuning
+3.019 to 2.311, pitch trajectory 0.315 to 0.275, decay 4.421 to 3.929, body
+11.506 to 10.504, dynamics 0.0945 to 0.0188. That is the evidence against
+reading the flat top's 1.6% regression as overfitting: on the larger unseen
+split the refit is better everywhere, and the flat top is eight rows of one
+guitar tuned about four cents sharp.
+
 The shipping column is not the fitted one. The Fitted column is what the
 bounded pattern search of 2026-09-04 converged on by itself; the user heard it
 against the calibration that shipped before it, level-matched with the letters

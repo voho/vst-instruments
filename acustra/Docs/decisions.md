@@ -37,7 +37,9 @@ than nylon's.
 What ships is therefore the refit with those two pinned: training 6.319236 →
 6.111540, development validation 6.327235 → 6.072344, and the eight
 never-fitted flat-top rows 7.948337 → 8.073304 — better on both fitted splits,
-1.6% worse on the split that is only ever reported. Two bounds moved with it,
+1.6% worse on the split that is only ever reported. The frozen test split, 188 archtop regions no fit or refit has ever rendered, was re-scored at the shipping calibration afterwards and settles what that regression means: 6.324463 → 5.728151, 9.4% better, with all seven terms improving. The refit generalises to notes it never saw; the flat top is eight rows of one guitar.
+
+Two bounds moved with it,
 each for a value that genuinely changed: the steel attack-pitch cue from 4.0 to
 7.8 cents, because the fit raised the displacement scale 25% and the recordings'
 own early-minus-late fundamental says the loudest steel layer moves 1.81 times
