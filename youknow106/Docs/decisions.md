@@ -5,6 +5,71 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — Sanity check against KR-106, driven directly
+
+The calibration takes were rendered a third time, through **Ultramaster
+KR-106**, a GPL3 JUNO-106 model whose author calibrated it from hardware
+measurements, firmware analysis and factory schematics. This pass was not
+handed to an operator: a small offline AudioUnit host drives the plug-in
+directly, sets all 56 parameters, plays a sample-accurate score and writes
+float WAVs, so there is no DAW tempo to be overridden, no panel set by hand,
+no bounce region and no demo build. Its three switch-valued parameters were
+decoded by measurement rather than assumption. Nothing clipped: every ratio
+below is identical to 0.01 dB across a 12 dB change of its master volume.
+
+**KR-106 is not an independent witness everywhere.** This project already
+cites it as a source for the chorus click-timing series, the code-to-frequency
+and sustain tables and the factory tone transcription, and the shipped chorus
+sweep trajectory *is* its measurement. On chorus delay a comparison is
+therefore partly circular. On mixer levels, the filter and the amplifier it is
+independent: nothing here was taken from it.
+
+**Where the two agree, within the tolerance a sanity check asks for:**
+
+| quantity | KR-106 | here |
+| --- | --- | --- |
+| VCA LEVEL, 32-byte steps | −4.88 / −9.92 / −14.96 dB | −5.13 / −10.43 / −15.73 |
+| High-pass cut II / cut III | −8.4 / −17.4 dB | −9.5 / −18.8 |
+| NOISE byte 64 re 127 | −6.50 dB | −6.32 |
+| Resonance peak, mid travel | 15.1 / 22.9 dB | 14.5 / 20.0 |
+| Chorus mode ratio | 1.63623 | 1.62348 (+0.79 %) |
+
+That mode ratio is the pass's best result. This project derives 1.6234799 from
+the mode switch's own T-network; KR-106 lands 0.79 % away and the audited
+Roland Cloud model landed 0.10 % away. Three sources within about one percent
+is real corroboration of a derivation, on the one quantity no chain can
+distort. The absolute rates spread wider — 0.5144 and 0.8417 Hz here against
+this project's derived 0.5533 and 0.8983, about 7 % slower, with Roland Cloud
+2 % slower — and this project's come from printed component values, so they
+stand.
+
+**Where they differ and this project is better anchored, so nothing moves:**
+self-oscillation lands on 247.1 Hz here against KR-106's 242.4, where the
+service manual prints 248 Hz at converter code 6272 — 0.4 % against 2.3 %. The
+high-pass corners are MNA-qualified against the drawn network, the VCA LEVEL
+law follows NEC's −5.9 mV/dB, and the NOISE deadband follows Tr22's drawn
+grounded-base onset, where KR-106 tapers instead of cutting off.
+
+**One quantity is the other way round, and it is the one with no anchor at
+all.** Frequency-matched at 261.63 Hz, so any response difference cancels
+exactly:
+
+| ratio | KR-106 | Arturia Jun-6 V | here |
+| --- | ---: | ---: | ---: |
+| pulse / saw | +4.65 | +6.21 | +6.51 |
+| sub / saw | +8.49 | +6.87 | +4.89 |
+
+On pulse this project and Arturia agree within 0.3 dB and KR-106 is the
+outlier, so nothing moves. On sub this project is the outlier, low, against
+two independent models that bracket it 2.0 to 3.6 dB higher — and
+`subMixVolts` is, by this project's own comment, the coordinate with no
+end-to-end anchor. Its history says the same thing twice over: it moved on the
+owner's decision in August and was reverted when the recording behind it could
+not be shown to reproduce its patch. It is not moved here either, because two
+models cannot close a question and because the two disagree by 1.6 dB about
+the size of the correction. It is put to the owner as the one candidate this
+pass produced.
+
 ## 2026-09-04 — First calibration takes rendered, and why nothing moved
 
 Nine of the calibration takes were rendered through **Arturia's Jun-6 V** and
