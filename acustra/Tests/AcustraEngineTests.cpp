@@ -703,6 +703,29 @@ struct AcustraEngineTestAccess
         return out;
     }
 
+    // The energy the picking hand's contact leaves in a stolen or replucked
+    // voice's tail loop, at capture and 60 ms later, on the string doing the
+    // repluck (voice 0) rather than the new pluck (voice 1's own string).
+    static std::pair<double, double> repluckTailEnergyAt60ms(double rate)
+    {
+        AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = StringMaterial::Steel;
+        engine.setParameters(parameters);
+        engine.prepare(rate, 128);
+        std::vector<float> l(128), r(128);
+        engine.noteOn(40, 0.8f);
+        for (int i = 0; i < static_cast<int>(0.3 * rate); i += 128)
+            engine.process(l.data(), r.data(), 128);
+        engine.noteOn(40, 0.8f); // repluck: captureTail runs on voice 0
+        const double atCapture = loopEnergy(engine.voices_[0].tailLoop);
+        for (int i = 0; i < static_cast<int>(0.06 * rate); i += 128)
+            engine.process(l.data(), r.data(), 128);
+        const double after60ms = engine.voices_[0].tailActive
+            ? loopEnergy(engine.voices_[0].tailLoop) : 0.0;
+        return { atCapture, after60ms };
+    }
+
     static constexpr int controlPeriodSamples() noexcept
     {
         return AcustraEngine::controlPeriod;
@@ -3586,8 +3609,8 @@ void testStolenStringKeepsRingingUnderHandDamping()
            "the tail kept less than half of the string's stored energy");
     expect(snapshot.keptInTail <= snapshot.heldBeforeSteal * 1.000001,
            "the tail held more energy than the string it came from");
-    // 0.16 s of hand damping is about nine 60 dB decays in half a second, so
-    // the tail must be far down but the mechanism must not be instantaneous.
+    // 10 ms of hand damping is over 150 60 dB decays in half a second, so the
+    // tail must be far down but the mechanism must not be instantaneous.
     expect(snapshot.tailEnergyAfterDecay < 0.01 * snapshot.keptInTail,
            "the stolen tail did not decay under the hand damping");
     // Replucking the same note is the hand landing on the string too: what
@@ -4550,6 +4573,16 @@ void testRepluckLandsTheHandOnTheString()
             expect(hopFirsts[index] < 0.5 * hopPeaks[index],
                    "a repeated E4 clicked on its first samples" + at);
         }
+
+        // Gate: the picking hand's 10 ms contact time leaves the captured
+        // tail's energy below 1% of what it started with 60 ms after a
+        // repluck.
+        const auto [atCapture, after60ms]
+            = acustra::AcustraEngineTestAccess::repluckTailEnergyAt60ms(rate);
+        expect(atCapture > 0.0, "a repluck captured no tail energy" + at);
+        expect(after60ms < 0.01 * atCapture,
+               "the repluck tail held more than 1% of its energy 60 ms later"
+               + at);
     }
 
     // A first pluck is untouched: a fresh engine and one that has only ever

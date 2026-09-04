@@ -2402,18 +2402,23 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
 
 void AcustraEngine::captureTail(Voice& voice) noexcept
 {
-    // A string is only taken or replucked while the plucking hand is on it,
-    // whatever the outgoing note's fret was. That is the contact beginRelease
-    // already models for a stopped fretted note, so the same 0.16 s damping
-    // applies here; the open-string 1.25 s case is a lifted fretting finger on
-    // a string nobody is touching, which this is not.
+    // A string is only taken or replucked while the plucking hand is on it:
+    // the picking hand landing to repluck or cut a note short, not the
+    // fretting finger beginRelease's 0.16 s models. Laurson, Erkut, Valimaki
+    // and Kuuskankare (CMJ 25(3), 2001, Sec. on re-excitation) report the loop
+    // gain driven to zero in about 10 ms before a re-pluck; Erkut, Karjalainen,
+    // Huang and Valimaki (AES 109th Convention, 2000) put the picking-hand
+    // flesh contact's active regime at 20-60 ms. 10 ms is the specific figure
+    // the first source gives for this contact and sits at the near edge of the
+    // second source's regime, so it is used rather than a value picked between
+    // the two.
     if (!(voice.level > 2.0e-7f))
     {
         voice.tailActive = false;
         return;
     }
     voice.tailLoop = voice.loops[0];
-    constexpr float contactSeconds = 0.16f;
+    constexpr float contactSeconds = 0.010f;
     voice.tailDamping = std::pow(0.001f,
         1.0f / std::max(contactSeconds * midiFrequency(voice.midiNote), 1.0f));
     voice.tailLevel = voice.level;
