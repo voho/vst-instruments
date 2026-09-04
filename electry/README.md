@@ -3184,6 +3184,22 @@ the realistic result is to ship nothing.
 
 ## Development checkpoints
 
+### 2026-09-05 string precision and retained hand state
+
+Fractional string reads and pick-image writes now preserve their exact delay
+fraction independently of the circular-buffer cursor. Ringing repicks retain
+the saddle resonator's history, and Palm-held hammer-ons, pull-offs and slides
+retain the planted hand's attack absorption as well as its decay. These correct
+existing numerical and physical-state inconsistencies without adding controls
+or changing fitted constants.
+
+The [September research and validation note](Docs/research-realism-2026-09.md)
+reviews primary work through August 2026, records the focused before/after
+regressions and interpolation spectrum, and identifies the remaining high-band
+amp-aliasing and controlled-capture limits. Generated listening comparisons and
+logs are in `build-realism-20260905/`. Neither those comparisons nor passing
+engineering tests establish competitive realism superiority.
+
 ### 2026-09-01 Palm spatial-contact experiments (rejected pre-source)
 
 - Tested two reversible bridge-hand spatial models before opening any selected

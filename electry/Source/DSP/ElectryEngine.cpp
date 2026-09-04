@@ -573,9 +573,10 @@ void ElectryEngine::DelayTap::setDelay(float delaySamples) noexcept
 void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value) noexcept
 {
     offsetSamples = clampf(offsetSamples, 1.0f, static_cast<float>(delayLineSize - 8));
-    const float position = static_cast<float>(writeIndex) - offsetSamples;
-    const int index = static_cast<int>(std::floor(position));
-    const float fraction = position - static_cast<float>(index);
+    // Match the moving read's cursor-independent fractional coordinate.
+    const float ceiling = std::ceil(offsetSamples);
+    const int index = writeIndex - static_cast<int>(ceiling);
+    const float fraction = ceiling - offsetSamples;
     const int mask = delayLineSize - 1;
     line[static_cast<std::size_t>(index & mask)] += value * (1.0f - fraction);
     line[static_cast<std::size_t>((index + 1) & mask)] += value * fraction;
@@ -4588,7 +4589,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato,
     // MIDI note-on that schedules a strummed string. Arming it here keeps the
     // pre-roll silent and means a key released before the pick arrives makes no
     // phantom impact. Hammer and legato Slide have no picking-hand collision.
-    const float palmStyleDepth = voice.playStyle == PlayStyle::PalmMute
+    // A fretting gesture retains this absorber even though its attack style
+    // is Hammer or Slide. It still colours the finger's released string below.
+    const float palmStyleDepth = (voice.playStyle == PlayStyle::PalmMute
+                                 || retainsExistingPalm)
         ? 0.55f + 0.45f * parameters.muteDamping : 0.0f;
     // Palm style and the continuous bridge hand are parallel contacts: each
     // can absorb only what the other leaves. Keep either one alone bit-exact.
@@ -5587,7 +5591,11 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         * bipolarNoise(voice.artifactNoiseState);
     const float rattleFrequency = (1600.0f + 420.0f
         * static_cast<float>(voice.stringIndex)) * (1.0f + rattleVariation);
-    voice.saddleRattle.reset();
+    // A new stroke adds force to the moving saddle. Preserve its displacement
+    // history through repicks/refrets, just like the bridge/body thud below;
+    // damping the string does not stop this separate hardware mode instantly.
+    if (! wasRinging)
+        voice.saddleRattle.reset();
     voice.saddleRattle.configure(
         rattleFrequency,
         lerp(10.0f, 24.0f, smoothedParameters_.artifactAmount), 1.0f,

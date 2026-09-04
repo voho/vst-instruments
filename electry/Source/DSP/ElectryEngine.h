@@ -941,9 +941,12 @@ private:
             delaySamples = delaySamples < 4.0f
                 ? 4.0f
                 : (delaySamples > maximumDelay ? maximumDelay : delaySamples);
-            const float position = static_cast<float>(writeIndex) - delaySamples;
-            const int index = static_cast<int>(position) - (position < 0.0f ? 1 : 0);
-            const float t = position - static_cast<float>(index);
+            // Split the delay before subtracting the integer ring cursor.
+            // Subtracting in float rounds its fraction differently as the
+            // cursor travels, modulating even a stationary string's pitch.
+            const float ceiling = std::ceil(delaySamples);
+            const int index = writeIndex - static_cast<int>(ceiling);
+            const float t = ceiling - delaySamples;
             constexpr int mask = delayLineSize - 1;
             const float y0 = line[static_cast<std::size_t>((index - 1) & mask)];
             const float y1 = line[static_cast<std::size_t>(index & mask)];
@@ -962,9 +965,8 @@ private:
 
         // The same third-order Lagrange read as above with its weights already
         // solved. Four multiplies instead of the clamp, floor and eight-product
-        // polynomial, and its fractional position is derived from the delay
-        // itself rather than from a difference against a five-digit write
-        // index, so it is the more accurate of the two as well.
+        // polynomial. Both reads derive their fraction from the delay itself
+        // so neither depends on the ring cursor's floating-point precision.
         [[nodiscard]] float readTap(const DelayTap& tap) const noexcept
         {
             constexpr int mask = delayLineSize - 1;

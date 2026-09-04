@@ -1068,6 +1068,8 @@ struct ElectryEngineTestAccess
         return ElectryEngine::delayLineSize;
     }
 
+    using DelayLoop = ElectryEngine::PolarisationLoop;
+
 #if ELECTRY_ANALYTIC_RELEASE_IC
     struct AnalyticReleaseSeed
     {
@@ -1249,6 +1251,14 @@ struct ElectryEngineTestAccess
     {
         return engine.voices_[static_cast<std::size_t>(stringIndex)]
             .palmImpactState;
+    }
+
+    static std::array<double, 2> saddleRattleState(
+        const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        const auto& rattle = engine.voices_[static_cast<std::size_t>(stringIndex)]
+                                 .saddleRattle;
+        return { rattle.y1, rattle.y2 };
     }
 
     static float excitationPulseCoefficient(const ElectryEngine& engine,
@@ -10568,6 +10578,76 @@ void testDelayTapClampsAndInterpolates()
            "a fractional delay's interpolation weights did not sum to unity");
 }
 
+void testFractionalDelayIsIndependentOfRingOrigin()
+{
+    TestAccess::DelayLoop loop;
+    const int capacity = TestAccess::delayLineCapacity();
+    const int mask = capacity - 1;
+    const double maximum = capacity - 8;
+    constexpr std::array<float, 4> samples { 0.25f, -0.5f, 0.75f, -1.0f };
+    double worstReadError = 0.0;
+    double worstWriteError = 0.0;
+    double worstOriginDifference = 0.0;
+
+    // Include non-dyadic delays found in pitched strings, both clamps, exact
+    // integers and wraparound. Quarter-sample fixtures alone hide this bug.
+    for (const float requested : {
+             -10.0f, 1.0f, 4.0f, 4.0001f, 10.25f, 38.314159f, 57.12345f,
+             127.23456f, 2330.8752f, 8191.9995f, 15000.25f, 16376.0f, 20000.0f })
+    {
+        // Independent double-precision Lagrange polynomial at the physical
+        // coordinate. Its value must not depend on the ring's memory origin.
+        const double readPosition = -std::clamp<double>(requested, 4.0, maximum);
+        const int readBase = static_cast<int>(std::floor(readPosition));
+        const double readFraction = readPosition - readBase;
+        double expectedRead = 0.0;
+        for (int j = 0; j < 4; ++j)
+        {
+            double weight = 1.0;
+            for (int k = 0; k < 4; ++k)
+                if (k != j)
+                    weight *= (readFraction - (k - 1)) / (j - k);
+            expectedRead += samples[static_cast<std::size_t>(j)] * weight;
+        }
+
+        const double writePosition = -std::clamp<double>(requested, 1.0, maximum);
+        const int writeBase = static_cast<int>(std::floor(writePosition));
+        const double writeFraction = writePosition - writeBase;
+        float firstRead = 0.0f;
+        for (int origin = 0; origin < capacity; ++origin)
+        {
+            loop.writeIndex = origin;
+            for (int j = 0; j < 4; ++j)
+                loop.line[static_cast<std::size_t>((origin + readBase + j - 1) & mask)]
+                    = samples[static_cast<std::size_t>(j)];
+            const float read = loop.readFractional(requested);
+            if (origin == 0)
+                firstRead = read;
+            worstOriginDifference = std::max(worstOriginDifference,
+                std::abs(static_cast<double>(read) - firstRead));
+            worstReadError = std::max(worstReadError, std::abs(read - expectedRead));
+
+            auto& first = loop.line[static_cast<std::size_t>((origin + writeBase) & mask)];
+            auto& second = loop.line[static_cast<std::size_t>((origin + writeBase + 1) & mask)];
+            first = 0.125f;
+            second = 0.25f;
+            loop.writeAdd(requested, -0.75f);
+            worstWriteError = std::max({ worstWriteError,
+                std::abs(first - (0.125 - 0.75 * (1.0 - writeFraction))),
+                std::abs(second - (0.25 - 0.75 * writeFraction)) });
+        }
+    }
+    expect(worstOriginDifference == 0.0,
+           "rotating the ring changed a stationary fractional string read");
+    expect(worstReadError < 2.0e-7,
+           "moving string read disagrees with the independent cubic reference");
+    expect(worstWriteError < 6.0e-8,
+           "pick image injection moved or changed weight with the ring origin");
+    std::cout << "Fractional delay: origin delta=" << worstOriginDifference
+              << ", read error=" << worstReadError
+              << ", write error=" << worstWriteError << '\n';
+}
+
 // The natural harmonic is a finger resting on a node, not a transposition.
 // The distinction is measurable in three places: which partials survive, that
 // the loop still runs at the fretted pitch (so the surviving partial decays at
@@ -16553,6 +16633,58 @@ void testPalmAttackContactsCompose()
            "Dead's fretting and bridge hands replaced rather than composed");
 }
 
+void testRetainedPalmColoursFingerExcitation()
+{
+    // A retained Palm-style hand and equivalent continuous bridge pressure
+    // must absorb the same finger release. Use the top string so the release
+    // corner stays above its safety floor and the comparison is meaningful.
+    for (const double rate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    for (const auto style : { PlayStyle::Hammer, PlayStyle::Slide })
+    for (const int destination : { 73, 79 })
+    {
+        const auto inspect = [&] (bool retainPalm, float pressure)
+        {
+            auto engine = std::make_unique<ElectryEngine>();
+            engine->prepare(rate, 512);
+            EngineParameters parameters;
+            parameters.strumSpreadSeconds = 0.0f;
+            parameters.sympatheticAmount = 0.0f;
+            engine->setParameters(parameters);
+            engine->reset();
+            engine->noteOn(ElectryEngine::firstSoloStringKeyswitchNote + 7, 1.0f);
+            engine->noteOn(styleKeyswitch(retainPalm
+                ? PlayStyle::PalmMute : PlayStyle::Sustain), 1.0f);
+            engine->noteOn(76, 0.90f);
+            StereoBuffer establish(static_cast<int>(0.040 * rate));
+            renderInto(*engine, establish);
+            const float impactBefore = TestAccess::palmImpactVelocity(*engine, 7);
+            engine->setPalmMutePressure(pressure);
+            engine->noteOn(styleKeyswitch(style), 1.0f);
+            engine->noteOn(destination, 0.90f);
+            const auto state = TestAccess::snapshot(*engine, 7);
+            expect(state.midiNote == destination && state.playStyle == style,
+                   "retained-Palm finger fixture did not retarget its string");
+            expect(! retainPalm || state.dampingStyle == PlayStyle::PalmMute,
+                   "a finger gesture lifted the retained Palm hand");
+            expect(TestAccess::palmImpactVelocity(*engine, 7) == impactBefore,
+                   "a finger gesture fabricated a new picking-hand impact");
+            return std::array<float, 2> {
+                state.excitationReleaseCoefficient,
+                TestAccess::noiseBandCoefficient(*engine, 7)
+            };
+        };
+        const float palmDepth = 0.55f + 0.45f * EngineParameters {}.muteDamping;
+        const auto open = inspect(false, 0.0f);
+        const auto pressure = inspect(false, palmDepth);
+        const auto retained = inspect(true, 0.0f);
+        expect(pressure[0] > open[0] && pressure[1] >= open[1],
+               "finger-contact fixture did not exercise bridge-hand absorption");
+        expect(retained == pressure,
+               "retained Palm hand lost finger-release/noise absorption at "
+                   + std::to_string(rate) + " Hz");
+    }
+}
+
 void testPalmImpactIsSampleRateInvariant()
 {
     std::array<double, 4> decaysDb {};
@@ -16862,6 +16994,60 @@ void testPalmImpactWaitsForStrokeAndClears()
     expect(TestAccess::palmImpactState(overlapping, overlappingString)
                == stateBeforeRepick,
            "a rapid Palm repick erased the live impact-filter tail");
+}
+
+void testSaddleRattleSurvivesRepicks()
+{
+    // The saddle is already vibrating when a new stroke reaches its string.
+    // Exercise real attack-driven state, including a large refret whose
+    // string-wave choke must not erase the separate hardware resonance.
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        for (const auto style : { PlayStyle::Sustain, PlayStyle::PalmMute })
+        {
+            for (const int nextNote : { 28, 40 })
+            {
+                auto engine = std::make_unique<ElectryEngine>();
+                engine->prepare(sampleRate, 512);
+                EngineParameters parameters;
+                parameters.artifactAmount = 1.0f;
+                parameters.sympatheticAmount = 0.0f;
+                parameters.pickNoise = 0.0f;
+                parameters.fingerNoise = 0.0f;
+                parameters.releaseNoise = 0.0f;
+                parameters.strumSpreadSeconds = 0.0f;
+                engine->setParameters(parameters);
+                engine->reset();
+                engine->noteOn(ElectryEngine::firstSoloStringKeyswitchNote, 1.0f);
+                engine->noteOn(styleKeyswitch(style), 1.0f);
+                engine->noteOn(28, 0.90f);
+                StereoBuffer attack(static_cast<int>(0.005 * sampleRate));
+                renderInto(*engine, attack);
+                const auto before = TestAccess::saddleRattleState(*engine, 0);
+                expect(std::abs(before[0]) + std::abs(before[1]) > 1.0e-12,
+                       "saddle-continuity fixture had no attack-driven ring");
+
+                engine->noteOn(nextNote, 0.95f);
+                expect(TestAccess::stringForNote(*engine, nextNote) == 0,
+                       "saddle-continuity fixture moved to another string");
+                expect(TestAccess::saddleRattleState(*engine, 0) == before,
+                       "a repick/refret erased moving saddle state at "
+                           + std::to_string(sampleRate) + " Hz");
+                renderInto(*engine, attack);
+                expect(allFinite(attack),
+                       "preserved saddle resonance produced non-finite audio");
+
+                engine->reset();
+                expect(TestAccess::saddleRattleState(*engine, 0)
+                           == std::array<double, 2> {},
+                       "engine reset preserved an old saddle resonance");
+                engine->noteOn(28, 0.90f);
+                expect(TestAccess::saddleRattleState(*engine, 0)
+                           == std::array<double, 2> {},
+                       "a fresh attack inherited an old saddle resonance");
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -21268,6 +21454,7 @@ int main()
     testSetPitchBendSanitisation();
     testSetResonanceReturnLevelAndPalmMutePressureSanitisation();
     testDelayTapClampsAndInterpolates();
+    testFractionalDelayIsIndependentOfRingOrigin();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
@@ -21291,8 +21478,10 @@ int main()
     testExtendedRangeMutedMatrixProxy();
     testPalmHandLossStartsEngaged();
     testPalmAttackContactsCompose();
+    testRetainedPalmColoursFingerExcitation();
     testPalmImpactIsSampleRateInvariant();
     testPalmImpactWaitsForStrokeAndClears();
+    testSaddleRattleSurvivesRepicks();
     testSeededPlayerTiming();
     testStrumSpread();
     testStrumTravelFollowsStroke();
