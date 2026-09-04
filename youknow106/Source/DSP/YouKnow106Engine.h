@@ -190,6 +190,11 @@ struct EngineParameters
     // Bound for the affine blends above; see the note on `calibration`.
     static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { Chorus::defaultNoiseScale };
+    // Comparison-only, not serialised: a linear scale on the shared Tr21
+    // noise rail for listening tests of the scope-crest convention behind
+    // the 4 Vp-p TP8 anchor (OQ-16). 1.0 is the shipped, conservative
+    // reading; the anchored bracket admits up to about +3.5 dB.
+    float mainNoiseLevelScale { 1.0f };
     int polyphony { 6 };           // 6 is the hardware voice count.
     // Exact preserves the established always-running sound and state.
     // ZonedHermite and PolyZoned trade bounded kernel error for lower VCF CPU
@@ -245,6 +250,15 @@ struct EngineParameters
     // narrow/near-mono result while preserving the ordinary I/II topology.
     // False retains the former anti-phase stereo I+II path for controlled A/Bs.
     bool enableNarrowOneTwoChorus { true };
+    // On by default: the chorus button reaches the wet-return JFETs through
+    // the drawn Tr5/C16/R48/C13/Tr4 drive (see Chorus::muteDrive*), so the
+    // wet return mutes about 60 ms after CHORUS goes off and returns about
+    // 115 ms after it comes on. False switches at the command, as before.
+    bool enableChorusMuteDrive { true };
+    // On by default: each MN3009 line carries its own fixed-seed insertion
+    // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
+    // keeps the two returns identical for controlled A/B renders.
+    bool enableChorusLineGainSpread { true };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
@@ -266,6 +280,28 @@ struct EngineParameters
     // does not change capacitance; leave the candidate off until an installed
     // 10 uF non-polar part is measured under the OQ-21 conditions.
     bool enableElectrolyticC14Nonlinearity { false };
+    // On by default: the switched HPF's departing cut leg keeps discharging
+    // its own capacitor -- C10 15 nF behind R21, C11 4.7 nF behind R23 --
+    // through its own 1 MOhm bleed and its own always-connected 47 kOhm into
+    // IC4a's summing node, instead of vanishing the instant IC3 points
+    // elsewhere. IC3 selects which leg the node is DRIVEN from; it does not
+    // disconnect the leg it just left. The tail is R29/(R21+R26) = 0.0448902,
+    // or -26.96 dB, of the stored capacitor voltage, decaying with 15.71 ms
+    // leaving Two and 4.92 ms leaving Three. False restores the former
+    // single-shared-state swap for controlled A/B renders; with the selector
+    // held still the two cut paths are bit-identical either way.
+    //
+    // The same switch also runs the Boost leg as its own three-capacitor
+    // network (C9, C8, C6 -- see BoostBranch) instead of the collapsed
+    // single-corner shelf: while Boost is selected the two agree to 0.016 dB,
+    // and what the physical states add is the leg's departing tail (C8
+    // discharging through R22||C9 and R25 into the summing node while IC4b
+    // keeps amplifying it -- the undriven pair's eigenmodes are 0.37 and
+    // 2.77 ms, so the earlier 940 us single-pole reading was short),
+    // the charge redistribution between C9 and C8 on re-entry, and IC4b's
+    // finite swing on its x11 low band. OQ-21 still owns the TC4052's own
+    // on-resistance and charge injection.
+    bool enableHighPassDepartingLegTail { true };
     // On by default: uses CircuitDerivedResonanceProfile's
     // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
     // BA662-family linear gm, 2026-08-20) instead of the voiced quadratic-then-
@@ -282,6 +318,16 @@ struct EngineParameters
     // serialised, like the rest of this family.
     ResonanceCompensationShape resonanceCompensationShape {
         ResonanceCompensationShape::Reconstruction };
+    // On by default: the resonance BA662 is one differential pair, so it takes
+    // a single tanh of the difference of its two divided inputs -- VCF IN
+    // through R5/R2 on the non-inverting side, VCF OUT through R3/R1 on the
+    // inverting one (JUNO-6/60 CPU BOARD p. 9). The model used to split that
+    // into a linear feedforward at the filter input and a separate tanh on the
+    // feedback return, which agrees only while both are small. False restores
+    // that split bit-exactly for controlled A/B renders. The two forms are
+    // identical at zero drive, so the 4.8 Vp-p self-oscillation trim and the
+    // maximumFeedback solve behind it are untouched either way.
+    bool enableDifferentialResonanceInput { true };
     // Comparison-only. Restores the former softplus envelope-to-gain stand-in
     // (turn-on 0.015, knee 0.0026) bit-exactly for A/B renders; the default
     // solves the traced Tr20 grounded-base stage's own junction law, see
@@ -293,6 +339,12 @@ struct EngineParameters
     // exactly like the resistor floors -- the exact-silence endpoint at 0 is
     // product policy, not a statement that the floor is a tolerance.
     bool enableCommonVcaNoise { true };
+    // On by default: each voice card's filter input carries the Johnson noise
+    // of its own 68k/560 stage network, referred through that stage's
+    // attenuator -- the same thermal law already applied to IC6's resistor
+    // groups, on resistors p. 9 prints. False restores the former voiced 20 uV
+    // seed bit-exactly for controlled A/B renders. Not serialised.
+    bool enableCardJohnsonFloor { true };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
@@ -575,6 +627,37 @@ public:
         // Roland-drawn value kept beside it for the A/B the bracket invites.
         // The 80017A's own thick-film resistors are unmarked and unmeasured;
         // OQ-09's measured family still owns the point value.
+        // A third reading now exists, and it is the first measured on an
+        // ORIGINAL rather than read off a drawing or a clone: a technician's
+        // ohmmeter survey of a de-potted 80017A
+        // (https://sounddoctorin.com/synthtec/roland/juno106.htm) reads the
+        // resonance OTA's non-inverting leg as 5.1k against 1.5k and the
+        // stage-1 series input as 3.9k, giving c = (3.9/68)(101.5/6.6) =
+        // 0.882 -- three times the floor below, 6.9 dB more passband
+        // compensation at full resonance. The same survey independently
+        // confirms three things this model already ships: 68k between the
+        // IR3109 stages, 560 ohm shunts, and 47k on the VCA BA662's output
+        // (see VoiceVcaSignalLaw::loadOhms), plus ~250 pF stage capacitors,
+        // which settles poleCapacitorFarads on 240 pF and makes 270 pF the
+        // clone's value rather than Roland's.
+        //
+        // Taken at face value that would be three times the floor below. It
+        // is not, and the arithmetic that shows why also settles which reading
+        // describes this module. Those are IN-CIRCUIT readings, and in-circuit
+        // ohmmetry reads low through parallel paths. Against the Open80017a
+        // topology the predicted readings are what he actually saw:
+        //   R1  24k  in parallel with (4.7 + 1.5 + 0.56)k = 5.27k, read 5.1k
+        //   R3  4.7k in parallel with (24 + 1.5)k          = 3.97k, read 3.9k
+        // and every value the two sources agree on -- 68k, 100k, 47k, 1.5k,
+        // 560 and the 4.7k VCA input -- is one whose parallel path is
+        // negligible, while both disagreements are in the direction a parallel
+        // path forces. A second independent original is therefore consistent
+        // with 4.7k and 24k, which is the reading shipped below, and the
+        // sibling drawing's 10k/47k is the discrete JUNO-6/60's own
+        // proportioning rather than the potted hybrid's.
+        //
+        // So the bracket did not widen. The floor is the best-supported
+        // reading of the 106's own module, and it is what ships.
         static constexpr float drawnInputCompensationPerFeedback =
             (10000.0f / 68000.0f)
             * ((100000.0f + 1500.0f) / (47000.0f + 1500.0f));
@@ -594,6 +677,18 @@ public:
             float feedback,
             ResonanceCompensationShape shape
                 = ResonanceCompensationShape::Reconstruction) noexcept;
+        // The bare coefficient c, without the 1 + c*k the split form wants.
+        // The differential form needs it because c multiplies the drive
+        // inside the resonance pair's own tanh.
+        [[nodiscard]] static constexpr float compensationCoefficient(
+            ResonanceCompensationShape shape) noexcept
+        {
+            return shape == ResonanceCompensationShape::Drawn
+                ? drawnInputCompensationPerFeedback
+                : (shape == ResonanceCompensationShape::Legacy
+                       ? legacyInputCompensationPerFeedback
+                       : inputCompensationPerFeedback);
+        }
         // The reciprocal of the pole scaling the cascade's own limit cycle
         // imposes on itself, as a function of the loop gain that sustains it.
         // Exactly 1 at and below `nominalOscillationFeedback`, where there is
@@ -864,8 +959,12 @@ public:
     // rebased from the chart's NOISE-first origin to this queue's
     // RESONANCE-first ordinal 0): drawn-artwork proportions, deliberately
     // non-uniform, still not hardware timestamps -- the figure is drafting,
-    // not a capture. It ships as a selectable comparison profile only; the
-    // reset path keeps NormalizedServiceChart.
+    // not a capture. Since 2026-09-04 it is what the plug-in and the demo
+    // renderer select, chosen by ear over the normalised placement
+    // (decisions.md). The engine's own default stays NormalizedServiceChart
+    // so every frozen fingerprint and ordinal-gap fixture keeps testing the
+    // reference grid -- the same split the VCF solver ladder uses -- and a
+    // selection is consumed by the next reset/prepare, never mid-pass.
     [[nodiscard]] static std::array<double, converterWritesPerPass>
         converterEventPhases(ConverterTimingProfile profile) noexcept;
     // Selects the profile reset()/prepare() install, so a comparison profile
@@ -1343,6 +1442,15 @@ private:
     // its finite slope.
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
+    // C54 ".001G" on module board p. 13: the G tolerance code is +/-2 %,
+    // and no per-card trimmer touches the ramp. See rampCurrentScaleFor.
+    static constexpr float rampCapacitorToleranceClass = 0.02f;
+    // ADJUSTMENT s. 10 (p. 19): VR31 -- one shared PWM trimmer -- is set for
+    // exactly 50 % on CH1 with PWM at 5, and the other channels are then
+    // accepted if they read 48-52 %. That is a joint window on each card's
+    // NET duty at the trim point, ramp error and comparator error together,
+    // relative to a trimmed CH1. The dispersion draws that net residual.
+    static constexpr float pwmDutyAcceptanceHalfWidth = 0.02f;
     // At B-2 coordinate 0x5400 the pair is code 0x0100 and count 0x1dfb.
     // Their product is a gain-free centre anchor for the approximately 12 Vpp
     // ramp: other pairs retain the B-2 law's small settled amplitude ripple,
@@ -1369,6 +1477,13 @@ private:
     // own comment for why the constant nonetheless stands.) The suites solve
     // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
+    // Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 prints the four IR3109 stage
+    // capacitors as "240PJ" -- C1, C2, C3, C4 alongside the seven 68K -- so
+    // both the value and its tolerance class come from the drawing rather than
+    // from an analyst's summary of it. The competing 270 pF in circulation is
+    // the Analogue Renaissance clone's own value, re-proportioned around
+    // different actives, and a de-potted original reads ~250 pF on a hand
+    // meter, which is 240 within tolerance. Anchored.
     static constexpr float poleCapacitorFarads = 240.0e-12f;
     // Each stage attenuates its differential input by 560 / (68000 + 560)
     // before the transconductor's differential pair sees it. That attenuator
@@ -1376,11 +1491,22 @@ private:
     // input coordinate; the upstream WAVE-to-input level remains OQ-15.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
-    // Half-span of the integrating capacitors' tolerance. The four 240 pF
-    // parts are discrete, so nothing trims them into agreement; a few percent
-    // is the ordinary class. Voiced under OQ-10, like the other card
-    // dispersions -- no measured population fixes it.
+    // Half-span of the integrating capacitors' tolerance. The four parts are
+    // discrete, so nothing trims them into agreement.
+    //
+    // The BOUND is no longer unsourced: the drawing's "240PJ" carries the J
+    // tolerance code, which is +/-5 %, so Roland specifies the band these
+    // parts are bought to. What the drawing cannot say is how a real
+    // population fills it -- a purchase tolerance is a guaranteed maximum, not
+    // a standard deviation, and parts habitually cluster well inside it. So
+    // this stays voiced, but voiced INSIDE an anchored bound of 0.05 rather
+    // than against nothing at all, and it stays at the end that claims least.
+    // OQ-10's population data still owns the point value.
+    static constexpr float vcfStageCapacitorToleranceBound = 0.05f;
     static constexpr float vcfStageCapacitorTolerance = 0.02f;
+    static_assert(vcfStageCapacitorTolerance <= vcfStageCapacitorToleranceBound,
+                  "the seeded capacitor spread must stay inside the J class "
+                  "tolerance Roland prints on the part");
     // The two VCF trims are the exception among the card dispersions: Roland
     // prints their acceptance. ADJUSTMENT procedures 7/8 (p. 19) repeat the
     // FREQ trim (248 Hz with C4 held, converter code 6272) and the WIDTH
@@ -1888,6 +2014,13 @@ private:
         // previousOmegaStep in its body -- a same-named parameter would
         // shadow it there and silently change which value gets scaled.
         void retime(float previousStep, float nextStep) noexcept;
+        // The resonance OTA's own input divider, as a coefficient on the
+        // drive, so the pair can see the DIFFERENCE of its two inputs inside
+        // one tanh instead of a linear feedforward outside it. Zero restores
+        // the former split exactly. Set per voice from the engine; uniform
+        // across voices in practice, but held per cascade so two plug-in
+        // instances on different shapes cannot interfere.
+        float inputCompensationCoefficient { 0.0f };
         template <bool useCubicEarly = false>
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
@@ -2060,7 +2193,13 @@ private:
     // envelopes are computed digitally in the shared processor and are
     // therefore identical across voices. What differs between voices is the
     // analogue chain each envelope drives, not the envelope itself. The
-    // distribution magnitudes remain voiced rather than measured residuals.
+    // distribution magnitudes remain voiced rather than measured residuals,
+    // but the untrimmed legs now have an anchored bound: the module-board
+    // legend (p. 12) prints every plain resistor as "R20J" -- J is +/-5 % --
+    // and only the DCO range resistors as 1 % metal-oxide film, so the 3 %
+    // classes on the sub leg (R101/R102), the noise leg (R102) and the
+    // per-voice summer leg (R3) sit inside that 5 %; the ramp uses C54's own
+    // G class (rampCapacitorToleranceClass).
     struct VoiceCard
     {
         float rampCurrentError { 0.0f };
@@ -2201,6 +2340,12 @@ private:
         // that check the lookup updateVoiceAudio already paid for every
         // active voice, every internal sample.
         float vcaGain { 0.0f };
+        // VR27 is an input attenuator, not an output one: p. 13 puts it
+        // between C59 off pin 3 VCF OUT and pin 9 VCA IN, through R108. A card
+        // trimmed hot therefore drives its BA662 pair harder rather than
+        // scaling what the pair already produced, so this rides ahead of
+        // VoiceVcaSignalLaw and `vca` carries only the control law.
+        float vcaInputTrim { 1.0f };
         float pulseDuty { 0.5f };
         // Physical comparator threshold. `pulseDuty` remains the public/
         // diagnostic nominal duty, but its endpoint clamps lose reachable
@@ -2766,6 +2911,50 @@ private:
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };
     float highPassHigh_ { 1.0f };
+    // R23/C11 (Three) and R21/C10 (Two) each hold their own charge. While a
+    // leg is selected its state is driven by the coupled bus at that leg's own
+    // passband corner -- highPassG_ already is that corner -- so its state is
+    // exactly the capacitor voltage. While it is not, it is fed silence at its
+    // own much slower undriven corner, and its residual current still reaches
+    // the summing node through its 47 kOhm. See the switch above.
+    HighPass highPassTwoLeg_ {};
+    HighPass highPassThreeLeg_ {};
+    float highPassTwoDepartG_ { 0.001f };
+    float highPassThreeDepartG_ { 0.001f };
+    // The Boost leg (IC3 Y3), jack board p. 15, as its three real charge
+    // stores rather than the collapsed shelf: Y3 -> (C9 47 nF || R22 47 kOhm)
+    // -> node N, C8 10 nF to ground, R20 into IC4b(+); IC4b is non-inverting
+    // with R18 100 kOhm (C6 22 nF across it) over R19 10 kOhm, so x11 at DC
+    // and x1 above C6's corner; its output reaches IC4a's summing node
+    // through R24 220 kOhm and Y3 itself through R25 47 kOhm, against R29
+    // 47 kOhm feedback. While selected, Y3 is the coupled bus. Deselected,
+    // Y3 hangs on R25 to the virtual earth and C8 discharges back through
+    // R22||C9 and R25 into that node -- the departing tail -- while IC4b keeps
+    // amplifying whatever N holds. Re-selection puts the bus step across C9
+    // in series with C8, so N jumps by C9/(C8+C9) of it.
+    struct BoostBranch
+    {
+        double vN { 0.0 };    // across C8, node N to ground
+        double vC9 { 0.0 };   // across C9, Y3 side positive
+        double vC6 { 0.0 };   // across C6, IC4b output side positive
+        // Bilinear integrator states behind the driven link pole and C6.
+        double linkState { 0.0 };
+        double c6State { 0.0 };
+        bool selected { false };
+        void reset() noexcept;
+    };
+    struct BoostBranchCoefficients
+    {
+        double linkG { 0.0 };   // TPT g of the R22 (C8 + C9) pole
+        double c6G { 0.0 };     // TPT g of the R18 C6 pole
+        // Trapezoidal one-step map of [vN, vC9] with Y3 undriven.
+        double m00 { 1.0 }, m01 { 0.0 }, m10 { 0.0 }, m11 { 1.0 };
+    };
+    BoostBranch boostBranch_ {};
+    BoostBranchCoefficients boostBranchCoefficients_ {};
+    void updateBoostBranchCoefficients() noexcept;
+    [[nodiscard]] float processBoostBranch(float coupled,
+                                           bool selected) noexcept;
 
     // C12/R36 immediately before the shared uPC1252H2 VCA.
     HighPass commonVcaInputCoupling_ {};

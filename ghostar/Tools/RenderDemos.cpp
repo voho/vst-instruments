@@ -320,6 +320,14 @@ private:
         {
             const int count = std::min(renderBlockSize, remaining);
             engine_->process(blockLeft.data(), blockRight.data(), count);
+            for (int index = 0; index < count; ++index)
+                if (!std::isfinite(blockLeft[static_cast<std::size_t>(index)])
+                    || !std::isfinite(
+                        blockRight[static_cast<std::size_t>(index)]))
+                    throw std::runtime_error(
+                        "the engine produced a non-finite sample at frame "
+                        + std::to_string(left_.size()
+                                         + static_cast<std::size_t>(index)));
             left_.insert(left_.end(), blockLeft.begin(), blockLeft.begin() + count);
             right_.insert(right_.end(), blockRight.begin(),
                           blockRight.begin() + count);

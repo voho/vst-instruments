@@ -6582,8 +6582,9 @@ void testPitStateMatchesFastFreewheel()
     // This is the work Exact performs before render; the fast retired path
     // intentionally skips it and must already have the same scale.
     YouKnow106TestAccess::updatePulseComparator(exact, 0, exactParameters);
-    expect(YouKnow106TestAccess::rampCurrentScale(exact, 0) == 1.03f
-               && YouKnow106TestAccess::rampCurrentScale(fast, 0) == 1.03f,
+    // A full-scale draw lands on C54's drawn G class, +/-2 %.
+    expect(YouKnow106TestAccess::rampCurrentScale(exact, 0) == 1.02f
+               && YouKnow106TestAccess::rampCurrentScale(fast, 0) == 1.02f,
            "a live calibration edit left the fast retired card's ramp scale stale");
 
     bool sawHeldRail = false;
@@ -6617,7 +6618,7 @@ void testPitStateMatchesFastFreewheel()
            "the matched retired-card fixture missed its hold or next rising OUT");
 
     fast.reset();
-    expect(YouKnow106TestAccess::rampCurrentScale(fast, 0) == 1.03f,
+    expect(YouKnow106TestAccess::rampCurrentScale(fast, 0) == 1.02f,
            "reset discarded the live calibration's fast-card ramp scale");
 }
 
@@ -8140,21 +8141,24 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
            "re-enabling pulse scheduled an oscillator reset");
 
-    // Card 6 has a deterministic negative comparator trim. During re-enable,
-    // the shared base CV therefore crosses zero before that card stops being
-    // pinned high. Its audible gate must follow the card comparator, not the
-    // already-positive shared base value. The shared CV climbs out of -0.8 V
-    // through the R117/C62 and R116/C63 smoothing poles, so the crossing sits
-    // several milliseconds after the write; search a window that covers it.
+    // Card 2 has a deterministic negative comparator trim: its net duty draw
+    // sits near the top of the 48-52 % window against a slightly slow ramp,
+    // so its threshold lands about 0.24 V below the shared hold. During
+    // re-enable the shared base CV therefore crosses zero before that card
+    // stops being pinned high. Its audible gate must follow the card
+    // comparator, not the already-positive shared base value. The shared CV
+    // climbs out of -0.8 V through the R117/C62 and R116/C63 smoothing poles,
+    // so the crossing sits several milliseconds after the write; search a
+    // window that covers it.
     bool sawPerCardOffsetWindow = false;
     for (int sample = 0; sample < 2048; ++sample)
     {
         renderExact(engine, 1);
         if (YouKnow106TestAccess::pwmHeld(engine) > 0.0f
-            && YouKnow106TestAccess::pulseDuty(engine, 5) >= 1.0f)
+            && YouKnow106TestAccess::pulseDuty(engine, 1) >= 1.0f)
         {
             sawPerCardOffsetWindow = true;
-            expect(YouKnow106TestAccess::pulseMixEnabled(engine, 5, true),
+            expect(YouKnow106TestAccess::pulseMixEnabled(engine, 1, true),
                    "pulse re-enable disconnected the still-pinned WAVE node");
             break;
         }
@@ -11384,9 +11388,11 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     const CouplingRun open = measure(0.00f);
     const CouplingRun middle = measure(0.50f);
     const CouplingRun narrow = measure(nominalPwmPanelMaximum);
-    expectNear(open.duty, 0.501946, 1.0e-3,
+    // Voice 0 is CH1, the card the shared VR31 trims to exactly 50 % at the
+    // trim point, so its residual here is the B-2 pair's own, not a draw.
+    expectNear(open.duty, 0.500498, 1.0e-3,
                "the coupling fixture's PWM panel 0.00 left its B-2-pair duty");
-    expectNear(narrow.duty, 0.940772, 1.0e-3,
+    expectNear(narrow.duty, 0.944239, 1.0e-3,
                "the coupling fixture's loaded PWM maximum left its card-specific duty");
     for (const auto& run : { open, middle, narrow })
     {

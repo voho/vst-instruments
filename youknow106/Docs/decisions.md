@@ -5,6 +5,174 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — Chart geometry chosen by ear; the noise crest stays put
+
+Two bracketed constants went to a blind listening test, keys unread until
+after the verdicts.
+
+**Converter intra-pass placement (OQ-08).** A was the shipping normalised
+`ordinal/23` placement, B the pixel-measured p. 8 chart geometry
+(`MeasuredChartGeometry`). Material: eight fast resonant filter-envelope
+stabs, a short chord and six PWM staccato notes; identical MIDI, controls,
+seed and rate; whole-file RMS matched within 0.03 dB with no trim, one common
+gain. The A/B null measured −3.2 dBc, almost all of it the free-running DCO
+phase each note-on catches at a different point in the pass.
+
+**Verdict, by ear:** very similar, B slightly better, heard as more resonant.
+The plug-in and the demo renderer now select `MeasuredChartGeometry` before
+preparing the engine, the way the VCF solver default is applied; the engine's
+own default stays the normalised grid so the frozen fingerprints and
+ordinal-gap fixtures keep testing the reference, and all three profiles
+remain selectable. This is a choice between two drafting-derived placements and moves no
+evidence class: neither profile is a hardware timestamp, and OQ-08's physical
+capture list is untouched.
+
+**Main NOISE level crest convention (OQ-16).** A was the shipping −11.96 dB
+reading of the "4 Vp-p at TP8" adjustment re the 4.8 Vp-p self-oscillation
+trim, B the six-sigma scope reading at +1.9 dB, C the bracket top at
++3.5 dB, through the comparison-only `mainNoiseLevelScale`. Material: saw +
+NOISE 10, then a NOISE-only resonant sweep; deliberately not level-matched,
+since level was the quantity under judgement; one common gain.
+
+**Verdict, by ear:** hard to say, no preference. Nothing moves:
+`noiseMixVolts` keeps its conservative reading inside the anchored bracket,
+and the comparison switch stays for a future set with different material.
+
+## 2026-09-03 — Correction: the de-potted original corroborates the shipped value
+
+The entry below records the Sound Doctorin teardown as widening the resonance
+compensation bracket to 0.882 and defining a coupled OQ-09/OQ-15 re-derivation.
+**That conclusion was wrong, and this entry supersedes it.** Cloning the
+Open80017a repository and reading Herpoel's KiCad schematic directly — R1 24k,
+R2 1.5k, R3 4.7k, R25 100k, R26 1.5k, R27 4.7k, R30 47k — made the arithmetic
+that settles it available.
+
+The teardown's readings are **in-circuit**, and in-circuit ohmmetry reads low
+through parallel paths. Against that topology the predicted readings are what he
+saw, to better than a tenth of a kilohm:
+
+    R1  24k  in parallel with (4.7 + 1.5 + 0.56)k = 5.27k   he read 5.1k
+    R3  4.7k in parallel with (24 + 1.5)k         = 3.97k   he read 3.9k
+
+And the pattern is not selective. Every value the two sources agree on — 68 kΩ
+between the stages, 100 kΩ resonance feedback, 47 kΩ VCA load, 1.5 kΩ, 560 Ω,
+and the 4.7 kΩ VCA input — is one whose parallel path is negligible; both
+disagreements are in the direction a parallel path forces, and both land where
+it predicts. That is the signature of a measurement artefact, not of a different
+circuit.
+
+So the teardown is not a third competing reading. It is a **second independent
+original consistent with 4.7 kΩ and 24 kΩ**, which is the reading that already
+ships. What it reclassifies is the sibling drawing: 10 kΩ and 47 kΩ describe the
+discrete JUNO-6/60's own proportioning, not the potted hybrid's, which is exactly
+what one would expect of a re-implementation.
+
+Three consequences. The shipped 0.275116 stops being merely the conservative end
+of a bracket and becomes the best-supported reading of the 106's own module. The
+coupled OQ-09/OQ-15 re-derivation named below is **not** owed — the drive
+coordinate is not moved by this evidence after all. And the Drawn shape stays
+selectable as the sibling instrument's value, which is what it now is.
+
+Everything the previous entry recorded as confirmed still stands: 68 kΩ, 560 Ω,
+100 kΩ, the 47 kΩ VCA load, and ~250 pF settling the integrator capacitor on
+240 pF with 270 pF identified as the clone's value.
+
+Documentation only; no constant moves.
+
+## 2026-09-03 — First measurement of an original 80017A, and why nothing moved yet
+
+A technician's ohmmeter survey of a **de-potted original A1QH80017A**
+([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)) is the
+first measured-on-an-original evidence this project has held. Everything before
+it was a factory drawing of a sibling instrument or a clone's reconstruction.
+
+**What it confirms**, independently of the sources the model already used: 68 kΩ
+between the IR3109 stages, 560 Ω shunts to ground, 100 kΩ resonance feedback
+from VCF OUT with 1.5 kΩ to ground, and **47 kΩ on the VCA BA662's output** —
+the same value the voice-VCA headroom was derived from on 2026-09-02, now
+corroborated on a real part rather than on the JUNO-6/60 drawing alone.
+
+**What it closes.** All four stage capacitors read ~250 pF, which is the 240 pF
+the sibling schematic prints within a hand-meter's tolerance. The competing
+270 pF turns out to be the Analogue Renaissance *clone's* value, not Roland's, so
+it is not evidence about the original at all. `poleCapacitorFarads` stays at
+240 pF and OQ-18's 64.8 kHz branch is retired.
+
+**What it unsettles.** The resonance OTA's non-inverting leg reads 5.1 kΩ against
+1.5 kΩ, not 47 kΩ, and the stage-1 series input reads 3.9 kΩ, not 10 kΩ. Those
+give c = (3.9/68)·(101.5/6.6) = 0.882, three times the shipped floor and 6.9 dB
+more passband compensation at full resonance. The bracket has therefore *widened*,
+and for the first time its top is a measurement rather than a drawing.
+
+**It is not adopted, for one structural reason and two evidential ones.**
+Structurally, the same reading puts stage 1's gain at 68/3.9 = 17.4 where
+`filterInputAttenuation` assumes 6.8, so it moves OQ-15's drive coordinate by the
+same act. Changing one without the other is incoherent, and the pair has to be
+re-derived together and reconciled against the anchored 6 Vp-p TP8 VCA GAIN trim
+— the same trim that killed the earlier proposal to move the drive coordinate on
+its own. Evidentially, it is a single in-circuit hand measurement, self-described
+as "roughly", standing against two independent 900 dpi reads of the sibling
+factory drawing. In-circuit ohmmetry reads low through parallel paths; the same
+meter did return 68 kΩ, 100 kΩ and 47 kΩ correctly, so a nine-fold error on the
++ leg is not a simple meter artefact, but one sample is one sample.
+
+One further caution from the same page, worth carrying: it reports that the
+Service Notes' **BA662 pin numbering is wrong** for this module. That cuts both
+ways — it weakens the drawing as a detail source, and it shows the author was
+working against a document he already distrusted.
+
+This is an evidence-recording entry, not a change. Nothing in the DSP moves.
+The next piece of work it defines is the coupled OQ-09/OQ-15 re-derivation, which
+is the highest-value item now open.
+
+## 2026-09-03 — The resonance pair sees one difference, not two separate terms
+
+The resonance BA662 is a single differential pair. It takes **one** tanh of the
+difference of its two divided inputs: VCF IN through R5 47k / R2 1.5k on the
+non-inverting side, VCF OUT through R3 100k / R1 1.5k on the inverting one
+(JUNO-6 and JUNO-60 CPU BOARD p. 9, the discrete circuit the A1QH80017A
+integrates). The model instead did two separate things: it multiplied the filter
+input by a linear `1 + c*k` ahead of the cascade, and applied a tanh to the
+feedback return inside it. That is not a constant to re-pin; it is the wrong
+form, in all five solver kernels.
+
+The restructuring is exact and small. Writing the pair's argument as the
+difference it physically is,
+
+    previous = drive - k*H*tanh((V4 - c*drive)/H)
+
+recovers `drive*(1 + c*k) - k*V4` in the linear limit, so the two agree wherever
+both terms are small, and diverge only where the nonlinearity actually bites.
+`c` is the same bracketed coefficient the 2026-09-02 entry shipped; it now
+multiplies the drive inside the tanh instead of ahead of it.
+
+**The endpoint solve is untouched, by construction.** At `drive = 0` the two
+forms are bit-identical, and Roland's 4.8 Vp-p / 248 Hz self-oscillation trim is
+taken with no oscillator, sub or noise in the patch. So `maximumFeedback = 4.504`
+and the `frequencyTrim` droop table built on it stand without re-solving, and the
+suite's endpoint assertions pass unchanged.
+
+Measured, shipping defaults at 48 kHz/4x, against the split form: silence is
+bit-identical and small-signal material barely moves (-0.087 dB on an open saw
+pad, -39 dBc). Two effects then compete as the signal grows, and both are
+consequences of the same correction. Removing the feedforward takes level off a
+loud resonant passband: -2.49 dB on a resonant pad, -1.56 dB on a stepped
+resonance ramp, -0.97 dB on a full-mixer patch. Shrinking the tanh's argument
+stops the loop being throttled by its own drive: +3.65 dB on a self-oscillating
+chord that has an oscillator in it, which is the case the audit named -- the
+model used to stop ringing where the drawn circuit keeps ringing.
+
+This is an evidence-priority correction, not a listening verdict: the split form
+is not a defensible alternative reading of the circuit, it is an approximation
+that only holds at small signal. No letters were rendered and none are owed. It
+does not close OQ-09, which still owns the coefficient's value.
+
+Paired native benchmark: -0.53 %, +1.69 %, +2.72 %, +0.35 % across the four
+audit scenarios -- the largest CPU cost of this pass, and one extra multiply and
+subtract per node in the hot feedback path is what it buys. Full suite 15/15.
+`EngineParameters::enableDifferentialResonanceInput` restores the split
+bit-exactly for comparison renders.
+
 ## 2026-09-02 — Resonance input compensation: off a voiced value, on to a bracket
 
 `inputCompensationPerFeedback` was 0.2296 with no derivation behind it. Two
@@ -466,6 +634,3 @@ new defaults stand. Chosen by ear, not settled by a measurement.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.
-- **Chart-geometry follow-on (OQ-08).** If `MeasuredChartGeometry` and the
-  normalised profile prove indistinguishable by ear, OQ-08's audible-impact
-  priority drops. No verdict yet.

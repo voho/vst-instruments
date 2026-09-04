@@ -108,6 +108,9 @@ if(GHOSTAR_BUILD_PLUGIN)
         NEEDS_MIDI_OUTPUT FALSE
         IS_MIDI_EFFECT FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT
+            "Ghostar uses audio input for the rear External Audio jack."
         AU_SANDBOX_SAFE TRUE
         COPY_PLUGIN_AFTER_BUILD FALSE)
 
@@ -158,7 +161,15 @@ if(GHOSTAR_BUILD_TOOLS)
     target_link_libraries(GhostarAliasAudit PRIVATE GhostarDSP)
     target_compile_features(GhostarAliasAudit PRIVATE cxx_std_20)
 
-    foreach(target GhostarRenderDemos GhostarZipperAudit GhostarAliasAudit)
+    # Inventory-only preflight for the same-unit hardware capture that will
+    # close the remaining voiced circuit seams. The complete acquisition
+    # protocol lives at the head of the tool that enforces it.
+    add_executable(GhostarValidateCalibrationCapture
+        Tools/ValidateCalibrationCapture.cpp)
+    target_compile_features(GhostarValidateCalibrationCapture PRIVATE cxx_std_20)
+
+    foreach(target GhostarRenderDemos GhostarZipperAudit GhostarAliasAudit
+                   GhostarValidateCalibrationCapture)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -238,6 +249,11 @@ if(BUILD_TESTING)
         add_test(NAME Ghostar.AliasAuditSmoke
                  COMMAND GhostarAliasAudit --smoke)
         set_tests_properties(Ghostar.AliasAuditSmoke PROPERTIES TIMEOUT 300)
+
+        add_test(NAME Ghostar.ValidateCalibrationCapture
+                 COMMAND GhostarValidateCalibrationCapture --self-test)
+        set_tests_properties(Ghostar.ValidateCalibrationCapture PROPERTIES
+            TIMEOUT 30)
     endif()
 
     if(GHOSTAR_BUILD_PLUGIN)

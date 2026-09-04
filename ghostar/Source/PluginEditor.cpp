@@ -425,8 +425,10 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
               "Gate the envelopes from the LFO square: auto-repeat at the "
               "MOD X rate, one gate per arpeggiator step.");
     addRocker(gateYExt, ids::gateYExt, "Y/EXT",
-              "Gate the envelopes from the Shaper's own comparator. At least "
-              "one gate source must be on or the envelopes never run.");
+              "Gate the envelopes from the Shaper's own comparator while "
+              "EXT GATE is unplugged, or from the inserted external gate. "
+              "At least one gate source must be on or the envelopes never "
+              "run.");
     addSelector(arpeggiator, ids::arpeggiator, "ARPEGGIATOR",
                 "Scans held keys bottom to top on the LFO clock. RIPPLE is "
                 "the plain sequence; ARPEGGIO repeats it up and down an "
@@ -541,6 +543,51 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     addRocker(splitPaths, ids::splitPaths, "SPLIT",
               "Sends the filter path left and the Shaper path right, as the "
               "hardware's two rear jacks do, instead of mixing them.");
+    addSelector(externalGate, ids::externalGate, "EXT GATE",
+                "Rear switching jack: UNPLUGGED uses the normalled Shaper Y "
+                "gate; LOW inserts a cable at 6 V or below; HIGH supplies "
+                "the greater-than-6 V external gate the Spirit accepts. "
+                "This is a saved jack state, not an audio-rate CV input.");
+    addSelector(externalPitchConnected, ids::externalPitchConnected,
+                "EXT PITCH",
+                "Rear switching jack: PLUGGED replaces keyboard and "
+                "arpeggiator pitch with PITCH CV before GLIDE. The keyboard "
+                "still gates and triggers the instrument.");
+    addKnob(externalPitchVolts, ids::externalPitchVolts, "PITCH CV",
+            "Spirit Keyboard Pitch Out-equivalent source voltage behind "
+            "15 kΩ. The rear input requires 1.1 V per octave; 0 V is its "
+            "keyboard-CV cancellation point near the second C. This saved "
+            "host control is block-latched, not an audio-rate CV lane.");
+    externalPitchVolts.slider.getProperties().set("bipolar", true);
+    externalPitchVolts.slider.getProperties().set("volts", true);
+    addRocker(oscBPedalConnected, ids::oscBPedalConnected, "B JACK",
+              "Insert the rear OSC B PEDAL cable. The unswitched TS jack is "
+              "electrically open when this is off; an inserted pedal adds "
+              "its tip-to-sleeve resistance to the 33 kΩ/100 nF input.");
+    addKnob(oscBPedalResistance, ids::oscBPedalResistance, "B PEDAL",
+            "Tip-to-sleeve resistance of the documented 100 kΩ OSC B "
+            "pedal: zero is a short and 100 kΩ is maximum resistance. "
+            "It changes Osc B only, including in BASS and WIDE. Pedal "
+            "direction and taper are not specified by Crumar.");
+    oscBPedalResistance.slider.getProperties().set("kilohms", true);
+    addRocker(filterPedalConnected, ids::filterPedalConnected, "F JACK",
+              "Insert the rear FILTER PEDAL cable. The unswitched TS jack "
+              "is electrically open when this is off; the 100 nF input "
+              "keeps its charge across cable and panic changes.");
+    addKnob(filterPedalResistance, ids::filterPedalResistance, "F PEDAL",
+            "Tip-to-sleeve resistance of the documented 100 kΩ FILTER "
+            "pedal: zero is a short and 100 kΩ is maximum resistance. "
+            "It moves Upper always and Lower only in DYNAMIC. Pedal "
+            "direction and taper are not specified by Crumar.");
+    filterPedalResistance.slider.getProperties().set("kilohms", true);
+    addSelector(externalAudioConnected, ids::externalAudioConnected,
+                "EXT AUDIO",
+                "Rear switching jack: UNPLUGGED sends internal PINK NOISE "
+                "to both NOISE sliders; PLUGGED replaces it with the optional "
+                "mono host input. A connected silent or unrouted bus remains "
+                "silence. Host +/-1 maps provisionally to +/-5 V. In the "
+                "Standalone app, uncheck Mute audio input in Audio/MIDI "
+                "Settings.");
 
     // The spring-loaded bend wheel: vertical travel, snapping back to centre.
     pitchWheel.setSliderStyle(juce::Slider::LinearVertical);
@@ -683,13 +730,20 @@ void GhostarAudioProcessorEditor::addKnob(Knob& knob, const char* parameterId,
     knob.slider.setScrollWheelEnabled(false);
     knob.slider.setMouseDragSensitivity(220);
     if (auto* parameter = processor.parameters.getParameter(parameterId))
-        knob.slider.setDoubleClickReturnValue(true,
-                                              parameter->getDefaultValue());
+        knob.slider.setDoubleClickReturnValue(
+            true, parameter->convertFrom0to1(parameter->getDefaultValue()));
     knob.slider.onValueChange = [this, &knob] {
         if (wiringUp)
             return;
         knob.readoutTicks = readoutHoldTicks;
-        knob.label.setText(travelText(knob.slider.getValue()),
+        const bool volts = static_cast<bool>(
+            knob.slider.getProperties().getWithDefault("volts", false));
+        const bool kilohms = static_cast<bool>(
+            knob.slider.getProperties().getWithDefault("kilohms", false));
+        knob.label.setText(volts ? juce::String(knob.slider.getValue(), 3) + " V"
+                           : kilohms
+                               ? juce::String(knob.slider.getValue(), 1) + " kΩ"
+                               : travelText(knob.slider.getValue()),
                            juce::dontSendNotification);
         knob.label.setColour(juce::Label::textColourId, silkscreen);
     };
@@ -801,7 +855,9 @@ void GhostarAudioProcessorEditor::timerCallback()
     };
     for (Knob* knob : { &tune, &interval, &lfoRate, &shaperShape, &shaperRate,
                         &masterVolume, &brightness, &cutoff, &lowerOnly,
-                        &resonance, &kbAmount, &filterEnvAmount, &glide })
+                        &resonance, &kbAmount, &filterEnvAmount, &glide,
+                        &externalPitchVolts, &oscBPedalResistance,
+                        &filterPedalResistance })
         revert(*knob);
     for (Fader* fader : { &shaperPathA, &shaperPathB, &shaperPathRing,
                           &shaperPathNoise, &filterPathA, &filterPathB,
@@ -1066,10 +1122,9 @@ void GhostarAudioProcessorEditor::layoutPanel()
     auto area =
         juce::Rectangle<int> { editorWidth, editorHeight }.reduced(margin);
 
-    // ---- Header: identity, the program browser, the product switches -----
-    // PANIC and SPLIT live up here rather than on the panel: neither is a
-    // control the modelled instrument has, and keeping them off the
-    // silkscreen keeps the panel below honest.
+    // ---- Header: identity, program browser, rear/product controls ---------
+    // PANIC, SPLIT and the rear-jack state live up here rather than on the
+    // front panel, keeping the hardware silkscreen below honest.
     {
         auto header = area.removeFromTop(48);
         auto identity = header.removeFromLeft(250);
@@ -1082,6 +1137,50 @@ void GhostarAudioProcessorEditor::layoutPanel()
         auto splitCell = header.removeFromRight(70);
         splitPaths.label.setBounds(splitCell.removeFromTop(14));
         splitPaths.button.setBounds(splitCell.removeFromTop(24));
+        header.removeFromRight(14);
+        auto externalGateCell = header.removeFromRight(112);
+        externalGate.label.setBounds(externalGateCell.removeFromTop(14));
+        externalGate.box.setBounds(externalGateCell.removeFromTop(26));
+        header.removeFromRight(14);
+        auto externalPitchCell = header.removeFromRight(102);
+        externalPitchConnected.label.setBounds(
+            externalPitchCell.removeFromTop(14));
+        externalPitchConnected.box.setBounds(
+            externalPitchCell.removeFromTop(26));
+        header.removeFromRight(8);
+        auto externalPitchVoltsCell = header.removeFromRight(54);
+        externalPitchVolts.label.setBounds(
+            externalPitchVoltsCell.removeFromTop(14));
+        externalPitchVolts.slider.setBounds(
+            externalPitchVoltsCell.reduced(10, 0));
+        header.removeFromRight(8);
+        auto oscBPedalResistanceCell = header.removeFromRight(58);
+        oscBPedalResistance.label.setBounds(
+            oscBPedalResistanceCell.removeFromTop(14));
+        oscBPedalResistance.slider.setBounds(
+            oscBPedalResistanceCell.reduced(12, 0));
+        auto oscBPedalJackCell = header.removeFromRight(34);
+        oscBPedalConnected.label.setBounds(
+            oscBPedalJackCell.removeFromTop(14));
+        oscBPedalConnected.button.setBounds(
+            oscBPedalJackCell.removeFromTop(24));
+        header.removeFromRight(8);
+        auto filterPedalResistanceCell = header.removeFromRight(58);
+        filterPedalResistance.label.setBounds(
+            filterPedalResistanceCell.removeFromTop(14));
+        filterPedalResistance.slider.setBounds(
+            filterPedalResistanceCell.reduced(12, 0));
+        auto filterPedalJackCell = header.removeFromRight(34);
+        filterPedalConnected.label.setBounds(
+            filterPedalJackCell.removeFromTop(14));
+        filterPedalConnected.button.setBounds(
+            filterPedalJackCell.removeFromTop(24));
+        header.removeFromRight(14);
+        auto externalAudioCell = header.removeFromRight(112);
+        externalAudioConnected.label.setBounds(
+            externalAudioCell.removeFromTop(14));
+        externalAudioConnected.box.setBounds(
+            externalAudioCell.removeFromTop(26));
         header.removeFromRight(14);
         gateLampBounds =
             header.removeFromRight(66).withSizeKeepingCentre(66, 28);

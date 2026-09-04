@@ -102,6 +102,33 @@ constexpr float noiseOtaLoadResistanceOhms = 330000.0f;   // R79
 constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
 constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
 constexpr float highPassCutBleedResistanceOhms = 1000000.0f; // R21 / R23
+// How much of a departed cut leg reaches IC4a, and how much slower it decays.
+// Both are the same ratio of two p. 15 resistances: with the mux open the
+// leg's timing resistance becomes R23+R28 (= R21+R26) instead of R28 alone, so
+// its corner falls by R29/(R23+R28) -- and because R29 equals R28, that same
+// figure is the output-referred fraction of the stored capacitor voltage the
+// leg delivers through its own 47 kOhm. 47/1047 = 0.0448902, or -26.96 dB.
+constexpr float highPassDepartRatio =
+    47000.0f / (highPassCutBleedResistanceOhms + 47000.0f);
+// The Boost leg's own parts, jack board p. 15 (read at designator level from
+// the 300 dpi scan): the C9||R22 link from Y3 to node N, C8 from N to ground,
+// IC4b's R18/C6 over R19, and the two returns into IC4a's R29 summing node.
+constexpr double boostLinkOhms = 47.0e3;        // R22
+constexpr double boostLinkFarads = 47.0e-9;     // C9
+constexpr double boostShuntFarads = 10.0e-9;    // C8
+constexpr double boostSumOhms = 47.0e3;         // R25 (Y3 into the node)
+constexpr double boostFeedbackOhms = 100.0e3;   // R18
+constexpr double boostFeedbackFarads = 22.0e-9; // C6
+constexpr double boostGroundOhms = 10.0e3;      // R19
+constexpr double boostReturnOhms = 220.0e3;     // R24 (IC4b into the node)
+constexpr double boostSummerOhms = 47.0e3;      // R29
+// Fraction of a Y3 step that C9 in series with C8 hands to node N, and the
+// gains the two returns carry into IC4a's output.
+constexpr double boostLinkShare =
+    boostLinkFarads / (boostLinkFarads + boostShuntFarads);
+constexpr double boostDirectGain = boostSummerOhms / boostSumOhms;   // 1
+constexpr double boostReturnGain = boostSummerOhms / boostReturnOhms; // 0.2136
+constexpr double boostAmplifierDcGain = 1.0 + boostFeedbackOhms / boostGroundOhms;
 
 // Per-voice module-input coupling, module board p. 13: the summed WAVE node
 // reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
@@ -195,11 +222,46 @@ constexpr float outputWiperInternalLoadOhms =
     outputSelectorLadderOhms * headphoneInputOhms
     / (outputSelectorLadderOhms + headphoneInputOhms);
 
-// Voiced microscopic excitation at the filter input. It is distinct from the
-// shared audible TP8 noise and gives an otherwise perfectly silent numerical
-// filter a deterministic self-oscillation seed. No healthy-card capture fixes
-// its 20 uV compatibility value yet.
-constexpr float filterNoiseVolts = 2.0e-5f;
+// The card's own thermal floor at the filter input. This is not the shared
+// audible TP8 noise; it is what the voice card's own resistors do, and it is
+// also what gives an otherwise perfectly silent numerical filter its
+// self-oscillation seed.
+//
+// It used to be a voiced 20 uV compatibility amplitude, on the grounds that no
+// healthy-card capture fixes it. That was the wrong bar: nothing needs to be
+// captured, because the resistors are printed and the law is the same
+// Johnson-Nyquist one already applied to IC6's five resistor groups (see
+// outputSummerResistorNoiseDensity). Each transconductor stage's input node is
+// the 68 kOhm feedback against the 560 Ohm shunt, so the source resistance is
+// their parallel combination, 555.43 Ohm, giving sqrt(4kTR) = 3.02 nV/rtHz at
+// the same 25 C the adjacent anchors use. That node sits behind the stage's own
+// 560/(68000+560) attenuator, so referred to the filter-module input coordinate
+// the model works in it is 3.02 nV / 0.0081680 = 370.2 nV/rtHz.
+//
+// Only stage 1's source is injected. The other three stages are uncorrelated
+// and enter after one or more poles, so summing all four at the input would
+// overstate them; a per-stage injection is the honest form and is a larger
+// change than this one. Evidence class: anchored resistors, derived density.
+//
+// The generator is a bipolar uniform sequence at the 192 kHz reference rate, so
+// amplitude A gives RMS A/sqrt(3) over an fs/2 band: A = sqrt(3) * density *
+// sqrt(fs/2) = 198.7 uV, which is 19.9 dB above the retired value.
+constexpr float filterNoiseSourceOhms = 68000.0f * 560.0f / (68000.0f + 560.0f);
+constexpr float filterNoiseStageAttenuation = 560.0f / (68000.0f + 560.0f);
+const float filterNoiseVoltsDerived = []
+{
+    const float density =
+        std::sqrt(4.0f * YouKnow106Engine::boltzmannConstant
+                  * YouKnow106Engine::outputNoiseTemperatureKelvin
+                  * filterNoiseSourceOhms)
+        / filterNoiseStageAttenuation;
+    // 192 kHz is YouKnow106Engine::noiseReferenceRateHz, which is private to
+    // the class; the static_assert beside the injection site keeps the two
+    // from drifting apart.
+    return std::sqrt(3.0f) * density * std::sqrt(192000.0f * 0.5f);
+}();
+// The retired voiced amplitude, kept bit-exactly for controlled A/B renders.
+constexpr float filterNoiseVoltsVoiced = 2.0e-5f;
 
 float clamp01(float value) noexcept
 {
@@ -913,6 +975,17 @@ std::uint16_t decayReleaseMultiplierForByte(std::uint8_t byte) noexcept
 
 std::uint16_t lfoRateIncrementForByte(std::uint8_t byte) noexcept
 {
+    // B-2's rate table at $0C60 opens 0005 000f 0019 0028 0037 0046 0050 005a,
+    // and this generator reproduces it entry for entry. The 5 -> 15 first step
+    // is a 3.0x ratio where every neighbour is at most 1.7x, which looks like a
+    // transcription error and is not one: the listing's own hex plainly reads
+    // 0005, and it was re-checked for exactly that reason.
+    //
+    // It is also what reconciles the printed specification. These coefficients
+    // give 0.0363 Hz at byte 0 and 0.1088 Hz at byte 1, so Roland's "0.1 Hz ~
+    // 30 Hz" is byte 1 to byte 127, both ends inside 0.9 %. Byte 0 is a
+    // below-spec entry the panel reaches anyway, because the LFO RATE row
+    // carries no minimum-stop resistor.
     int value = 5;
     for (int index = 1; index <= byte; ++index)
     {
@@ -2971,6 +3044,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
 #endif
     constexpr double feedbackHeadroom =
         VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
+    const double resonanceCompensation =
+        static_cast<double>(inputCompensationCoefficient);
     const double currentOmega = clampOmegaStep(
         static_cast<double>(omegaStep));
     const double currentFeedback = std::clamp(
@@ -3319,10 +3394,15 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                 YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
                                              result.size());
 #endif
+            // One pair, one tanh, of the difference of its two divided
+            // inputs. `resonanceCompensation` is zero when the legacy split
+            // is selected, which makes this the former argument exactly.
+            const double differentialInput =
+                value[3] - resonanceCompensation * drive;
             const double feedbackArgument = [&] {
                 if constexpr (useReciprocal)
-                    return value[3] * (1.0 / feedbackHeadroom);
-                return value[3] / feedbackHeadroom;
+                    return differentialInput * (1.0 / feedbackHeadroom);
+                return differentialInput / feedbackHeadroom;
             }();
             double previous = drive - feedbackAt[point] * feedbackHeadroom
                 * nonlinear(feedbackArgument);
@@ -3386,7 +3466,9 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
             const double loopReturn = feedbackAt[point] == 0.0
                 ? drive
                 : drive - feedbackAt[point] * feedbackHeadroom
-                    * polyZonedTanhImpl(value[3] * (1.0 / feedbackHeadroom));
+                    * polyZonedTanhImpl(
+                        (value[3] - resonanceCompensation * drive)
+                        * (1.0 / feedbackHeadroom));
 
             const std::array<double, 4> stageArg {
                 (loopReturn - value[0] + stageOffset[0]) * inverseHeadroom,
@@ -3709,9 +3791,16 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledRk4Pair(
                                       lanes[1].inverseHeadroom);
     const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
+    // Read per cascade rather than broadcast: the coefficient is uniform
+    // across voices in practice, but two plug-in instances can differ.
+    const Pair resonanceCompensation = pack(
+        static_cast<double>(first.inputCompensationCoefficient),
+        static_cast<double>(second.inputCompensationCoefficient));
     const auto derivative = [&](const PairState& value, Pair drive) {
         const Pair feedbackArgument = pairMultiplyScalar(
-            value[3], 1.0 / feedbackHeadroom);
+            pairSubtract(value[3],
+                         pairMultiply(resonanceCompensation, drive)),
+            1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
             ? pairLow(drive)
@@ -4071,9 +4160,16 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonPair(
                                       lanes[1].inverseHeadroom);
     const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
+    // Read per cascade rather than broadcast: the coefficient is uniform
+    // across voices in practice, but two plug-in instances can differ.
+    const Pair resonanceCompensation = pack(
+        static_cast<double>(first.inputCompensationCoefficient),
+        static_cast<double>(second.inputCompensationCoefficient));
     const auto derivative = [&](const PairState& value, Pair drive) {
         const Pair feedbackArgument = pairMultiplyScalar(
-            value[3], 1.0 / feedbackHeadroom);
+            pairSubtract(value[3],
+                         pairMultiply(resonanceCompensation, drive)),
+            1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
             ? pairLow(drive)
@@ -4486,6 +4582,13 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
         [&](const Lane& lane, std::size_t) {
             return static_cast<float>(lane.feedback) * feedbackHeadroom;
         }, 0u);
+    // Read per cascade rather than broadcast: the coefficient is uniform
+    // across voices in practice, but two plug-in instances can differ.
+    const Quad resonanceCompensation = quadLoad({
+        cascades[0]->inputCompensationCoefficient,
+        cascades[1]->inputCompensationCoefficient,
+        cascades[2]->inputCompensationCoefficient,
+        cascades[3]->inputCompensationCoefficient });
     std::array<Quad, 7> drives;
     for (std::size_t point = 0; point < drives.size(); ++point)
         drives[point] = packField(
@@ -4495,7 +4598,9 @@ bool YouKnow106Engine::OtaCascade::tryProcessSettledMersonQuad(
 
     const auto derivative = [&](const QuadState& value, Quad drive) {
         const Quad feedbackArgument = quadMultiplyScalar(
-            value[3], 1.0f / feedbackHeadroom);
+            quadSubtract(value[3],
+                         quadMultiply(resonanceCompensation, drive)),
+            1.0f / feedbackHeadroom);
         const Quad loopReturn = quadSubtract(
             drive, quadMultiply(feedbackGain,
                                 polyTanhQuad(feedbackArgument)));
@@ -4664,6 +4769,127 @@ float YouKnow106Engine::HighPass::process(float input, float g,
     const double high = static_cast<double>(input) - low;
     return static_cast<float>(static_cast<double>(highGain) * high
                             + static_cast<double>(shelfGain) * low);
+}
+
+void YouKnow106Engine::BoostBranch::reset() noexcept
+{
+    vN = 0.0;
+    vC9 = 0.0;
+    vC6 = 0.0;
+    linkState = 0.0;
+    c6State = 0.0;
+    selected = false;
+}
+
+void YouKnow106Engine::updateBoostBranchCoefficients() noexcept
+{
+    const double h = static_cast<double>(inverseOversampledRate_);
+    auto& c = boostBranchCoefficients_;
+    // Driven configuration: with Y3 held at the bus, C9 is across a known
+    // voltage and the only free state is w = vN - share * u, a single pole
+    // at R22 (C8 + C9) -- the same 59.41 Hz corner the collapsed shelf used,
+    // bilinear like every other one-pole in this file.
+    const double linkTau = boostLinkOhms * (boostLinkFarads + boostShuntFarads);
+    c.linkG = std::tan(0.5 * h / linkTau);
+    // IC4b's feedback pole, R18 C6 (72.34 Hz), driven by R18/R19 times the
+    // voltage on its inverting input.
+    const double c6Tau = boostFeedbackOhms * boostFeedbackFarads;
+    c.c6G = std::tan(0.5 * h / c6Tau);
+    // Undriven configuration, exact trapezoidal step of the linear pair
+    //   C8  dvN/dt  = -(vN + vC9) / R25
+    //   C9  dvC9/dt = -vC9 / R22 - (vN + vC9) / R25
+    // with Y3 = vN + vC9 hanging on R25 into the virtual earth.
+    const double a00 = -1.0 / (boostSumOhms * boostShuntFarads);
+    const double a01 = a00;
+    const double a10 = -1.0 / (boostSumOhms * boostLinkFarads);
+    const double a11 = -(1.0 / boostLinkOhms + 1.0 / boostSumOhms)
+                     / boostLinkFarads;
+    // (I - hA/2)^-1 (I + hA/2)
+    const double p00 = 1.0 - 0.5 * h * a00, p01 = -0.5 * h * a01;
+    const double p10 = -0.5 * h * a10,      p11 = 1.0 - 0.5 * h * a11;
+    const double q00 = 1.0 + 0.5 * h * a00, q01 = 0.5 * h * a01;
+    const double q10 = 0.5 * h * a10,       q11 = 1.0 + 0.5 * h * a11;
+    const double det = p00 * p11 - p01 * p10;
+    const double i00 = p11 / det, i01 = -p01 / det;
+    const double i10 = -p10 / det, i11 = p00 / det;
+    c.m00 = i00 * q00 + i01 * q10;
+    c.m01 = i00 * q01 + i01 * q11;
+    c.m10 = i10 * q00 + i11 * q10;
+    c.m11 = i10 * q01 + i11 * q11;
+}
+
+float YouKnow106Engine::processBoostBranch(float coupled,
+                                           bool selected) noexcept
+{
+    auto& b = boostBranch_;
+    const auto& c = boostBranchCoefficients_;
+    const double u = static_cast<double>(coupled);
+
+    if (selected)
+    {
+        if (!b.selected)
+        {
+            // Re-selection puts the bus step across C9 in series with C8;
+            // the charge redistributes and N jumps by C9/(C8+C9) of it. The
+            // integrator behind the driven pole restarts at rest on the new
+            // node voltage.
+            b.vN += boostLinkShare * (u - b.vN - b.vC9);
+            b.linkState = b.vN - boostLinkShare * u;
+            b.selected = true;
+        }
+        // Bilinear one-pole on w = vN - share*u with input (1 - share)*u:
+        // v = (x - s) g/(1+g), w = v + s, s <- w + v.
+        const double v = ((1.0 - boostLinkShare) * u - b.linkState) * c.linkG
+                       / (1.0 + c.linkG);
+        const double w = v + b.linkState;
+        b.linkState = w + v;
+        b.vN = w + boostLinkShare * u;
+        b.vC9 = u - b.vN;
+    }
+    else
+    {
+        b.selected = false;
+        const double vN = c.m00 * b.vN + c.m01 * b.vC9;
+        const double vC9 = c.m10 * b.vN + c.m11 * b.vC9;
+        b.vN = vN;
+        b.vC9 = vC9;
+    }
+
+    // IC4b: non-inverting, its inverting input tracks N while the output is
+    // inside its swing; C6 charges from R19's current less its own R18 leak,
+    // so its voltage settles to (R18/R19) times the inverting input.
+    // The output bound is the shared summer-stage swing policy (OQ-05): a
+    // x11 stage inside +/-15 V rails cannot pass more than about 1.2 V of
+    // low band linearly, so on a loud bass chord in Boost this is the first
+    // stage in the chain to run out of rail.
+    const auto stepC6 = [&](double inverting, double& stateOut) {
+        const double x = (boostAmplifierDcGain - 1.0) * inverting;
+        const double v = (x - b.c6State) * c.c6G / (1.0 + c.c6G);
+        const double y = v + b.c6State;
+        stateOut = y + v;
+        return y;
+    };
+    double c6State = b.c6State;
+    double vC6 = stepC6(b.vN, c6State);
+    double linear = b.vN + vC6;
+    double out = static_cast<double>(outputSummerClip(static_cast<float>(linear)));
+    if (std::abs(out - linear) > 1.0e-6 * std::max(1.0, std::abs(linear)))
+    {
+        // Saturated: the inverting input is what the clipped output leaves
+        // across the divider, not N. One corrected step is enough at these
+        // corners (940 us and slower against a 5 us grid).
+        vC6 = stepC6(out - vC6, c6State);
+        linear = b.vN + vC6;
+        out = static_cast<double>(outputSummerClip(static_cast<float>(linear)));
+    }
+    b.vC6 = vC6;
+    b.c6State = c6State;
+    if (!std::isfinite(b.vN) || !std::isfinite(b.vC9) || !std::isfinite(b.vC6)
+        || !std::isfinite(b.linkState) || !std::isfinite(b.c6State))
+        b.reset();
+
+    const double y3 = selected ? u : b.vN + b.vC9;
+    return static_cast<float>(boostDirectGain * y3 + boostReturnGain * out);
 }
 
 void YouKnow106Engine::HalfbandDecimator::reset() noexcept
@@ -5007,6 +5233,17 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
     updateSharedHighPass(activeParameters_);
+    // The two cut legs' undriven corners: each leg's own passband corner
+    // scaled by highPassDepartRatio. 225.8 Hz -> 10.14 Hz leaving Two,
+    // 720.5 Hz -> 32.34 Hz leaving Three. Both sit far below every supported
+    // internal Nyquist, so they need no design-corner clamp.
+    highPassTwoDepartG_ = std::tan(
+        pi * highPassCornerHz(HighPassMode::Two) * highPassDepartRatio
+        * inverseOversampledRate_);
+    highPassThreeDepartG_ = std::tan(
+        pi * highPassCornerHz(HighPassMode::Three) * highPassDepartRatio
+        * inverseOversampledRate_);
+    updateBoostBranchCoefficients();
     moduleCouplingG_ = std::tan(
         pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
@@ -5195,6 +5432,9 @@ void YouKnow106Engine::clearRateDependentOutputPath(
     {
         voiceBusCoupling_.reset();
         highPass_.reset();
+        highPassTwoLeg_.reset();
+        highPassThreeLeg_.reset();
+        boostBranch_.reset();
         commonVcaInputCoupling_.reset();
         noiseSourceHighPass_.reset();
         noiseSourceLowPass_.reset();
@@ -5455,6 +5695,9 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.portamento, 0.0f);
     fix01(result.benderDcoDepth, 0.30f);
     fix01(result.benderVcfDepth, 0.0f);
+    result.mainNoiseLevelScale = std::isfinite(result.mainNoiseLevelScale)
+        ? std::clamp(result.mainNoiseLevelScale, 0.0f, 4.0f)
+        : 1.0f;
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
@@ -7017,14 +7260,22 @@ float YouKnow106Engine::cutoffAnalogCounts(
 float YouKnow106Engine::rampCurrentScaleFor(
     const VoiceCard& card, float calibration) noexcept
 {
-    // The ramp's charging resistor carries the same per-card tolerance class
-    // as every other analogue trim here. updatePulseComparator solves the
-    // comparator crossing against this cycle's ramp slope, and renderVoice's
-    // amplitude has to scale the rendered ramp by that identical slope; the
-    // former resolves it here and caches it on the voice (Voice::
-    // rampCurrentScale) so the latter reads the exact value the comparator
-    // was solved against instead of re-deriving it.
-    return 1.0f + card.rampCurrentError * 0.03f * calibration;
+    // Nothing trims a card's ramp: VR33 (DCO CV OFFSET, p. 18 s. 2) is one
+    // shared converter zero, and the per-card trimmers are VCF, RES, VCA
+    // and VCA OFFSET only. What bounds it is the drawing: module board
+    // p. 13 prints the integrator as "C54 .001G" -- the G code is +/-2 % --
+    // and the three range resistors as "399K MF / 200K MF / 100K MF",
+    // metal film. The +/-2 % capacitor class is therefore the anchored
+    // bound the dispersion sits inside (a 1 % film resistor adds 2.24 %
+    // in quadrature); the former 0.03 was a voiced class with no part
+    // behind it. Anchored bound, point at the bound's own class.
+    // updatePulseComparator solves the comparator crossing against this
+    // cycle's ramp slope, and renderVoice's amplitude has to scale the
+    // rendered ramp by that identical slope; the former resolves it here
+    // and caches it on the voice (Voice::rampCurrentScale) so the latter
+    // reads the exact value the comparator was solved against instead of
+    // re-deriving it.
+    return 1.0f + card.rampCurrentError * rampCapacitorToleranceClass * calibration;
 }
 
 void YouKnow106Engine::refreshVoiceRampCurrentScales() noexcept
@@ -7061,6 +7312,14 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     voice.inputCompensation =
         VoicedResonanceCompatibilityProfile::inputCompensation(
             voice.feedback, parameters.resonanceCompensationShape);
+    // The differential form carries the same coefficient inside the pair's
+    // own tanh instead of ahead of it, so the cascade needs c rather than
+    // 1 + c*k. Zero leaves the cascade arithmetic bit-identical to the split.
+    voice.filter.inputCompensationCoefficient =
+        parameters.enableDifferentialResonanceInput
+            ? VoicedResonanceCompatibilityProfile::compensationCoefficient(
+                  parameters.resonanceCompensationShape)
+            : 0.0f;
 
     const float analogCounts = cutoffAnalogCounts(
         voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
@@ -7099,8 +7358,11 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     voice.vcaGain = parameters.useSoftplusVoiceVcaCompatibilityLaw
                         ? VoiceVcaControlLaw::softplusGain(vcaControl)
                         : VoiceVcaControlLaw::gain(vcaControl);
-    voice.vca = voice.vcaGain
-              * (1.0f + card.vcaGainError * 0.03f * tolerance);
+    voice.vca = voice.vcaGain;
+    // The card's VCA GAIN spread is VR27's setting, and VR27 sits on the
+    // input. Keeping it here rather than on the output leaves the small-signal
+    // product identical and lets a hot card drive its own pair harder.
+    voice.vcaInputTrim = 1.0f + card.vcaGainError * 0.03f * tolerance;
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
     // from values that never change. They now live in
@@ -7122,12 +7384,26 @@ void YouKnow106Engine::updatePulseComparator(
     // waveform that did not exist.
     const float cardCurrent = voice.rampCurrentScale;
     const float amplitudeScale = voice.dco.renderScale * cardCurrent;
-    // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
-    // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
-    // pins the comparator high even while this card's VCA is shut.
-    const float threshold = static_cast<float>(pwmVolts_)
-                          + card.comparatorOffset * 0.24f
-                                * parameters.calibration;
+    // ADJUSTMENT s. 10 (p. 19) is a joint window: the one shared VR31 puts
+    // CH1 at exactly 50 % with PWM at 5, and every other card is accepted
+    // within 48-52 % as it stands, ramp error and comparator error together.
+    // So CH1's net residual at the trim point is zero and the others' is a
+    // draw inside +/-2 points; the comparator offset is whatever threshold
+    // shift leaves that net after this card's own ramp error -- at
+    // calibration 0 both vanish and the threshold is the shared hold alone.
+    // An earlier revision drew +/-2 points on the threshold and +/-3 % on the
+    // ramp independently, which put some cards outside the window Roland
+    // ships them inside. Pulse Off remains separate at -0.8 V and pins the
+    // comparator high even while this card's VCA is shut.
+    const float netDuty = voice.cardIndex == 0
+        ? 0.0f
+        : card.comparatorOffset * pwmDutyAcceptanceHalfWidth
+              * parameters.calibration;
+    // duty = 1 - V_th / (12 V * scale) at the 6 V hold, so the threshold
+    // that lands 0.5 + netDuty is 6 V * scale * (1 - 2 netDuty).
+    const float thresholdOffset =
+        0.5f * rampAmplitudeVolts * (cardCurrent * (1.0f - 2.0f * netDuty) - 1.0f);
+    const float threshold = static_cast<float>(pwmVolts_) + thresholdOffset;
     voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
     voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
@@ -7762,9 +8038,14 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration)
            * agedNoiseGain_;
 
+    static_assert(noiseReferenceRateHz == 192000.0,
+                  "filterNoiseVoltsDerived hard-codes the 192 kHz reference "
+                  "rate because it is computed at namespace scope");
     voice.noiseState = xorshift32(voice.noiseState);
     const float microscopicNoise =
-        bipolarFromState(voice.noiseState) * filterNoiseVolts;
+        bipolarFromState(voice.noiseState)
+        * (parameters.enableCardJohnsonFloor ? filterNoiseVoltsDerived
+                                             : filterNoiseVoltsVoiced);
 
     // --- Filter, amplifier -------------------------------------------------
     // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
@@ -7784,9 +8065,15 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
         mixed, moduleCouplingG_, 0.0f, 1.0f);
     // The microscopic card excitation is injected at the filter input, after
     // the source coordinate scale, so it stays outside this capacitor (OQ-16).
-    const float filterInput = coupled * filterInputAttenuation
-                            * voice.inputCompensation
-                            + microscopicNoise * noiseRateScale_;
+    // With the differential form the compensation rides inside the resonance
+    // pair's tanh, so the drive reaching the cascade is the plain coupled
+    // node; the split form keeps the feedforward multiply it always had.
+    const float compensatedDrive =
+        activeParameters_.enableDifferentialResonanceInput
+            ? coupled * filterInputAttenuation
+            : coupled * filterInputAttenuation * voice.inputCompensation;
+    const float filterInput =
+        compensatedDrive + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C.
     const float dynamicHeadroom =
         dynamicOtaHeadroomVolts(parameters, voice.cardIndex);
@@ -7937,8 +8224,9 @@ float YouKnow106Engine::finishVoiceFilter(Voice& voice,
     // The pair itself saturates ahead of the control multiply (see
     // VoiceVcaSignalLaw); the switch only retains the linear multiply for
     // A/B renders.
+    const float trimmed = vcaInput * voice.vcaInputTrim;
     const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
-        ? VoiceVcaSignalLaw::shape(vcaInput) : vcaInput;
+        ? VoiceVcaSignalLaw::shape(trimmed) : trimmed;
     const float output = shaped * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
@@ -8511,7 +8799,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 noiseState_ = 0x6d2b79f5u;
             noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
-                bipolarFromState(noiseState_) * noiseRateScale_;
+                bipolarFromState(noiseState_) * noiseRateScale_
+                * parameters.mainNoiseLevelScale;
             // The hold voltage is what moves; Tr22 converts it to control
             // current instantaneously, so the onset law is applied after the
             // hold and ahead of both the C41-driven and legacy level paths.
@@ -8526,10 +8815,29 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // rectifier's own 100/120 Hz ripple is deliberately NOT modelled:
             // Service Notes p. 16 gives a 3300 uF reservoir per rail behind a
             // 0.25 A secondary, so the unregulated ripple is about 0.76 Vpp at
-            // 50 Hz, and the M5230L regulators after it reject roughly 60 dB of
-            // that. What reaches a card is on the order of 50 ppm of 15 V --
-            // some 0.03 cents of cutoff shift through the transfer below. It is
-            // derivably inaudible, not merely unmeasured.
+            // 50 Hz. The rejection after it is no longer an estimate. The
+            // rails the cards run on are IC4, a Mitsubishi M5230L dual
+            // tracking regulator (p. 16), and its data sheet -- reproduced in
+            // the 1987 Mitsubishi General Purpose ICs databook, p. 4-8 --
+            // specifies ripple rejection RR = 68 dB at f = 120 Hz, measured
+            // with its own circuit (b) at ei = 0 dBm, alongside output noise
+            // VNO = 12 uVrms over 20 Hz-100 kHz, input regulation 0.02 %/V typ
+            // and 0.1 %/V max, and load regulation 0.02 % typ and 0.1 % max.
+            // Those are typicals; the part publishes no minimum rejection.
+            // That leaves about 0.30 mVpp on the rail, some 20 ppm of 15 V, or
+            // 0.011 cents of cutoff through the transfer below, which is about
+            // -104 dBc of sideband on a 24 dB/oct slope and -94 dBc on a
+            // near-self-oscillating skirt, under the instrument's own noise
+            // floor either way. Derivably inaudible, not merely unmeasured.
+            //
+            // The 12-bit converter's reference does not reopen it. The
+            // reference is the output-high level of the 4050 buffers IC30-32
+            // on the +5.0 V net (p. 13), and IC3 -- an M5231L, the single
+            // regulator whose own sheet gives RR = 62 dB typ at 120 Hz --
+            // derives that net from the already-regulated +15 V through R11
+            // 100 ohm (p. 16). The two rejections cascade to about 0.05 ppm of
+            // 5 V, two ten-thousandths of a 12-bit LSB, so the common-mode path
+            // that would move every held CV together carries nothing audible.
             //
             // The sum is kept as a pure load measure. Unit Character scales the
             // consequence once, where the droop is applied.
@@ -8767,9 +9075,54 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             }
             const float coupled = voiceBusCoupling_.process(
                 busIn, effectiveCouplingG, 0.0f, 1.0f);
-            const float shaped = highPass_.process(coupled,
-                                                   highPassG_,
-                                                   highPassShelf_, highPassHigh_);
+            // IC3 selects which leg IC4a's summing node is driven from, but
+            // it does not disconnect the leg it just left: that leg's 47 kOhm
+            // is unswitched, so its capacitor keeps discharging through its
+            // own 1 MOhm bleed into the same summing node. The shared filter
+            // still runs every sample whichever leg is selected so the legacy
+            // switch below stays bit-identical; with the physical legs on,
+            // Boost is rendered by its own three-capacitor branch and One is
+            // a bare wire, so the shared state is only read on the legacy path.
+            const float sharedLeg = highPass_.process(coupled,
+                                                      highPassG_,
+                                                      highPassShelf_,
+                                                      highPassHigh_);
+            float shaped = sharedLeg;
+            if (parameters.enableHighPassDepartingLegTail)
+            {
+                const bool twoActive =
+                    parameters.highPass == HighPassMode::Two;
+                const bool threeActive =
+                    parameters.highPass == HighPassMode::Three;
+                const bool boostActive =
+                    parameters.highPass == HighPassMode::Boost;
+                // Runs in both configurations: driven while selected, and
+                // discharging its stored charge into the same summing node
+                // while not. Its selected output replaces the shelf.
+                const float boostLeg = processBoostBranch(coupled, boostActive);
+                const float twoLeg = twoActive
+                    ? highPassTwoLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
+                    : highPassTwoLeg_.process(0.0f, highPassTwoDepartG_,
+                                              1.0f, 0.0f);
+                const float threeLeg = threeActive
+                    ? highPassThreeLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
+                    : highPassThreeLeg_.process(0.0f, highPassThreeDepartG_,
+                                                1.0f, 0.0f);
+                shaped = twoActive ? twoLeg
+                       : threeActive ? threeLeg
+                       : boostActive ? boostLeg
+                       : sharedLeg;
+                // output = +R29 * i and the departing current is
+                // i = -Vc / (R_bleed + R_sum), hence the sign.
+                if (!twoActive)
+                    shaped -= highPassDepartRatio * twoLeg;
+                if (!threeActive)
+                    shaped -= highPassDepartRatio * threeLeg;
+                // The boost branch's node voltages already carry their own
+                // sign into the summing node, selected or not.
+                if (!boostActive)
+                    shaped += boostLeg;
+            }
 
             // VCA LEVEL is the one common uPC1252H2 on the jack board, after
             // the voice sum and HPF. The six voice-module VCAs above are driven
@@ -8822,7 +9175,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                                 parameters.enableChorusHyperbolicSweep,
                                 parameters.calibration,
                                 parameters.useChorusRateNoiseHypothesis,
-                                parameters.enableNarrowOneTwoChorus);
+                                parameters.enableNarrowOneTwoChorus,
+                                parameters.enableChorusMuteDrive,
+                                parameters.enableChorusLineGainSpread);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional

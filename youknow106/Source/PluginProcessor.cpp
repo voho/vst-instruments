@@ -827,6 +827,12 @@ int YouKnow106AudioProcessor::getQualityChoice() const noexcept
 void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engineReady.store (false, std::memory_order_release);
+    // Product default, chosen by ear on 2026-09-04 (Docs/decisions.md): the
+    // converter's writes land on the pixel-measured p. 8 chart geometry. The
+    // engine's own default stays the normalised reference grid for its
+    // fingerprints, and a selection is consumed by prepare().
+    engine.selectConverterTimingProfile (
+        youknow106::YouKnow106Engine::ConverterTimingProfile::MeasuredChartGeometry);
     engine.prepare (sampleRate, samplesPerBlock,
                     oversamplingFactorForChoice (getQualityChoice()));
     (void) updateEngineParameters();
