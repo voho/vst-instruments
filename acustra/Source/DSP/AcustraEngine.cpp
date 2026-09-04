@@ -194,8 +194,11 @@ float stringAxialRigidity(bool steel, int stringIndex) noexcept
 
 // The tension a requested interval needs, from Grimes, PLoS ONE 9(7):e102088
 // (2014), Eq. 6. His bent string stretches by e = 1/cos(theta) - 1, which is
-// the strain dT/EA, so it carries tension T = T0 + dT and mass per length
-// mu0/(1+e) and sounds at f0*sqrt((T/T0)/(1+e)). Requiring that ratio to be r
+// the strain dT/EA, so it carries tension T = T0 + dT, its mass per length
+// falls to mu0/(1+e), and the path it vibrates along grows to L0(1+e). Those
+// last two together are the mu0(1+e) his Eq. 6 puts under the root at the
+// unstretched length: f = (1/2L0) sqrt(T/(mu0(1+e))), so the ratio to the
+// open string is f/f0 = sqrt((T/T0)/(1+e)). Requiring that ratio to be r
 // inverts to dT = T0 (r^2 - 1) / (1 - r^2 T0/EA). Validated in that paper on
 // measured Ernie Ball sets, with plain steel at 177.6-188.4 GPa against the
 // 200 GPa this engine's table uses.
@@ -1572,8 +1575,19 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         performedBend = pitchBendSemitones_[0] + memberBend;
         memberBendSemitones = memberBend;
     }
+    // The wheel's vibrato is the fretting hand modulating the string's
+    // tension at a fixed length (see vibratoSemitones), and a tension
+    // modulation is heard as a pitch modulation: the same excursion goes into
+    // the performed interval, so the tuned delay carries it, and into the
+    // tension below, so the inharmonicity and the junction port carry it too.
+    // A string whose axial stiffness this data does not fix - nylon's wound
+    // basses, see stringAxialRigidity - gets none, rather than a pitch move
+    // with no tension behind it. The wheel down is + 0.0f, which is exact.
+    const float axialRigidity = stringAxialRigidity(steel, stringIndex);
+    const float vibratoInterval = axialRigidity > 0.0f
+        ? vibratoSemitones(voice, fret) : 0.0f;
     const float performedSemitones = clamp(performedBend, -192.0f, 192.0f)
-        + 0.01f * voice.attackPitchCents;
+        + 0.01f * voice.attackPitchCents + vibratoInterval;
     // An eight-octave RPN range is legal even when the requested pitch is
     // outside this finite waveguide's representable band. Keep the performed
     // interval, then bound the physical frequency at the existing delay-line
@@ -1604,7 +1618,7 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         : std::max(linearMass * openWaveSpeed * openWaveSpeed, 1.0f);
     // Slide or bend, settled. A channel's pitch bend is a slide: the fretting
     // hand moves along the neck, the sounding length changes and the tension
-    // does not. That is what the frequency and delay below have always done
+    // does not. That is what the frequency and delay above have always done
     // and what the README documents, so it is left exactly as it was. An MPE
     // member channel's own bend is the other gesture - one finger pushing one
     // string across the fret, at a length the fret fixes - so it goes through
@@ -1619,9 +1633,8 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     // few-cent tension transient (updateAttackPitch), already carried as a
     // pitch, and routing it here would modulate the junction port on every
     // note's attack, which no measurement asks for.
-    const float axialRigidity = stringAxialRigidity(steel, stringIndex);
     const float tensionSemitones = axialRigidity > 0.0f
-        ? memberBendSemitones + vibratoSemitones(voice, fret) : 0.0f;
+        ? memberBendSemitones + vibratoInterval : 0.0f;
     const float bentTension = tensionSemitones != 0.0f
         ? bentStringTension(tension, axialRigidity,
                             std::exp2(tensionSemitones / 12.0f))
@@ -1701,11 +1714,16 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     // only adds loss on top of a shape this already fixes.
     const bool dispersionDesignChanged = clearDelay
         || std::abs(voice.dispersionDesignFrequency - unbentFrequency) > 1.0e-4f
-        // A bend moves B continuously, and this design is an iterative
-        // solve. 0.2% of B is 0.03 cents of H12 stretch on a low E, two
-        // orders below the 3-cent tolerance the dispersion test holds, while
-        // every discrete change that reaches here - fret, tuning, string set
-        // - moves B by far more than that.
+        // A bend or a vibrato moves B continuously, and this design is an
+        // iterative solve, so B is only re-solved once it has moved 0.2%.
+        // That relative tolerance applies to every caller, not only to a
+        // moving bend: the one other continuous route into B is
+        // physical.stiffnessScale, and a fitted move of it smaller than 0.2%
+        // now leaves the allpass as designed until something else here
+        // changes. 0.2% of B is 0.03 cents of H12 stretch on a low E, two
+        // orders below the 3-cent tolerance the dispersion test holds, and
+        // every discrete change that reaches here - fret, tuning, string set,
+        // a calibration edit worth hearing - moves B by far more than that.
         || std::abs(voice.dispersionDesignInharmonicity - inharmonicity)
                > std::max(1.0e-9f, 0.002f * inharmonicity)
         || std::abs(voice.dispersionDesignAge - age) > 1.0e-5f
@@ -1895,16 +1913,19 @@ void AcustraEngine::updateAttackPitch(Voice& voice, int stringIndex) noexcept
 // 108th Conv. 2000, preprint 5114, Sec. 3.3) describe the same gesture: the
 // classical player's vibrato is axial, the fretting hand modulating tension
 // at a fixed bend angle, so it belongs on the tension route and not on the
-// fret. What those measurements fix: the lowest frequency during a vibrato is
-// the note's own unmodulated one (Erkut), so the modulation is one-sided
-// upward and starts from the note's pitch; the depth converges over a
-// transient of about 0.5 s from the moment the player begins it (Erkut's tt);
-// the fitted rates are 1.4 Hz slow and 4.9 Hz fast (Erkut), the fast one just
-// under Laurson et al.'s 5-6 Hz for the same instrument (CMJ 25(3):38-49,
-// 2001),
-// and the fast vibrato's depth is systematically the smaller, so the wheel
-// runs from the shallow fast end to the deep slow one rather than raising
-// both; and an open string gets none, because no finger is stopping it
+// fret - and what a tension modulation is heard as is a modulation of the
+// fundamental (Erkut: the string is repeatedly stretched to fluctuate the
+// fundamental frequency), which is why configureVoice puts the interval this
+// returns into the performed pitch as well as into the tension. What those
+// measurements fix: the lowest frequency during a vibrato is the note's own
+// unmodulated one (Erkut), so the modulation is one-sided upward and starts
+// from the note's pitch; the depth converges over a transient of about 0.5 s
+// from the moment the player begins it (Erkut's tt); the fitted rates are
+// 1.4 Hz slow and 4.9 Hz fast (Erkut), the fast one just under Laurson et
+// al.'s 5-6 Hz for the same instrument (CMJ 25(3):38-49, 2001), and the fast
+// vibrato's depth is systematically the smaller, so the wheel runs from the
+// shallow fast end to the deep slow one rather than raising both; and an
+// open string gets none, because no finger is stopping it
 // (Laurson's max-depth is zero at fret zero). What no source fixes is the
 // wheel's top in cents - Erkut reports the depth varying with string and fret
 // without a figure, Laurson scales it by an integer 1 to 9 - so that endpoint

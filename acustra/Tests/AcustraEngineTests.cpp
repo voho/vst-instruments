@@ -236,12 +236,14 @@ struct AcustraEngineTestAccess
                  selected->bendImpedanceScale, selected->fret, stringIndex };
     }
 
-    // The impedance scale is the frequency ratio the string's tension is
-    // holding (see configureVoice), so a trace of it is a pitch trace of the
-    // vibrato in ratio form, sampled once per block.
-    static std::vector<double> vibratoScaleTrace(float wheel, double rate,
-                                                 double seconds, int block,
-                                                 int midiNote = 52)
+    // A per-block trace of the loop the wheel is driving, taken from a real
+    // render: the delay the loop is actually reading, slew and all, with
+    // everything else that sets where it resonates. The vibrato is then
+    // measured as the pitch it produces rather than as a quantity that stands
+    // in for one.
+    static std::vector<StringLoopSnapshot> vibratoLoopTrace(
+        float wheel, double rate, double seconds, int block,
+        int midiNote = 52)
     {
         AcustraEngine engine;
         EngineParameters parameters;
@@ -252,7 +254,7 @@ struct AcustraEngineTestAccess
         engine.setVibrato(wheel);
         std::vector<float> left(static_cast<std::size_t>(block));
         std::vector<float> right(static_cast<std::size_t>(block));
-        std::vector<double> trace;
+        std::vector<StringLoopSnapshot> trace;
         const int blocks = static_cast<int>(seconds * rate / block);
         for (int index = 0; index < blocks; ++index)
         {
@@ -262,8 +264,14 @@ struct AcustraEngineTestAccess
                 {
                     return voice.played && voice.midiNote == midiNote;
                 });
-            trace.push_back(selected == engine.voices_.end()
-                ? 1.0 : selected->bendImpedanceScale);
+            if (selected == engine.voices_.end())
+                break;
+            const auto& loop = selected->loops[0];
+            trace.push_back({ loop.currentDelay, loop.loopGain,
+                              loop.broadLossCoefficient, loop.broadLossMix,
+                              loop.lowpassCoefficient, loop.highLossMix,
+                              loop.dispersionA1, loop.dispersionA2,
+                              selected->dispersionDesignInharmonicity });
         }
         return trace;
     }
@@ -1965,12 +1973,17 @@ double loopPhase(const acustra::AcustraEngineTestAccess::StringLoopSnapshot& loo
         + allpassPhase;
 }
 
+// The bracket is widened by the caller when the resonance can sit further
+// from the nominal than a note's own tuning residual - under a vibrato it can
+// be a fifth of a semitone away. Bisection converges to the same place from
+// either bracket; what the width has to guarantee is only that the root is
+// inside it.
 double loopResonance(
     const acustra::AcustraEngineTestAccess::StringLoopSnapshot& loop,
-    int partial, double expectedOmega)
+    int partial, double expectedOmega, double windowCents = 12.0)
 {
-    double lower = expectedOmega * std::exp2(-12.0 / 1200.0);
-    double upper = expectedOmega * std::exp2(12.0 / 1200.0);
+    double lower = expectedOmega * std::exp2(-windowCents / 1200.0);
+    double upper = expectedOmega * std::exp2(windowCents / 1200.0);
     const double target = 2.0 * std::numbers::pi * partial;
     for (int iteration = 0; iteration < 52; ++iteration)
     {
@@ -2626,68 +2639,117 @@ void testTheVibratoWheelAtZeroIsExact()
 }
 
 // What the wheel does when it is not zero, against what the sources measured.
+// The gesture those sources describe is a fundamental-frequency modulation
+// (Erkut: the string is repeatedly stretched to fluctuate the fundamental),
+// so this measures a frequency: each block's loop is resolved for the pitch
+// it is sounding, and the same note rendered with the wheel down is resolved
+// beside it, so what is compared is the vibrato itself and not the note's own
+// tuning residual or its attack glide.
 void testTheVibratoWheelStaysInsideItsPublishedBounds()
 {
-    const double rate = 48000.0;
-    const int block = 64;
-    for (const float wheel : { 0.35f, 1.0f })
+    const auto trace = [] (float wheel, double rate, int block, int midiNote)
     {
-        const auto trace = acustra::AcustraEngineTestAccess::vibratoScaleTrace(
-            wheel, rate, 3.0, block);
-        expect(!trace.empty(), "the vibrato trace was empty");
+        return acustra::AcustraEngineTestAccess::vibratoLoopTrace(
+            wheel, rate, 3.0, block, midiNote);
+    };
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const int block = 64;
         const double perBlock = block / rate;
-        double deepest = 0.0;
-        double shallowest = 0.0;
-        for (std::size_t index = 0; index < trace.size(); ++index)
+        const auto centsTrace = [&] (float wheel, int midiNote)
         {
-            const double cents = 1200.0 * std::log2(trace[index]);
-            if (index * perBlock < 0.2)
-                shallowest = std::max(shallowest, cents);
-            deepest = std::max(deepest, cents);
+            const auto bent = trace(wheel, rate, block, midiNote);
+            const auto still = trace(0.0f, rate, block, midiNote);
+            const double nominalOmega = 2.0 * std::numbers::pi * 440.0
+                * std::exp2((midiNote - 69.0) / 12.0) / rate;
+            std::vector<double> cents;
+            const auto blocks = std::min(bent.size(), still.size());
+            for (std::size_t index = 0; index < blocks; ++index)
+                cents.push_back(1200.0 * std::log2(
+                    loopResonance(bent[index], 1, nominalOmega, 60.0)
+                    / loopResonance(still[index], 1, nominalOmega, 60.0)));
+            return cents;
+        };
+        for (const float wheel : { 0.35f, 1.0f })
+        {
+            const auto cents = centsTrace(wheel, 52);
+            expect(cents.size() > 1000, "the vibrato trace was too short");
+            double deepest = 0.0;
+            double lowest = 1.0e9;
+            double shallowest = 0.0;
+            for (std::size_t index = 0; index < cents.size(); ++index)
+            {
+                deepest = std::max(deepest, cents[index]);
+                lowest = std::min(lowest, cents[index]);
+                if (static_cast<double>(index) * perBlock < 0.2)
+                    shallowest = std::max(shallowest, cents[index]);
+            }
+            // Erkut et al. 2000 Sec. 3.3: the lowest frequency during a
+            // vibrato is the nominal fundamental of the tone without it, so
+            // the sounding pitch never goes below the note's own. The
+            // tolerance covers what the wheel does to the rest of the model
+            // through the audio it reads back, chiefly the attack-pitch
+            // surrogate: the same trace on a nylon plain treble, which has
+            // no such surrogate, dips at most 0.004 cents, and this steel
+            // one 0.03, a two-hundredth of the depth.
+            expect(lowest >= -0.1,
+                   "the vibrato took the sounding pitch "
+                       + std::to_string(-lowest)
+                       + " cents below the note's own");
+            // The wheel's full-scale depth is the authored 20 cents, and
+            // what the string sounds is that interval plus the loop's own
+            // tuning residual, which is not quite the same at the top of the
+            // excursion as at the bottom: 0.14% of the interval here, and
+            // 0.5% on a nylon plain treble, which is unchanged when the
+            // dispersion design is re-solved every block instead of every
+            // 0.2% of B - so it is the tuning solve and not a stale design.
+            // One percent is the bound.
+            expect(deepest > 1.0 && deepest <= 20.2,
+                   "the wheel's vibrato reached " + std::to_string(deepest)
+                       + " cents of pitch");
+            // Its 0.5 s transient (Erkut's tt) means the first fifth of a
+            // second cannot already be at depth.
+            expect(shallowest < 0.5 * deepest,
+                   "the vibrato reached " + std::to_string(shallowest)
+                       + " of its " + std::to_string(deepest)
+                       + " cents inside the first 0.2 s");
+            // Rate, from the half-depth crossings after the transient.
+            // Erkut's 1.4 Hz slow and 4.9 Hz fast are the wheel's endpoints.
+            std::vector<double> crossings;
+            for (std::size_t index = 1; index < cents.size(); ++index)
+                if (static_cast<double>(index) * perBlock > 1.0
+                    && cents[index - 1] < 0.5 * deepest
+                    && cents[index] >= 0.5 * deepest)
+                    crossings.push_back(
+                        static_cast<double>(index) * perBlock);
+            expect(crossings.size() >= 2,
+                   "the vibrato did not repeat after its transient");
+            const double period = (crossings.back() - crossings.front())
+                / static_cast<double>(crossings.size() - 1);
+            const double measured = 1.0 / period;
+            expect(measured > 1.35 && measured < 5.0,
+                   "the vibrato ran at " + std::to_string(measured)
+                       + " Hz, outside the 1.4-4.9 Hz the sources measured");
+            std::cout << "Acustra vibrato wheel " << wheel << " at "
+                      << static_cast<int>(rate) << " Hz: " << measured
+                      << " Hz, pitch depth " << deepest << " cents, lowest "
+                      << lowest << "\n";
         }
-        // Erkut et al. 2000 Sec. 3.3: the lowest frequency during a vibrato
-        // is the note's own, so nothing goes below it.
-        double lowest = 1.0e9;
-        for (const double scale : trace)
-            lowest = std::min(lowest, 1200.0 * std::log2(scale));
-        expect(lowest >= -1.0e-6,
-               "the vibrato went below the note's own pitch by "
-                   + std::to_string(-lowest) + " cents");
-        expect(deepest > 1.0 && deepest <= 20.01,
-               "the wheel's vibrato reached " + std::to_string(deepest)
-                   + " cents");
-        // Its 0.5 s transient (Erkut's tt) means the first fifth of a second
-        // cannot already be at depth.
-        expect(shallowest < 0.5 * deepest,
-               "the vibrato reached " + std::to_string(shallowest)
-                   + " of its " + std::to_string(deepest)
-                   + " cents inside the first 0.2 s");
-        // Rate, from the peaks after the transient. Erkut's 1.4 Hz slow and
-        // 4.9 Hz fast are the wheel's endpoints.
-        std::vector<double> peaks;
-        for (std::size_t index = 1; index + 1 < trace.size(); ++index)
-            if (index * perBlock > 1.0 && trace[index] > trace[index - 1]
-                && trace[index] >= trace[index + 1])
-                peaks.push_back(static_cast<double>(index) * perBlock);
-        expect(peaks.size() >= 2,
-               "the vibrato did not repeat after its transient");
-        const double period = (peaks.back() - peaks.front())
-            / static_cast<double>(peaks.size() - 1);
-        const double measured = 1.0 / period;
-        expect(measured > 1.35 && measured < 5.0,
-               "the vibrato ran at " + std::to_string(measured)
-                   + " Hz, outside the 1.4-4.9 Hz the sources measured");
-        std::cout << "Acustra vibrato wheel " << wheel << ": " << measured
-                  << " Hz, depth " << deepest << " cents\n";
+        // An open string has no finger stopping it, so it has no vibrato
+        // (Laurson et al. 2001: max-depth is zero at fret zero). Nothing
+        // about its loop moves, so the two renders are the same loop block
+        // for block.
+        const auto open = trace(1.0f, rate, block, 40);
+        const auto openStill = trace(0.0f, rate, block, 40);
+        expect(!open.empty() && open.size() == openStill.size(),
+               "the open-string vibrato trace was empty");
+        bool moved = false;
+        for (std::size_t index = 0; index < open.size(); ++index)
+            moved = moved || open[index].delay != openStill[index].delay
+                || open[index].inharmonicity
+                       != openStill[index].inharmonicity;
+        expect(!moved, "an open string was given a vibrato");
     }
-    // An open string has no finger stopping it, so it has no vibrato
-    // (Laurson et al. 2001: max-depth is zero at fret zero).
-    const auto open = acustra::AcustraEngineTestAccess::vibratoScaleTrace(
-        1.0f, rate, 2.0, block, 40);
-    expect(!open.empty()
-               && std::all_of(open.begin(), open.end(),
-                              [] (double scale) { return scale == 1.0; }),
-           "an open string was given a vibrato");
 }
 
 // A member bend is one finger on one string.
