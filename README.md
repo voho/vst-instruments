@@ -69,14 +69,17 @@ shell, across four octaves.
 [![Acustra](acustra/Docs/screenshots/acustra-standalone.png)](acustra/README.md)
 
 Physically modelled six-string acoustic guitar: fitted stiff-string waveguides
-drive a passive measured bridge, sympathetic idle strings and a 96-mode stereo
-body-radiation model. A plate conductance floor restores the damping a finite
-modal fit loses above the soundboard's modal overlap, a string taken for a new
-note rings on under the hand rather than being cut, and CC2 is continuous
-bridge-hand damping, CC68 legato hammers on with a strike sized by velocity,
-and note-off velocity lifts the fretting finger off the string. A fret/tuning
-allocator enforces guitar playability while bounded Shape, Material, String
-Age, Touch and Position controls keep the surface simple.
+drive a passive two-point measured bridge (each string ending on its own
+saddle point), sympathetic idle strings and a stereo body-radiation model
+measured per string material. A plate conductance floor restores the damping
+a finite modal fit loses above the soundboard's modal overlap, a string taken
+for a new note rings on under the hand rather than being cut, and CC2 is
+continuous bridge-hand damping, CC68 legato hammers on with a strike sized by
+velocity, CC1 is the fretting hand's vibrato, and note-off velocity lifts the
+fretting finger off the string. MPE gives a member channel's own pitch bend a
+real string-tension bend, plus per-note pluck point and pressure. A
+fret/tuning allocator enforces guitar playability while bounded Shape,
+Material, String Age, Touch and Position controls keep the surface simple.
 
 [Eight audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
 

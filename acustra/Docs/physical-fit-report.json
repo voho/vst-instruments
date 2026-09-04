@@ -1,1451 +1,1451 @@
 {
-  "date": "2026-09-03",
-  "runtime_source": "AcustraEngine physical model with one measured guitar per string material -- g21 for steel (50-mode passive bridge, 96-mode body), g34 for nylon (42-mode passive bridge, 103-mode body) -- one positive-real plate conductance floor, and a constant six-string saddle anchor at a fitted saddle-to-anchor length",
-  "analysis_sample_rate": 48000,
-  "render_seconds": 4.2,
-  "render_block_size": 127,
-  "runtime_output_reference_gain": 18.0,
-  "loss": "seven weighted robust descriptors: attack, harmonics, tuning, pitch_trajectory, decay (dB/s), body, dynamics",
-  "loss_weights": {
-    "attack": 0.2,
-    "harmonics": 0.2,
-    "tuning": 0.07,
-    "pitch_trajectory": 0.03,
-    "decay": 0.25,
-    "body": 0.15,
-    "dynamics": 0.1
-  },
-  "pitch_trajectory_windows_seconds": [
-    [
-      0.02,
-      0.1
-    ],
-    [
-      0.08,
-      0.2
-    ],
-    [
-      0.18,
-      0.4
-    ]
+ "date": "2026-09-03",
+ "runtime_source": "AcustraEngine physical model with one measured guitar per string material -- g21 for steel (50-mode passive bridge, 96-mode body), g34 for nylon (42-mode passive bridge, 103-mode body) -- one positive-real plate conductance floor, and a constant six-string saddle anchor at a fitted saddle-to-anchor length",
+ "analysis_sample_rate": 48000,
+ "render_seconds": 4.2,
+ "render_block_size": 127,
+ "runtime_output_reference_gain": 18.0,
+ "loss": "seven weighted robust descriptors: attack, harmonics, tuning, pitch_trajectory, decay (dB/s), body, dynamics",
+ "loss_weights": {
+  "attack": 0.2,
+  "harmonics": 0.2,
+  "tuning": 0.07,
+  "pitch_trajectory": 0.03,
+  "decay": 0.25,
+  "body": 0.15,
+  "dynamics": 0.1
+ },
+ "pitch_trajectory_windows_seconds": [
+  [
+   0.02,
+   0.1
   ],
-  "split_role": "held_out is development validation used for promotion gates, not an untouched final test",
-  "stored_calibration_values": 29,
-  "active_fit_parameters": 27,
-  "inactive_parameters": [
-    "directGain",
-    "polarisationEndCorrectionMetres"
+  [
+   0.08,
+   0.2
   ],
-  "calibration_order": [
-    "bodyFrequencyScale",
-    "bodyQScale",
-    "bridgeMobilityScale",
-    "residueTiltDbPerOctave",
-    "directGain",
-    "nylon.fundamentalT60Scale",
-    "nylon.frequencyLossScale",
-    "nylon.apertureScale",
-    "nylon.transientScale",
-    "nylon.pluckDistanceScale",
-    "nylon.velocityBrightnessDepth",
-    "steel.stiffnessScale",
-    "steel.fundamentalT60Scale",
-    "steel.frequencyLossScale",
-    "steel.apertureScale",
-    "steel.transientScale",
-    "steel.pluckDistanceScale",
-    "steel.velocityBrightnessDepth",
-    "apertureRegisterExponent",
-    "lowBodyModeGain",
-    "steelDisplacementScaleMetres",
-    "steelFretT60Slope",
-    "highLossCutoffScale",
-    "bridgeConductanceFloor",
-    "bridgeConductanceCornerHz",
-    "bridgeTailLengthMetres",
-    "longitudinalGain",
-    "longitudinalQ",
-    "polarisationEndCorrectionMetres"
+  [
+   0.18,
+   0.4
+  ]
+ ],
+ "split_role": "held_out is development validation used for promotion gates, not an untouched final test",
+ "stored_calibration_values": 29,
+ "active_fit_parameters": 27,
+ "inactive_parameters": [
+  "directGain",
+  "polarisationEndCorrectionMetres"
+ ],
+ "calibration_order": [
+  "bodyFrequencyScale",
+  "bodyQScale",
+  "bridgeMobilityScale",
+  "residueTiltDbPerOctave",
+  "directGain",
+  "nylon.fundamentalT60Scale",
+  "nylon.frequencyLossScale",
+  "nylon.apertureScale",
+  "nylon.transientScale",
+  "nylon.pluckDistanceScale",
+  "nylon.velocityBrightnessDepth",
+  "steel.stiffnessScale",
+  "steel.fundamentalT60Scale",
+  "steel.frequencyLossScale",
+  "steel.apertureScale",
+  "steel.transientScale",
+  "steel.pluckDistanceScale",
+  "steel.velocityBrightnessDepth",
+  "apertureRegisterExponent",
+  "lowBodyModeGain",
+  "steelDisplacementScaleMetres",
+  "steelFretT60Slope",
+  "highLossCutoffScale",
+  "bridgeConductanceFloor",
+  "bridgeConductanceCornerHz",
+  "bridgeTailLengthMetres",
+  "longitudinalGain",
+  "longitudinalQ",
+  "polarisationEndCorrectionMetres"
+ ],
+ "calibration": [
+  1.04,
+  0.097990747,
+  0.754677154,
+  -1.0,
+  0.0,
+  1.13984718,
+  1.42440079,
+  1.69750718,
+  0.182559111,
+  1.09385889,
+  0.000716432382,
+  1.48177734,
+  1.53,
+  0.52,
+  0.65992123,
+  0.523383307,
+  1.03116387,
+  0.948115221,
+  -0.0706290118,
+  7.5,
+  0.00617327847,
+  -0.0301260746,
+  2.16964938,
+  0.011,
+  2804.94773,
+  0.00325,
+  0.0,
+  35.0,
+  0.0008
+ ],
+ "neutral_baseline": {
+  "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length; 20 mm saddle-to-anchor length",
+  "calibration_in_calibration_order": [
+   1.0,
+   1.0,
+   1.0,
+   0.0,
+   0.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   0.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   0.0,
+   1.0,
+   1.0,
+   0.0061,
+   -0.03,
+   1.3,
+   0.0,
+   1000.0,
+   0.02,
+   0.0,
+   80.0
   ],
-  "calibration": [
-    1.04,
-    0.097990747,
-    0.754677154,
-    -1.0,
-    0.0,
-    1.13984718,
-    1.42440079,
-    1.69750718,
-    0.182559111,
-    1.09385889,
-    0.000716432382,
-    1.48177734,
-    1.53,
-    0.52,
-    0.65992123,
-    0.523383307,
-    1.03116387,
-    0.948115221,
-    -0.0706290118,
-    7.5,
-    0.00617327847,
-    -0.0301260746,
-    2.16964938,
-    0.011,
-    2804.94773,
-    0.00325,
-    0.0,
-    35.0,
-    0.0008
-  ],
-  "neutral_baseline": {
-    "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length; 20 mm saddle-to-anchor length",
-    "calibration_in_calibration_order": [
-      1.0,
-      1.0,
-      1.0,
-      0.0,
-      0.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      0.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      0.0,
-      1.0,
-      1.0,
-      0.0061,
-      -0.03,
-      1.3,
-      0.0,
-      1000.0,
-      0.02,
-      0.0,
-      80.0
-    ],
-    "purpose": "a reproducible neutral physical calibration, re-rendered on the current 50-mode runtime and re-scored under the corrected decay descriptor, so it is comparable with the fitted scores beside it; it is not the historical 26-mode-bridge neutral the earlier reports quoted"
-  },
-  "splits": {
-    "training": {
-      "examples": 83,
-      "unique_model_renders": 47,
-      "fitted_score": 6.319236,
-      "terms": {
-        "attack": {
-          "neutral": 9.309916832505955,
-          "fitted": 6.9599
-        },
-        "harmonics": {
-          "neutral": 10.441357549351897,
-          "fitted": 8.1921
-        },
-        "tuning": {
-          "neutral": 4.7200069586896545,
-          "fitted": 3.4591
-        },
-        "pitch_trajectory": {
-          "neutral": 0.5545940344615841,
-          "fitted": 0.5226
-        },
-        "decay": {
-          "neutral": 6.5023449891362235,
-          "fitted": 5.2355
-        },
-        "body": {
-          "neutral": 15.462399754765235,
-          "fitted": 11.3239
-        },
-        "dynamics": {
-          "neutral": 5.262953607125741,
-          "fitted": 0.2357
-        }
-      },
-      "neutral_score": 8.768534755725106,
-      "change_percent": -27.93281687257866
+  "purpose": "a reproducible neutral physical calibration, re-rendered on the current 50-mode runtime and re-scored under the corrected decay descriptor, so it is comparable with the fitted scores beside it; it is not the historical 26-mode-bridge neutral the earlier reports quoted"
+ },
+ "splits": {
+  "training": {
+   "examples": 83,
+   "unique_model_renders": 47,
+   "fitted_score": 6.319236,
+   "terms": {
+    "attack": {
+     "neutral": 9.309916832505955,
+     "fitted": 6.9599
     },
-    "held_out": {
-      "examples": 24,
-      "unique_model_renders": 24,
-      "fitted_score": 6.327235,
-      "terms": {
-        "attack": {
-          "neutral": 9.155575861766145,
-          "fitted": 7.5668
-        },
-        "harmonics": {
-          "neutral": 10.831031892275846,
-          "fitted": 8.5855
-        },
-        "tuning": {
-          "neutral": 5.134666492710443,
-          "fitted": 3.3783
-        },
-        "pitch_trajectory": {
-          "neutral": 0.2159873722123093,
-          "fitted": 0.1584
-        },
-        "decay": {
-          "neutral": 5.464938238665436,
-          "fitted": 4.5842
-        },
-        "body": {
-          "neutral": 15.82243218879784,
-          "fitted": 11.3809
-        },
-        "dynamics": {
-          "neutral": 0.42473841202342505,
-          "fitted": 0.0234
-        }
-      },
-      "neutral_score": 8.145301055652865,
-      "change_percent": -22.320427977197006
+    "harmonics": {
+     "neutral": 10.441357549351897,
+     "fitted": 8.1921
     },
-    "flat_top": {
-      "examples": 8,
-      "unique_model_renders": 8,
-      "fitted_score": 7.948337,
-      "terms": {
-        "attack": {
-          "neutral": 9.036944038636934,
-          "fitted": 7.5325
-        },
-        "harmonics": {
-          "neutral": 8.586058487630032,
-          "fitted": 7.8669
-        },
-        "tuning": {
-          "neutral": 8.267588323509182,
-          "fitted": 2.429
-        },
-        "pitch_trajectory": {
-          "neutral": 0.6100492795473387,
-          "fitted": 0.5306
-        },
-        "decay": {
-          "neutral": 8.690178706006728,
-          "fitted": 6.0885
-        },
-        "body": {
-          "neutral": 13.894703320071423,
-          "fitted": 15.7703
-        },
-        "dynamics": {
-          "neutral": null,
-          "fitted": null
-        }
-      },
-      "neutral_score": 9.309314823108725,
-      "change_percent": -14.619527311831137,
-      "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
+    "tuning": {
+     "neutral": 4.7200069586896545,
+     "fitted": 3.4591
+    },
+    "pitch_trajectory": {
+     "neutral": 0.5545940344615841,
+     "fitted": 0.5226
+    },
+    "decay": {
+     "neutral": 6.5023449891362235,
+     "fitted": 5.2355
+    },
+    "body": {
+     "neutral": 15.462399754765235,
+     "fitted": 11.3239
+    },
+    "dynamics": {
+     "neutral": 5.262953607125741,
+     "fitted": 0.2357
     }
+   },
+   "neutral_score": 8.768534755725106,
+   "change_percent": -27.93281687257866
   },
-  "bridge_modal_extension": {
-    "source": "Robert Mores g21 treble-side bridge impact and co-located accelerometer",
-    "source_doi": "10.5281/zenodo.4604577",
-    "source_md5": "733cb10baf5ce36d8bf333610ffbb260",
-    "fit_band_hz": [
-      60,
-      10000
-    ],
-    "measured_candidates": 65,
-    "retained_positive_real_modes": 50,
-    "instrumentation_alignment_samples": 2,
-    "production_26_mode_fit": {
-      "relative_complex_error": 0.301071418,
-      "median_magnitude_error_db": 3.432411692,
-      "median_magnitude_error_4200_to_10000_hz_db": 8.551923897
+  "held_out": {
+   "examples": 24,
+   "unique_model_renders": 24,
+   "fitted_score": 6.327235,
+   "terms": {
+    "attack": {
+     "neutral": 9.155575861766145,
+     "fitted": 7.5668
     },
-    "selected_50_mode_fit": {
-      "relative_complex_error": 0.185925823,
-      "median_magnitude_error_db": 0.823970887,
-      "median_magnitude_error_4200_to_10000_hz_db": 0.701418946
+    "harmonics": {
+     "neutral": 10.831031892275846,
+     "fitted": 8.5855
     },
-    "selection": {
-      "training_before": 7.058992024106181,
-      "training_after": 6.959311242323791,
-      "change_percent": -1.412110701386038
+    "tuning": {
+     "neutral": 5.134666492710443,
+     "fitted": 3.3783
     },
-    "opened_after_freeze": {
-      "development_validation_before": 6.792615103647656,
-      "development_validation_after": 6.764893269784096,
-      "change_percent": -0.4081172485199902
+    "pitch_trajectory": {
+     "neutral": 0.2159873722123093,
+     "fitted": 0.1584
     },
-    "six_string_release_benchmark": {
-      "alternating_runs_per_build": 6,
-      "production_median_x_realtime": 0.0265932,
-      "selected_median_x_realtime": 0.0343352,
-      "change_percent": 29.112705503662607,
-      "gate_x_realtime": 0.25
+    "decay": {
+     "neutral": 5.464938238665436,
+     "fitted": 4.5842
     },
-    "generator_check": "python3 Tools/GenerateMeasuredBridge.py --raw-mat /path/to/qualified_selected_impulses.mat --check",
-    "decision": "promoted; aggregate improves on both splits, while decay regresses on both and remains an explicit listening risk"
-  },
-  "post_bridge_calibration_continuation": {
-    "topology_change": "none",
-    "protocol": "four bounded train-only least-squares stages in global, nylon, steel, global order; max_nfev 2 per stage; development validation remained closed until the final vector was frozen",
-    "training_stage_scores": [
-      6.78276823622088,
-      6.720451177530855,
-      6.674004305503201,
-      6.634038947894676
-    ],
-    "selection": {
-      "training_before": 6.959311242323791,
-      "training_after": 6.634038947894676,
-      "change_percent": -4.6739150341622455
+    "body": {
+     "neutral": 15.82243218879784,
+     "fitted": 11.3809
     },
-    "opened_after_freeze": {
-      "development_validation_before": 6.764893269784096,
-      "development_validation_after": 6.473144460245942,
-      "change_percent": -4.312689024101413,
-      "improved_terms": [
-        "attack",
-        "harmonics",
-        "tuning",
-        "pitch_trajectory",
-        "decay",
-        "body",
-        "dynamics"
-      ]
-    },
-    "decision": "promoted; the same fixed 50-mode runtime improves aggregate score on both splits and all seven development-validation terms"
-  },
-  "mechanism_ablations": {
-    "high_loss_cutoff": {
-      "mechanism": "shared multiplier on the material- and age-dependent upper-string-loss cutoff",
-      "stage_selected_scale": 1.3,
-      "production_value_after_joint_continuation": 1.8693394148,
-      "training_grid": {
-        "1.00": 7.193228995469759,
-        "1.10": 7.116183913745176,
-        "1.15": 7.096187530367063,
-        "1.20": 7.082983323524745,
-        "1.25": 7.06248853234317,
-        "1.30": 7.058992024106181,
-        "1.35": 7.060754017164134,
-        "1.40": 7.0601986664246565,
-        "1.50": 7.078265843724744,
-        "2.00": 7.208790930357742,
-        "3.00": 7.30246236207392,
-        "4.00": 7.30246236207392
-      },
-      "scale_1_ablation": {
-        "training_score": 7.193228995469759,
-        "training_decay": 5.429767094627592,
-        "held_out_score": 6.9909908291374805,
-        "held_out_decay": 4.322596238797309
-      },
-      "selected": {
-        "training_score": 7.058992024106181,
-        "training_decay": 5.012553537136098,
-        "held_out_score": 6.792615103647656,
-        "held_out_decay": 3.912160091226171
-      },
-      "tested_invariants": "the 0.5-to-4.0 regression changes 8 kHz round-trip loss for nylon and steel while keeping fundamental decay within 0.001 dB and compensated pitch within 0.01 cent",
-      "decision": "1.30 was selected on training before validation was opened; it reduces excess upper-partial damping without changing the requested fundamental T60 law and repeated the total/decay improvement on development validation",
-      "postfit_diagnostic": {
-        "role": "diagnostic only; spectral flatness was not used to select the cutoff",
-        "spectral_flatness_model_minus_target_db_80_to_250_ms": {
-          "training": {
-            "steel_1_to_4khz": -14.65,
-            "steel_4_to_12khz": -28.97,
-            "nylon_1_to_4khz": -11.7,
-            "nylon_4_to_12khz": -24.79
-          },
-          "held_out": {
-            "steel_1_to_4khz": -12.05,
-            "steel_4_to_12khz": -29.26,
-            "nylon_1_to_4khz": -11.73,
-            "nylon_4_to_12khz": -23.9
-          }
-        },
-        "coverage": "all 88 examples remain less spectrally flat than their targets in both bands",
-        "strongest_decay_residual": "low-register 3.713-to-8 kHz model/target decay ratios are 0.380 training and 0.375 held out",
-        "cutoff_1_to_1_3_effect": "upper decay ratios improve consistently, but 4-to-12 kHz flatness moves -0.53/-2.73 dB on training steel/nylon and -0.65/-2.45 dB on held-out steel/nylon",
-        "interpretation": "the cutoff corrects decay, not the remaining sparse bridge/body radiation; the next justified input is force-referenced two-axis saddle admittance plus stereo pressure measurement"
-      }
-    },
-    "steel_kirchhoff_carrier": {
-      "mechanism": "bounded steel-only displacement-slope-energy surrogate for axial-tension attack sharpening",
-      "selected_displacement_scale_metres": 0.0061,
-      "pitch_bound_cents": [
-        0.0,
-        20.0
-      ],
-      "authored_plus_decay_selection_baseline": {
-        "evidence_stage": "historical pre-high-loss-cutoff selection",
-        "training_score": 7.197568718046208,
-        "training_pitch_trajectory": 0.7356033758070701,
-        "held_out_score": 6.995742795393383,
-        "held_out_pitch_trajectory": 0.2047598779363767
-      },
-      "selected_hybrid": {
-        "training_score": 7.058992024106181,
-        "training_pitch_trajectory": 0.6987881257453828,
-        "held_out_score": 6.792615103647656,
-        "held_out_pitch_trajectory": 0.17676217005471564
-      },
-      "off_ablation": {
-        "training_score": 7.07831900335126,
-        "training_pitch_trajectory": 0.9378590467891409,
-        "held_out_score": 6.771148730900196,
-        "held_out_pitch_trajectory": 0.24016485781383043
-      },
-      "current_training_grid": {
-        "0.0000": 7.07831900335126,
-        "0.0030": 7.077772499550409,
-        "0.0061": 7.058992024106181,
-        "0.0090": 7.0848902901060935,
-        "0.0120": 7.12977193570689
-      },
-      "steel_material_specific_selection": {
-        "evidence_stage": "historical pre-high-loss-cutoff material-specific selection",
-        "training_authored_score": 7.056921707,
-        "training_authored_pitch_trajectory": 0.845291439,
-        "training_selected_score": 7.051305954,
-        "training_selected_pitch_trajectory": 0.801241603,
-        "held_out_authored_score": 6.764593876,
-        "held_out_authored_pitch_trajectory": 0.270558788,
-        "held_out_selected_score": 6.756181355,
-        "held_out_selected_pitch_trajectory": 0.227837287,
-        "decision": "0.0061 was promoted because it improved both the total and mechanism-specific pitch term on training, then repeated both improvements on development validation"
-      },
-      "nylon_rejection": {
-        "evidence_stage": "historical pre-high-loss-cutoff topology selection",
-        "authored_training_score": 8.707613984,
-        "authored_training_pitch_trajectory": 0.143287834,
-        "best_tested_kc_total_score": 8.717053915,
-        "best_tested_kc_total_scale_metres": 0.0,
-        "decision": "every tested nylon KC scale lost on the training total; retain the exact authored 3-cent velocity-squared Touch-scaled cue with 75 ms decay"
-      },
-      "decision": "the current train-only interaction resweep again selected 0.0061 on total score; it improves pitch trajectory on both splits, while the held-out aggregate is 0.02147 lower with the mechanism off, so the retained mechanism-specific benefit and aggregate tradeoff are both explicit"
-    },
-    "steel_fret_decay": {
-      "selected_slope": -0.03,
-      "legacy_slope": 0.018,
-      "fitted": {
-        "training_score": 7.058992024106181,
-        "training_decay": 5.012553537136098,
-        "held_out_score": 6.792615103647656,
-        "held_out_decay": 3.912160091226171
-      },
-      "legacy_ablation": {
-        "training_score": 7.078426138556049,
-        "training_decay": 5.0951277855673025,
-        "held_out_score": 6.831946201675249,
-        "held_out_decay": 4.044131157584115
-      },
-      "current_training_grid": {
-        "-0.050": 7.06092677296988,
-        "-0.030": 7.058992024106181,
-        "-0.010": 7.059768022288564,
-        "+0.018": 7.078426138556049
-      },
-      "decision": "promoted one shared steel scalar; open steel and all nylon loop gains are unchanged"
+    "dynamics": {
+     "neutral": 0.42473841202342505,
+     "fitted": 0.0234
     }
+   },
+   "neutral_score": 8.145301055652865,
+   "change_percent": -22.320427977197006
   },
-  "midi_expression": {
-    "default_mode": "conventional MIDI with independent channels",
-    "mpe_subset": "lower zone only, created/resized/removed by RPN 6 on channel 1",
-    "pitch_bend": "RPN 0 supports 0--96 semitones; lower-zone defaults are manager 2 and members 48; released tails freeze member bend while manager bend remains live",
-    "controller_scope": "manager bend, sustain, CC120, CC121 and CC123 address the lower zone; member controls stay scoped to their channel",
-    "limitations": "no upper MPE zone, per-note pressure or CC74 timbre",
-    "legato_footswitch_cc68": "a note a sounding string can reach is hammered on rather than replucked, and releasing it pulls off to what that string still holds; exact no-op while up, which is the default"
-  },
-  "historical_score_compatibility": "Earlier aperture, body-mode and direct-path ablations used a six-term objective. The mechanism-ablation grids predate the frozen 50-mode bridge extension and the post-bridge joint calibration continuation. They remain historical topology-selection evidence and are not relabeled as current 50-mode scores.",
-  "corpus_integrity": {
-    "target_content_hash_scheme": "SHA-256 over every target-*.f32 in the corpus, in sorted basename order, each contributing its UTF-8 basename, a NUL byte and its raw bytes; recomputed when the flat-top split was added, so it does not continue the previous value",
-    "target_count": 115,
-    "target_content_sha256": "28da80abc200c4ffc6f103506a7170b83cc952ded8f1c3db1531420c32976dce",
-    "train_manifest_sha256": "429357eba1150e2baed46475de06f1900b8d696e4975035438a3573b60c6ff24",
-    "validation_manifest_sha256": "725acbad4d35371fbcea5c723d2f322b3a9d710051d68eea081805243e3b80d0",
-    "flattop_manifest_sha256": "51215e90cb7a392eec58d21c46402ffb4cff6107b5a2742cefcffb34b89dcf00"
-  },
-  "claim_status": "Top of market is an unvalidated goal. These corpus scores do not establish perceptual equivalence, preference or market rank.",
-  "sample_v1_baseline": {
-    "method": "the frozen historical dense::Sampler rendered each exact benchmark zone at its captured MIDI note, velocity and round robin through its shipping 0.75 ms attack and playback-gain path; the same seven-term scorer and split manifests were used",
-    "training": 1.2080128205866743,
-    "held_out": 1.4437279229490527,
-    "flat_top": 0.12855464509924194,
-    "interpretation": "control only, not an out-of-sample realism comparison: version 1 plays the target recordings themselves, and the near-zero flat-top score reflects especially direct source playback. The nonzero scores measure the sampler envelope, interpolation, stereo path and finite analysis rather than distance from independent real takes. The physical model's higher score is expected and cannot be read as version 1 sounding more realistic on uncaptured notes or performances."
-  },
-  "recording_floor": {
-    "method": "the fitter's own seven terms run recording against recording: each archtop take is scored against another take of the same note and layer, all 54 ordered pairs of the three training round robins, with the bank's per-zone playback trim undone on the level descriptor so the dynamics term measures the player and not the trim. The model and the sample-player control below are rescored against those same trim-corrected targets, since a row whose two numbers are measured against two different targets is not a ratio",
-    "material": "steel",
-    "split": "training",
-    "example_count": 54,
-    "pair_count": 54,
-    "level_terms_trim_corrected": true,
-    "symmetry_max_term_difference": 0.0,
-    "floor": {
-      "score": 1.2780036055265953,
-      "terms": {
-        "attack": 0.8821279477325311,
-        "body": 1.7941844487151906,
-        "decay": 0.9334804215356665,
-        "dynamics": 0.15602105149175655,
-        "harmonics": 2.213658502830456,
-        "pitch_trajectory": 0.21993955585117325,
-        "tuning": 1.9164035842584455
-      }
+  "flat_top": {
+   "examples": 8,
+   "unique_model_renders": 8,
+   "fitted_score": 7.948337,
+   "terms": {
+    "attack": {
+     "neutral": 9.036944038636934,
+     "fitted": 7.5325
     },
-    "model": {
-      "level_terms_trim_corrected": true,
-      "score": 6.513223934454794,
-      "terms": {
-        "attack": 7.826746014466161,
-        "body": 11.468220517803392,
-        "decay": 4.639351674263885,
-        "dynamics": 1.9767960481734173,
-        "harmonics": 8.140275217025382,
-        "pitch_trajectory": 0.7381702752700302,
-        "tuning": 3.141771126350928
-      }
+    "harmonics": {
+     "neutral": 8.586058487630032,
+     "fitted": 7.8669
     },
-    "sample_v1_control": {
-      "at_or_below_floor": {
-        "attack": true,
-        "body": true,
-        "decay": true,
-        "dynamics": false,
-        "harmonics": true,
-        "pitch_trajectory": true,
-        "tuning": false
-      },
-      "level_terms_trim_corrected": true,
-      "score": 0.8094953657215316,
-      "terms": {
-        "attack": 0.33328570570133076,
-        "body": 0.6444051860250409,
-        "decay": 0.3288902833922923,
-        "dynamics": 2.8306489826805348,
-        "harmonics": 0.14329767755871148,
-        "pitch_trajectory": 0.0005297412540435958,
-        "tuning": 3.6030649973145605
-      }
+    "tuning": {
+     "neutral": 8.267588323509182,
+     "fitted": 2.429
     },
-    "control_above_floor_terms": [
-      "dynamics",
-      "tuning"
-    ],
-    "control_note": "both are measured, not inferred, and both are playback transforms. Tuning: version 1 retunes each region to equal temperament while the export keeps the recording's own pitch, so over the 54 training takes the target's H1 sits at a median -4.7 cents and version 1's at +0.2, a median 4.8 cents apart against the term's 5-cent tolerance, and each row's difference is that zone's own tuningCentsFrom12Tet to 0.1 cents. Dynamics: version 1 renders through the same per-zone trim the export applied, so undoing that trim on the target alone puts exactly the trim into the residual - 5.6 dB across the two training layers, measured as the span of the per-zone trims themselves",
-    "interpretation": "a term's model score is only readable against this floor; the floor is not a target, since a model that reached it would be as close to one take as another take of the same note is",
-    "level_term_basis": "measured spans of the mean level over the 54 training takes, velocity 16 to velocity 112: the export's targets 13.2 dB, which is the authored 0.55*velocity^0.82 playback gain; the trim-corrected targets 18.9 dB, that gain with the recordings' own 5.6 dB layer-to-layer spread restored on top of it; the model 14.9 dB and sample-player version 1 13.3 dB. No basis puts the recordings' own dynamics alone on the target side, so the 12.7x dynamics ratio supports the negative reading only - the level term is not the model's best-behaved term at the 1.3x an uncorrected model column against a corrected floor reported - and what the recordings' own 5.6 dB asks of the engine is an open question, not one this row answers"
-  },
-  "frozen_test_split": {
-    "method": "AcustraPhysicalFitRenderer --test renders every captured archtop layer and take, on the sixteen roots the fit uses, that no fit, screen or refit has ever rendered: 188 of those roots' 256 regions. Root 37 is excluded because the lowest modelled string is E2/MIDI 40. Scored once per release at the shipping calibration and never fitted",
-    "examples": 188,
-    "unique_model_renders": 64,
-    "overlap_with_fit_splits": 0,
-    "score": 6.324463277024044,
-    "terms": {
-      "attack": 8.110001,
-      "harmonics": 8.204574,
-      "tuning": 3.018647,
-      "pitch_trajectory": 0.315467,
-      "decay": 4.421479,
-      "body": 11.506383,
-      "dynamics": 0.094517
+    "pitch_trajectory": {
+     "neutral": 0.6100492795473387,
+     "fitted": 0.5306
     },
-    "sample_v1_control": 0.5426648207988745,
-    "steel_only_reference": {
-      "training": {
-        "examples": 54,
-        "score": 6.336063581635963
-      },
-      "held_out": {
-        "examples": 14,
-        "score": 6.403525973929313
-      },
-      "note": "the training and development-validation scores restricted to the same archtop material, so the test score can be read beside them"
+    "decay": {
+     "neutral": 8.690178706006728,
+     "fitted": 6.0885
     },
-    "model_render_reuse": "a model render is keyed by material, note and velocity, so the take is the recording's only: 32 of the 64 renders are byte-identical (md5) to renders the fit corpus already produced, and 60 of the 188 rows score fit-optimised model audio against a take it was not fitted on. The other 128 rows are root-by-layer combinations the model has never rendered"
-  },
-  "plate_conductance_floor": {
-    "mechanism": "one over-damped positive-real section added to the measured bridge mobility, restoring the flat conductance a plate keeps above its modal-overlap frequency",
-    "why": "a 50-mode positive-real fit of a 60-10000 Hz driving-point measurement reproduces |Y| but loses Re(Y) between modes, where a real top plate has dense modal overlap; Cremer and Heckl give the high-frequency limit of a plate driving-point mobility as a real constant",
-    "parameters": [
-      "bridgeConductanceFloor",
-      "bridgeConductanceCornerHz"
-    ],
-    "fixed_upper_corner_hz": 16000.0,
-    "identity": "bridgeConductanceFloor 0 renders the previous build bit-identically",
-    "bridge_ablation_dB_per_second_added_by_the_junction": {
-      "400-600": 30.3,
-      "600-900": 13.0,
-      "900-1350": 4.5,
-      "1350-2000": 12.4,
-      "2000-3000": 4.6,
-      "3000-4500": 1.1
+    "body": {
+     "neutral": 13.894703320071423,
+     "fitted": 15.7703
     },
-    "training_screen": {
-      "floor_0": 6.63403876,
-      "floor_0.004_corner_2400": 6.54038843
-    },
-    "selection": {
-      "training_before": 6.634038942691128,
-      "training_after": 6.417665711647007,
-      "change_percent": -3.261561062774665
-    },
-    "opened_after_freeze": {
-      "development_validation_before": 6.473144533101294,
-      "development_validation_after": 6.434786716997037,
-      "change_percent": -0.5925685099121392
-    },
-    "damping_audit_model_minus_recording_db_per_second": {
-      "protocol": "python3 Tools/AuditDampingCurve.py <rendered fit corpus>; bands whose answer moves with the analysis window are withheld as null, which withholds 4500-6800 and 6800-9000 for both materials",
-      "before": {
-        "nylon": {
-          "80-120": null,
-          "120-180": null,
-          "180-270": 8.137,
-          "270-400": 7.541,
-          "400-600": 9.324,
-          "600-900": 2.882,
-          "900-1350": 1.313,
-          "1350-2000": -1.063,
-          "2000-3000": -9.505,
-          "3000-4500": null,
-          "4500-6800": null,
-          "6800-9000": null
-        },
-        "steel": {
-          "80-120": 7.835,
-          "120-180": 1.721,
-          "180-270": 9.886,
-          "270-400": -2.725,
-          "400-600": -1.471,
-          "600-900": 2.503,
-          "900-1350": -1.021,
-          "1350-2000": -7.24,
-          "2000-3000": -7.25,
-          "3000-4500": -5.139,
-          "4500-6800": -1.553,
-          "6800-9000": null
-        }
-      },
-      "after": {
-        "nylon": {
-          "80-120": null,
-          "120-180": null,
-          "180-270": 8.844,
-          "270-400": 8.475,
-          "400-600": 10.295,
-          "600-900": 5.042,
-          "900-1350": 3.841,
-          "1350-2000": 1.945,
-          "2000-3000": -4.094,
-          "3000-4500": null,
-          "4500-6800": null,
-          "6800-9000": null
-        },
-        "steel": {
-          "80-120": 8.109,
-          "120-180": 1.728,
-          "180-270": 9.279,
-          "270-400": -2.828,
-          "400-600": -2.161,
-          "600-900": 2.325,
-          "900-1350": -0.615,
-          "1350-2000": -5.378,
-          "2000-3000": -3.034,
-          "3000-4500": -0.653,
-          "4500-6800": null,
-          "6800-9000": null
-        }
-      },
-      "note": "recomputed on the widened corpus with the stability guard; the earlier unguarded figures for 4500-6800 and 6800-9000 Hz are withdrawn, including the +15.5 to +3.7 improvement one clause of the promotion gate cited"
-    },
-    "decision": "promoted on a controlled ablation under the corrected decay descriptor: development validation 6.378198 with the floor against 6.462390 without it, from the same starting calibration",
-    "controlled_ablation": {
-      "protocol": "two bounded fits under the corrected descriptor from the same pre-plate-floor starting calibration, differing only in whether the two plate values were free",
-      "floor_free": {
-        "training": 6.132176903662072,
-        "development_validation": 6.378198322677138
-      },
-      "floor_pinned_at_zero": {
-        "training": 6.24692450930623,
-        "development_validation": 6.462390316788033
-      },
-      "decision": "floor free wins both splits; the mechanism is kept",
-      "replication": {
-        "protocol": "the same ablation repeated from an independent starting calibration, the shipping vector, on the widened 83-row corpus; development validation is the same 24 rows throughout, so all four fits are comparable on it",
-        "floor_free": {
-          "training": 6.410403693891456,
-          "development_validation": 6.355825508640519
-        },
-        "floor_pinned_at_zero": {
-          "training": 6.452317813432141,
-          "development_validation": 6.3879650229646785
-        },
-        "decision": "replicates: the floor wins both splits from both starting points. The held-out gap is 0.084 from the pre-floor start and 0.032 from the shipping start, so the effect is consistent in sign and smaller than one run alone suggested. No calibration is promoted from this run; it tests the mechanism, not a candidate."
-      }
+    "dynamics": {
+     "neutral": null,
+     "fitted": null
     }
-  },
-  "rejected_upper_loss_shelf_split": {
-    "mechanism": "per-material corner and depth for the string-side upper-loss shelf",
-    "selection": {
-      "training_before": 6.634038942691128,
-      "training_after": 6.580260149870737
-    },
-    "opened_after_freeze": {
-      "development_validation_after": 6.431137427889945
-    },
-    "damping_audit_steel_after": {
-      "1350-2000": -7.0,
-      "2000-3000": -7.3,
-      "3000-4500": -5.2
-    },
-    "decision": "rejected; the aggregate improved but the predeclared damping gate failed, the steel shelf parameters moved by less than 0.03 percent, and a direct sweep showed the shelf overshoots 3 kHz by three times its 1.35 kHz correction. All of its plumbing was removed."
-  },
-  "decay_descriptor_correction": {
-    "was": "robust log2(T60) per partial and per band over 0.12-4.0 s",
-    "now": "the same robust line's decay rate in dB/s, tolerance 6 dB/s",
-    "why": "what a decay error does to a note is a level difference, and after t seconds that difference is exactly (rate_model - rate_target) * t dB; log2(T60) measures the relative error instead, so the same 1.4x error scores identically at 25 dB after one second on a 0.5 s partial and at 3 dB on a 4 s partial",
-    "consequence": "every score in this report is under the corrected descriptor and is not comparable with the previously frozen numbers",
-    "scores_under_the_corrected_descriptor": {
-      "pre_plate_floor_build": {
-        "training": 6.280687,
-        "development_validation": 6.485961
-      },
-      "plate_floor_build_fitted_under_the_old_descriptor": {
-        "training": 6.118156,
-        "development_validation": 6.521663
-      }
-    }
-  },
-  "nylon_training_split_widened": {
-    "was": "10 FreePats nylon regions in training, 10 in development validation, 21 unused",
-    "now": "29 in training - every unused region playable on the six modelled strings; MIDI 38 and 39 lie below the lowest open string",
-    "validation": "unchanged, the same 24 rows, so held-out scores stay comparable",
-    "why": "seven nylon parameters against ten rows left that stage close to unidentifiable; it stalled without improving in two of three fits",
-    "material_balance": "training moves from 54 steel / 10 nylon to 54 / 29",
-    "first_fit_on_it": {
-      "development_validation": 6.355826,
-      "against": 6.378198,
-      "decision": "rejected: it passed the validation clause but failed the predeclared nylon damping clause, improving only 3 of 10 nylon bands. The shipping calibration is unchanged. Its net nylon band error did fall 6.1 dB/s, which is why the clause is recorded rather than reinterpreted."
-    }
-  },
-  "score_stability": {
-    "test": "the decay descriptor's STFT window halved from 8192 to 4096, a parameter no result should depend on",
-    "absolute_scores_move": {
-      "training": -0.0174,
-      "development_validation": -0.0588,
-      "development_validation_decay_term": -0.2354
-    },
-    "paired_gaps_hold": {
-      "plate_floor_ablation_run_1_pinned_minus_free": {
-        "window_8192": 0.0842,
-        "window_4096": 0.0519
-      },
-      "plate_floor_ablation_run_2_pinned_minus_free": {
-        "window_8192": 0.0321,
-        "window_4096": 0.0276
-      }
-    },
-    "conclusion": "an absolute score here is analysis-dependent at about the 1% level, so only paired comparisons over identical rows mean anything; the sensitivity is common-mode and cancels in the difference, and the plate floor wins in all four cells"
-  },
-  "constant_saddle_anchor": {
-    "change": "the lumped tail spring the bridge junction sees is summed over all six strings at all times, at a fitted saddle-to-anchor length, instead of over the played strings at the stub xi_b=0.995 leaves",
-    "defect_removed": "a note held inside a chord decayed 2.15x slower than the same note alone, and a second voice too quiet to hear moved it by the same amount; now 0.99-1.00x",
-    "fitted_length_metres": 0.0171860529,
-    "gate": "declared before the refit: dependence within 1.10x, both split scores no worse than the shipping 6.431871 and 6.378198, the length strictly inside its bounds, suites green",
-    "gate_outcome": "three clauses passed; the score clause failed. Two bounded continuations reach 6.441362 training and 6.427690 development validation, 0.15% and 0.78% worse than shipping",
-    "counter_evidence": {
-      "corpus_is_blind_to_the_defect": "every row is one note on a fresh engine, and for one played string every anchor subset considered is identical",
-      "common_neutral_start": "on the neutral calibration both topologies share, the constant six-string anchor scores 8.768535 training and 8.145301 development validation against the played-subset anchor's 9.671509 and 9.277751",
-      "flat_top_split": "7.428581 against the shipping build's 7.662502 on the same eight never-fitted rows, 3.05% closer",
-      "descriptor_sensitivity": "halving the decay analysis window moves the development-validation score by 0.9%, which is larger than the regression"
-    },
-    "decision": "promoted, with the failed clause recorded as failed rather than reworded"
-  },
-  "junction_transient_corrections": {
-    "cause": "displacement waves are turned into bridge velocity and force by finite differences, and three things moved a wave without the bridge moving: a released shape filling a delay line, the release gain applied to the sample a loop hands out, and a string set or tuning exchanged under a ringing chord",
-    "measured_below_the_limiter": true,
-    "note_over_a_six_string_chord": {
-      "before": 0.0934,
-      "after": 0.0092,
-      "same_note_on_a_silent_engine": 0.0089
-    },
-    "chord_release_over_its_own_background": {
-      "before": 20.85,
-      "after": 2.94
-    },
-    "all_notes_off_over_its_own_background": 2.52,
-    "string_set_switch_under_a_chord": {
-      "before": 26.42,
-      "after": 0.66
-    },
-    "tuning_switch_under_a_chord": {
-      "before": 2.59,
-      "after": 1.04
-    },
-    "remaining": "a repluck of a note already sounding on its string peaks 2.2x the same note alone, and a 96-semitone bend, where the delay line clamps, peaks 17x the chord it lands on",
-    "corpus_effect": "none; all 71 model renders are bit-identical, because every fit render is a single note on a fresh engine that is never released",
-    "after_the_body_chosen_by_ear": {
-      "note_over_a_six_string_chord": {
-        "peak": 0.0162,
-        "same_note_on_a_silent_engine": 0.0169
-      },
-      "chord_release_over_its_own_background": 0.83,
-      "all_notes_off_over_its_own_background": 0.84,
-      "ninety_six_semitone_bend": 5.72,
-      "two_semitone_bend": 1.42,
-      "repluck_of_a_sounding_note": 1.6,
-      "reading": "every gesture measured is now within 1.42x of the level it lands on, most below 1.0x; the darker more damped body rings less on the residual release step that the derivative re-referencing could not remove"
-    }
-  },
-  "corpus_mismatch_probes": {
-    "method": "one parameter swept from the fitted calibration, all three splits rescored; reported, never used to select",
-    "lowBodyModeGain": {
-      "1.5": [
-        6.4686,
-        6.4313,
-        7.583
-      ],
-      "3.0": [
-        6.4594,
-        6.4217,
-        7.4979
-      ],
-      "4.36968649": [
-        6.4579,
-        6.4195,
-        7.4101
-      ],
-      "6.0": [
-        6.4628,
-        6.4239,
-        7.3031
-      ],
-      "9.0": [
-        6.4803,
-        6.4408,
-        7.1322
-      ]
-    },
-    "residueTiltDbPerOctave": {
-      "-2.0": [
-        6.9707,
-        6.9588,
-        5.8919
-      ],
-      "0.0": [
-        6.5821,
-        6.5583,
-        6.5788
-      ],
-      "1.94550942": [
-        6.4579,
-        6.4195,
-        7.4101
-      ],
-      "4.0": [
-        6.5897,
-        6.5413,
-        8.0414
-      ],
-      "6.0": [
-        6.8026,
-        6.7587,
-        8.6337
-      ]
-    },
-    "bridgeMobilityScale": {
-      "0.25": [
-        6.1266,
-        6.2146,
-        7.4142
-      ],
-      "0.35": [
-        6.2703,
-        6.2516,
-        7.2838
-      ],
-      "0.45": [
-        6.4081,
-        6.3655,
-        7.2467
-      ],
-      "0.768190432": [
-        6.4579,
-        6.4195,
-        7.4101
-      ],
-      "1.2": [
-        6.9436,
-        6.6107,
-        7.5997
-      ],
-      "2.0": [
-        7.5315,
-        7.0041,
-        7.7221
-      ]
-    },
-    "order": "[training, development validation, flat top]",
-    "reading": "the fitted corpus and the flat-top rows want opposite body settings. Training and development validation put the low-mode gain near 4.4 while the flat-top rows fall monotonically to 9.0 and beyond; training prefers a body residue tilt of about +1.9 dB/octave while the flat-top rows prefer -2.0; and training improves all the way to the bridge-mobility lower bound of 0.25 while the flat-top rows are worst there. Following the training corpus on the body means following an archtop.",
-    "not_adopted": "the bridge-mobility direction is a rail the staged optimiser does not reach and was not taken: it buys 4.7% of training by scaling a measured bridge 3x away from its measurement, and moves the flat-top rows the wrong way",
-    "string_side": {
-      "steel.frequencyLossScale": {
-        "0.45": [
-          6.4436,
-          6.4056,
-          7.381
-        ],
-        "0.597412435": [
-          6.4414,
-          6.4277,
-          7.4286
-        ],
-        "0.75": [
-          6.4576,
-          6.4656,
-          7.4924
-        ],
-        "0.95": [
-          6.5083,
-          6.5311,
-          7.5979
-        ]
-      },
-      "steel.fundamentalT60Scale": {
-        "1.05": [
-          6.4654,
-          6.4456,
-          7.6565
-        ],
-        "1.2668308": [
-          6.4414,
-          6.4277,
-          7.4286
-        ],
-        "1.5": [
-          6.4457,
-          6.4327,
-          7.2829
-        ],
-        "1.8": [
-          6.4602,
-          6.4478,
-          7.2099
-        ]
-      },
-      "highLossCutoffScale": {
-        "1.5": [
-          6.645,
-          6.6564,
-          7.4715
-        ],
-        "2.16964938": [
-          6.4414,
-          6.4277,
-          7.4286
-        ],
-        "2.8": [
-          6.531,
-          6.5084,
-          7.4286
-        ],
-        "3.6": [
-          6.5585,
-          6.5214,
-          7.4286
-        ]
-      },
-      "bridgeConductanceFloor": {
-        "0.002": [
-          6.4491,
-          6.3479,
-          7.7573
-        ],
-        "0.00628631882": [
-          6.4414,
-          6.4277,
-          7.4286
-        ],
-        "0.011": [
-          6.4566,
-          6.4678,
-          7.2964
-        ],
-        "0.017": [
-          6.53,
-          6.5522,
-          7.197
-        ]
-      }
-    },
-    "no_move_improves_all_three": "no single parameter move improves training, development validation and the flat-top rows together; the fit is at a real local optimum on the corpus it was given, and the distance to a flat-top is not closed by fitting harder",
-    "joint_flat_top_direction": {
-      "values": {
-        "lowBodyModeGain": 9.0,
-        "residueTiltDbPerOctave": -2.0,
-        "steel.fundamentalT60Scale": 1.8,
-        "steel.frequencyLossScale": 0.45,
-        "bridgeConductanceFloor": 0.017
-      },
-      "scores": {
-        "training": 7.300275,
-        "held_out": 7.318408,
-        "flat_top": 5.19435
-      },
-      "against_shipping": {
-        "training": "+13.3%",
-        "held_out": "+13.9%",
-        "flat_top": "-30.1%"
-      },
-      "status": "a listening candidate, not a calibration: the five values were selected by looking at the flat-top split, so 5.194350 is a fitted number on eight rows and those rows are spent as a selection set for it",
-      "listening_sets": "tmp/acustra-listening/2026-08-31-archtop-or-flattop and 2026-08-31-body-weight, neither committed"
-    }
-  },
-  "listening_verdicts": {
-    "2026-08-31 archtop-or-flattop": "the flat-top direction is more realistic than the fitted build but a bit too dull; something in the middle would be best",
-    "2026-08-31 body-weight": "the fitted build is the worst of three; the ideal sits between the middle candidate and the full flat-top one",
-    "adopted": {
-      "lowBodyModeGain": [
-        4.06622997,
-        7.5
-      ],
-      "residueTiltDbPerOctave": [
-        1.86155763,
-        -1.0
-      ],
-      "steel.fundamentalT60Scale": [
-        1.2668308,
-        1.53
-      ],
-      "steel.frequencyLossScale": [
-        0.597412435,
-        0.52
-      ],
-      "bridgeConductanceFloor": [
-        0.00628631882,
-        0.011
-      ]
-    },
-    "cost": {
-      "training": [
-        6.441362,
-        6.836184
-      ],
-      "held_out": [
-        6.42769,
-        6.823805
-      ],
-      "flat_top": [
-        7.428581,
-        5.655082
-      ]
-    },
-    "status": "five of the twenty-seven values are a direction chosen by ear, not the fit's answer; recorded as chosen by ear in Docs/decisions.md",
-    "open": "none; the upper-band damping set was cancelled rather than rendered",
-    "2026-08-31 how-far": "B, half way back toward the fitted calibration, is the worst of three; A, the shipping engine, and C, half way further toward the flat-top rows, are a tie. The corpus broke the tie in favour of A - 6.836184 and 6.823805 against C's 7.047400 and 7.062700 - so the adopted point stands and the direction is not pushed further"
-  },
-  "sympathetic_tail_ceiling": {
-    "was": 0.9,
-    "now": 0.97,
-    "measured": 0.948664,
-    "reason": "the ceiling bounds the balance of a fretted note's tail, not the coupling: holding the sympathetic path fixed and tilting the body's radiation down alone moves it 0.806 to 0.927, while doubling the low-mode gain at a fixed tilt moves it 0.806 to 0.819. It was re-pinned when a listening verdict chose that body",
-    "tightened_in_exchange": "the resonant share must now exceed five times the off-resonant share rather than three; measured 7.04"
-  },
-  "upper_band_cutoff_resolved": {
-    "question": "the gated loss put the shared upper-loss cutoff at 2.0 while the damping audit preferred 1.2 for steel and 1.6 for nylon",
-    "audit_rerun_dB_per_s_model_minus_recording": {
-      "nylon 2000-3000": {
-        "1.2": 18.5,
-        "1.6": 5.9,
-        "2.16964938": -0.0
-      },
-      "steel 2000-3000": {
-        "1.2": 0.1,
-        "1.6": -1.1,
-        "2.16964938": -1.4
-      },
-      "steel 3000-4500": {
-        "1.2": 4.6,
-        "1.6": 3.4,
-        "2.16964938": 2.8
-      }
-    },
-    "splits_at_1.2": {
-      "training": 7.5062,
-      "held_out": 7.708,
-      "flat_top": 5.8863
-    },
-    "splits_at_2.16964938": {
-      "training": 6.836184,
-      "held_out": 6.823805,
-      "flat_top": 5.655082
-    },
-    "conclusion": "the disagreement is gone; the audit's old preference was measured on a build that no longer exists, three things having moved under it - the anchor topology, the plate conductance floor and steel's frequency loss. A number settles it, so no listening test is run"
-  },
-  "by_material": {
-    "note": "the ear-chosen body move, scored per material; the pair is that move's own before and after, not the engine that ships now -- see current_shipping below, which is a fresh measurement of this calibration after the nylon bending-stiffness table and the classical body",
-    "training": {
-      "nylon": [
-        8.4087,
-        8.6722
-      ],
-      "steel": [
-        5.8249,
-        6.3053
-      ]
-    },
-    "held_out": {
-      "nylon": [
-        7.8169,
-        7.6228
-      ],
-      "steel": [
-        5.9964,
-        6.7997
-      ]
-    },
-    "reading": "nylon moves 3.1% worse on training and 2.5% better held out; steel carries the whole trade at 8.2% and 13.4%, with attack 14.9% and body 11.7% worse. Nylon's +13.5 dB 80-160 Hz attack excess is on a band 47 dB below the classical reference's own total, so it changes the aggregate by a fraction of a decibel",
-    "current_shipping": {
-      "training": {
-        "nylon": 7.777045,
-        "steel": 6.336064
-      },
-      "held_out": {
-        "nylon": 7.055413,
-        "steel": 6.403526
-      }
-    }
-  },
-  "longitudinal_modes": {
-    "frequencies_hz": {
-      "steel": [
-        1481,
-        1684,
-        2079,
-        2551,
-        3903,
-        3906
-      ],
-      "plain_nylon": 1184
-    },
-    "derivation": "c_long = sqrt(E*A_axial/mu) from the published EJ16 tensions, the Jarvelainen core diameters the bending model uses, and steel's Young's modulus; plain nylon from its own density and modulus. Nothing chosen",
-    "drive": "DAFx-26's EA/(2L) times mean square slope, through the same displacement scale the attack-pitch surrogate is calibrated with; a square, so it carries the products of transverse partials",
-    "measured_band_growth_db": {
-      "quarter_velocity": 4.3,
-      "near_full": 11.1
-    },
-    "adopted": {
-      "longitudinalGain": 0.025,
-      "longitudinalQ": 35
-    },
-    "scores": {
-      "training": [
-        6.836184,
-        6.76847
-      ],
-      "held_out": [
-        6.823805,
-        6.774969
-      ],
-      "flat_top": [
-        5.655082,
-        5.645406
-      ]
-    },
-    "selection": "the n=1+n=3 axial model with shared gain 0.025 improves training, development validation and independent flat-top scores against the shipping n=1-only model at gain 0.03",
-    "excluded": "nylon's three wound basses, whose published density is an effective composite figure right for transverse mass and wrong for axial stiffness",
-    "axial_modal_extension": {
-      "mechanism": "the integrated extension drive projects onto odd fixed-fixed axial modes; add n=3 beside n=1 at its derived 3*c_long/(2L) frequency and 1/3 participation",
-      "baseline_scores": {
-        "training": 6.76847,
-        "held_out": 6.774969,
-        "flat_top": 5.645406
-      },
-      "candidate_scores": {
-        "training": 6.767930652726375,
-        "held_out": 6.768288568168492,
-        "flat_top": 5.613894947072707
-      },
-      "gain_rebalance": {
-        "before": 0.03,
-        "after": 0.025
-      },
-      "gate": "same 115 targets, manifests, scorer, sample rate and block size; all three split scores must not regress",
-      "decision": "adopted; all three splits improve"
-    },
-    "shipping_gain": {
-      "longitudinalGain": 0.0,
-      "why": "the axial resonators' narrow onset read as a pitched water drop at every pluck and their shipping gain was set to zero on 2026-09-01 (README release history); the 0.025 figures above are the scores of that mechanism while it was on",
-      "scores_at_zero": {
-        "training": 6.835322790154296,
-        "held_out": 6.823750638244407,
-        "flat_top": 5.654679028375743
-      },
-      "note": "these are the shipping engine's scores, rendered and scored on Linux; the earlier figures in this file were taken on another platform and the README explains why a last-bit difference grows on polyphonic material but not on the single notes scored here"
-    }
-  },
-  "fret_collision_unreachable": {
-    "corrected": "2026-09-04, by fret_collision_measured below: the conclusion recorded here is refuted. The excursion columns are the static pluck shape, which is the wrong quantity - a string released from rest swings on to minus that shape, and its extreme at the mirror of the pluck point is the whole pluck displacement, not the fraction of it standing over a fret at rest. Measured in the shipping engine, the barrier does fire. The entry is kept for the record; its conclusion is not the model's.",
-    "method": "the attack-pitch surrogate's fitted 6.17 mm displacement scale converts a wave-unit slope to d/L of physical slope, and the pluck triangle that produces the measured slope energy gives the excursion",
-    "low_e_excursion_mm": {
-      "velocity_0.50": [
-        0.834,
-        0.053
-      ],
-      "velocity_0.85": [
-        1.385,
-        0.089
-      ],
-      "velocity_1.00": [
-        1.607,
-        0.103
-      ]
-    },
-    "columns": "[at the pluck point, at the first fret]",
-    "clearance_mm": "0.30 to 0.50 at the first fret on a set-up steel guitar",
-    "superseded_conclusion": "a unilateral barrier at the action height would never fire at any velocity, so it is not built; the excursion is downstream of the corpus, since the displacement scale is fitted against the pitch rise the recordings show and a hard pick stroke moves a low E two to four millimetres"
-  },
-  "fret_collision_measured": {
-    "change": "none: a string/fret collision was built, measured against its own gate, and not landed",
-    "mechanism": "a rigid unilateral barrier at the published action line plus published neck relief. The displacement at a fret is read from the vertical loop as the tap at that fraction of the delay minus the tap at the rest of it - the difference, because the collapsed loop folds both end inversions into its write - and where the string would cross a crown, half the shortfall is added at each tap with the weights it was read at. Rigid-obstacle scattering after Krishnaswamy and Smith, 'Methods for simulating string collisions with rigid spatial objects', WASPAA 2003, with no penalty stiffness and no restitution coefficient, and no new calibration value",
-    "relief_source": "Martin's published factory procedure (Setup & Adjustment of Sure Align Neck System for SC Models, SC-Service-Kit-2024) capos the first fret, frets the twelfth and reads .003\" to .005\" at the fifth; Taylor's production set-up sheet (RevM_11/21/13) gives .004\" to .007\" for the acoustic series. .004\" (0.102 mm) is a choice from inside both published ranges, not a measurement of one neck. The bow between the two held frets is the parabola through the three points those specifications fix, with no free parameter; its apex lands 180.2 mm from the nut, between the fifth fret at 162.5 mm and the sixth at 189.8 mm",
-    "open_low_e_frets_1_to_8": {
-      "clearance_mm": [
-        0.713,
-        0.958,
-        1.178,
-        1.376,
-        1.555,
-        1.716,
-        1.861,
-        1.992
-      ],
-      "engine_free_swing_mm": [
-        0.566,
-        0.992,
-        1.222,
-        1.273,
-        1.268,
-        1.212,
-        1.155,
-        1.1
-      ],
-      "closed_form_dalembert_mm": [
-        0.524,
-        1.018,
-        1.285,
-        1.213,
-        1.144,
-        1.08,
-        1.02,
-        0.962
-      ],
-      "error_percent": [
-        8.1,
-        -2.5,
-        -4.9,
-        5.0,
-        10.8,
-        12.2,
-        13.3,
-        14.3
-      ],
-      "closed_form": "min over u of 0.5*(F(u) + F(2x-u)) with F the odd, 2L-periodic extension of the released triangle, at pluck fraction 0.1407 of the sounding length from the bridge and the loop's own realised peak 1.3127 mm, evaluated at x/Ls = 2^(-n/12); steel, default controls, velocity 1.0, 48 kHz",
-      "reading": "the engine's two-tap read reproduces the closed form to 14.3% at worst, and the bias at frets 4 to 8 is one-sided - the loop swings 5 to 14% further than the ideal string, so the barrier fires slightly more readily than the physics requires"
-    },
-    "firing": "released away from the top, the open low E at velocity 1.0 crosses the crowns of frets 2 and 3 by 0.034 and 0.044 mm and no others; at 0.85 fret 2 comes within 0.006 mm and nothing fires; at 0.5 the nearest fret clears by 0.367 mm and at 0.3 by 0.501 mm; fret 1 never fires, short by 0.147 mm at velocity 1.0. Released toward the top nothing fires at any velocity, the nearest 0.534 mm short. A fretted note is the opposite case: the clearance one fret above the stop is 0.152 mm on MIDI 76 and 0.158 mm on MIDI 69, both fire at velocity 0.50, and MIDI 76 crosses fret 13 by 0.131 mm at velocity 1.0",
-    "passivity": "0.000e+00 worst per-sample energy gain in all 30 runs (five gestures x 44100/48000/96000 x steel/nylon), which is what the algebra gives: writing d/2 and -d/2 at taps read with weights a and b changes the loop's squared sum by d*y + (d^2/4)*|a-b|^2, and with y = -clearance - d that is at most -d*clearance - d^2/2",
-    "velocity_gate": "the softest benchmark layer is bit-identical with the barrier on - all nine steel v16 renders byte-identical, 38 of 79 model renders unchanged; v48 rows move 0.02 to 0.25 dB rms, v80 rows 0.95 to 2.42 dB, v112 rows up to 5.75 dB",
-    "scores": {
-      "training": [
-        6.452449,
-        6.603847
-      ],
-      "held_out": [
-        6.142083,
-        6.30972
-      ],
-      "flat_top": [
-        8.29064,
-        7.946905
-      ],
-      "dynamics_term": [
-        0.2057,
-        0.395
-      ]
-    },
-    "failed_gates": "16 assertions in 6 engine tests, all on fretted notes: H8 decay on steel MIDI 76, 77, 78 and 83 spreads 17.08, 16.53, 16.08 and 22.04% across 44.1, 48 and 96 kHz against the 15% the lossless loop read allows, and H8 loss per round trip ranges over a factor of 2.77 against 2.5; one string's own level across repeated strums moves more than 2 dB from GuitarSet's measured 4.47 dB spread; hammer-on energy stops rising with velocity at all three rates for both materials",
-    "conclusion": "the mechanism is right and passive, and it is not in the engine because of what it reads against. initialisePluck gives every string at every fret the same released peak - 1.3127 mm realised in the loop at velocity 1.0, no term in the sounding length and none in the string - while the clearance one fret above a stop is 0.13 to 0.24 mm, so a fretted note starts buzzing at velocity 0.50 and by 1.0 costs 6.4 dB of peak on a hard fretted pluck and 5.7 dB on a hard strum. Both fitted splits move against it while the reported-only flat-top rows move for it. What is missing is not the collision model but a displacement measurement on the instrument: steelDisplacementScaleMetres is fitted to the attack pitch glide, and nothing pins the pluck's amplitude per string and per sounding length"
-  },
-  "by_ear_values_frozen_in_the_fit": [
-    "residueTiltDbPerOctave",
-    "lowBodyModeGain",
-    "steel.fundamentalT60Scale",
-    "steel.frequencyLossScale",
-    "bridgeConductanceFloor"
-  ],
-  "second_axis_corrected": {
-    "source": "J. Woodhouse, Plucked Guitar Transients: Comparison of Measurements and Synthesis, Acta Acustica united with Acustica 90 (2004) 945-965",
-    "measured": "the full 2x2 bridge admittance matrix, by a wire-break method; Lambourg and Chaigne, SMAC 93, 448-453, report an earlier one in good qualitative agreement",
-    "finding_1": "no convincing example of double exponential decay across every note to the twelfth fret on each string of the test guitar; the one candidate profile was the measurement noise floor",
-    "finding_2": "in synthesis with his own measured matrix, inclusion of the second polarisation makes rather little difference to the damping factors, and a normal-admittance-only synthesis is very similar",
-    "what_it_is_for": "plucks parallel to the soundboard have significantly lower levels, and where a string peak splits into a doublet the normal pluck excites the upper member and the parallel pluck the lower - an effect on angle and colour, which is what this project's take-to-take measurement pointed at",
-    "minimal_form": "in a modal expansion both direct admittances and the cross admittance follow from each mode's normal and tangential components, the cross term being their product, so a passive 2x2 on the existing 96-mode body needs one extra number per mode and is passive by construction",
-    "correction": "two-stage decay is a piano behaviour; the second axis is not the route to it on a guitar, and this project should stop implying that adding it would change how the instrument decays"
-  },
-  "refit_around_the_by_ear_body_rejected": {
-    "setup": "full staged refit, the five by-ear values frozen, the other twenty-four free",
-    "scores": {
-      "training": [
-        6.76847,
-        6.672461
-      ],
-      "held_out": [
-        6.774969,
-        6.833386
-      ],
-      "flat_top": [
-        5.645406,
-        6.271268
-      ]
-    },
-    "verdict": "training 1.42% better, development validation 0.86% worse, flat-top 11.1% worse; rejected on the development-validation gate",
-    "what_moved": "longitudinalGain 0.03 to 0.075 and highLossCutoffScale 2.170 to 2.503 - the settings that buy the archtop corpus attack brightness and move the flat-top rows away",
-    "reading": "the freezing kept the verdict and did not stop the free parameters walking the same way by other routes; on this corpus a refit has to be gated on development validation every time"
-  },
-  "two_way_junction_and_stub_anchor": {
-    "change": "every string is a junction member (idle strings load and inject at the bridge); the saddle-to-anchor length is DAFx-26 xi_b=0.995 (3.25 mm) instead of the fitted 17.2 mm spring; every pluck draws its point within +/-0.02 of the length",
-    "decided_by": "chord tuning against equal temperament (worst note 23 -> 9 cents steel, 23 -> 7 nylon) and idle-string pumping (+7 dB -> -44 dB), not the corpus",
-    "scores_before": [
-      6.835323,
-      6.823751,
-      5.654679
-    ],
-    "scores_after": [
-      6.606652,
-      6.521525,
-      8.120169
-    ],
-    "flat_top_note": "the halo masked the played strings over-damping; string losses and bridge mobility want a refit around the new termination"
-  },
-  "per_material_measured_guitars": {
-    "change": "each string material plays the guitar its own banks were measured on: steel keeps g21 (a 2018 DeVoe flamenca blanca, measured in a school music room), nylon moves to g34 (a 1971 Manuel Contreras classical Spanish, measured anechoic in the HAW Hamburg class-1 free-field laboratory)",
-    "windows": "g21 keeps DAFx-26's 3000-sample body window because its first reflection returns at 17.6 ms; g34's anechoic record converges at 12000 samples, where every mode below 700 Hz holds its Q to 1.8 percent at twice that window",
-    "mode_counts": {
-      "g21_bridge": 50,
-      "g21_body": 96,
-      "g34_bridge": 42,
-      "g34_body": 103
-    },
-    "fit_errors": {
-      "g34_bridge_complex": 0.197341,
-      "g34_bridge_median_db": 1.094127,
-      "g34_body_channel0": [
-        0.219,
-        1.241,
-        3.744
-      ],
-      "g34_body_channel1": [
-        0.1675,
-        0.819,
-        2.622
-      ],
-      "g34_body_stereo_p90_db": 4.054
-    },
-    "rejected": "g35 (1978 M. L. Bellido) missed the bridge fit's relative-complex limit at 0.2603 against 0.24; g36 (2001 J. L. Bellido) fits but scores 8.0279 and 7.6586 on the nylon splits against g34's 7.9594 and 7.1613",
-    "scores_before": [
-      6.606652,
-      6.521525,
-      8.120169
-    ],
-    "scores_after": [
-      6.632018,
-      6.420769,
-      8.120169
-    ],
-    "nylon_split_before": [
-      7.877642,
-      7.43161
-    ],
-    "nylon_split_after": [
-      7.959385,
-      7.161313
-    ],
-    "steel_unchanged": "all 40 non-nylon model renders are byte-identical to the previous engine's",
-    "anchor_reswept": "worst separable chord note, cents early/late: 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at 17.2 mm, 25.8/98.2 with no anchor"
-  },
-  "lossless_fractional_delay": {
-    "change": "the string loop's fractional delay is a second-order Thiran allpass read at an integer tap, D held in [1.1, 2.1), replacing the four-point Catmull-Rom read; its phase is folded into the tuning and dispersion collocation with the tap pinned inside each solve, and the collocation's multi-start fallback now runs for both materials from a spread of both starting ratios",
-    "decided_by": "a correctness defect, not the corpus: the interpolated read lost 0.23 and 0.53 dB per pass at 8 and 10 kHz at a half-sample fraction and nothing at an integer one, so H8 on steel MIDI 76 to 84 decayed at 3.0 to 96.5 dB/s at 44.1 kHz on the loop fraction alone, and MIDI 84's H8 at 3.0, 89.8 and 93.6 dB/s at 44.1, 48 and 96 kHz. An allpass has magnitude one at every frequency: the same nine notes now decay at 36.0 to 90.6 dB/s at 44.1 kHz, a smooth 1.7:1 rise in loss per round trip against the interpolated read's 47:1, and no note's H8 varies by more than 12.9% across the three rates",
-    "scores_before": [
-      6.57518,
-      6.381324,
-      8.120169
-    ],
-    "scores_after": [
-      6.452449,
-      6.142083,
-      8.29064
-    ],
-    "restricted_refit": "highLossCutoffScale and nylon.frequencyLossScale were swept on the rendered corpus over [0.9, 3.5] x [1.15, 2.1] (24 paired rows at 22 distinct points; the shipping point and (2.45, 1.7) were each rendered in two sweeps). The training optimum, 2.3 and 1.7, scores 6.428403 training against the shipping values' 6.452449 but 6.165286 on held-out development validation against 6.142083, so gated on validation the refit is rejected and the shipping calibration stands. steel.frequencyLossScale was not swept into the calibration: it is a by-ear value and frozen in the fit",
-    "flat_top_note": "the eight flat-top rows are 2.10% worse where training is 1.87% and held-out validation 3.75% better; that disagreement is a listening set's to settle, not a refit's"
-  },
-  "two_point_bridge": {
-    "change": "the bridge has two degrees of freedom, heave and rock, fitted to the archive's bass and treble impacts and the accelerometer at each of those ends (Method.pdf 2b: the two sensors 'taken together allow to trace two of the degrees of freedom of the bridge'); one pole set with a positive-semidefinite residue matrix [[heave, cross], [cross, rock]] per mode, so a string at lever arm u sees heave + 2u*cross + u^2*rock, which is the measured treble driving point at u = +1 and the measured bass one at u = -1; the six strings sit at u = (i - 2.5)/2 from the impacts' half-separation; a 2x2 junction solve per sample; each stub anchor at its own string's point, so the six springs are a stiffness matrix and a string at the end finds the anchor softer than one in the middle; bridgePhaseDelay reads (Y^-1 + K/s)^-1 at that string's own point",
-    "corner": "above the frequency where the archive's two records of the bass-to-treble transfer differ by as much as the transfer itself, no reciprocal 2x2 is identifiable, so the target is the mean of the two ends and no mode there carries a cross or rocking residue. Measured in third octaves: 2245 Hz on g21, 5657 Hz on g34",
-    "mode_counts": {
-      "g21_bridge": 47,
-      "g21_rocking": 30,
-      "g34_bridge": 46,
-      "g34_rocking": 40
-    },
-    "fit_errors": {
-      "g21_relative_complex": 0.198546,
-      "g21_median_db_per_string": [
-        0.943,
-        0.947,
-        1.256,
-        1.263,
-        0.985,
-        0.849
-      ],
-      "g34_relative_complex": 0.235357,
-      "g34_median_db_per_string": [
-        1.149,
-        1.148,
-        1.276,
-        1.336,
-        0.95,
-        1.227
-      ]
-    },
-    "decided_by": "the chord-tuning measurement, not the corpus. Over E, G, Am, D and C, 26 notes a material, worst separable note's pull early/late in cents: steel 2.6/1.4 to 2.2/3.0 and nylon 1.3/4.9 to 2.8/1.7; mean pull steel 1.1/0.4 to 0.9/0.6 and nylon 0.6/0.8 to 0.7/0.6; the coincident pairs, where the tracker reads a beat rather than a pull, 85.8/6.6 to 65.7/8.4 (steel) and 52.3/13.2 to 28.2/9.4 (nylon). The open low E's H1 decays at 7.93 dB/s against 7.89, inside the recordings' 4.5 to 8.6. E3 played over the open low E splits into a pair 0.463 Hz wide with the upper member 8 dB down, where the one-point bridge left one unresolved peak; the archtop's own open E2 H2 doublet is 0.8 Hz",
-    "scores_before": [
-      6.452449,
-      6.142083,
-      8.29064
-    ],
-    "scores_after": [
-      6.322154,
-      6.319706,
-      7.950448
-    ],
-    "cost": "held-out development validation is 2.89% worse, on its attack, harmonics and decay terms, where training is 2.02% and the flat-top rows 4.10% better. Idle open-string content over 0.5-2.0 s, measured as the power in +/-25-cent bands at the idle open strings' partials against the played fundamental, has a worse median share: -11.1 to -8.3 dB on the steel rows, -20.3 to -18.2 on nylon and -16.5 to -14.9 on the flat-top rows, against recorded targets of -28.2, -19.5 and -13.5. The idle bands' own median level barely moves (0.2 to 0.3 dB); what changes is which rows carry the content, and the softer end anchor is the route",
-    "cost_note": "the plan's fuller gate asked for that share not to get worse; it did. The chord-tuning gate, the doublet and the low-E decay all passed"
-  },
-  "polarisation_end_correction": {
-    "source": "J. Woodhouse, Plucked guitar transients: comparison of measurements and synthesis, Acta Acustica 90 (2004) 945-965, Sec. 4.3, https://euphonics.org/wp-content/uploads/2022/03/Guitar_II.pdf",
-    "measured": "the doublet between a string's two transverse polarisations is an end correction at the terminations, not body coupling (his measured 2x2 admittance matrix splits the pair by about 0.1 Hz): the polarisation parallel to the soundboard is longer by about 0.8 mm in 650 mm on the B string, so the normal polarisation is the higher member, and this is 'more significant ... than that coming from the body admittance matrix'",
-    "what_changed": "the authored -0.32 / +0.41 cents split, whose sign was opposite to the measurement and whose total was a third of its size, is replaced by the published 0.8 mm carried as a length; the whole difference lengthens the parallel loop, so the normal loop now runs at exactly the sounding length the tuning is built on",
-    "bounded_not_fixed": "Woodhouse calls the attribution tentative and says the exact amount would require detailed computation, so the length is calibration value 29, bounded 0 to 0.82 mm - one string diameter, the B string it was measured on",
-    "not_fitted": "the corpus does see it, but only weakly and only on steel: with the bridge-local direct path off, the lengthened polarisation still reaches the output through the shared slope energy that drives the steel attack pitch. Zeroing the correction changes 40 of the 79 model renders - all 32 steel and all 8 flat-top rows, all 39 nylon rows byte-identical - and moves the score from 6.319236 / 6.327235 / 7.948337 to 6.320649 / 6.328354 / 7.953299, a real preference for the published value on all three splits and far too small a lever to fit an end correction on, so it is frozen in the fitter at the measurement",
-    "measured_effect": "every note plays 0.31 cents sharper, the removal of the old split's detune of the radiating loop: single nylon notes at one second move from a mean 0.43 cents off equal temperament to 0.32, and the chord pull itself - the spread of notes inside a chord about its own mean - is unchanged, steel worst separable note 2.01/2.50 to 2.01/2.51 cents early/late and nylon 2.19/1.11 to 2.20/1.09",
-    "rocking_only_second_axis_rejected": "terminating the parallel polarisation on h^2 times the measured rocking mobility - the moment a horizontal saddle-top force makes about the along-string axis, the coordinate the archive's two bridge-end accelerometers trace - renders 64.2 dB (h = 3 mm) and 60.2 dB (h = 6 mm) below the shipping engine on the same nylon phrase, and still 47.7 dB down at an implausible 30 mm. Inaudible at any plausible saddle height, and h is not published for these guitars; the second radiating axis needs the measured tangential admittance per body mode",
-    "whirling_probe_rejected": "one shared slope-energy tension ripple modulating both loops (Gough, JASA 75 (1984); Elliott, Am. J. Phys. 48 (1980) 478) measures, on a steel E2 at velocity 1.0, an rms |dT/T| of 0.451 percent but a peak of 9.75 percent - 80.5 cents of instantaneous pitch. Applied per sample it moves the E2 spectral centroid from 319 Hz to 6313 Hz and the H5-H12 band from 11.22 to 15.85 dB re H1; bounding it would need a calibrated ripple amplitude, a new constant, so it does not ship"
+   },
+   "neutral_score": 9.309314823108725,
+   "change_percent": -14.619527311831137,
+   "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
   }
+ },
+ "bridge_modal_extension": {
+  "source": "Robert Mores g21 treble-side bridge impact and co-located accelerometer",
+  "source_doi": "10.5281/zenodo.4604577",
+  "source_md5": "733cb10baf5ce36d8bf333610ffbb260",
+  "fit_band_hz": [
+   60,
+   10000
+  ],
+  "measured_candidates": 65,
+  "retained_positive_real_modes": 50,
+  "instrumentation_alignment_samples": 2,
+  "production_26_mode_fit": {
+   "relative_complex_error": 0.301071418,
+   "median_magnitude_error_db": 3.432411692,
+   "median_magnitude_error_4200_to_10000_hz_db": 8.551923897
+  },
+  "selected_50_mode_fit": {
+   "relative_complex_error": 0.185925823,
+   "median_magnitude_error_db": 0.823970887,
+   "median_magnitude_error_4200_to_10000_hz_db": 0.701418946
+  },
+  "selection": {
+   "training_before": 7.058992024106181,
+   "training_after": 6.959311242323791,
+   "change_percent": -1.412110701386038
+  },
+  "opened_after_freeze": {
+   "development_validation_before": 6.792615103647656,
+   "development_validation_after": 6.764893269784096,
+   "change_percent": -0.4081172485199902
+  },
+  "six_string_release_benchmark": {
+   "alternating_runs_per_build": 6,
+   "production_median_x_realtime": 0.0265932,
+   "selected_median_x_realtime": 0.0343352,
+   "change_percent": 29.112705503662607,
+   "gate_x_realtime": 0.25
+  },
+  "generator_check": "python3 Tools/GenerateMeasuredBridge.py --raw-mat /path/to/qualified_selected_impulses.mat --check",
+  "decision": "promoted; aggregate improves on both splits, while decay regresses on both and remains an explicit listening risk"
+ },
+ "post_bridge_calibration_continuation": {
+  "topology_change": "none",
+  "protocol": "four bounded train-only least-squares stages in global, nylon, steel, global order; max_nfev 2 per stage; development validation remained closed until the final vector was frozen",
+  "training_stage_scores": [
+   6.78276823622088,
+   6.720451177530855,
+   6.674004305503201,
+   6.634038947894676
+  ],
+  "selection": {
+   "training_before": 6.959311242323791,
+   "training_after": 6.634038947894676,
+   "change_percent": -4.6739150341622455
+  },
+  "opened_after_freeze": {
+   "development_validation_before": 6.764893269784096,
+   "development_validation_after": 6.473144460245942,
+   "change_percent": -4.312689024101413,
+   "improved_terms": [
+    "attack",
+    "harmonics",
+    "tuning",
+    "pitch_trajectory",
+    "decay",
+    "body",
+    "dynamics"
+   ]
+  },
+  "decision": "promoted; the same fixed 50-mode runtime improves aggregate score on both splits and all seven development-validation terms"
+ },
+ "mechanism_ablations": {
+  "high_loss_cutoff": {
+   "mechanism": "shared multiplier on the material- and age-dependent upper-string-loss cutoff",
+   "stage_selected_scale": 1.3,
+   "production_value_after_joint_continuation": 1.8693394148,
+   "training_grid": {
+    "1.00": 7.193228995469759,
+    "1.10": 7.116183913745176,
+    "1.15": 7.096187530367063,
+    "1.20": 7.082983323524745,
+    "1.25": 7.06248853234317,
+    "1.30": 7.058992024106181,
+    "1.35": 7.060754017164134,
+    "1.40": 7.0601986664246565,
+    "1.50": 7.078265843724744,
+    "2.00": 7.208790930357742,
+    "3.00": 7.30246236207392,
+    "4.00": 7.30246236207392
+   },
+   "scale_1_ablation": {
+    "training_score": 7.193228995469759,
+    "training_decay": 5.429767094627592,
+    "held_out_score": 6.9909908291374805,
+    "held_out_decay": 4.322596238797309
+   },
+   "selected": {
+    "training_score": 7.058992024106181,
+    "training_decay": 5.012553537136098,
+    "held_out_score": 6.792615103647656,
+    "held_out_decay": 3.912160091226171
+   },
+   "tested_invariants": "the 0.5-to-4.0 regression changes 8 kHz round-trip loss for nylon and steel while keeping fundamental decay within 0.001 dB and compensated pitch within 0.01 cent",
+   "decision": "1.30 was selected on training before validation was opened; it reduces excess upper-partial damping without changing the requested fundamental T60 law and repeated the total/decay improvement on development validation",
+   "postfit_diagnostic": {
+    "role": "diagnostic only; spectral flatness was not used to select the cutoff",
+    "spectral_flatness_model_minus_target_db_80_to_250_ms": {
+     "training": {
+      "steel_1_to_4khz": -14.65,
+      "steel_4_to_12khz": -28.97,
+      "nylon_1_to_4khz": -11.7,
+      "nylon_4_to_12khz": -24.79
+     },
+     "held_out": {
+      "steel_1_to_4khz": -12.05,
+      "steel_4_to_12khz": -29.26,
+      "nylon_1_to_4khz": -11.73,
+      "nylon_4_to_12khz": -23.9
+     }
+    },
+    "coverage": "all 88 examples remain less spectrally flat than their targets in both bands",
+    "strongest_decay_residual": "low-register 3.713-to-8 kHz model/target decay ratios are 0.380 training and 0.375 held out",
+    "cutoff_1_to_1_3_effect": "upper decay ratios improve consistently, but 4-to-12 kHz flatness moves -0.53/-2.73 dB on training steel/nylon and -0.65/-2.45 dB on held-out steel/nylon",
+    "interpretation": "the cutoff corrects decay, not the remaining sparse bridge/body radiation; the next justified input is force-referenced two-axis saddle admittance plus stereo pressure measurement"
+   }
+  },
+  "steel_kirchhoff_carrier": {
+   "mechanism": "bounded steel-only displacement-slope-energy surrogate for axial-tension attack sharpening",
+   "selected_displacement_scale_metres": 0.0061,
+   "pitch_bound_cents": [
+    0.0,
+    20.0
+   ],
+   "authored_plus_decay_selection_baseline": {
+    "evidence_stage": "historical pre-high-loss-cutoff selection",
+    "training_score": 7.197568718046208,
+    "training_pitch_trajectory": 0.7356033758070701,
+    "held_out_score": 6.995742795393383,
+    "held_out_pitch_trajectory": 0.2047598779363767
+   },
+   "selected_hybrid": {
+    "training_score": 7.058992024106181,
+    "training_pitch_trajectory": 0.6987881257453828,
+    "held_out_score": 6.792615103647656,
+    "held_out_pitch_trajectory": 0.17676217005471564
+   },
+   "off_ablation": {
+    "training_score": 7.07831900335126,
+    "training_pitch_trajectory": 0.9378590467891409,
+    "held_out_score": 6.771148730900196,
+    "held_out_pitch_trajectory": 0.24016485781383043
+   },
+   "current_training_grid": {
+    "0.0000": 7.07831900335126,
+    "0.0030": 7.077772499550409,
+    "0.0061": 7.058992024106181,
+    "0.0090": 7.0848902901060935,
+    "0.0120": 7.12977193570689
+   },
+   "steel_material_specific_selection": {
+    "evidence_stage": "historical pre-high-loss-cutoff material-specific selection",
+    "training_authored_score": 7.056921707,
+    "training_authored_pitch_trajectory": 0.845291439,
+    "training_selected_score": 7.051305954,
+    "training_selected_pitch_trajectory": 0.801241603,
+    "held_out_authored_score": 6.764593876,
+    "held_out_authored_pitch_trajectory": 0.270558788,
+    "held_out_selected_score": 6.756181355,
+    "held_out_selected_pitch_trajectory": 0.227837287,
+    "decision": "0.0061 was promoted because it improved both the total and mechanism-specific pitch term on training, then repeated both improvements on development validation"
+   },
+   "nylon_rejection": {
+    "evidence_stage": "historical pre-high-loss-cutoff topology selection",
+    "authored_training_score": 8.707613984,
+    "authored_training_pitch_trajectory": 0.143287834,
+    "best_tested_kc_total_score": 8.717053915,
+    "best_tested_kc_total_scale_metres": 0.0,
+    "decision": "every tested nylon KC scale lost on the training total; retain the exact authored 3-cent velocity-squared Touch-scaled cue with 75 ms decay"
+   },
+   "decision": "the current train-only interaction resweep again selected 0.0061 on total score; it improves pitch trajectory on both splits, while the held-out aggregate is 0.02147 lower with the mechanism off, so the retained mechanism-specific benefit and aggregate tradeoff are both explicit"
+  },
+  "steel_fret_decay": {
+   "selected_slope": -0.03,
+   "legacy_slope": 0.018,
+   "fitted": {
+    "training_score": 7.058992024106181,
+    "training_decay": 5.012553537136098,
+    "held_out_score": 6.792615103647656,
+    "held_out_decay": 3.912160091226171
+   },
+   "legacy_ablation": {
+    "training_score": 7.078426138556049,
+    "training_decay": 5.0951277855673025,
+    "held_out_score": 6.831946201675249,
+    "held_out_decay": 4.044131157584115
+   },
+   "current_training_grid": {
+    "-0.050": 7.06092677296988,
+    "-0.030": 7.058992024106181,
+    "-0.010": 7.059768022288564,
+    "+0.018": 7.078426138556049
+   },
+   "decision": "promoted one shared steel scalar; open steel and all nylon loop gains are unchanged"
+  }
+ },
+ "midi_expression": {
+  "default_mode": "conventional MIDI with independent channels",
+  "mpe_subset": "lower zone only, created/resized/removed by RPN 6 on channel 1",
+  "pitch_bend": "RPN 0 supports 0--96 semitones; lower-zone defaults are manager 2 and members 48; released tails freeze member bend while manager bend remains live",
+  "controller_scope": "manager bend, sustain, CC120, CC121 and CC123 address the lower zone; member controls stay scoped to their channel",
+  "limitations": "no upper MPE zone, per-note pressure or CC74 timbre",
+  "legato_footswitch_cc68": "a note a sounding string can reach is hammered on rather than replucked, and releasing it pulls off to what that string still holds; exact no-op while up, which is the default"
+ },
+ "historical_score_compatibility": "Earlier aperture, body-mode and direct-path ablations used a six-term objective. The mechanism-ablation grids predate the frozen 50-mode bridge extension and the post-bridge joint calibration continuation. They remain historical topology-selection evidence and are not relabeled as current 50-mode scores.",
+ "corpus_integrity": {
+  "target_content_hash_scheme": "SHA-256 over every target-*.f32 in the corpus, in sorted basename order, each contributing its UTF-8 basename, a NUL byte and its raw bytes; recomputed when the flat-top split was added, so it does not continue the previous value",
+  "target_count": 115,
+  "target_content_sha256": "28da80abc200c4ffc6f103506a7170b83cc952ded8f1c3db1531420c32976dce",
+  "train_manifest_sha256": "429357eba1150e2baed46475de06f1900b8d696e4975035438a3573b60c6ff24",
+  "validation_manifest_sha256": "725acbad4d35371fbcea5c723d2f322b3a9d710051d68eea081805243e3b80d0",
+  "flattop_manifest_sha256": "51215e90cb7a392eec58d21c46402ffb4cff6107b5a2742cefcffb34b89dcf00"
+ },
+ "claim_status": "Top of market is an unvalidated goal. These corpus scores do not establish perceptual equivalence, preference or market rank.",
+ "sample_v1_baseline": {
+  "method": "the frozen historical dense::Sampler rendered each exact benchmark zone at its captured MIDI note, velocity and round robin through its shipping 0.75 ms attack and playback-gain path; the same seven-term scorer and split manifests were used",
+  "training": 1.2080128205866743,
+  "held_out": 1.4437279229490527,
+  "flat_top": 0.12855464509924194,
+  "interpretation": "control only, not an out-of-sample realism comparison: version 1 plays the target recordings themselves, and the near-zero flat-top score reflects especially direct source playback. The nonzero scores measure the sampler envelope, interpolation, stereo path and finite analysis rather than distance from independent real takes. The physical model's higher score is expected and cannot be read as version 1 sounding more realistic on uncaptured notes or performances."
+ },
+ "recording_floor": {
+  "method": "the fitter's own seven terms run recording against recording: each archtop take is scored against another take of the same note and layer, all 54 ordered pairs of the three training round robins, with the bank's per-zone playback trim undone on the level descriptor so the dynamics term measures the player and not the trim. The model and the sample-player control below are rescored against those same trim-corrected targets, since a row whose two numbers are measured against two different targets is not a ratio",
+  "material": "steel",
+  "split": "training",
+  "example_count": 54,
+  "pair_count": 54,
+  "level_terms_trim_corrected": true,
+  "symmetry_max_term_difference": 0.0,
+  "floor": {
+   "score": 1.2780036055265953,
+   "terms": {
+    "attack": 0.8821279477325311,
+    "body": 1.7941844487151906,
+    "decay": 0.9334804215356665,
+    "dynamics": 0.15602105149175655,
+    "harmonics": 2.213658502830456,
+    "pitch_trajectory": 0.21993955585117325,
+    "tuning": 1.9164035842584455
+   }
+  },
+  "model": {
+   "level_terms_trim_corrected": true,
+   "score": 6.513223934454794,
+   "terms": {
+    "attack": 7.826746014466161,
+    "body": 11.468220517803392,
+    "decay": 4.639351674263885,
+    "dynamics": 1.9767960481734173,
+    "harmonics": 8.140275217025382,
+    "pitch_trajectory": 0.7381702752700302,
+    "tuning": 3.141771126350928
+   }
+  },
+  "sample_v1_control": {
+   "at_or_below_floor": {
+    "attack": true,
+    "body": true,
+    "decay": true,
+    "dynamics": false,
+    "harmonics": true,
+    "pitch_trajectory": true,
+    "tuning": false
+   },
+   "level_terms_trim_corrected": true,
+   "score": 0.8094953657215316,
+   "terms": {
+    "attack": 0.33328570570133076,
+    "body": 0.6444051860250409,
+    "decay": 0.3288902833922923,
+    "dynamics": 2.8306489826805348,
+    "harmonics": 0.14329767755871148,
+    "pitch_trajectory": 0.0005297412540435958,
+    "tuning": 3.6030649973145605
+   }
+  },
+  "control_above_floor_terms": [
+   "dynamics",
+   "tuning"
+  ],
+  "control_note": "both are measured, not inferred, and both are playback transforms. Tuning: version 1 retunes each region to equal temperament while the export keeps the recording's own pitch, so over the 54 training takes the target's H1 sits at a median -4.7 cents and version 1's at +0.2, a median 4.8 cents apart against the term's 5-cent tolerance, and each row's difference is that zone's own tuningCentsFrom12Tet to 0.1 cents. Dynamics: version 1 renders through the same per-zone trim the export applied, so undoing that trim on the target alone puts exactly the trim into the residual - 5.6 dB across the two training layers, measured as the span of the per-zone trims themselves",
+  "interpretation": "a term's model score is only readable against this floor; the floor is not a target, since a model that reached it would be as close to one take as another take of the same note is",
+  "level_term_basis": "measured spans of the mean level over the 54 training takes, velocity 16 to velocity 112: the export's targets 13.2 dB, which is the authored 0.55*velocity^0.82 playback gain; the trim-corrected targets 18.9 dB, that gain with the recordings' own 5.6 dB layer-to-layer spread restored on top of it; the model 14.9 dB and sample-player version 1 13.3 dB. No basis puts the recordings' own dynamics alone on the target side, so the 12.7x dynamics ratio supports the negative reading only - the level term is not the model's best-behaved term at the 1.3x an uncorrected model column against a corrected floor reported - and what the recordings' own 5.6 dB asks of the engine is an open question, not one this row answers"
+ },
+ "frozen_test_split": {
+  "method": "AcustraPhysicalFitRenderer --test renders every captured archtop layer and take, on the sixteen roots the fit uses, that no fit, screen or refit has ever rendered: 188 of those roots' 256 regions. Root 37 is excluded because the lowest modelled string is E2/MIDI 40. Scored once per release at the shipping calibration and never fitted",
+  "examples": 188,
+  "unique_model_renders": 64,
+  "overlap_with_fit_splits": 0,
+  "score": 6.324463277024044,
+  "terms": {
+   "attack": 8.110001,
+   "harmonics": 8.204574,
+   "tuning": 3.018647,
+   "pitch_trajectory": 0.315467,
+   "decay": 4.421479,
+   "body": 11.506383,
+   "dynamics": 0.094517
+  },
+  "sample_v1_control": 0.5426648207988745,
+  "steel_only_reference": {
+   "training": {
+    "examples": 54,
+    "score": 6.336063581635963
+   },
+   "held_out": {
+    "examples": 14,
+    "score": 6.403525973929313
+   },
+   "note": "the training and development-validation scores restricted to the same archtop material, so the test score can be read beside them"
+  },
+  "model_render_reuse": "a model render is keyed by material, note and velocity, so the take is the recording's only: 32 of the 64 renders are byte-identical (md5) to renders the fit corpus already produced, and 60 of the 188 rows score fit-optimised model audio against a take it was not fitted on. The other 128 rows are root-by-layer combinations the model has never rendered"
+ },
+ "plate_conductance_floor": {
+  "mechanism": "one over-damped positive-real section added to the measured bridge mobility, restoring the flat conductance a plate keeps above its modal-overlap frequency",
+  "why": "a 50-mode positive-real fit of a 60-10000 Hz driving-point measurement reproduces |Y| but loses Re(Y) between modes, where a real top plate has dense modal overlap; Cremer and Heckl give the high-frequency limit of a plate driving-point mobility as a real constant",
+  "parameters": [
+   "bridgeConductanceFloor",
+   "bridgeConductanceCornerHz"
+  ],
+  "fixed_upper_corner_hz": 16000.0,
+  "identity": "bridgeConductanceFloor 0 renders the previous build bit-identically",
+  "bridge_ablation_dB_per_second_added_by_the_junction": {
+   "400-600": 30.3,
+   "600-900": 13.0,
+   "900-1350": 4.5,
+   "1350-2000": 12.4,
+   "2000-3000": 4.6,
+   "3000-4500": 1.1
+  },
+  "training_screen": {
+   "floor_0": 6.63403876,
+   "floor_0.004_corner_2400": 6.54038843
+  },
+  "selection": {
+   "training_before": 6.634038942691128,
+   "training_after": 6.417665711647007,
+   "change_percent": -3.261561062774665
+  },
+  "opened_after_freeze": {
+   "development_validation_before": 6.473144533101294,
+   "development_validation_after": 6.434786716997037,
+   "change_percent": -0.5925685099121392
+  },
+  "damping_audit_model_minus_recording_db_per_second": {
+   "protocol": "python3 Tools/AuditDampingCurve.py <rendered fit corpus>; bands whose answer moves with the analysis window are withheld as null, which withholds 4500-6800 and 6800-9000 for both materials",
+   "before": {
+    "nylon": {
+     "80-120": null,
+     "120-180": null,
+     "180-270": 8.137,
+     "270-400": 7.541,
+     "400-600": 9.324,
+     "600-900": 2.882,
+     "900-1350": 1.313,
+     "1350-2000": -1.063,
+     "2000-3000": -9.505,
+     "3000-4500": null,
+     "4500-6800": null,
+     "6800-9000": null
+    },
+    "steel": {
+     "80-120": 7.835,
+     "120-180": 1.721,
+     "180-270": 9.886,
+     "270-400": -2.725,
+     "400-600": -1.471,
+     "600-900": 2.503,
+     "900-1350": -1.021,
+     "1350-2000": -7.24,
+     "2000-3000": -7.25,
+     "3000-4500": -5.139,
+     "4500-6800": -1.553,
+     "6800-9000": null
+    }
+   },
+   "after": {
+    "nylon": {
+     "80-120": null,
+     "120-180": null,
+     "180-270": 8.844,
+     "270-400": 8.475,
+     "400-600": 10.295,
+     "600-900": 5.042,
+     "900-1350": 3.841,
+     "1350-2000": 1.945,
+     "2000-3000": -4.094,
+     "3000-4500": null,
+     "4500-6800": null,
+     "6800-9000": null
+    },
+    "steel": {
+     "80-120": 8.109,
+     "120-180": 1.728,
+     "180-270": 9.279,
+     "270-400": -2.828,
+     "400-600": -2.161,
+     "600-900": 2.325,
+     "900-1350": -0.615,
+     "1350-2000": -5.378,
+     "2000-3000": -3.034,
+     "3000-4500": -0.653,
+     "4500-6800": null,
+     "6800-9000": null
+    }
+   },
+   "note": "recomputed on the widened corpus with the stability guard; the earlier unguarded figures for 4500-6800 and 6800-9000 Hz are withdrawn, including the +15.5 to +3.7 improvement one clause of the promotion gate cited"
+  },
+  "decision": "promoted on a controlled ablation under the corrected decay descriptor: development validation 6.378198 with the floor against 6.462390 without it, from the same starting calibration",
+  "controlled_ablation": {
+   "protocol": "two bounded fits under the corrected descriptor from the same pre-plate-floor starting calibration, differing only in whether the two plate values were free",
+   "floor_free": {
+    "training": 6.132176903662072,
+    "development_validation": 6.378198322677138
+   },
+   "floor_pinned_at_zero": {
+    "training": 6.24692450930623,
+    "development_validation": 6.462390316788033
+   },
+   "decision": "floor free wins both splits; the mechanism is kept",
+   "replication": {
+    "protocol": "the same ablation repeated from an independent starting calibration, the shipping vector, on the widened 83-row corpus; development validation is the same 24 rows throughout, so all four fits are comparable on it",
+    "floor_free": {
+     "training": 6.410403693891456,
+     "development_validation": 6.355825508640519
+    },
+    "floor_pinned_at_zero": {
+     "training": 6.452317813432141,
+     "development_validation": 6.3879650229646785
+    },
+    "decision": "replicates: the floor wins both splits from both starting points. The held-out gap is 0.084 from the pre-floor start and 0.032 from the shipping start, so the effect is consistent in sign and smaller than one run alone suggested. No calibration is promoted from this run; it tests the mechanism, not a candidate."
+   }
+  }
+ },
+ "rejected_upper_loss_shelf_split": {
+  "mechanism": "per-material corner and depth for the string-side upper-loss shelf",
+  "selection": {
+   "training_before": 6.634038942691128,
+   "training_after": 6.580260149870737
+  },
+  "opened_after_freeze": {
+   "development_validation_after": 6.431137427889945
+  },
+  "damping_audit_steel_after": {
+   "1350-2000": -7.0,
+   "2000-3000": -7.3,
+   "3000-4500": -5.2
+  },
+  "decision": "rejected; the aggregate improved but the predeclared damping gate failed, the steel shelf parameters moved by less than 0.03 percent, and a direct sweep showed the shelf overshoots 3 kHz by three times its 1.35 kHz correction. All of its plumbing was removed."
+ },
+ "decay_descriptor_correction": {
+  "was": "robust log2(T60) per partial and per band over 0.12-4.0 s",
+  "now": "the same robust line's decay rate in dB/s, tolerance 6 dB/s",
+  "why": "what a decay error does to a note is a level difference, and after t seconds that difference is exactly (rate_model - rate_target) * t dB; log2(T60) measures the relative error instead, so the same 1.4x error scores identically at 25 dB after one second on a 0.5 s partial and at 3 dB on a 4 s partial",
+  "consequence": "every score in this report is under the corrected descriptor and is not comparable with the previously frozen numbers",
+  "scores_under_the_corrected_descriptor": {
+   "pre_plate_floor_build": {
+    "training": 6.280687,
+    "development_validation": 6.485961
+   },
+   "plate_floor_build_fitted_under_the_old_descriptor": {
+    "training": 6.118156,
+    "development_validation": 6.521663
+   }
+  }
+ },
+ "nylon_training_split_widened": {
+  "was": "10 FreePats nylon regions in training, 10 in development validation, 21 unused",
+  "now": "29 in training - every unused region playable on the six modelled strings; MIDI 38 and 39 lie below the lowest open string",
+  "validation": "unchanged, the same 24 rows, so held-out scores stay comparable",
+  "why": "seven nylon parameters against ten rows left that stage close to unidentifiable; it stalled without improving in two of three fits",
+  "material_balance": "training moves from 54 steel / 10 nylon to 54 / 29",
+  "first_fit_on_it": {
+   "development_validation": 6.355826,
+   "against": 6.378198,
+   "decision": "rejected: it passed the validation clause but failed the predeclared nylon damping clause, improving only 3 of 10 nylon bands. The shipping calibration is unchanged. Its net nylon band error did fall 6.1 dB/s, which is why the clause is recorded rather than reinterpreted."
+  }
+ },
+ "score_stability": {
+  "test": "the decay descriptor's STFT window halved from 8192 to 4096, a parameter no result should depend on",
+  "absolute_scores_move": {
+   "training": -0.0174,
+   "development_validation": -0.0588,
+   "development_validation_decay_term": -0.2354
+  },
+  "paired_gaps_hold": {
+   "plate_floor_ablation_run_1_pinned_minus_free": {
+    "window_8192": 0.0842,
+    "window_4096": 0.0519
+   },
+   "plate_floor_ablation_run_2_pinned_minus_free": {
+    "window_8192": 0.0321,
+    "window_4096": 0.0276
+   }
+  },
+  "conclusion": "an absolute score here is analysis-dependent at about the 1% level, so only paired comparisons over identical rows mean anything; the sensitivity is common-mode and cancels in the difference, and the plate floor wins in all four cells"
+ },
+ "constant_saddle_anchor": {
+  "change": "the lumped tail spring the bridge junction sees is summed over all six strings at all times, at a fitted saddle-to-anchor length, instead of over the played strings at the stub xi_b=0.995 leaves",
+  "defect_removed": "a note held inside a chord decayed 2.15x slower than the same note alone, and a second voice too quiet to hear moved it by the same amount; now 0.99-1.00x",
+  "fitted_length_metres": 0.0171860529,
+  "gate": "declared before the refit: dependence within 1.10x, both split scores no worse than the shipping 6.431871 and 6.378198, the length strictly inside its bounds, suites green",
+  "gate_outcome": "three clauses passed; the score clause failed. Two bounded continuations reach 6.441362 training and 6.427690 development validation, 0.15% and 0.78% worse than shipping",
+  "counter_evidence": {
+   "corpus_is_blind_to_the_defect": "every row is one note on a fresh engine, and for one played string every anchor subset considered is identical",
+   "common_neutral_start": "on the neutral calibration both topologies share, the constant six-string anchor scores 8.768535 training and 8.145301 development validation against the played-subset anchor's 9.671509 and 9.277751",
+   "flat_top_split": "7.428581 against the shipping build's 7.662502 on the same eight never-fitted rows, 3.05% closer",
+   "descriptor_sensitivity": "halving the decay analysis window moves the development-validation score by 0.9%, which is larger than the regression"
+  },
+  "decision": "promoted, with the failed clause recorded as failed rather than reworded"
+ },
+ "junction_transient_corrections": {
+  "cause": "displacement waves are turned into bridge velocity and force by finite differences, and three things moved a wave without the bridge moving: a released shape filling a delay line, the release gain applied to the sample a loop hands out, and a string set or tuning exchanged under a ringing chord",
+  "measured_below_the_limiter": true,
+  "note_over_a_six_string_chord": {
+   "before": 0.0934,
+   "after": 0.0092,
+   "same_note_on_a_silent_engine": 0.0089
+  },
+  "chord_release_over_its_own_background": {
+   "before": 20.85,
+   "after": 2.94
+  },
+  "all_notes_off_over_its_own_background": 2.52,
+  "string_set_switch_under_a_chord": {
+   "before": 26.42,
+   "after": 0.66
+  },
+  "tuning_switch_under_a_chord": {
+   "before": 2.59,
+   "after": 1.04
+  },
+  "remaining": "a repluck of a note already sounding on its string peaks 2.2x the same note alone, and a 96-semitone bend, where the delay line clamps, peaks 17x the chord it lands on",
+  "corpus_effect": "none; all 71 model renders are bit-identical, because every fit render is a single note on a fresh engine that is never released",
+  "after_the_body_chosen_by_ear": {
+   "note_over_a_six_string_chord": {
+    "peak": 0.0162,
+    "same_note_on_a_silent_engine": 0.0169
+   },
+   "chord_release_over_its_own_background": 0.83,
+   "all_notes_off_over_its_own_background": 0.84,
+   "ninety_six_semitone_bend": 5.72,
+   "two_semitone_bend": 1.42,
+   "repluck_of_a_sounding_note": 1.6,
+   "reading": "every gesture measured is now within 1.42x of the level it lands on, most below 1.0x; the darker more damped body rings less on the residual release step that the derivative re-referencing could not remove"
+  }
+ },
+ "corpus_mismatch_probes": {
+  "method": "one parameter swept from the fitted calibration, all three splits rescored; reported, never used to select",
+  "lowBodyModeGain": {
+   "1.5": [
+    6.4686,
+    6.4313,
+    7.583
+   ],
+   "3.0": [
+    6.4594,
+    6.4217,
+    7.4979
+   ],
+   "4.36968649": [
+    6.4579,
+    6.4195,
+    7.4101
+   ],
+   "6.0": [
+    6.4628,
+    6.4239,
+    7.3031
+   ],
+   "9.0": [
+    6.4803,
+    6.4408,
+    7.1322
+   ]
+  },
+  "residueTiltDbPerOctave": {
+   "-2.0": [
+    6.9707,
+    6.9588,
+    5.8919
+   ],
+   "0.0": [
+    6.5821,
+    6.5583,
+    6.5788
+   ],
+   "1.94550942": [
+    6.4579,
+    6.4195,
+    7.4101
+   ],
+   "4.0": [
+    6.5897,
+    6.5413,
+    8.0414
+   ],
+   "6.0": [
+    6.8026,
+    6.7587,
+    8.6337
+   ]
+  },
+  "bridgeMobilityScale": {
+   "0.25": [
+    6.1266,
+    6.2146,
+    7.4142
+   ],
+   "0.35": [
+    6.2703,
+    6.2516,
+    7.2838
+   ],
+   "0.45": [
+    6.4081,
+    6.3655,
+    7.2467
+   ],
+   "0.768190432": [
+    6.4579,
+    6.4195,
+    7.4101
+   ],
+   "1.2": [
+    6.9436,
+    6.6107,
+    7.5997
+   ],
+   "2.0": [
+    7.5315,
+    7.0041,
+    7.7221
+   ]
+  },
+  "order": "[training, development validation, flat top]",
+  "reading": "the fitted corpus and the flat-top rows want opposite body settings. Training and development validation put the low-mode gain near 4.4 while the flat-top rows fall monotonically to 9.0 and beyond; training prefers a body residue tilt of about +1.9 dB/octave while the flat-top rows prefer -2.0; and training improves all the way to the bridge-mobility lower bound of 0.25 while the flat-top rows are worst there. Following the training corpus on the body means following an archtop.",
+  "not_adopted": "the bridge-mobility direction is a rail the staged optimiser does not reach and was not taken: it buys 4.7% of training by scaling a measured bridge 3x away from its measurement, and moves the flat-top rows the wrong way",
+  "string_side": {
+   "steel.frequencyLossScale": {
+    "0.45": [
+     6.4436,
+     6.4056,
+     7.381
+    ],
+    "0.597412435": [
+     6.4414,
+     6.4277,
+     7.4286
+    ],
+    "0.75": [
+     6.4576,
+     6.4656,
+     7.4924
+    ],
+    "0.95": [
+     6.5083,
+     6.5311,
+     7.5979
+    ]
+   },
+   "steel.fundamentalT60Scale": {
+    "1.05": [
+     6.4654,
+     6.4456,
+     7.6565
+    ],
+    "1.2668308": [
+     6.4414,
+     6.4277,
+     7.4286
+    ],
+    "1.5": [
+     6.4457,
+     6.4327,
+     7.2829
+    ],
+    "1.8": [
+     6.4602,
+     6.4478,
+     7.2099
+    ]
+   },
+   "highLossCutoffScale": {
+    "1.5": [
+     6.645,
+     6.6564,
+     7.4715
+    ],
+    "2.16964938": [
+     6.4414,
+     6.4277,
+     7.4286
+    ],
+    "2.8": [
+     6.531,
+     6.5084,
+     7.4286
+    ],
+    "3.6": [
+     6.5585,
+     6.5214,
+     7.4286
+    ]
+   },
+   "bridgeConductanceFloor": {
+    "0.002": [
+     6.4491,
+     6.3479,
+     7.7573
+    ],
+    "0.00628631882": [
+     6.4414,
+     6.4277,
+     7.4286
+    ],
+    "0.011": [
+     6.4566,
+     6.4678,
+     7.2964
+    ],
+    "0.017": [
+     6.53,
+     6.5522,
+     7.197
+    ]
+   }
+  },
+  "no_move_improves_all_three": "no single parameter move improves training, development validation and the flat-top rows together; the fit is at a real local optimum on the corpus it was given, and the distance to a flat-top is not closed by fitting harder",
+  "joint_flat_top_direction": {
+   "values": {
+    "lowBodyModeGain": 9.0,
+    "residueTiltDbPerOctave": -2.0,
+    "steel.fundamentalT60Scale": 1.8,
+    "steel.frequencyLossScale": 0.45,
+    "bridgeConductanceFloor": 0.017
+   },
+   "scores": {
+    "training": 7.300275,
+    "held_out": 7.318408,
+    "flat_top": 5.19435
+   },
+   "against_shipping": {
+    "training": "+13.3%",
+    "held_out": "+13.9%",
+    "flat_top": "-30.1%"
+   },
+   "status": "a listening candidate, not a calibration: the five values were selected by looking at the flat-top split, so 5.194350 is a fitted number on eight rows and those rows are spent as a selection set for it",
+   "listening_sets": "tmp/acustra-listening/2026-08-31-archtop-or-flattop and 2026-08-31-body-weight, neither committed"
+  }
+ },
+ "listening_verdicts": {
+  "2026-08-31 archtop-or-flattop": "the flat-top direction is more realistic than the fitted build but a bit too dull; something in the middle would be best",
+  "2026-08-31 body-weight": "the fitted build is the worst of three; the ideal sits between the middle candidate and the full flat-top one",
+  "adopted": {
+   "lowBodyModeGain": [
+    4.06622997,
+    7.5
+   ],
+   "residueTiltDbPerOctave": [
+    1.86155763,
+    -1.0
+   ],
+   "steel.fundamentalT60Scale": [
+    1.2668308,
+    1.53
+   ],
+   "steel.frequencyLossScale": [
+    0.597412435,
+    0.52
+   ],
+   "bridgeConductanceFloor": [
+    0.00628631882,
+    0.011
+   ]
+  },
+  "cost": {
+   "training": [
+    6.441362,
+    6.836184
+   ],
+   "held_out": [
+    6.42769,
+    6.823805
+   ],
+   "flat_top": [
+    7.428581,
+    5.655082
+   ]
+  },
+  "status": "five of the twenty-seven values are a direction chosen by ear, not the fit's answer; recorded as chosen by ear in Docs/decisions.md",
+  "open": "none; the upper-band damping set was cancelled rather than rendered",
+  "2026-08-31 how-far": "B, half way back toward the fitted calibration, is the worst of three; A, the shipping engine, and C, half way further toward the flat-top rows, are a tie. The corpus broke the tie in favour of A - 6.836184 and 6.823805 against C's 7.047400 and 7.062700 - so the adopted point stands and the direction is not pushed further"
+ },
+ "sympathetic_tail_ceiling": {
+  "was": 0.9,
+  "now": 0.97,
+  "measured": 0.948664,
+  "reason": "the ceiling bounds the balance of a fretted note's tail, not the coupling: holding the sympathetic path fixed and tilting the body's radiation down alone moves it 0.806 to 0.927, while doubling the low-mode gain at a fixed tilt moves it 0.806 to 0.819. It was re-pinned when a listening verdict chose that body",
+  "tightened_in_exchange": "the resonant share must now exceed five times the off-resonant share rather than three; measured 7.04"
+ },
+ "upper_band_cutoff_resolved": {
+  "question": "the gated loss put the shared upper-loss cutoff at 2.0 while the damping audit preferred 1.2 for steel and 1.6 for nylon",
+  "audit_rerun_dB_per_s_model_minus_recording": {
+   "nylon 2000-3000": {
+    "1.2": 18.5,
+    "1.6": 5.9,
+    "2.16964938": -0.0
+   },
+   "steel 2000-3000": {
+    "1.2": 0.1,
+    "1.6": -1.1,
+    "2.16964938": -1.4
+   },
+   "steel 3000-4500": {
+    "1.2": 4.6,
+    "1.6": 3.4,
+    "2.16964938": 2.8
+   }
+  },
+  "splits_at_1.2": {
+   "training": 7.5062,
+   "held_out": 7.708,
+   "flat_top": 5.8863
+  },
+  "splits_at_2.16964938": {
+   "training": 6.836184,
+   "held_out": 6.823805,
+   "flat_top": 5.655082
+  },
+  "conclusion": "the disagreement is gone; the audit's old preference was measured on a build that no longer exists, three things having moved under it - the anchor topology, the plate conductance floor and steel's frequency loss. A number settles it, so no listening test is run"
+ },
+ "by_material": {
+  "note": "the ear-chosen body move, scored per material; the pair is that move's own before and after, not the engine that ships now -- see current_shipping below, which is a fresh measurement of this calibration after the nylon bending-stiffness table and the classical body",
+  "training": {
+   "nylon": [
+    8.4087,
+    8.6722
+   ],
+   "steel": [
+    5.8249,
+    6.3053
+   ]
+  },
+  "held_out": {
+   "nylon": [
+    7.8169,
+    7.6228
+   ],
+   "steel": [
+    5.9964,
+    6.7997
+   ]
+  },
+  "reading": "nylon moves 3.1% worse on training and 2.5% better held out; steel carries the whole trade at 8.2% and 13.4%, with attack 14.9% and body 11.7% worse. Nylon's +13.5 dB 80-160 Hz attack excess is on a band 47 dB below the classical reference's own total, so it changes the aggregate by a fraction of a decibel",
+  "current_shipping": {
+   "training": {
+    "nylon": 7.777045,
+    "steel": 6.336064
+   },
+   "held_out": {
+    "nylon": 7.055413,
+    "steel": 6.403526
+   }
+  }
+ },
+ "longitudinal_modes": {
+  "frequencies_hz": {
+   "steel": [
+    1481,
+    1684,
+    2079,
+    2551,
+    3903,
+    3906
+   ],
+   "plain_nylon": 1184
+  },
+  "derivation": "c_long = sqrt(E*A_axial/mu) from the published EJ16 tensions, the Jarvelainen core diameters the bending model uses, and steel's Young's modulus; plain nylon from its own density and modulus. Nothing chosen",
+  "drive": "DAFx-26's EA/(2L) times mean square slope, through the same displacement scale the attack-pitch surrogate is calibrated with; a square, so it carries the products of transverse partials",
+  "measured_band_growth_db": {
+   "quarter_velocity": 4.3,
+   "near_full": 11.1
+  },
+  "adopted": {
+   "longitudinalGain": 0.025,
+   "longitudinalQ": 35
+  },
+  "scores": {
+   "training": [
+    6.836184,
+    6.76847
+   ],
+   "held_out": [
+    6.823805,
+    6.774969
+   ],
+   "flat_top": [
+    5.655082,
+    5.645406
+   ]
+  },
+  "selection": "the n=1+n=3 axial model with shared gain 0.025 improves training, development validation and independent flat-top scores against the shipping n=1-only model at gain 0.03",
+  "excluded": "nylon's three wound basses, whose published density is an effective composite figure right for transverse mass and wrong for axial stiffness",
+  "axial_modal_extension": {
+   "mechanism": "the integrated extension drive projects onto odd fixed-fixed axial modes; add n=3 beside n=1 at its derived 3*c_long/(2L) frequency and 1/3 participation",
+   "baseline_scores": {
+    "training": 6.76847,
+    "held_out": 6.774969,
+    "flat_top": 5.645406
+   },
+   "candidate_scores": {
+    "training": 6.767930652726375,
+    "held_out": 6.768288568168492,
+    "flat_top": 5.613894947072707
+   },
+   "gain_rebalance": {
+    "before": 0.03,
+    "after": 0.025
+   },
+   "gate": "same 115 targets, manifests, scorer, sample rate and block size; all three split scores must not regress",
+   "decision": "adopted; all three splits improve"
+  },
+  "shipping_gain": {
+   "longitudinalGain": 0.0,
+   "why": "the axial resonators' narrow onset read as a pitched water drop at every pluck and their shipping gain was set to zero on 2026-09-01 (README release history); the 0.025 figures above are the scores of that mechanism while it was on",
+   "scores_at_zero": {
+    "training": 6.835322790154296,
+    "held_out": 6.823750638244407,
+    "flat_top": 5.654679028375743
+   },
+   "note": "these are the shipping engine's scores, rendered and scored on Linux; the earlier figures in this file were taken on another platform and the README explains why a last-bit difference grows on polyphonic material but not on the single notes scored here"
+  }
+ },
+ "fret_collision_unreachable": {
+  "corrected": "2026-09-04, by fret_collision_measured below: the conclusion recorded here is refuted. The excursion columns are the static pluck shape, which is the wrong quantity - a string released from rest swings on to minus that shape, and its extreme at the mirror of the pluck point is the whole pluck displacement, not the fraction of it standing over a fret at rest. Measured in the shipping engine, the barrier does fire. The entry is kept for the record; its conclusion is not the model's.",
+  "method": "the attack-pitch surrogate's fitted 6.17 mm displacement scale converts a wave-unit slope to d/L of physical slope, and the pluck triangle that produces the measured slope energy gives the excursion",
+  "low_e_excursion_mm": {
+   "velocity_0.50": [
+    0.834,
+    0.053
+   ],
+   "velocity_0.85": [
+    1.385,
+    0.089
+   ],
+   "velocity_1.00": [
+    1.607,
+    0.103
+   ]
+  },
+  "columns": "[at the pluck point, at the first fret]",
+  "clearance_mm": "0.30 to 0.50 at the first fret on a set-up steel guitar",
+  "superseded_conclusion": "a unilateral barrier at the action height would never fire at any velocity, so it is not built; the excursion is downstream of the corpus, since the displacement scale is fitted against the pitch rise the recordings show and a hard pick stroke moves a low E two to four millimetres"
+ },
+ "fret_collision_measured": {
+  "change": "none: a string/fret collision was built, measured against its own gate, and not landed",
+  "mechanism": "a rigid unilateral barrier at the published action line plus published neck relief. The displacement at a fret is read from the vertical loop as the tap at that fraction of the delay minus the tap at the rest of it - the difference, because the collapsed loop folds both end inversions into its write - and where the string would cross a crown, half the shortfall is added at each tap with the weights it was read at. Rigid-obstacle scattering after Krishnaswamy and Smith, 'Methods for simulating string collisions with rigid spatial objects', WASPAA 2003, with no penalty stiffness and no restitution coefficient, and no new calibration value",
+  "relief_source": "Martin's published factory procedure (Setup & Adjustment of Sure Align Neck System for SC Models, SC-Service-Kit-2024) capos the first fret, frets the twelfth and reads .003\" to .005\" at the fifth; Taylor's production set-up sheet (RevM_11/21/13) gives .004\" to .007\" for the acoustic series. .004\" (0.102 mm) is a choice from inside both published ranges, not a measurement of one neck. The bow between the two held frets is the parabola through the three points those specifications fix, with no free parameter; its apex lands 180.2 mm from the nut, between the fifth fret at 162.5 mm and the sixth at 189.8 mm",
+  "open_low_e_frets_1_to_8": {
+   "clearance_mm": [
+    0.713,
+    0.958,
+    1.178,
+    1.376,
+    1.555,
+    1.716,
+    1.861,
+    1.992
+   ],
+   "engine_free_swing_mm": [
+    0.566,
+    0.992,
+    1.222,
+    1.273,
+    1.268,
+    1.212,
+    1.155,
+    1.1
+   ],
+   "closed_form_dalembert_mm": [
+    0.524,
+    1.018,
+    1.285,
+    1.213,
+    1.144,
+    1.08,
+    1.02,
+    0.962
+   ],
+   "error_percent": [
+    8.1,
+    -2.5,
+    -4.9,
+    5.0,
+    10.8,
+    12.2,
+    13.3,
+    14.3
+   ],
+   "closed_form": "min over u of 0.5*(F(u) + F(2x-u)) with F the odd, 2L-periodic extension of the released triangle, at pluck fraction 0.1407 of the sounding length from the bridge and the loop's own realised peak 1.3127 mm, evaluated at x/Ls = 2^(-n/12); steel, default controls, velocity 1.0, 48 kHz",
+   "reading": "the engine's two-tap read reproduces the closed form to 14.3% at worst, and the bias at frets 4 to 8 is one-sided - the loop swings 5 to 14% further than the ideal string, so the barrier fires slightly more readily than the physics requires"
+  },
+  "firing": "released away from the top, the open low E at velocity 1.0 crosses the crowns of frets 2 and 3 by 0.034 and 0.044 mm and no others; at 0.85 fret 2 comes within 0.006 mm and nothing fires; at 0.5 the nearest fret clears by 0.367 mm and at 0.3 by 0.501 mm; fret 1 never fires, short by 0.147 mm at velocity 1.0. Released toward the top nothing fires at any velocity, the nearest 0.534 mm short. A fretted note is the opposite case: the clearance one fret above the stop is 0.152 mm on MIDI 76 and 0.158 mm on MIDI 69, both fire at velocity 0.50, and MIDI 76 crosses fret 13 by 0.131 mm at velocity 1.0",
+  "passivity": "0.000e+00 worst per-sample energy gain in all 30 runs (five gestures x 44100/48000/96000 x steel/nylon), which is what the algebra gives: writing d/2 and -d/2 at taps read with weights a and b changes the loop's squared sum by d*y + (d^2/4)*|a-b|^2, and with y = -clearance - d that is at most -d*clearance - d^2/2",
+  "velocity_gate": "the softest benchmark layer is bit-identical with the barrier on - all nine steel v16 renders byte-identical, 38 of 79 model renders unchanged; v48 rows move 0.02 to 0.25 dB rms, v80 rows 0.95 to 2.42 dB, v112 rows up to 5.75 dB",
+  "scores": {
+   "training": [
+    6.452449,
+    6.603847
+   ],
+   "held_out": [
+    6.142083,
+    6.30972
+   ],
+   "flat_top": [
+    8.29064,
+    7.946905
+   ],
+   "dynamics_term": [
+    0.2057,
+    0.395
+   ]
+  },
+  "failed_gates": "16 assertions in 6 engine tests, all on fretted notes: H8 decay on steel MIDI 76, 77, 78 and 83 spreads 17.08, 16.53, 16.08 and 22.04% across 44.1, 48 and 96 kHz against the 15% the lossless loop read allows, and H8 loss per round trip ranges over a factor of 2.77 against 2.5; one string's own level across repeated strums moves more than 2 dB from GuitarSet's measured 4.47 dB spread; hammer-on energy stops rising with velocity at all three rates for both materials",
+  "conclusion": "the mechanism is right and passive, and it is not in the engine because of what it reads against. initialisePluck gives every string at every fret the same released peak - 1.3127 mm realised in the loop at velocity 1.0, no term in the sounding length and none in the string - while the clearance one fret above a stop is 0.13 to 0.24 mm, so a fretted note starts buzzing at velocity 0.50 and by 1.0 costs 6.4 dB of peak on a hard fretted pluck and 5.7 dB on a hard strum. Both fitted splits move against it while the reported-only flat-top rows move for it. What is missing is not the collision model but a displacement measurement on the instrument: steelDisplacementScaleMetres is fitted to the attack pitch glide, and nothing pins the pluck's amplitude per string and per sounding length"
+ },
+ "by_ear_values_frozen_in_the_fit": [
+  "residueTiltDbPerOctave",
+  "lowBodyModeGain",
+  "steel.fundamentalT60Scale",
+  "steel.frequencyLossScale",
+  "bridgeConductanceFloor"
+ ],
+ "second_axis_corrected": {
+  "source": "J. Woodhouse, Plucked Guitar Transients: Comparison of Measurements and Synthesis, Acta Acustica united with Acustica 90 (2004) 945-965",
+  "measured": "the full 2x2 bridge admittance matrix, by a wire-break method; Lambourg and Chaigne, SMAC 93, 448-453, report an earlier one in good qualitative agreement",
+  "finding_1": "no convincing example of double exponential decay across every note to the twelfth fret on each string of the test guitar; the one candidate profile was the measurement noise floor",
+  "finding_2": "in synthesis with his own measured matrix, inclusion of the second polarisation makes rather little difference to the damping factors, and a normal-admittance-only synthesis is very similar",
+  "what_it_is_for": "plucks parallel to the soundboard have significantly lower levels, and where a string peak splits into a doublet the normal pluck excites the upper member and the parallel pluck the lower - an effect on angle and colour, which is what this project's take-to-take measurement pointed at",
+  "minimal_form": "in a modal expansion both direct admittances and the cross admittance follow from each mode's normal and tangential components, the cross term being their product, so a passive 2x2 on the existing 96-mode body needs one extra number per mode and is passive by construction",
+  "correction": "two-stage decay is a piano behaviour; the second axis is not the route to it on a guitar, and this project should stop implying that adding it would change how the instrument decays"
+ },
+ "refit_around_the_by_ear_body_rejected": {
+  "setup": "full staged refit, the five by-ear values frozen, the other twenty-four free",
+  "scores": {
+   "training": [
+    6.76847,
+    6.672461
+   ],
+   "held_out": [
+    6.774969,
+    6.833386
+   ],
+   "flat_top": [
+    5.645406,
+    6.271268
+   ]
+  },
+  "verdict": "training 1.42% better, development validation 0.86% worse, flat-top 11.1% worse; rejected on the development-validation gate",
+  "what_moved": "longitudinalGain 0.03 to 0.075 and highLossCutoffScale 2.170 to 2.503 - the settings that buy the archtop corpus attack brightness and move the flat-top rows away",
+  "reading": "the freezing kept the verdict and did not stop the free parameters walking the same way by other routes; on this corpus a refit has to be gated on development validation every time"
+ },
+ "two_way_junction_and_stub_anchor": {
+  "change": "every string is a junction member (idle strings load and inject at the bridge); the saddle-to-anchor length is DAFx-26 xi_b=0.995 (3.25 mm) instead of the fitted 17.2 mm spring; every pluck draws its point within +/-0.02 of the length",
+  "decided_by": "chord tuning against equal temperament (worst note 23 -> 9 cents steel, 23 -> 7 nylon) and idle-string pumping (+7 dB -> -44 dB), not the corpus",
+  "scores_before": [
+   6.835323,
+   6.823751,
+   5.654679
+  ],
+  "scores_after": [
+   6.606652,
+   6.521525,
+   8.120169
+  ],
+  "flat_top_note": "the halo masked the played strings over-damping; string losses and bridge mobility want a refit around the new termination"
+ },
+ "per_material_measured_guitars": {
+  "change": "each string material plays the guitar its own banks were measured on: steel keeps g21 (a 2018 DeVoe flamenca blanca, measured in a school music room), nylon moves to g34 (a 1971 Manuel Contreras classical Spanish, measured anechoic in the HAW Hamburg class-1 free-field laboratory)",
+  "windows": "g21 keeps DAFx-26's 3000-sample body window because its first reflection returns at 17.6 ms; g34's anechoic record converges at 12000 samples, where every mode below 700 Hz holds its Q to 1.8 percent at twice that window",
+  "mode_counts": {
+   "g21_bridge": 50,
+   "g21_body": 96,
+   "g34_bridge": 42,
+   "g34_body": 103
+  },
+  "fit_errors": {
+   "g34_bridge_complex": 0.197341,
+   "g34_bridge_median_db": 1.094127,
+   "g34_body_channel0": [
+    0.219,
+    1.241,
+    3.744
+   ],
+   "g34_body_channel1": [
+    0.1675,
+    0.819,
+    2.622
+   ],
+   "g34_body_stereo_p90_db": 4.054
+  },
+  "rejected": "g35 (1978 M. L. Bellido) missed the bridge fit's relative-complex limit at 0.2603 against 0.24; g36 (2001 J. L. Bellido) fits but scores 8.0279 and 7.6586 on the nylon splits against g34's 7.9594 and 7.1613",
+  "scores_before": [
+   6.606652,
+   6.521525,
+   8.120169
+  ],
+  "scores_after": [
+   6.632018,
+   6.420769,
+   8.120169
+  ],
+  "nylon_split_before": [
+   7.877642,
+   7.43161
+  ],
+  "nylon_split_after": [
+   7.959385,
+   7.161313
+  ],
+  "steel_unchanged": "all 40 non-nylon model renders are byte-identical to the previous engine's",
+  "anchor_reswept": "worst separable chord note, cents early/late: 1.4/3.8 at the 3.25 mm stub, 2.1/2.4 at 8 mm, 2.9/3.2 at 17.2 mm, 25.8/98.2 with no anchor"
+ },
+ "lossless_fractional_delay": {
+  "change": "the string loop's fractional delay is a second-order Thiran allpass read at an integer tap, D held in [1.1, 2.1), replacing the four-point Catmull-Rom read; its phase is folded into the tuning and dispersion collocation with the tap pinned inside each solve, and the collocation's multi-start fallback now runs for both materials from a spread of both starting ratios",
+  "decided_by": "a correctness defect, not the corpus: the interpolated read lost 0.23 and 0.53 dB per pass at 8 and 10 kHz at a half-sample fraction and nothing at an integer one, so H8 on steel MIDI 76 to 84 decayed at 3.0 to 96.5 dB/s at 44.1 kHz on the loop fraction alone, and MIDI 84's H8 at 3.0, 89.8 and 93.6 dB/s at 44.1, 48 and 96 kHz. An allpass has magnitude one at every frequency: the same nine notes now decay at 36.0 to 90.6 dB/s at 44.1 kHz, a smooth 1.7:1 rise in loss per round trip against the interpolated read's 47:1, and no note's H8 varies by more than 12.9% across the three rates",
+  "scores_before": [
+   6.57518,
+   6.381324,
+   8.120169
+  ],
+  "scores_after": [
+   6.452449,
+   6.142083,
+   8.29064
+  ],
+  "restricted_refit": "highLossCutoffScale and nylon.frequencyLossScale were swept on the rendered corpus over [0.9, 3.5] x [1.15, 2.1] (24 paired rows at 22 distinct points; the shipping point and (2.45, 1.7) were each rendered in two sweeps). The training optimum, 2.3 and 1.7, scores 6.428403 training against the shipping values' 6.452449 but 6.165286 on held-out development validation against 6.142083, so gated on validation the refit is rejected and the shipping calibration stands. steel.frequencyLossScale was not swept into the calibration: it is a by-ear value and frozen in the fit",
+  "flat_top_note": "the eight flat-top rows are 2.10% worse where training is 1.87% and held-out validation 3.75% better; that disagreement is a listening set's to settle, not a refit's"
+ },
+ "two_point_bridge": {
+  "change": "the bridge has two degrees of freedom, heave and rock, fitted to the archive's bass and treble impacts and the accelerometer at each of those ends (Method.pdf 2b: the two sensors 'taken together allow to trace two of the degrees of freedom of the bridge'); one pole set with a positive-semidefinite residue matrix [[heave, cross], [cross, rock]] per mode, so a string at lever arm u sees heave + 2u*cross + u^2*rock, which is the measured treble driving point at u = +1 and the measured bass one at u = -1; the six strings sit at u = (i - 2.5)/2 from the impacts' half-separation; a 2x2 junction solve per sample; each stub anchor at its own string's point, so the six springs are a stiffness matrix and a string at the end finds the anchor softer than one in the middle; bridgePhaseDelay reads (Y^-1 + K/s)^-1 at that string's own point",
+  "corner": "above the frequency where the archive's two records of the bass-to-treble transfer differ by as much as the transfer itself, no reciprocal 2x2 is identifiable, so the target is the mean of the two ends and no mode there carries a cross or rocking residue. Measured in third octaves: 2245 Hz on g21, 5657 Hz on g34",
+  "mode_counts": {
+   "g21_bridge": 47,
+   "g21_rocking": 30,
+   "g34_bridge": 46,
+   "g34_rocking": 40
+  },
+  "fit_errors": {
+   "g21_relative_complex": 0.198546,
+   "g21_median_db_per_string": [
+    0.943,
+    0.947,
+    1.256,
+    1.263,
+    0.985,
+    0.849
+   ],
+   "g34_relative_complex": 0.235357,
+   "g34_median_db_per_string": [
+    1.149,
+    1.148,
+    1.276,
+    1.336,
+    0.95,
+    1.227
+   ]
+  },
+  "decided_by": "the chord-tuning measurement, not the corpus. Over E, G, Am, D and C, 26 notes a material, worst separable note's pull early/late in cents: steel 2.6/1.4 to 2.2/3.0 and nylon 1.3/4.9 to 2.8/1.7; mean pull steel 1.1/0.4 to 0.9/0.6 and nylon 0.6/0.8 to 0.7/0.6; the coincident pairs, where the tracker reads a beat rather than a pull, 85.8/6.6 to 65.7/8.4 (steel) and 52.3/13.2 to 28.2/9.4 (nylon). The open low E's H1 decays at 7.93 dB/s against 7.89, inside the recordings' 4.5 to 8.6. E3 played over the open low E splits into a pair 0.463 Hz wide with the upper member 8 dB down, where the one-point bridge left one unresolved peak; the archtop's own open E2 H2 doublet is 0.8 Hz",
+  "scores_before": [
+   6.452449,
+   6.142083,
+   8.29064
+  ],
+  "scores_after": [
+   6.322154,
+   6.319706,
+   7.950448
+  ],
+  "cost": "held-out development validation is 2.89% worse, on its attack, harmonics and decay terms, where training is 2.02% and the flat-top rows 4.10% better. Idle open-string content over 0.5-2.0 s, measured as the power in +/-25-cent bands at the idle open strings' partials against the played fundamental, has a worse median share: -11.1 to -8.3 dB on the steel rows, -20.3 to -18.2 on nylon and -16.5 to -14.9 on the flat-top rows, against recorded targets of -28.2, -19.5 and -13.5. The idle bands' own median level barely moves (0.2 to 0.3 dB); what changes is which rows carry the content. Rendering the same corpus with the two-point bridge but the anchor kept as one scalar heave-only sum (the pre-existing sum-of-T/L) recovers none of it (-8.4, -18.3 and -11.0 dB), so the rocking coordinate itself carries the regression, not the softer per-string anchor",
+  "cost_note": "the plan's fuller gate asked for that share not to get worse; it did. The chord-tuning gate, the doublet and the low-E decay all passed"
+ },
+ "polarisation_end_correction": {
+  "source": "J. Woodhouse, Plucked guitar transients: comparison of measurements and synthesis, Acta Acustica 90 (2004) 945-965, Sec. 4.3, https://euphonics.org/wp-content/uploads/2022/03/Guitar_II.pdf",
+  "measured": "the doublet between a string's two transverse polarisations is an end correction at the terminations, not body coupling (his measured 2x2 admittance matrix splits the pair by about 0.1 Hz): the polarisation parallel to the soundboard is longer by about 0.8 mm in 650 mm on the B string, so the normal polarisation is the higher member, and this is 'more significant ... than that coming from the body admittance matrix'",
+  "what_changed": "the authored -0.32 / +0.41 cents split, whose sign was opposite to the measurement and whose total was a third of its size, is replaced by the published 0.8 mm carried as a length; the whole difference lengthens the parallel loop, so the normal loop now runs at exactly the sounding length the tuning is built on",
+  "bounded_not_fixed": "Woodhouse calls the attribution tentative and says the exact amount would require detailed computation, so the length is calibration value 29, bounded 0 to 0.82 mm - one string diameter, the B string it was measured on",
+  "not_fitted": "the corpus does see it, but only weakly and only on steel: with the bridge-local direct path off, the lengthened polarisation still reaches the output through the shared slope energy that drives the steel attack pitch. Zeroing the correction changes 40 of the 79 model renders - all 32 steel and all 8 flat-top rows, all 39 nylon rows byte-identical - and moves the score from 6.319236 / 6.327235 / 7.948337 to 6.320649 / 6.328354 / 7.953299, a real preference for the published value on all three splits and far too small a lever to fit an end correction on, so it is frozen in the fitter at the measurement",
+  "measured_effect": "every note plays 0.31 cents sharper, the removal of the old split's detune of the radiating loop: single nylon notes at one second move from a mean 0.43 cents off equal temperament to 0.32, and the chord pull itself - the spread of notes inside a chord about its own mean - is unchanged, steel worst separable note 2.01/2.50 to 2.01/2.51 cents early/late and nylon 2.19/1.11 to 2.20/1.09",
+  "rocking_only_second_axis_rejected": "terminating the parallel polarisation on h^2 times the measured rocking mobility - the moment a horizontal saddle-top force makes about the along-string axis, the coordinate the archive's two bridge-end accelerometers trace - renders 64.2 dB (h = 3 mm) and 60.2 dB (h = 6 mm) below the shipping engine on the same nylon phrase, and still 47.7 dB down at an implausible 30 mm. Inaudible at any plausible saddle height, and h is not published for these guitars; the second radiating axis needs the measured tangential admittance per body mode",
+  "whirling_probe_rejected": "one shared slope-energy tension ripple modulating both loops (Gough, JASA 75 (1984); Elliott, Am. J. Phys. 48 (1980) 478) measures, on a steel E2 at velocity 1.0, an rms |dT/T| of 0.451 percent but a peak of 9.75 percent - 80.5 cents of instantaneous pitch. Applied per sample it moves the E2 spectral centroid from 319 Hz to 6313 Hz and the H5-H12 band from 11.22 to 15.85 dB re H1; bounding it would need a calibrated ripple amplitude, a new constant, so it does not ship"
+ }
 }
