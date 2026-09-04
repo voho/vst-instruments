@@ -530,16 +530,22 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
             engine.setMpeTimbre (static_cast<float> (value) / 127.0f,
                                  midiChannel);
         }
-        else if (controller == 126u)
+        else if (controller == 126u && midiChannel == 1)
         {
-            // MIDI's own Mono Mode On channel-mode message: value is how
-            // many consecutive channels become monophonic voices. Roland's
-            // GK and Fishman's TriplePlay send exactly this, value 6, to put
-            // one string on each of channels 1-6.
+            // MIDI 1.0's own Mono Mode On channel-mode message on the basic
+            // channel: value is how many consecutive channels become
+            // monophonic voices. M=6 is the standard spelling of "six
+            // channels, one voice each", which is why it is the toggle here
+            // -- not a message either Roland's GK or Fishman's TriplePlay is
+            // documented to transmit (their own manuals describe only the
+            // resulting one-string-per-channel layout, not a message that
+            // requests it), so today nothing sends this on those rigs; a
+            // future control surface or the host's own MIDI editor can. Any
+            // other value, including 0, turns the mode back off.
             engine.setStringPerChannelMode (
                 value == static_cast<unsigned> (acustra::AcustraEngine::stringCount));
         }
-        else if (controller == 127u)
+        else if (controller == 127u && midiChannel == 1)
         {
             engine.setStringPerChannelMode (false);
         }

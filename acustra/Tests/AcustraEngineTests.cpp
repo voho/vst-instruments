@@ -761,38 +761,39 @@ struct AcustraEngineTestAccess
             engine.vibratoSemitones(*selected, selected->fret));
     }
 
-    // A pull-off's lift velocity, and the channel pressure biasing whether
-    // it clears the fret whole (see AcustraEngine::liftFinger): true is a
-    // full release (touchSamples left at 0), false is the slower
-    // finger-still-clearing case.
-    static bool pullOffClearsWhole(float lift, float pressure,
-                                   int midiChannel)
+    // A pull-off's radiated tail energy at a given lift velocity and member
+    // channel pressure (see AcustraEngine::liftFinger, which no longer reads
+    // pressure at all -- this is the regression that keeps it that way).
+    // -1 pressure means the CC message is never sent.
+    static double pullOffRadiatedEnergy(float lift, float pressure,
+                                        int midiChannel, double sampleRate)
     {
         AcustraEngine engine;
         EngineParameters parameters;
         parameters.stringMaterial = StringMaterial::Steel;
         engine.setParameters(parameters);
-        engine.prepare(48000.0, 64);
-        engine.setBridgeCouplingEnabled(false);
+        engine.prepare(sampleRate, 64);
         if (midiChannel > 1)
             engine.setLowerZoneMemberCount(2);
         if (pressure >= 0.0f)
             engine.setMpePressure(pressure, midiChannel);
-        constexpr int fretted = 57;
+        constexpr int fretted = 70;
         engine.noteOn(fretted, 0.8f, midiChannel);
-        const auto taken = std::find_if(engine.voices_.begin(),
-            engine.voices_.end(), [midiChannel, fretted] (const auto& voice)
-            { return voice.played && voice.midiChannel == midiChannel
-                  && voice.midiNote == fretted; });
-        if (taken == engine.voices_.end())
-            return false;
-        const auto stringIndex = std::distance(engine.voices_.begin(), taken);
-        // A release to the open string clears the note's own member channel
-        // (see liftFinger), so identify the voice by its string, taken
-        // before the release, not by the channel it no longer carries.
+        const int settleBlocks = static_cast<int>(sampleRate * 4.0 / 64.0);
+        std::vector<float> left(64, 0.0f), right(64, 0.0f);
+        for (int block = 0; block < settleBlocks; ++block)
+            engine.process(left.data(), right.data(), 64);
         engine.noteOff(fretted, midiChannel, lift);
-        return engine.voices_[static_cast<std::size_t>(stringIndex)]
-                   .touchSamples == 0;
+        double energy = 0.0;
+        const int tailBlocks = static_cast<int>(sampleRate * 2.0 / 64.0);
+        for (int block = 0; block < tailBlocks; ++block)
+        {
+            engine.process(left.data(), right.data(), 64);
+            for (int i = 0; i < 64; ++i)
+                energy += static_cast<double>(left[i]) * left[i]
+                        + static_cast<double>(right[i]) * right[i];
+        }
+        return energy;
     }
 
     struct StringModeSnapshot
@@ -2815,32 +2816,36 @@ void testMpePressureBiasesVibratoDepthWithinTheWheelsOwnBound()
            "a light grip did not sit at the authored 50% depth floor");
 }
 
-void testMpePressureLowersThePullOffThresholdOnlyAtRelease()
+// A prior version biased liftFinger's elastic threshold with member
+// pressure; measured up to 1.61x the unbiased release's injected energy on
+// some lifts (Docs/decisions.md-worthy finding, reverted -- see the comment
+// in liftFinger). This is the regression: pressure must not move a single
+// joule of a pull-off's radiated tail energy, at any lift or rate.
+void testMpePressureNeverChangesAPullOffsRadiatedEnergy()
 {
     using acustra::AcustraEngineTestAccess;
 
-    bool foundCrossing = false;
-    for (float lift = 0.05f; lift <= 0.95f; lift += 0.05f)
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
     {
-        const bool light
-            = AcustraEngineTestAccess::pullOffClearsWhole(lift, 0.0f, 2);
-        const bool firm
-            = AcustraEngineTestAccess::pullOffClearsWhole(lift, 1.0f, 2);
-        expect(!(light && !firm),
-               "raising pressure made a pull-off harder to clear, not easier, "
-               "at lift " + std::to_string(lift));
-        if (!light && firm)
-            foundCrossing = true;
+        for (float lift = 0.05f; lift <= 0.95f; lift += 0.05f)
+        {
+            const double unset = AcustraEngineTestAccess::pullOffRadiatedEnergy(
+                lift, -1.0f, 2, rate);
+            const double firm = AcustraEngineTestAccess::pullOffRadiatedEnergy(
+                lift, 1.0f, 2, rate);
+            expect(unset == firm,
+                   "full member pressure changed a pull-off's radiated "
+                   "energy at lift " + std::to_string(lift) + ", rate "
+                   + std::to_string(rate) + ": " + std::to_string(unset)
+                   + " vs " + std::to_string(firm));
+        }
     }
-    expect(foundCrossing,
-           "no lift velocity showed member pressure moving the pull-off "
-           "threshold");
 
-    const bool conventionalLight
-        = AcustraEngineTestAccess::pullOffClearsWhole(0.5f, 0.0f, 1);
-    const bool conventionalFirm
-        = AcustraEngineTestAccess::pullOffClearsWhole(0.5f, 1.0f, 1);
-    expect(conventionalLight == conventionalFirm,
+    const double conventionalUnset
+        = AcustraEngineTestAccess::pullOffRadiatedEnergy(0.265f, -1.0f, 1, 48000.0);
+    const double conventionalFirm
+        = AcustraEngineTestAccess::pullOffRadiatedEnergy(0.265f, 1.0f, 1, 48000.0);
+    expect(conventionalUnset == conventionalFirm,
            "channel pressure changed a pull-off on a conventional, "
            "non-member channel");
 }
@@ -5369,7 +5374,7 @@ int main()
     testTheVibratoWheelAtZeroIsExact();
     testMpeTimbreSetsPerNotePluckPointOnMemberChannelOnly();
     testMpePressureBiasesVibratoDepthWithinTheWheelsOwnBound();
-    testMpePressureLowersThePullOffThresholdOnlyAtRelease();
+    testMpePressureNeverChangesAPullOffsRadiatedEnergy();
     testStringPerChannelModeIsOptInAndBypassesTheAllocator();
     testTheVibratoWheelStaysInsideItsPublishedBounds();
     testAMemberBendRetunesOnlyItsOwnString();

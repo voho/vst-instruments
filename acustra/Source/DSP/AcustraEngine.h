@@ -469,8 +469,10 @@ private:
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
     float effectiveTouch(const Voice& voice) const noexcept;
-    // MPE channel pressure for this voice's own member channel, 0 with no
-    // lower zone, no CC message received yet, or off a member channel.
+    // MPE channel pressure for this voice's own member channel, -1 with no
+    // lower zone, no CC message received yet on that channel, or off a
+    // member channel; 0 is a real received value (light grip), not the
+    // sentinel.
     [[nodiscard]] float mpePressureFor(const Voice& voice) const noexcept;
     [[nodiscard]] float vibratoSemitones(const Voice& voice,
                                          int fret) const noexcept;
@@ -561,8 +563,11 @@ private:
     float bodyModelFadeStep_ { 1.0f / 1920.0f };
     int controlCounter_ { 0 };
     int lowerZoneMemberCount_ { 0 };
-    // -1 means no CC74 has been received on that channel this note; the
-    // panel Pluck Position control applies as it always did.
+    // -1 means no CC74 (mpeTimbre_) or channel pressure (mpePressure_) has
+    // ever been received on that channel; the panel Pluck Position control
+    // applies as it always did. Both persist across notes on the channel,
+    // the way MPE per-channel controllers do, until the lower zone is
+    // reconfigured or the engine is reset.
     std::array<float, midiChannelCount> mpeTimbre_ {};
     std::array<float, midiChannelCount> mpePressure_ {};
     bool stringPerChannelMode_ { false };

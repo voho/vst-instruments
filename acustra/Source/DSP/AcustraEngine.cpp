@@ -712,6 +712,15 @@ DispersionCalibration calibrateDispersion(
 
 AcustraEngine::AcustraEngine() noexcept
 {
+    // -1 is the "nothing received yet" sentinel for both; see mpeTimbre_ /
+    // mpePressure_'s declaration. reset() re-applies this on every prepare(),
+    // but the sentinel has to hold from construction too, before the first
+    // prepare() -- the {} default-member-initialiser above zero-inits them,
+    // which is a different, meaningful value (0 is a real received CC74/
+    // pressure of "none"/"no grip"), not this sentinel.
+    mpeTimbre_.fill(-1.0f);
+    mpePressure_.fill(-1.0f);
+
     parameters_ = sanitise(parameters_);
     targetParameters_ = parameters_;
     const auto notes = openNotes(parameters_.tuning);
@@ -2423,16 +2432,18 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
         physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
     const float waveSpeed = 2.0f * scaleLength * midiFrequency(voice.openMidi);
     const float tension = voice.characteristicImpedance * waveSpeed;
-    // MPE channel pressure, read before a full release to the open string
-    // clears the note's own member channel below, biases how easily this
-    // lift's energy clears the fret: a firmer grip needs less of it to snap
-    // clean, down to 60% of the unbiased elastic energy. It reshapes the
-    // same triangle either way -- see addReleasedTriangle and
-    // addTriangleVelocity -- and adds no energy of its own.
-    constexpr float pressureThresholdFloor = 0.6f;
-    const float liftPressure = mpePressureFor(voice);
-    const float elasticBias = liftPressure >= 0.0f
-        ? 1.0f - (1.0f - pressureThresholdFloor) * liftPressure : 1.0f;
+    // MPE channel pressure does not reach this lift: an earlier version
+    // biased the elastic threshold below to move some lifts into the full-
+    // release branch at less than the fret's own elastic energy, but
+    // addReleasedTriangle always injects that unbiased elastic energy (a
+    // triangle of a fixed physical height and apex, not the lift's own
+    // energy), so a biased lift below the true threshold released more
+    // energy than it carried -- measured up to 1.61x the unbiased case's
+    // radiated tail energy on some lifts. No formulation was found that
+    // both moves the threshold and keeps the two branches' injected energy
+    // continuous without a second invented constant, so the branch stays on
+    // the fret's own physics only; grip pressure biases vibrato depth (see
+    // vibratoSemitones) but not this.
 
     voice.fingerLift = 0.0f;
     voice.releaseDamping = 1.0f;
@@ -2459,7 +2470,7 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
     configureVoice(voice, stringIndex, targetMidi, false);
 
     const float energy = pluckEnergy(lift, targetLength, tension);
-    const float elastic = elasticBias * 0.5f * tension * height * height
+    const float elastic = 0.5f * tension * height * height
         * (1.0f / apex + 1.0f / (1.0f - apex)) / targetLength;
     voice.touchDamping = handContactGain(midiFrequency(targetMidi));
     if (energy >= elastic)

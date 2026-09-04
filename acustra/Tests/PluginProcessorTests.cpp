@@ -1384,11 +1384,12 @@ void testMpePressureReachesTheEngineOnMemberChannelOnly()
 
 void testStringPerChannelModeViaMonoModeOn()
 {
-    // MIDI's own Mono Mode On (CC126, value = channel count) is the
-    // convention Roland's GK and Fishman's TriplePlay send for one string
-    // per channel; Poly Mode On (CC127) restores the fret-distance
-    // allocator. Never sending either leaves the allocator exactly as it
-    // was.
+    // MIDI 1.0's own Mono Mode On (CC126, value = channel count) is the
+    // toggle: M=6 is the standard spelling of the one-string-per-channel
+    // layout Roland's GK and Fishman's TriplePlay each produce, though
+    // neither is documented to transmit this specific message itself.
+    // Poly Mode On (CC127) restores the fret-distance allocator. Never
+    // sending either leaves the allocator exactly as it was.
     const auto activeVoices = [] (bool sendMonoOn, bool sendPolyOnAfter,
                                   int channel, int midiNote)
     {
