@@ -1,6 +1,6 @@
 {
- "date": "2026-09-03",
- "runtime_source": "AcustraEngine physical model with one measured guitar per string material -- g21 for steel (50-mode passive bridge, 96-mode body), g34 for nylon (42-mode passive bridge, 103-mode body) -- one positive-real plate conductance floor, and a constant six-string saddle anchor at a fitted saddle-to-anchor length",
+ "date": "2026-09-04",
+ "runtime_source": "AcustraEngine physical model with one measured guitar per string material -- g21 for steel (47-mode two-point passive bridge, 96-mode body), g34 for nylon (46-mode two-point passive bridge, 103-mode body) -- one positive-real plate conductance floor, and a constant six-string saddle anchor at DAFx-26's published 3.25 mm stub",
  "analysis_sample_rate": 48000,
  "render_seconds": 4.2,
  "render_block_size": 127,
@@ -69,37 +69,37 @@
  ],
  "calibration": [
   1.04,
-  0.097990747,
+  0.0534179688,
   0.754677154,
   -1.0,
   0.0,
-  1.13984718,
-  1.42440079,
-  1.69750718,
-  0.182559111,
-  1.09385889,
-  0.000716432382,
-  1.48177734,
+  0.86484718,
+  1.40369766,
+  1.7688939,
+  0.0,
+  1.12667139,
+  0.0375,
+  0.749355465,
   1.53,
   0.52,
-  0.65992123,
-  0.523383307,
-  1.03116387,
-  0.948115221,
+  0.643124355,
+  0.494086432,
+  0.88819512,
+  1.1859375,
   -0.0706290118,
   7.5,
-  0.00617327847,
-  -0.0301260746,
-  2.16964938,
+  0.00773577847,
+  -0.0597851562,
+  2.28586032,
   0.011,
-  2804.94773,
+  2187.76023,
   0.00325,
   0.0,
   35.0,
   0.0008
  ],
  "neutral_baseline": {
-  "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length; 20 mm saddle-to-anchor length",
+  "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0.0061; steelFretT60Slope -0.03; highLossCutoffScale 1.3; plate conductance floor 0; 20 mm saddle-to-anchor length; longitudinalGain 0; and the polarisation end correction at Woodhouse's published 0.8 mm, which is frozen rather than fitted and so carries the same value the shipping calibration does",
   "calibration_in_calibration_order": [
    1.0,
    1.0,
@@ -128,9 +128,10 @@
    1000.0,
    0.02,
    0.0,
-   80.0
+   80.0,
+   0.0008
   ],
-  "purpose": "a reproducible neutral physical calibration, re-rendered on the current 50-mode runtime and re-scored under the corrected decay descriptor, so it is comparable with the fitted scores beside it; it is not the historical 26-mode-bridge neutral the earlier reports quoted"
+  "purpose": "a reproducible neutral physical calibration, re-rendered on the current engine and re-scored under the corrected decay descriptor, so the change beside it is paired: same notes, same engine, calibration the only difference. It is not the historical 26-mode-bridge neutral the earlier reports quoted, and it has to be re-rendered whenever the engine moves. The two-point bridge, the measured classical body and the lossless fractional-delay read all changed it while the column stood at its pre-wave values; it was re-rendered on 2026-09-04 and moved from 8.768535 / 8.145301 / 9.309315 to the values stored here"
  },
  "splits": {
   "training": {
@@ -139,36 +140,36 @@
    "fitted_score": 6.11154,
    "terms": {
     "attack": {
-     "neutral": 9.309916832505955,
-     "fitted": 6.9599
+     "neutral": 7.794695,
+     "fitted": 6.760978
     },
     "harmonics": {
-     "neutral": 10.441357549351897,
-     "fitted": 8.1921
+     "neutral": 9.502771,
+     "fitted": 7.876721
     },
     "tuning": {
-     "neutral": 4.7200069586896545,
-     "fitted": 3.4591
+     "neutral": 4.515127,
+     "fitted": 2.986346
     },
     "pitch_trajectory": {
-     "neutral": 0.5545940344615841,
-     "fitted": 0.5226
+     "neutral": 0.6281,
+     "fitted": 0.445204
     },
     "decay": {
-     "neutral": 6.5023449891362235,
-     "fitted": 5.2355
+     "neutral": 8.273097,
+     "fitted": 5.207569
     },
     "body": {
-     "neutral": 15.462399754765235,
-     "fitted": 11.3239
+     "neutral": 12.77903,
+     "fitted": 11.025179
     },
     "dynamics": {
-     "neutral": 5.262953607125741,
-     "fitted": 0.2357
+     "neutral": 5.196167,
+     "fitted": 0.059308
     }
    },
-   "neutral_score": 8.768534755725106,
-   "change_percent": -27.93281687257866
+   "neutral_score": 8.299140543243546,
+   "change_percent": -26.35936253693768
   },
   "held_out": {
    "examples": 24,
@@ -176,36 +177,36 @@
    "fitted_score": 6.072344,
    "terms": {
     "attack": {
-     "neutral": 9.155575861766145,
-     "fitted": 7.5668
+     "neutral": 8.290301,
+     "fitted": 7.133403
     },
     "harmonics": {
-     "neutral": 10.831031892275846,
-     "fitted": 8.5855
+     "neutral": 9.308067,
+     "fitted": 8.319373
     },
     "tuning": {
-     "neutral": 5.134666492710443,
-     "fitted": 3.3783
+     "neutral": 4.87097,
+     "fitted": 2.929717
     },
     "pitch_trajectory": {
-     "neutral": 0.2159873722123093,
-     "fitted": 0.1584
+     "neutral": 0.179756,
+     "fitted": 0.151871
     },
     "decay": {
-     "neutral": 5.464938238665436,
-     "fitted": 4.5842
+     "neutral": 6.859256,
+     "fitted": 4.506876
     },
     "body": {
-     "neutral": 15.82243218879784,
-     "fitted": 11.3809
+     "neutral": 13.170233,
+     "fitted": 10.96773
     },
     "dynamics": {
-     "neutral": 0.42473841202342505,
-     "fitted": 0.0234
+     "neutral": 0.409327,
+     "fitted": 0.002741
     }
    },
-   "neutral_score": 8.145301055652865,
-   "change_percent": -22.320427977197006
+   "neutral_score": 7.597315747282043,
+   "change_percent": -20.07250715922404
   },
   "flat_top": {
    "examples": 8,
@@ -213,36 +214,36 @@
    "fitted_score": 8.073304,
    "terms": {
     "attack": {
-     "neutral": 9.036944038636934,
-     "fitted": 7.5325
+     "neutral": 8.270935,
+     "fitted": 7.404509
     },
     "harmonics": {
-     "neutral": 8.586058487630032,
-     "fitted": 7.8669
+     "neutral": 7.839148,
+     "fitted": 7.74366
     },
     "tuning": {
-     "neutral": 8.267588323509182,
-     "fitted": 2.429
+     "neutral": 2.985677,
+     "fitted": 2.605724
     },
     "pitch_trajectory": {
-     "neutral": 0.6100492795473387,
-     "fitted": 0.5306
+     "neutral": 0.697143,
+     "fitted": 0.552671
     },
     "decay": {
-     "neutral": 8.690178706006728,
-     "fitted": 6.0885
+     "neutral": 11.355165,
+     "fitted": 6.622133
     },
     "body": {
-     "neutral": 13.894703320071423,
-     "fitted": 15.7703
+     "neutral": 13.956041,
+     "fitted": 15.87884
     },
     "dynamics": {
      "neutral": null,
      "fitted": null
     }
    },
-   "neutral_score": 9.309314823108725,
-   "change_percent": -14.619527311831137,
+   "neutral_score": 9.315695109715989,
+   "change_percent": -13.33653683470396,
    "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
   }
  },
@@ -540,7 +541,7 @@
   "level_term_basis": "measured spans of the mean level over the 54 training takes, velocity 16 to velocity 112: the export's targets 13.2 dB, which is the authored 0.55*velocity^0.82 playback gain; the trim-corrected targets 18.9 dB, that gain with the recordings' own 5.6 dB layer-to-layer spread restored on top of it; the model 14.9 dB and sample-player version 1 13.3 dB. No basis puts the recordings' own dynamics alone on the target side, so the 12.7x dynamics ratio supports the negative reading only - the level term is not the model's best-behaved term at the 1.3x an uncorrected model column against a corrected floor reported - and what the recordings' own 5.6 dB asks of the engine is an open question, not one this row answers"
  },
  "frozen_test_split": {
-  "method": "AcustraPhysicalFitRenderer --test renders every captured archtop layer and take, on the sixteen roots the fit uses, that no fit, screen or refit has ever rendered: 188 of those roots' 256 regions. Root 37 is excluded because the lowest modelled string is E2/MIDI 40. Scored once per release at the shipping calibration and never fitted",
+  "method": "AcustraPhysicalFitRenderer --test renders every captured archtop layer and take, on the sixteen roots the fit uses, that no fit, screen or refit has ever rendered: 188 of those roots' 256 regions. Root 37 is excluded because the lowest modelled string is E2/MIDI 40. Scored once per release at the shipping calibration and never fitted; the score stored here was taken at the calibration that shipped before the 2026-09-04 refit and has not been re-scored since",
   "examples": 188,
   "unique_model_renders": 64,
   "overlap_with_fit_splits": 0,

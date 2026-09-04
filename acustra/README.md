@@ -81,8 +81,9 @@ examples, and 8 independent flat-top examples; it measures attack, harmonics,
 tuning, early pitch trajectory, decay rate, body spectrum, and dynamics. Lower
 is better, but the absolute score depends on analysis settings, so only paired
 comparisons over identical notes support a decision. Against the reproducible
-neutral calibration, the shipping calibration changes the three scores by
--27.9%, -22.4%, and -14.6%, respectively. These are engineering descriptors,
+neutral calibration — re-rendered on the current engine, so the pairing is
+same-note and same-engine — the shipping calibration changes the three scores
+by -26.4%, -20.1%, and -13.3%, respectively. These are engineering descriptors,
 not a listening preference or a claim of perceptual equivalence.
 
 The renderer also emits matched `*-sample-v1.json` manifests for the frozen
@@ -595,40 +596,37 @@ Lower is better in the robust descriptor score:
 
 | Split | Rows | Neutral baseline | Fitted | Shipping | Change |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Training | 83 | 8.768535 | 6.441362 | 6.111540 | −30.30% |
-| Development validation | 24 | 8.145301 | 6.427690 | 6.072344 | −25.45% |
-| Flat top (reported only) | 8 | 9.309315 | 7.428581 | 8.073304 | −13.28% |
+| Training | 83 | 8.299141 | 5.662377 | 6.111540 | −26.36% |
+| Development validation | 24 | 7.597316 | 5.893771 | 6.072344 | −20.07% |
+| Flat top (reported only) | 8 | 9.315695 | 6.913712 | 8.073304 | −13.34% |
 
-The shipping column is not the fitted one. Five of the twenty-seven values were
-moved off the fit's answer by a listening verdict — the body's low-mode gain
-and residue tilt, steel's fundamental T60 and frequency loss, and the plate
-conductance floor — after a listener heard the fitted build against the
-direction the flat-top rows prefer and reported the fitted one as the less
-realistic of the two. Against the current engine's own Fitted column the
-shipping build now reads 1.9% better on training and 1.6% better on
-development validation and 7.0% worse on the eight flat-top rows; read this
-pairing as a snapshot rather than a constant, since both columns move on
-every engine change and the comparison that matters is paired, same-note,
-same-engine. `Docs/decisions.md` records the verdict as a verdict. A full
-staged refit around it, with those five held and the other twenty-four free,
-was then run and rejected: training 1.42% better, development validation
-0.86% worse and the flat-top rows 11.1% worse, with the freed parameters
-walking back toward the archtop by other routes. A second staged refit,
-using a bounded compass search rather than a one-sided-derivative solver, was
-run later (Docs/decisions.md, "the refit around the two-way junction
-converged"): it converged and beat the shipping calibration on all four
-splits including the frozen 188-row test, but it was held back for the ear
-rather than adopted, because it doubles the open low E's fundamental decay
-rate away from its own recorded target and fails eleven engine regressions.
+The shipping column is not the fitted one. The Fitted column is what the
+bounded pattern search of 2026-09-04 converged on by itself; the user heard it
+against the calibration that shipped before it, level-matched with the letters
+unread, and chose it by ear, which is what licensed the direction. It did not
+license the vector: the search had run two values onto bounds that contradict
+what this repository has measured, and both are pinned back in what ships —
+`bridgeMobilityScale` to the archive's own measured mobility, and the
+saddle-to-anchor length to DAFx-26's published 3.25 mm stub. That pinning is
+what the two columns differ by, and it costs 7.9% on training, 3.0% on
+development validation and 16.8% on the eight flat-top rows. The five values
+an earlier listener moved off the fit's answer on 2026-08-31 — the body's
+low-mode gain and residue tilt, steel's fundamental T60 and frequency loss,
+and the plate conductance floor — are still frozen at that verdict, as is the
+axial resonators' gain switched off by ear on 2026-09-01, so the search never
+saw any of the six. `Docs/decisions.md` records both verdicts as verdicts.
+Read the whole table as a snapshot rather than a constant: every column moves
+on every engine change, and the comparison that means anything is paired,
+same-note and same-engine.
 
-The neutral column moved when the saddle anchor became a constant of the
-instrument: on the calibration both topologies share, the constant six-string
-anchor scores 8.768535 and 8.145301 where the played-subset anchor scored
-9.671509 and 9.277751 on the same rows. The fitted column moved the other way
-by much less — the shipping build reached 6.431871 and 6.378198, so two bounded
-continuations around the new anchor end 0.15% and 0.78% behind a calibration
-built by a longer lineage of them. `Docs/decisions.md` records that trade, the
-gate clause it fails, and why the change ships regardless.
+The neutral column moves with the engine, not only with the calibration, so it
+is re-rendered rather than carried: the two-point bridge, nylon's measured
+classical body and the lossless fractional-delay read all landed while it
+stood at 8.768535, 8.145301 and 9.309315, which is what it read on the engine
+of 2026-09-02. On that engine the constant six-string anchor scored 8.768535
+and 8.145301 where the played-subset anchor scored 9.671509 and 9.277751 on
+the same rows; `Docs/decisions.md` records that trade, the gate clause it
+fails, and why the change ships regardless.
 
 Read those figures as a paired measurement, not as constants. Halving the decay
 descriptor's analysis window, which no result should depend on, moves the
@@ -796,6 +794,15 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   Closing this wants a detector that does not sit on a band two other strings
   reach first — a per-string probe, or the wrapper reporting the delays it
   computed — not a looser bound on the same measurement.
+- The top three steel notes' fundamentals no longer decay at the same rate
+  across host rates. The bound was 1.5%; since the 2026-09-04 refit MIDI 82,
+  83 and 84 read 1.87%, 2.78% and 1.77% over 44.1, 48 and 96 kHz, and the
+  test's bound moved to 3.2% to say so. It is not the bridge mobility, which
+  is restored to its measured value and leaves the spread in place; the two
+  candidates are the halved body Q scale and the lowered bridge conductance
+  corner, and neither was isolated. A note should sound the same at every
+  host rate, so this is a defect to close, not a tolerance to keep widening.
+
 - The bridge mobility the corpus wants is not the mobility that was measured.
   The 2026-09-04 pattern search drove `bridgeMobilityScale` to its 0.25 floor,
   a quarter of the archive's own value, and that rail was worth 3.9% of
@@ -865,14 +872,16 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   which would put a classical high E about 126 cents sharp at the twelfth
   harmonic), but the engine's post-change per-string bending coefficient,
   computed from the table plus this engine's own tensions, sits within about
-  14% of Woodhouse's own values on every string. The body's fitted Q scale of
-  0.098 puts 29 of
-  the 96 measured modes on the Q=4 floor, every mode below 500 Hz among them,
-  so the fine modal structure the measurement has above 300 Hz (4.6 dB of
-  standard deviation after octave smoothing) the model does not (0.8 dB); and
-  the measured Q values themselves are the generator's 62.5 ms window, not
-  the guitar's: resolved from the same record with a 250 ms window the low
-  modes are two to four times sharper (91 Hz Q 7 to 19, 209 Hz 15 to 39),
+  14% of Woodhouse's own values on every string. The body's fitted Q scale,
+  halved to 0.053 by the 2026-09-04 refit, puts 77 of steel's 96 measured
+  modes and 80 of nylon's 103 on the Q=4 floor, where the 0.098 that shipped
+  before it put 29 and 30 — every mode below 500 Hz among them either way — so
+  the fine modal structure the measurement has above 300 Hz (4.6 dB of
+  standard deviation after octave smoothing) the model does not (0.8 dB,
+  measured at the older and higher Q scale); and the measured Q values
+  themselves are the generator's 62.5 ms window on g21, not the guitar's:
+  resolved from the same record with a 250 ms window the low modes are two to
+  four times sharper (91 Hz Q 7 to 19, 209 Hz 15 to 39),
   every candidate that keeps them scores worse on the corpus but moves the
   partial-level fine structure toward all three real guitars, and the choice
   is a listening set with the user (the decision log has the letters). Real nylon and flat-top fundamentals beat at about
@@ -974,7 +983,7 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   settles: such a matrix has been measured and published, by Woodhouse and
   earlier by Lambourg and Chaigne, and in a modal expansion the two direct
   admittances and the cross admittance all follow from each mode's normal and
-  tangential components, so a passive 2x2 on the existing 96-mode body needs
+  tangential components, so a passive 2x2 on the existing measured body needs
   one extra number per mode rather than a second measurement of everything.
   A proper second axis requires that number;
   the tested arbitrary rotation did not generalise and is not shipped. The
@@ -1077,8 +1086,9 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
 - The by-ear plate conductance floor (0.011 m/s/N) is not the measured plate
   constant. Measured from the same g21 record it extrapolates — the
   sliding-window mean mobility over 2-10 kHz (Elie, Gautier and David, JASA
-  132(6), 4013-4024, 2012, Eq. 25) — the conductance the 50-mode fit is
-  missing is about 0.0015 m/s/N, a seventh of the shipping value; even the
+  132(6), 4013-4024, 2012, Eq. 25) — the conductance the bridge fit is
+  missing is about 0.0015 m/s/N (measured against the 50-mode single-point
+  fit that shipped when the reading was taken), a seventh of the shipping value; even the
   whole measured mean mobility of that plate over the band is less than half
   0.011. Substituting the measured value trades one band for another: it
   brings 2-4.5 kHz decay closer to the recordings but over-damps 4.5-6.8 kHz
@@ -1256,6 +1266,23 @@ A concise ledger of the changes that move what Acustra sounds like or how it is
 controlled. Pure refactors, deduplications and test-coverage additions are in
 git history rather than here.
 
+### 2026-09-04
+
+- **The calibration the listener chose ships.** A bounded pattern search over
+  the 115-note benchmark converged on a new vector; rendered level-matched
+  against the shipping build with the letters unread, the user chose it by
+  ear. Two of its values are pinned back to what the repository measured
+  rather than to what the search wanted — the bridge mobility to the
+  archive's own measured value, and the saddle-to-anchor length to DAFx-26's
+  published 3.25 mm stub — and the pinning costs 7.9%, 3.0% and 16.8% of the
+  three splits against the free fit. The audible consequences it does carry:
+  the body's Q scale halves, so 77 of steel's 96 measured modes sit on the
+  Q=4 floor where 29 did, and the steel attack-pitch cue rises from 4.0 to
+  7.8 cents at full velocity.
+- Benchmark: training 6.319236 → 6.111540, development validation 6.327235 →
+  6.072344, flat top 7.948337 → 8.073304 — better on both fitted splits, 1.6%
+  worse on the eight flat-top rows, which are reported and never fitted.
+
 ### 2026-09-03
 
 - **Nylon's bending stiffness is Woodhouse's own measured per-string table**
@@ -1296,8 +1323,8 @@ git history rather than here.
   vibrato-depth bias, never a pull-off's release energy), and an opt-in
   string-per-channel mode (MIDI Mono Mode On / Poly Mode On on the basic
   channel) for hexaphonic-pickup-style controllers.
-- Benchmark: training 6.606652 → 6.111540, development validation 6.521525 →
-  6.072344, flat top 8.120169 → 8.073304.
+- Benchmark: training 6.606652 → 6.319236, development validation 6.521525 →
+  6.327235, flat top 8.120169 → 7.948337.
 
 ### 2026-09-02
 
