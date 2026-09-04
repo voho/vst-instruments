@@ -1998,10 +1998,13 @@ void testPhysicalSustainSettlesNearRequestedPitch()
         // The bound is 1.6 rather than 1.5 because the whole engine moved
         // +0.31 cents when the radiating polarisation stopped carrying the
         // old authored split's 0.32-cent detune of itself (see
-        // polarisationEndCorrectionMetres): B3 now reads 1.487, 1.488 and
-        // 1.546 cents at 44.1, 48 and 96 kHz against 1.237, 1.238 and 1.297,
-        // and the other five notes moved from -0.06 to -0.62 cents to +0.06
-        // to +0.30, closer to nominal rather than further.
+        // polarisationEndCorrectionMetres). B3 is the only note near the
+        // bound and is what sets it: at the shipping calibration the six
+        // read +0.432 (MIDI 40), +0.274 (45), +0.322 (52), +1.515 (59),
+        // +0.087 (64) and -0.214 (71) cents, so the other five sit inside
+        // half a cent and B3 has 0.08 cents of headroom. Tighten this only
+        // together with a measurement of B3's coupling to the rocking mode,
+        // since that pair, not a compensation error, is what puts it there.
         expect(std::abs(alone) < 1.6,
                "the played steel string missed settled pitch for MIDI "
                    + std::to_string(midiNote) + " by "
@@ -3009,12 +3012,16 @@ void testTheVibratoWheelStaysInsideItsPublishedBounds()
             }
             // Erkut et al. 2000 Sec. 3.3: the lowest frequency during a
             // vibrato is the nominal fundamental of the tone without it, so
-            // the sounding pitch never goes below the note's own. The
-            // tolerance covers what the wheel does to the rest of the model
-            // through the audio it reads back, chiefly the attack-pitch
-            // surrogate: the same trace on a nylon plain treble, which has
-            // no such surrogate, dips at most 0.004 cents, and this steel
-            // one 0.03, a two-hundredth of the depth.
+            // the sounding pitch never goes below the note's own. What the
+            // tolerance covers is the CACHED DISPERSION DESIGN, not any
+            // string-model surrogate: the allpass is re-solved only once the
+            // wheel has moved B by 0.2% (see the cache guard in
+            // updateDispersion), so between re-solves the loop is tuned for
+            // a slightly stale B. Dropping that guard so the design re-solves
+            // on every change takes this trace's worst dip from -0.0386 to
+            // -0.000153 cents, a factor of 250, and leaves the depth below
+            // alone. 0.1 is therefore about 2.6x the worst the shipping
+            // build actually dips, which the printed `lowest` reports.
             expect(lowest >= -0.1,
                    "the vibrato took the sounding pitch "
                        + std::to_string(-lowest)
@@ -3022,11 +3029,12 @@ void testTheVibratoWheelStaysInsideItsPublishedBounds()
             // The wheel's full-scale depth is the authored 20 cents, and
             // what the string sounds is that interval plus the loop's own
             // tuning residual, which is not quite the same at the top of the
-            // excursion as at the bottom: 0.14% of the interval here, and
-            // 0.5% on a nylon plain treble, which is unchanged when the
-            // dispersion design is re-solved every block instead of every
-            // 0.2% of B - so it is the tuning solve and not a stale design.
-            // One percent is the bound.
+            // excursion as at the bottom: 0.50% of the interval at 44.1 kHz,
+            // 0.46% at 48 and 0.23% at 96, as the printed depths show. Unlike
+            // the dip above, this is unchanged when the dispersion design is
+            // re-solved on every change instead of every 0.2% of B, so it is
+            // the tuning solve and not the stale design. One percent is the
+            // bound.
             expect(deepest > 1.0 && deepest <= 20.2,
                    "the wheel's vibrato reached " + std::to_string(deepest)
                        + " cents of pitch");
