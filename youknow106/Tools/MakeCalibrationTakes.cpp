@@ -34,6 +34,25 @@
 // Takes 1-12 use route 1 or 2. Takes marked FACTORY use route 3 and exist so
 // that a session with no SysEx path still produces something comparable.
 //
+// Route 1 is narrower than it looks, which is why route 2 gets its own output.
+// Original hardware takes the dump, and so does this plug-in. Among software
+// Junos surveyed on 2026-09-04, only Cherry Audio's DCO-106 documents Juno-106
+// SysEx compatibility, and it receives from a live MIDI stream rather than
+// opening a .syx file. Roland's own Cloud JUNO-106, TAL-U-NO-LX, Arturia
+// Jun-6 V, Softube Model 84, u-he Diva and the JU-06A Boutique all publish no
+// SysEx receive for this format. So this tool writes TWO sets:
+//
+//   with-sysex/ -- the takes above, patch embedded, controls stepped mid-take.
+//   manual/     -- the same measurements with every step expanded into its own
+//                  file at a static panel, for an instrument where the operator
+//                  sets the controls by hand. Nothing is stepped, nothing is
+//                  transcribed except the printed panel, and each file names
+//                  the single control that differs from the take before it.
+//
+// The manual set cannot see a switching transient -- the mute drive's 81 ms,
+// the high-pass leg tails -- because those live in the moment of the change
+// itself. Those measurements need route 1 or hardware.
+//
 // The modelled keyboard is the hardware's own 61 keys, C2..C7 = MIDI 36..96;
 // no take steps outside that span. The keybed is not velocity sensitive, so
 // every note is written at velocity 100 and velocity carries no information.
@@ -775,21 +794,83 @@ RenderResult renderTake(const std::vector<MidiEvent>& events,
 }
 } // namespace
 
+// The human-readable name of the one control a manual step moves, and its
+// value, for the panel line the operator actually reads.
+std::string stepDescription(int parameter, int value)
+{
+    switch (static_cast<sysex::ToneParameter>(parameter))
+    {
+        case sysex::ToneParameter::DcoNoise:
+            return "NOISE = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::VcfRes:
+            return "VCF RES = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::VcaLevel:
+            return "VCA LEVEL = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::EnvAttack:
+            return "ENV ATTACK = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::EnvDecay:
+            return "ENV DECAY = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::EnvSustain:
+            return "ENV SUSTAIN = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::EnvRelease:
+            return "ENV RELEASE = " + std::to_string(value) + " of 127";
+        case sysex::ToneParameter::SwitchesOne:
+        {
+            sysex::Patch probe {};
+            (void) sysex::applyParameter(probe, parameter, value);
+            switch (probe.chorus)
+            {
+                case ChorusMode::Off:  return "CHORUS = off";
+                case ChorusMode::One:  return "CHORUS = I";
+                default:               return "CHORUS = II";
+            }
+        }
+        case sysex::ToneParameter::SwitchesTwo:
+        {
+            sysex::Patch probe {};
+            (void) sysex::applyParameter(probe, parameter, value);
+            switch (probe.highPass)
+            {
+                case HighPassMode::Boost: return "HPF = bass boost (position 0)";
+                case HighPassMode::One:   return "HPF = flat (position 1)";
+                case HighPassMode::Two:   return "HPF = cut II (position 2)";
+                default:                  return "HPF = cut III (position 3)";
+            }
+        }
+        default:
+            return "parameter " + std::to_string(parameter) + " = "
+                 + std::to_string(value);
+    }
+}
+
 int main(int argc, char** argv)
 {
-    const std::filesystem::path outputDirectory =
+    const std::filesystem::path root =
         argc > 1 ? argv[1] : "calibration-takes";
+    const std::filesystem::path outputDirectory = root / "with-sysex";
+    const std::filesystem::path manualDirectory = root / "manual";
     std::error_code error;
     std::filesystem::create_directories(outputDirectory, error);
+    std::filesystem::create_directories(manualDirectory, error);
 
     const auto takes = buildTakes();
-    std::ofstream manifest(outputDirectory / "manifest.txt");
+    std::ofstream manifest(root / "manifest.txt");
     manifest << "YouKnow106 calibration takes\n"
                 "Render each .mid through the instrument and return the WAV "
                 "under the same name.\n"
                 "48 kHz or better, 24-bit or float, no limiting, no "
-                "normalisation, one gain setting for the whole session.\n\n";
+                "normalisation, one gain setting for the whole session.\n\n"
+                "with-sysex/  the patch is embedded in each .mid and controls "
+                "step during the take. Original hardware and this plug-in "
+                "accept it; among software Junos only Cherry Audio's DCO-106 "
+                "documents Juno-106 SysEx receive, from a live MIDI stream.\n"
+                "manual/      the same measurements with every step expanded "
+                "into its own file at a static panel. Set the panel by hand "
+                "from the 'panel' line, play the file, record. The switching "
+                "transients (chorus mute delay, high-pass leg tails) cannot be "
+                "measured this way -- they live in the change itself.\n\n";
 
+    std::size_t manualFiles = 0;
     for (const auto& take : takes)
     {
         std::uint8_t tone[sysex::toneByteCount] {};
@@ -893,9 +974,115 @@ int main(int argc, char** argv)
                     take.id.c_str(), take.endMs / 1000.0,
                     peak > 0.0 ? 20.0 * std::log10(peak) : -144.0,
                     take.factoryNumber ? take.factoryNumber : "");
+
+        // --- the same take, expanded for an instrument with no SysEx path ---
+        // Each step becomes its own file at a static panel. A take with no
+        // steps is copied across unchanged, because it already is one.
+        struct ManualVariant
+        {
+            std::string suffix;
+            std::string control;
+            sysex::Patch patch;
+            std::vector<Note> notes;
+            int endMs;
+        };
+        std::vector<ManualVariant> variants;
+        if (steps.empty())
+        {
+            variants.push_back({ "", "as the panel line above", take.patch,
+                                 take.notes, take.endMs });
+        }
+        else
+        {
+            // Steps are cumulative writes, so the panel at step i is the base
+            // patch with steps 0..i applied. The notes that belong to a step
+            // are the ones that start inside its window; a take whose notes
+            // are all held across every step (the chord takes) repeats its
+            // whole chord in each variant instead.
+            auto running = take.patch;
+            for (std::size_t index = 0; index < steps.size(); ++index)
+            {
+                (void) sysex::applyParameter(running, steps[index].parameter,
+                                             steps[index].value);
+                const int from = steps[index].timeMs;
+                const int to = index + 1 < steps.size()
+                                   ? steps[index + 1].timeMs : take.endMs;
+                // Fold a run of writes at the same instant into one variant:
+                // take 09 sets four envelope bytes before a single note.
+                if (index + 1 < steps.size()
+                    && steps[index + 1].timeMs - from < 100)
+                    continue;
+
+                std::vector<Note> windowNotes;
+                for (const auto& note : take.notes)
+                    if (note.onMs >= from && note.onMs < to)
+                        windowNotes.push_back(note);
+                // A chord take holds its notes across every step, so nothing
+                // STARTS inside a window. Take the notes that OVERLAP it and
+                // clip them to it; requiring a note to span the window
+                // entirely silently dropped the last step of every chord take,
+                // because the chord is released before the take ends.
+                if (windowNotes.empty())
+                    for (const auto& note : take.notes)
+                        if (note.onMs <= from && note.offMs > from)
+                            windowNotes.push_back({ note.note, from,
+                                                    std::min(note.offMs, to) });
+                if (windowNotes.empty())
+                    continue;
+
+                int earliest = windowNotes.front().onMs;
+                for (const auto& note : windowNotes)
+                    earliest = std::min(earliest, note.onMs);
+                std::vector<Note> shifted;
+                int latest = 0;
+                for (const auto& note : windowNotes)
+                {
+                    shifted.push_back({ note.note, note.onMs - earliest + 500,
+                                        note.offMs - earliest + 500 });
+                    latest = std::max(latest, shifted.back().offMs);
+                }
+                char suffix[32];
+                std::snprintf(suffix, sizeof suffix, "-%02zu", variants.size() + 1);
+                variants.push_back({ suffix,
+                                     stepDescription(steps[index].parameter,
+                                                     steps[index].value),
+                                     running, shifted, latest + 2500 });
+            }
+        }
+
+        for (const auto& variant : variants)
+        {
+            const std::string name = take.id + variant.suffix;
+            std::vector<MidiEvent> manualEvents;
+            for (const auto& note : variant.notes)
+            {
+                manualEvents.push_back(
+                    { note.onMs, { 0x90u, static_cast<std::uint8_t>(note.note),
+                                   100u }, false });
+                manualEvents.push_back(
+                    { note.offMs, { 0x80u, static_cast<std::uint8_t>(note.note),
+                                    0u }, false });
+            }
+            writeMidiFile(manualDirectory / (name + ".mid"), name,
+                          manualEvents, variant.endMs);
+            const auto manualProduct =
+                renderTake(manualEvents, variant.patch, variant.endMs, 1.0f);
+            const auto manualNominal =
+                renderTake(manualEvents, variant.patch, variant.endMs, 0.0f);
+            writeFloatWav(manualDirectory / (name + "-model.wav"),
+                          manualProduct.left, manualProduct.right);
+            writeFloatWav(manualDirectory / (name + "-model-nominal.wav"),
+                          manualNominal.left, manualNominal.right);
+            manifest << "  manual/" << name << ".mid  --  " << take.panel
+                     << ", and " << variant.control << ". Length "
+                     << (variant.endMs / 1000.0) << " s.\n";
+            ++manualFiles;
+        }
+        manifest << "\n";
     }
 
-    std::printf("\nWrote %zu takes to %s\n", takes.size(),
-                outputDirectory.string().c_str());
+    std::printf("\nWrote %zu takes to %s and %zu static-panel files to %s\n",
+                takes.size(), outputDirectory.string().c_str(), manualFiles,
+                manualDirectory.string().c_str());
     return 0;
 }
