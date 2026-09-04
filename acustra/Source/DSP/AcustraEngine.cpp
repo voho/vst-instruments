@@ -172,6 +172,50 @@ float stringImpedance(bool steel, int stringIndex, int openMidi) noexcept
     return linearMass * waveSpeed;
 }
 
+// Axial rigidity E*A, in newtons: what a bend works against. Steel uses the
+// same effective core the bending and attack-pitch models use, since a wound
+// string's wrap carries almost no axial load, and plain nylon its own
+// diameter and modulus. Nylon's three wound basses return zero: their
+// tabulated density is an effective composite that is right for transverse
+// mass and wrong for axial stiffness - the same reason the longitudinal drive
+// is left out for them - so what a stretch does to their pitch is not
+// something this data fixes, and they keep the length convention below.
+float stringAxialRigidity(bool steel, int stringIndex) noexcept
+{
+    const auto index = static_cast<std::size_t>(stringIndex);
+    if (!steel && stringIndex < 3)
+        return 0.0f;
+    const float diameter = steel ? steelBendingDiameter[index]
+                                 : nylonDiameterMetres[index];
+    const float youngsModulus = steel ? steelYoungsModulus
+                                      : nylonYoungsModulus[index];
+    return youngsModulus * 0.25f * pi * diameter * diameter;
+}
+
+// The tension a requested interval needs, from Grimes, PLoS ONE 9(7):e102088
+// (2014), Eq. 6. His bent string stretches by e = 1/cos(theta) - 1, which is
+// the strain dT/EA, so it carries tension T = T0 + dT and mass per length
+// mu0/(1+e) and sounds at f0*sqrt((T/T0)/(1+e)). Requiring that ratio to be r
+// inverts to dT = T0 (r^2 - 1) / (1 - r^2 T0/EA). Validated in that paper on
+// measured Ernie Ball sets, with plain steel at 177.6-188.4 GPa against the
+// 200 GPa this engine's table uses.
+float bentStringTension(float tension, float axialRigidity,
+                        float frequencyRatio) noexcept
+{
+    // The denominator vanishes where the string's own extension would eat the
+    // whole of the added tension - a string past breaking, not a bend - so
+    // the tension the model follows stops half way to it, which is 36.8
+    // semitones up on the plain high E and 44.0 on the wound low E, well
+    // inside the +-96 semitones a bend input can ask for. Past that the pitch
+    // still follows the wheel through the delay, as a slide does.
+    const float ratioSquared = std::min(frequencyRatio * frequencyRatio,
+                                        0.5f * axialRigidity / tension);
+    const float added = tension * (ratioSquared - 1.0f)
+                      / (1.0f - ratioSquared * tension / axialRigidity);
+    // Grimes' law describes a string in tension; a slackened one leaves it.
+    return std::max(tension + added, 0.05f * tension);
+}
+
 // A steel-string and a classical are different instruments, and neither
 // archive record describes the other, so each material plays the guitar its
 // own banks were measured on. The two banks need not be the same length; the
@@ -1096,6 +1140,9 @@ void AcustraEngine::reset() noexcept
     palmMute_ = targetPalmMute_;
     pitchBendSemitones_.fill(0.0f);
     sustainPedals_.fill(false);
+    vibrato_ = 0.0f;
+    vibratoPhase_ = 0.0f;
+    vibratoOnset_ = 0.0f;
     noteOrder_ = 0;
     controlCounter_ = 0;
     parameters_ = sanitise(targetParameters_);
@@ -1251,6 +1298,23 @@ void AcustraEngine::updateControlState() noexcept
     palmMute_ += palmMuteSmoothing_ * (targetPalmMute_ - palmMute_);
     if (std::abs(targetPalmMute_ - palmMute_) < 1.0e-6f)
         palmMute_ = targetPalmMute_;
+    if (vibrato_ > 0.0f)
+    {
+        // Erkut's two measured rates as the wheel's endpoints, in the
+        // direction he measured them: the fast vibrato is the shallow one.
+        const float rate = 4.9f + vibrato_ * (1.4f - 4.9f);
+        vibratoPhase_ += twoPi * rate
+            * static_cast<float>(controlPeriod) * inverseSampleRate_;
+        if (vibratoPhase_ >= twoPi)
+            vibratoPhase_ -= twoPi;
+        vibratoOnset_ = std::min(1.0f, vibratoOnset_
+            + static_cast<float>(controlPeriod) * inverseSampleRate_ / 0.5f);
+    }
+    else
+    {
+        vibratoPhase_ = 0.0f;
+        vibratoOnset_ = 0.0f;
+    }
     applyDiscreteParameters(false);
     for (int string = 0; string < stringCount; ++string)
     {
@@ -1499,12 +1563,14 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     // slope energy; its delay target slews on the existing 6 ms time constant.
     const auto channel = static_cast<std::size_t>(voice.midiChannel - 1);
     float performedBend = voice.played ? pitchBendSemitones_[channel] : 0.0f;
+    float memberBendSemitones = 0.0f;
     if (voice.played && voice.mpeMember)
     {
         const float memberBend = voice.memberPitchBendFrozen
             ? voice.frozenMemberPitchBendSemitones
             : pitchBendSemitones_[channel];
         performedBend = pitchBendSemitones_[0] + memberBend;
+        memberBendSemitones = memberBend;
     }
     const float performedSemitones = clamp(performedBend, -192.0f, 192.0f)
         + 0.01f * voice.attackPitchCents;
@@ -1536,6 +1602,30 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
             ? steelTensionNewtons[index]
             : std::max(linearMass * openWaveSpeed * openWaveSpeed, 1.0f))
         : std::max(linearMass * openWaveSpeed * openWaveSpeed, 1.0f);
+    // Slide or bend, settled. A channel's pitch bend is a slide: the fretting
+    // hand moves along the neck, the sounding length changes and the tension
+    // does not. That is what the frequency and delay below have always done
+    // and what the README documents, so it is left exactly as it was. An MPE
+    // member channel's own bend is the other gesture - one finger pushing one
+    // string across the fret, at a length the fret fixes - so it goes through
+    // the string's tension: the frequency it asks for is still reached by the
+    // delay, but the inharmonicity that goes as 1/T and the impedance the
+    // junction reads move with the tension that would produce it. The
+    // manager's zone-wide bend stays a slide, because a whole zone bending is
+    // a hand moving rather than six fingers pushing. Grimes (see
+    // bentStringTension) notes a lateral bend can only raise pitch; a
+    // downward member bend is the release of a pre-bend, the same law run
+    // backwards. The attack glide stays out of it: it is the model's own
+    // few-cent tension transient (updateAttackPitch), already carried as a
+    // pitch, and routing it here would modulate the junction port on every
+    // note's attack, which no measurement asks for.
+    const float axialRigidity = stringAxialRigidity(steel, stringIndex);
+    const float tensionSemitones = axialRigidity > 0.0f
+        ? memberBendSemitones + vibratoSemitones(voice, fret) : 0.0f;
+    const float bentTension = tensionSemitones != 0.0f
+        ? bentStringTension(tension, axialRigidity,
+                            std::exp2(tensionSemitones / 12.0f))
+        : tension;
     // Steel keeps the E*I = E*(pi*d^4/64) solid-cylinder model on its fitted
     // effective bending diameter and stiffnessScale. Nylon reads Woodhouse's
     // measured E*I directly (see nylonBendingEI above) rather than deriving
@@ -1547,7 +1637,7 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         : pi * pi * nylonBendingEI[index];
     const float stiffnessScale = steel ? physical.stiffnessScale : 1.0f;
     const float inharmonicity = clamp(stiffness * stiffnessScale
-        / (tension * soundingLength * soundingLength), 0.0f, 0.004f);
+        / (bentTension * soundingLength * soundingLength), 0.0f, 0.004f);
     const float age = parameters_.stringAge;
     // Preserve the material/age law while allowing one shared fitted cutoff
     // scale to reduce excess upper-partial damping without changing the
@@ -1611,7 +1701,13 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     // only adds loss on top of a shape this already fixes.
     const bool dispersionDesignChanged = clearDelay
         || std::abs(voice.dispersionDesignFrequency - unbentFrequency) > 1.0e-4f
-        || std::abs(voice.dispersionDesignInharmonicity - inharmonicity) > 1.0e-9f
+        // A bend moves B continuously, and this design is an iterative
+        // solve. 0.2% of B is 0.03 cents of H12 stretch on a low E, two
+        // orders below the 3-cent tolerance the dispersion test holds, while
+        // every discrete change that reaches here - fret, tuning, string set
+        // - moves B by far more than that.
+        || std::abs(voice.dispersionDesignInharmonicity - inharmonicity)
+               > std::max(1.0e-9f, 0.002f * inharmonicity)
         || std::abs(voice.dispersionDesignAge - age) > 1.0e-5f
         || std::abs(voice.dispersionDesignFrequencyLossScale
                     - physical.frequencyLossScale) > 1.0e-5f;
@@ -1739,6 +1835,19 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     voice.fret = fret;
     voice.characteristicImpedance = stringImpedance(
         steel, stringIndex, voice.openMidi);
+    // Z = sqrt(T*mu) with Grimes' stretched mass per length is Z0 times the
+    // frequency ratio the same tension produces - 12.3% for a whole tone -
+    // and saturates with the tension where his law stops. The junction reads
+    // characteristicImpedance times the applied scale, so a string set or
+    // tuning switched under a ringing chord still steps the port exactly as
+    // it did, and only a bend slews it.
+    const float stretchedMass = 1.0f
+        + (bentTension - tension) / std::max(axialRigidity, 1.0f);
+    voice.tensionNewtons = bentTension;
+    voice.bendImpedanceScale = std::sqrt((bentTension / tension)
+                                         / stretchedMass);
+    if (clearDelay)
+        voice.appliedBendImpedanceScale = voice.bendImpedanceScale;
     if (voice.keyDown || voice.pedalHeld || !voice.played)
         voice.releaseDamping = 1.0f;
 }
@@ -1780,6 +1889,36 @@ void AcustraEngine::updateAttackPitch(Voice& voice, int stringIndex) noexcept
     const float cents = 1200.0f * std::log2(std::sqrt(1.0f + ratio));
     voice.attackPitchCents = std::isfinite(cents)
         ? clamp(cents, 0.0f, 20.0f) : 0.0f;
+}
+
+// The modulation wheel's vibrato. Grimes' Sec. 0.3 and Erkut et al. (AES
+// 108th Conv. 2000, preprint 5114, Sec. 3.3) describe the same gesture: the
+// classical player's vibrato is axial, the fretting hand modulating tension
+// at a fixed bend angle, so it belongs on the tension route and not on the
+// fret. What those measurements fix: the lowest frequency during a vibrato is
+// the note's own unmodulated one (Erkut), so the modulation is one-sided
+// upward and starts from the note's pitch; the depth converges over a
+// transient of about 0.5 s from the moment the player begins it (Erkut's tt);
+// the fitted rates are 1.4 Hz slow and 4.9 Hz fast (Erkut), the fast one just
+// under Laurson et al.'s 5-6 Hz for the same instrument (CMJ 25(3):38-49,
+// 2001),
+// and the fast vibrato's depth is systematically the smaller, so the wheel
+// runs from the shallow fast end to the deep slow one rather than raising
+// both; and an open string gets none, because no finger is stopping it
+// (Laurson's max-depth is zero at fret zero). What no source fixes is the
+// wheel's top in cents - Erkut reports the depth varying with string and fret
+// without a figure, Laurson scales it by an integer 1 to 9 - so that endpoint
+// is authored, and set to the same 20 cents the attack-pitch surrogate is
+// bounded at, which keeps a new magnitude out of the model.
+float AcustraEngine::vibratoSemitones(const Voice& voice,
+                                      int fret) const noexcept
+{
+    if (!(vibrato_ > 0.0f) || !voice.played || !voice.keyDown
+        || voice.harmonic > 1 || fret <= 0)
+        return 0.0f;
+    constexpr float fullWheelSemitones = 0.20f;
+    return fullWheelSemitones * vibrato_ * vibratoOnset_
+        * 0.5f * (1.0f - std::cos(vibratoPhase_));
 }
 
 float AcustraEngine::effectiveTouch(const Voice& voice) const noexcept
@@ -2826,6 +2965,11 @@ void AcustraEngine::setPitchBend(float semitones, int midiChannel) noexcept
         = clamp(std::isfinite(semitones) ? semitones : 0.0f, -96.0f, 96.0f);
 }
 
+void AcustraEngine::setVibrato(float amount) noexcept
+{
+    vibrato_ = clamp(std::isfinite(amount) ? amount : 0.0f, 0.0f, 1.0f);
+}
+
 void AcustraEngine::setLowerZoneMemberCount(int memberCount) noexcept
 {
     const int next = std::clamp(memberCount, 0, midiChannelCount - 1);
@@ -3027,7 +3171,8 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
                        voice.observedSlopeEnergy)
             : 0.0f;
     }
-    const float impedance = voice.characteristicImpedance;
+    const float impedance = voice.characteristicImpedance
+                          * voice.appliedBendImpedanceScale;
     if (voice.tailActive)
     {
         // The taken string keeps sounding while the hand damps it; its wave
@@ -3146,6 +3291,15 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                 releaseGain = std::min(releaseGain, voice.touchDamping);
                 --voice.touchSamples;
             }
+            // A bend is a tension change, so the port this string presents
+            // moves with it. The junction sums impedances every sample and a
+            // whole-tone bend moves this one by 12%; followed at the delay's
+            // own rate rather than stepped once a control period, the sum
+            // never steps. A scale of exactly 1 leaves both arithmetic and
+            // output bit-identical to the unbent engine.
+            voice.appliedBendImpedanceScale += delaySmoothing_
+                * (voice.bendImpedanceScale
+                   - voice.appliedBendImpedanceScale);
             excitation[static_cast<std::size_t>(string)]
                 = renderExcitation(voice);
             verticalIncident[static_cast<std::size_t>(string)]
@@ -3172,8 +3326,10 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             // string's impedance counted once.
             if (voice.played || sympatheticStringsEnabled_)
             {
-                impedanceSum += voice.characteristicImpedance;
-                weightedIncident += voice.characteristicImpedance
+                const float port = voice.characteristicImpedance
+                                 * voice.appliedBendImpedanceScale;
+                impedanceSum += port;
+                weightedIncident += port
                     * (verticalIncident[static_cast<std::size_t>(string)]
                        + tailIncident[static_cast<std::size_t>(string)]);
             }

@@ -186,9 +186,142 @@ struct AcustraEngineTestAccess
             ? 0.0 : selected->loops[0].targetDelay;
     }
 
-    static double channelBentDelay(float masterBend, float memberBend)
+    struct BentStringSnapshot
+    {
+        StringLoopSnapshot loop;
+        double unbentInharmonicity;
+        double tension;
+        double impedanceScale;
+        int fret;
+        int stringIndex;
+    };
+
+    // One note taken on an MPE member channel, held, and reconfigured under a
+    // manager bend and a member bend. Everything the bend convention touches
+    // is read off the voice it produced.
+    static BentStringSnapshot bentString(StringMaterial material, int midiNote,
+                                         float masterBend, float memberBend,
+                                         double rate = 48000.0)
     {
         AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = material;
+        engine.setParameters(parameters);
+        engine.prepare(rate, 64);
+        engine.setBridgeCouplingEnabled(false);
+        engine.setLowerZoneMemberCount(2);
+        engine.noteOn(midiNote, 0.8f, 2);
+        auto selected = std::find_if(engine.voices_.begin(),
+            engine.voices_.end(), [midiNote] (const auto& voice)
+            {
+                return voice.played && voice.midiNote == midiNote
+                    && voice.midiChannel == 2;
+            });
+        if (selected == engine.voices_.end())
+            return {};
+        const int stringIndex = static_cast<int>(
+            std::distance(engine.voices_.begin(), selected));
+        selected->attackPitchCents = 0.0f;
+        engine.configureVoice(*selected, stringIndex, midiNote, false);
+        const double unbent = selected->dispersionDesignInharmonicity;
+        engine.setPitchBend(masterBend, 1);
+        engine.setPitchBend(memberBend, 2);
+        engine.configureVoice(*selected, stringIndex, midiNote, false);
+        const auto& loop = selected->loops[0];
+        return { { loop.targetDelay, loop.loopGain, loop.broadLossCoefficient,
+                   loop.broadLossMix, loop.lowpassCoefficient,
+                   loop.highLossMix, loop.dispersionA1, loop.dispersionA2,
+                   selected->dispersionDesignInharmonicity },
+                 unbent, selected->tensionNewtons,
+                 selected->bendImpedanceScale, selected->fret, stringIndex };
+    }
+
+    // The impedance scale is the frequency ratio the string's tension is
+    // holding (see configureVoice), so a trace of it is a pitch trace of the
+    // vibrato in ratio form, sampled once per block.
+    static std::vector<double> vibratoScaleTrace(float wheel, double rate,
+                                                 double seconds, int block,
+                                                 int midiNote = 52)
+    {
+        AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = StringMaterial::Steel;
+        engine.setParameters(parameters);
+        engine.prepare(rate, block);
+        engine.noteOn(midiNote, 0.8f);
+        engine.setVibrato(wheel);
+        std::vector<float> left(static_cast<std::size_t>(block));
+        std::vector<float> right(static_cast<std::size_t>(block));
+        std::vector<double> trace;
+        const int blocks = static_cast<int>(seconds * rate / block);
+        for (int index = 0; index < blocks; ++index)
+        {
+            engine.process(left.data(), right.data(), block);
+            const auto selected = std::find_if(engine.voices_.begin(),
+                engine.voices_.end(), [midiNote] (const auto& voice)
+                {
+                    return voice.played && voice.midiNote == midiNote;
+                });
+            trace.push_back(selected == engine.voices_.end()
+                ? 1.0 : selected->bendImpedanceScale);
+        }
+        return trace;
+    }
+
+    // Two notes on two member channels, one of them bent: what the bend does
+    // to its own string and to the other one. Delay then tension, the bent
+    // string before and after, then the other string before and after.
+    static std::array<double, 8> memberBendIsolation()
+    {
+        AcustraEngine engine;
+        engine.prepare(48000.0, 64);
+        engine.setLowerZoneMemberCount(4);
+        engine.noteOn(52, 0.8f, 2);
+        engine.noteOn(59, 0.8f, 3);
+        const auto find = [&engine] (int channel)
+        {
+            return std::find_if(engine.voices_.begin(), engine.voices_.end(),
+                [channel] (const auto& voice)
+                {
+                    return voice.played && voice.midiChannel == channel;
+                });
+        };
+        auto bent = find(2);
+        auto other = find(3);
+        if (bent == engine.voices_.end() || other == engine.voices_.end())
+            return {};
+        bent->attackPitchCents = 0.0f;
+        other->attackPitchCents = 0.0f;
+        const auto reconfigure = [&]
+        {
+            engine.configureVoice(*bent, static_cast<int>(
+                std::distance(engine.voices_.begin(), bent)),
+                bent->midiNote, false);
+            engine.configureVoice(*other, static_cast<int>(
+                std::distance(engine.voices_.begin(), other)),
+                other->midiNote, false);
+        };
+        reconfigure();
+        const double bentDelayBefore = bent->loops[0].targetDelay;
+        const double otherDelayBefore = other->loops[0].targetDelay;
+        const double bentTensionBefore = bent->tensionNewtons;
+        const double otherTensionBefore = other->tensionNewtons;
+        engine.setPitchBend(2.0f, 2);
+        reconfigure();
+        return { bentDelayBefore, bent->loops[0].targetDelay,
+                 bentTensionBefore, bent->tensionNewtons,
+                 otherDelayBefore, other->loops[0].targetDelay,
+                 otherTensionBefore, other->tensionNewtons };
+    }
+
+    static double channelBentDelay(float masterBend, float memberBend,
+                                   StringMaterial material
+                                       = StringMaterial::Steel)
+    {
+        AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = material;
+        engine.setParameters(parameters);
         engine.prepare(48000.0, 64);
         engine.setLowerZoneMemberCount(2);
         engine.noteOn(52, 0.8f, 2);
@@ -1265,8 +1398,34 @@ void testMidiChannelOwnershipAndAdditiveBend()
         1.0f, 0.0f);
     const double memberOnly = acustra::AcustraEngineTestAccess::channelBentDelay(
         0.0f, 0.5f);
-    expect(std::abs(additive - masterOnly) < 1.0e-6,
+    // Re-pinned by the slide-or-bend convention (see configureVoice): the
+    // manager's bend is a slide and a member's own bend is a string bend, so
+    // the two stay additive in pitch while only the member half moves the
+    // tension - and through it the inharmonicity the loop's tuning solves
+    // against. On the nylon wound bass this note lands on, whose axial
+    // stiffness the data does not fix, both halves are slides and the
+    // additivity is exact.
+    const double nylonAdditive =
+        acustra::AcustraEngineTestAccess::channelBentDelay(
+            0.5f, 0.5f, acustra::StringMaterial::Nylon);
+    const double nylonMasterOnly =
+        acustra::AcustraEngineTestAccess::channelBentDelay(
+            1.0f, 0.0f, acustra::StringMaterial::Nylon);
+    expect(std::abs(nylonAdditive - nylonMasterOnly) < 1.0e-6,
            "channel 1 master and member pitch bends were not additive");
+    std::cout << "Acustra additive bend: steel " << additive << " vs "
+              << masterOnly << " vs " << memberOnly << ", nylon "
+              << nylonAdditive << " vs " << nylonMasterOnly << "\n";
+    // The steel pair differs in the loop's tuned delay - 0.28 samples in 262
+    // - because the member half's tension changes the inharmonicity the
+    // tuning solves against, not because the pitch differs: the delay is
+    // whatever puts the fundamental where it was asked for. That the pitch
+    // itself is additive is measured in
+    // testAMemberBendIsATensionBendByGrimes, which can resolve the loop.
+    expect(std::abs(additive - masterOnly) < 0.5,
+           "a member bend's tension moved the tuned delay by "
+               + std::to_string(std::abs(additive - masterOnly))
+               + " samples against the same interval slid");
     expect(std::abs(additive - memberOnly) > 1.0e-3,
            "member pitch bend did not reach its owned string");
 
@@ -2059,6 +2218,488 @@ void testDispersionAcrossRatesMaterialsAndNotes()
                        + std::to_string(cents) + " cents");
         }
     }
+}
+
+// A bend is the string stretched, not the neck slid. Grimes (PLoS ONE
+// 9(7):e102088, 2014, Eq. 6) fixes what tension a bent string carries and
+// therefore what its inharmonicity and its impedance do, so the model's
+// tension is checked against his law rather than against itself.
+void testAMemberBendIsATensionBendByGrimes()
+{
+    // The engine's own tables: the effective core diameters the wound
+    // strings' bending model uses (steelBendingDiameter), 200 GPa, and the
+    // published EJ16 tensions (steelTensionNewtons in AcustraEngine.cpp).
+    constexpr double bendingDiameter[] { 0.477159e-3, 0.437895e-3,
+                                         0.412021e-3, 0.38e-3,
+                                         0.406e-3, 0.305e-3 };
+    constexpr double openTension[] { 110.759, 128.554, 133.002,
+                                     133.892, 103.643, 104.088 };
+    double worstGrimes = 0.0;
+    double worstImpedance = 0.0;
+    double worstInharmonicity = 0.0;
+    for (const int midiNote : { 47, 52, 64, 76 })
+    {
+        const auto unbent = acustra::AcustraEngineTestAccess::bentString(
+            acustra::StringMaterial::Steel, midiNote, 0.0f, 0.0f);
+        const auto index = static_cast<std::size_t>(unbent.stringIndex);
+        expect(unbent.stringIndex >= 0 && unbent.stringIndex < 6,
+               "the bend test could not take MIDI "
+                   + std::to_string(midiNote));
+        const double rigidity = 2.0e11 * 0.25 * std::numbers::pi
+            * bendingDiameter[index] * bendingDiameter[index];
+        const double unbentTension = unbent.tension;
+        expect(std::abs(unbentTension - openTension[index]) < 1.0e-3,
+               "an unbent string was not at its published tension");
+        for (int step = 1; step <= 20; ++step)
+        {
+            const double semitones = 0.1 * static_cast<double>(step);
+            const auto bent = acustra::AcustraEngineTestAccess::bentString(
+                acustra::StringMaterial::Steel, midiNote, 0.0f,
+                static_cast<float>(semitones));
+            const double strain = (bent.tension - unbentTension) / rigidity;
+            // Grimes Eq. 6: the stretched string sounds at
+            // f0 * sqrt((T/T0) / (1 + dT/EA)).
+            const double grimesCents = 1200.0 * std::log2(std::sqrt(
+                (bent.tension / unbentTension) / (1.0 + strain)));
+            worstGrimes = std::max(worstGrimes,
+                std::abs(grimesCents - 100.0 * semitones));
+            // Z = sqrt(T mu) with his stretched mass per length is Z0 times
+            // that same ratio.
+            worstImpedance = std::max(worstImpedance, std::abs(
+                1200.0 * std::log2(bent.impedanceScale)
+                - 100.0 * semitones));
+            // B goes as 1/T. The design is re-solved when B has moved by
+            // 0.2%, so it trails the exact law by up to that much.
+            worstInharmonicity = std::max(worstInharmonicity, std::abs(
+                bent.loop.inharmonicity * bent.tension
+                / (unbent.loop.inharmonicity * unbentTension) - 1.0));
+            // The manager's half of an MPE bend is a slide: the same
+            // interval taken on channel 1 leaves the tension where it was.
+            const auto slid = acustra::AcustraEngineTestAccess::bentString(
+                acustra::StringMaterial::Steel, midiNote,
+                static_cast<float>(semitones), 0.0f);
+            expect(slid.tension == unbentTension
+                       && slid.impedanceScale == 1.0,
+                   "a manager bend moved the string's tension");
+            expect(std::abs(slid.loop.delay - bent.loop.delay)
+                       < 0.05 * slid.loop.delay,
+                   "slide and bend of the same interval landed a long way "
+                   "apart in delay");
+        }
+    }
+    expect(worstGrimes < 2.0,
+           "the bend's tension missed Grimes' pitch by "
+               + std::to_string(worstGrimes) + " cents over a whole tone");
+    expect(worstImpedance < 0.01,
+           "the bent impedance missed sqrt(T*mu) by "
+               + std::to_string(worstImpedance) + " cents");
+    expect(worstInharmonicity < 0.005,
+           "the bent inharmonicity left the 1/T law by "
+               + std::to_string(100.0 * worstInharmonicity) + "%");
+    std::cout << "Acustra bend vs Grimes: pitch " << worstGrimes
+              << " cents, impedance " << worstImpedance
+              << " cents, B*T " << 100.0 * worstInharmonicity << "%\n";
+
+    // Pitch stays additive across the two halves of an MPE bend even though
+    // only the member half moves the tension: the loop is tuned to whatever
+    // delay puts the fundamental where the wheels asked for it.
+    double highestSplit = -1.0e9;
+    double lowestSplit = 1.0e9;
+    for (const auto split : { std::pair { 0.0f, 1.0f },
+                              std::pair { 0.25f, 0.75f },
+                              std::pair { 0.5f, 0.5f },
+                              std::pair { 1.0f, 0.0f } })
+    {
+        const auto snapshot = acustra::AcustraEngineTestAccess::bentString(
+            acustra::StringMaterial::Steel, 52, split.first, split.second);
+        const double nominal = 440.0 * std::exp2((52.0 - 69.0) / 12.0)
+                             * std::exp2(1.0 / 12.0);
+        const double resolved = loopResonance(snapshot.loop, 1,
+            2.0 * std::numbers::pi * nominal / sampleRate)
+            * sampleRate / (2.0 * std::numbers::pi);
+        const double cents = 1200.0 * std::log2(resolved / nominal);
+        highestSplit = std::max(highestSplit, cents);
+        lowestSplit = std::min(lowestSplit, cents);
+    }
+    // The offset from nominal the four share is the loop's own tuning
+    // residual and its polarisation split, which every note carries; what
+    // additivity means here is that the four splits land together.
+    expect(highestSplit - lowestSplit < 0.05,
+           "a semitone split between manager and member bends spread the "
+           "pitch over " + std::to_string(highestSplit - lowestSplit)
+               + " cents");
+    std::cout << "Acustra bend additivity: four manager/member splits of a "
+                 "semitone spread over " << highestSplit - lowestSplit
+              << " cents at " << lowestSplit << " to " << highestSplit
+              << " cents from nominal\n";
+
+    // Nylon's wound basses have no axial stiffness this data fixes, so they
+    // keep the length convention; its plain trebles do not.
+    const auto nylonBass = acustra::AcustraEngineTestAccess::bentString(
+        acustra::StringMaterial::Nylon, 52, 0.0f, 2.0f);
+    const auto nylonBassUnbent = acustra::AcustraEngineTestAccess::bentString(
+        acustra::StringMaterial::Nylon, 52, 0.0f, 0.0f);
+    expect(nylonBass.stringIndex < 3
+               && nylonBass.tension == nylonBassUnbent.tension
+               && nylonBass.impedanceScale == 1.0,
+           "a nylon wound bass was given a tension its data does not fix");
+    const auto nylonTreble = acustra::AcustraEngineTestAccess::bentString(
+        acustra::StringMaterial::Nylon, 72, 0.0f, 2.0f);
+    const auto nylonTrebleUnbent
+        = acustra::AcustraEngineTestAccess::bentString(
+            acustra::StringMaterial::Nylon, 72, 0.0f, 0.0f);
+    expect(nylonTreble.stringIndex >= 3
+               && nylonTreble.tension > nylonTrebleUnbent.tension,
+           "a plain nylon treble did not bend through its tension");
+}
+
+// The twelfth partial's stretch is the audible half of B moving with the
+// tension: a whole-tone bend raises T by 27% and the stretch has to fall by
+// what that B predicts.
+void testABendMovesTheTwelfthPartialStretch()
+{
+    for (const int midiNote : { 40, 52, 64 })
+    {
+        double stretch[2] {};
+        double predicted[2] {};
+        for (int bent = 0; bent < 2; ++bent)
+        {
+            const double semitones = bent == 0 ? 0.0 : 2.0;
+            const auto snapshot = acustra::AcustraEngineTestAccess::bentString(
+                acustra::StringMaterial::Steel, midiNote, 0.0f,
+                static_cast<float>(semitones));
+            const double fundamental = 440.0
+                * std::exp2((static_cast<double>(midiNote) - 69.0) / 12.0)
+                * std::exp2(semitones / 12.0);
+            const double nominalOmega = 2.0 * std::numbers::pi
+                                      * fundamental / sampleRate;
+            const double first = loopResonance(snapshot.loop, 1, nominalOmega);
+            const double b = snapshot.loop.inharmonicity;
+            const double ratio = std::sqrt((1.0 + b * 144.0) / (1.0 + b));
+            const double twelfth = loopResonance(snapshot.loop, 12,
+                                                 first * 12.0 * ratio);
+            stretch[bent] = 1200.0 * std::log2(twelfth / (12.0 * first));
+            predicted[bent] = 1200.0 * std::log2(ratio);
+        }
+        const double moved = stretch[1] - stretch[0];
+        const double expected = predicted[1] - predicted[0];
+        expect(expected < -0.5,
+               "a whole-tone bend was predicted to move MIDI "
+                   + std::to_string(midiNote) + "'s H12 stretch by only "
+                   + std::to_string(expected) + " cents");
+        expect(std::abs(moved - expected) < 0.5,
+               "MIDI " + std::to_string(midiNote)
+                   + "'s H12 stretch moved by " + std::to_string(moved)
+                   + " cents under a whole-tone bend where its tension "
+                     "predicts " + std::to_string(expected));
+        std::cout << "Acustra H12 stretch MIDI " << midiNote << ": "
+                  << stretch[0] << " -> " << stretch[1] << " cents, "
+                  << "predicted " << predicted[0] << " -> " << predicted[1]
+                  << "\n";
+    }
+}
+
+// The junction sums the strings' impedances every sample, and a whole-tone
+// bend moves one string's by 12%. Stepped once a control period that is a
+// step in the port; followed at the delay's own rate it is not.
+void testABendDoesNotStepTheJunctionPort()
+{
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const int block = 64;
+        const auto bendTo = [&] (bool member, float semitones,
+                                 bool instant = false)
+        {
+            acustra::AcustraEngine engine;
+            acustra::EngineParameters parameters;
+            parameters.stringMaterial = acustra::StringMaterial::Steel;
+            engine.setParameters(parameters);
+            engine.prepare(rate, block);
+            engine.setLowerZoneMemberCount(4);
+            engine.noteOn(52, 0.85f, 2);
+            const int samples = static_cast<int>(2.0 * rate);
+            Audio audio {
+                std::vector<float>(static_cast<std::size_t>(samples)),
+                std::vector<float>(static_cast<std::size_t>(samples)) };
+            for (int offset = 0; offset < samples; offset += block)
+            {
+                const double at = offset / rate;
+                const float ramp = instant
+                    ? (at >= 0.5 ? 1.0f : 0.0f)
+                    : static_cast<float>(
+                        std::clamp((at - 0.5) / 0.3, 0.0, 1.0));
+                engine.setPitchBend(semitones * ramp, member ? 2 : 1);
+                engine.process(audio.left.data() + offset,
+                               audio.right.data() + offset,
+                               std::min(block, samples - offset));
+            }
+            return audio;
+        };
+        double peakAt = 0.0;
+        const auto peak = [&] (const Audio& audio, double begin, double end)
+        {
+            double loudest = 0.0;
+            const auto first = static_cast<std::size_t>(begin * rate);
+            const auto last = std::min(audio.left.size(),
+                static_cast<std::size_t>(end * rate));
+            for (auto index = first; index < last; ++index)
+            {
+                const double here = std::max(
+                    std::abs(static_cast<double>(audio.left[index])),
+                    std::abs(static_cast<double>(audio.right[index])));
+                if (here > loudest)
+                {
+                    loudest = here;
+                    peakAt = static_cast<double>(index) / rate;
+                }
+            }
+            return loudest;
+        };
+        const auto held = bendTo(true, 0.0f);
+        const auto bent = bendTo(true, 2.0f);
+        const auto slid = bendTo(false, 2.0f);
+        // The same note over the same window, bent and not: what the bend
+        // adds is all that is being measured.
+        const double reference = peak(held, 0.5, 1.2);
+        const double bentPeak = peak(bent, 0.5, 1.2);
+        const double bentAt = peakAt;
+        const double slidPeak = peak(slid, 0.5, 1.2);
+        const double slidAt = peakAt;
+        expect(reference > 0.0, "the held note was silent");
+        // The bend and the slide of the same interval reach the same pitch
+        // at the same moment, so what a peak measures is the interval, not
+        // the mechanism: both cross the same body mode 0.1 s into the ramp
+        // and both are louder there than the note held still. The tension
+        // route's own contribution is the difference between them, which is
+        // the string's 12% higher impedance in the junction's force.
+        expect(bentPeak <= slidPeak * 1.05,
+               "the tension bend peaked "
+                   + std::to_string(bentPeak / slidPeak)
+                   + " times the slide of the same interval");
+        expect(std::abs(bentAt - slidAt) < 0.01,
+               "the tension bend's loudest moment was "
+                   + std::to_string(bentAt - slidAt)
+                   + " s away from the slide's");
+        // A step in the port would arrive as a transient rather than as a
+        // level: measured where one would show, in the rise from one 5 ms
+        // frame to the frame two hops before it.
+        const auto rise = [&] (const Audio& audio)
+        {
+            std::vector<double> frames;
+            for (double at = 0.45; at + 0.005 < 1.2; at += 0.0025)
+                frames.push_back(tailBandRms(audio, rate, at, at + 0.005,
+                                             20.0, 0.45 * rate));
+            double worst = 0.0;
+            for (std::size_t index = 2; index < frames.size(); ++index)
+                worst = std::max(worst,
+                    frames[index] / std::max(frames[index - 2], 1.0e-30));
+            return worst;
+        };
+        const double bentRise = rise(bent);
+        const double slidRise = rise(slid);
+        const double heldRise = rise(held);
+        // And the hostile case the port slew exists for: the whole interval
+        // arriving in one message, so the string's impedance is asked to
+        // move 12% between one sample and the next.
+        const auto stepped = bendTo(true, 2.0f, true);
+        const auto steppedSlide = bendTo(false, 2.0f, true);
+        const double steppedRise = rise(stepped);
+        const double steppedSlideRise = rise(steppedSlide);
+        expect(steppedRise < std::max(steppedSlideRise, heldRise) * 1.05,
+               "a whole tone arriving in one message at "
+                   + std::to_string(static_cast<int>(rate))
+                   + " Hz raised one 5 ms frame by a factor of "
+                   + std::to_string(steppedRise) + " against the slide's "
+                   + std::to_string(steppedSlideRise));
+        const double steppedPeak = peak(stepped, 0.5, 1.2);
+        const double steppedAt = peakAt;
+        const double steppedSlidePeak = peak(steppedSlide, 0.5, 1.2);
+        const double steppedSlideAt = peakAt;
+        // Both land 20 ms after the message, where the slewed delay has
+        // arrived; what separates them is that a bent string presents 12.3%
+        // more impedance and the junction's force is proportional to it, so
+        // that much more level is the mechanism rather than a transient.
+        expect(steppedPeak <= steppedSlidePeak * 1.13
+                   && std::abs(steppedAt - steppedSlideAt) < 0.01,
+               "a whole tone arriving in one message peaked "
+                   + std::to_string(steppedPeak / steppedSlidePeak)
+                   + " times the slide of the same interval, "
+                   + std::to_string(steppedAt - steppedSlideAt)
+                   + " s away from it");
+        std::cout << "  stepped peaks: bend " << steppedPeak / reference
+                  << ", slide " << steppedSlidePeak / reference
+                  << " of the held note, both at " << steppedAt << " s\n";
+        expect(bentRise < std::max(slidRise, heldRise) * 1.05,
+               "a whole-tone tension bend at "
+                   + std::to_string(static_cast<int>(rate))
+                   + " Hz raised one 5 ms frame by a factor of "
+                   + std::to_string(bentRise) + " against the slide's "
+                   + std::to_string(slidRise) + " and the held note's "
+                   + std::to_string(heldRise));
+        std::cout << "Acustra bend peak at " << static_cast<int>(rate)
+                  << " Hz: bend " << bentPeak / reference << ", slide "
+                  << slidPeak / reference << " of the held note, both at "
+                  << bentAt << " s; frame rise " << bentRise << " vs "
+                  << slidRise << " and " << heldRise << ", stepped "
+                  << steppedRise << " vs " << steppedSlideRise << "\n";
+    }
+}
+
+// A hostile wheel: the tension the model follows saturates where Grimes' law
+// stops describing a string, which is inside the bend range MIDI can ask for.
+void testAnExtremeBendSaturatesInsideTheBendRange()
+{
+    constexpr double bendingDiameter[] { 0.477159e-3, 0.437895e-3,
+                                         0.412021e-3, 0.38e-3,
+                                         0.406e-3, 0.305e-3 };
+    for (const int midiNote : { 40, 64 })
+    {
+        const auto unbent = acustra::AcustraEngineTestAccess::bentString(
+            acustra::StringMaterial::Steel, midiNote, 0.0f, 0.0f);
+        const auto index = static_cast<std::size_t>(unbent.stringIndex);
+        const double rigidity = 2.0e11 * 0.25 * std::numbers::pi
+            * bendingDiameter[index] * bendingDiameter[index];
+        // Half way to the singularity at r^2 = EA/T0.
+        const double saturation = 1200.0 * std::log2(std::sqrt(
+            0.5 * rigidity / unbent.tension));
+        expect(saturation < 9600.0 && saturation > 3000.0,
+               "the tension saturated at " + std::to_string(saturation)
+                   + " cents, outside the +-96 semitones a bend can ask for");
+        const auto extreme = acustra::AcustraEngineTestAccess::bentString(
+            acustra::StringMaterial::Steel, midiNote, 0.0f, 96.0f);
+        expect(std::isfinite(extreme.tension)
+                   && std::abs(extreme.tension
+                               - (rigidity - unbent.tension))
+                          < 1.0e-3 * rigidity,
+               "a 96-semitone bend did not saturate at the string's axial "
+               "rigidity");
+        expect(extreme.loop.delay >= 3.0 && std::isfinite(extreme.loop.delay)
+                   && extreme.impedanceScale > 1.0
+                   && std::isfinite(extreme.impedanceScale),
+               "a 96-semitone bend left the loop unbounded");
+        const auto slack = acustra::AcustraEngineTestAccess::bentString(
+            acustra::StringMaterial::Steel, midiNote, 0.0f, -96.0f);
+        expect(slack.tension > 0.0 && slack.tension < unbent.tension
+                   && std::isfinite(slack.loop.delay),
+               "a 96-semitone downward bend left the string's tension "
+               "unphysical");
+        std::cout << "Acustra bend saturation MIDI " << midiNote << ": "
+                  << saturation << " cents, tension at 96 semitones "
+                  << extreme.tension << " N\n";
+    }
+}
+
+// CC1 is the left hand's vibrato. Zero is the wheel not touched.
+void testTheVibratoWheelAtZeroIsExact()
+{
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const int block = 64;
+        const auto play = [&] (bool sendZero)
+        {
+            acustra::AcustraEngine engine;
+            acustra::EngineParameters parameters;
+            parameters.stringMaterial = acustra::StringMaterial::Steel;
+            engine.setParameters(parameters);
+            engine.prepare(rate, block);
+            engine.noteOn(52, 0.85f);
+            const int samples = static_cast<int>(1.0 * rate);
+            Audio audio {
+                std::vector<float>(static_cast<std::size_t>(samples)),
+                std::vector<float>(static_cast<std::size_t>(samples)) };
+            for (int offset = 0; offset < samples; offset += block)
+            {
+                if (sendZero)
+                    engine.setVibrato(0.0f);
+                engine.process(audio.left.data() + offset,
+                               audio.right.data() + offset,
+                               std::min(block, samples - offset));
+            }
+            return audio;
+        };
+        const auto untouched = play(false);
+        const auto zeroed = play(true);
+        expect(untouched.left == zeroed.left && untouched.right == zeroed.right,
+               "CC1 at zero changed the sound at "
+                   + std::to_string(static_cast<int>(rate)) + " Hz");
+    }
+}
+
+// What the wheel does when it is not zero, against what the sources measured.
+void testTheVibratoWheelStaysInsideItsPublishedBounds()
+{
+    const double rate = 48000.0;
+    const int block = 64;
+    for (const float wheel : { 0.35f, 1.0f })
+    {
+        const auto trace = acustra::AcustraEngineTestAccess::vibratoScaleTrace(
+            wheel, rate, 3.0, block);
+        expect(!trace.empty(), "the vibrato trace was empty");
+        const double perBlock = block / rate;
+        double deepest = 0.0;
+        double shallowest = 0.0;
+        for (std::size_t index = 0; index < trace.size(); ++index)
+        {
+            const double cents = 1200.0 * std::log2(trace[index]);
+            if (index * perBlock < 0.2)
+                shallowest = std::max(shallowest, cents);
+            deepest = std::max(deepest, cents);
+        }
+        // Erkut et al. 2000 Sec. 3.3: the lowest frequency during a vibrato
+        // is the note's own, so nothing goes below it.
+        double lowest = 1.0e9;
+        for (const double scale : trace)
+            lowest = std::min(lowest, 1200.0 * std::log2(scale));
+        expect(lowest >= -1.0e-6,
+               "the vibrato went below the note's own pitch by "
+                   + std::to_string(-lowest) + " cents");
+        expect(deepest > 1.0 && deepest <= 20.01,
+               "the wheel's vibrato reached " + std::to_string(deepest)
+                   + " cents");
+        // Its 0.5 s transient (Erkut's tt) means the first fifth of a second
+        // cannot already be at depth.
+        expect(shallowest < 0.5 * deepest,
+               "the vibrato reached " + std::to_string(shallowest)
+                   + " of its " + std::to_string(deepest)
+                   + " cents inside the first 0.2 s");
+        // Rate, from the peaks after the transient. Erkut's 1.4 Hz slow and
+        // 4.9 Hz fast are the wheel's endpoints.
+        std::vector<double> peaks;
+        for (std::size_t index = 1; index + 1 < trace.size(); ++index)
+            if (index * perBlock > 1.0 && trace[index] > trace[index - 1]
+                && trace[index] >= trace[index + 1])
+                peaks.push_back(static_cast<double>(index) * perBlock);
+        expect(peaks.size() >= 2,
+               "the vibrato did not repeat after its transient");
+        const double period = (peaks.back() - peaks.front())
+            / static_cast<double>(peaks.size() - 1);
+        const double measured = 1.0 / period;
+        expect(measured > 1.35 && measured < 5.0,
+               "the vibrato ran at " + std::to_string(measured)
+                   + " Hz, outside the 1.4-4.9 Hz the sources measured");
+        std::cout << "Acustra vibrato wheel " << wheel << ": " << measured
+                  << " Hz, depth " << deepest << " cents\n";
+    }
+    // An open string has no finger stopping it, so it has no vibrato
+    // (Laurson et al. 2001: max-depth is zero at fret zero).
+    const auto open = acustra::AcustraEngineTestAccess::vibratoScaleTrace(
+        1.0f, rate, 2.0, block, 40);
+    expect(!open.empty()
+               && std::all_of(open.begin(), open.end(),
+                              [] (double scale) { return scale == 1.0; }),
+           "an open string was given a vibrato");
+}
+
+// A member bend is one finger on one string.
+void testAMemberBendRetunesOnlyItsOwnString()
+{
+    const auto isolation
+        = acustra::AcustraEngineTestAccess::memberBendIsolation();
+    expect(isolation[1] < isolation[0] - 1.0
+               && isolation[3] > isolation[2] * 1.2,
+           "a member bend did not retune and re-tension its own string");
+    expect(isolation[4] == isolation[5] && isolation[6] == isolation[7],
+           "a member bend reached a string on another member channel");
 }
 
 void testBlockPartitionIsDeterministic()
@@ -4434,6 +5075,13 @@ int main()
     testDispersionAcrossRatesMaterialsAndNotes();
     testTheFractionalDelayReadIsLossless();
     testASlewingDelayDoesNotClickAboveFourteenKilohertz();
+    testAMemberBendIsATensionBendByGrimes();
+    testABendMovesTheTwelfthPartialStretch();
+    testABendDoesNotStepTheJunctionPort();
+    testAnExtremeBendSaturatesInsideTheBendRange();
+    testTheVibratoWheelAtZeroIsExact();
+    testTheVibratoWheelStaysInsideItsPublishedBounds();
+    testAMemberBendRetunesOnlyItsOwnString();
     testBlockPartitionIsDeterministic();
     testSampleRatesAndAutomationStayBounded();
     testHostileParametersAreSanitised();

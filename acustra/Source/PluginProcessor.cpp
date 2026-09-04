@@ -492,7 +492,14 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
             midiChannel, static_cast<int> (controller),
             static_cast<int> (value)));
 
-        if (controller == 2u)
+        if (controller == 1u)
+        {
+            // The modulation wheel is the fretting hand's vibrato. Like the
+            // bridge hand it is one gesture across the instrument rather than
+            // a per-channel setting, and zero is an exact no-op.
+            engine.setVibrato (static_cast<float> (value) / 127.0f);
+        }
+        else if (controller == 2u)
         {
             // Bridge-hand pressure. It is a playing gesture rather than a
             // construction setting, so it stays a controller and the panel

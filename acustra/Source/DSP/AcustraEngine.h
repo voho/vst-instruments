@@ -126,6 +126,10 @@ public:
     // an exact no-op, which is the default.
     void setLegato(bool on) noexcept;
     void setPitchBend(float semitones, int midiChannel = 1) noexcept;
+    // MIDI's Modulation Wheel, CC1, as the left hand's vibrato. Zero is an
+    // exact no-op, which is the default; see the vibrato map in
+    // AcustraEngine.cpp for what the wheel is bounded by.
+    void setVibrato(float amount) noexcept;
     // Acustra implements the MPE lower zone only: channel 1 is its manager
     // and the contiguous channels above it are members. Zero restores
     // conventional, fully independent MIDI channels.
@@ -356,6 +360,18 @@ private:
         float excitationColour { 0.0f };
         float excitationLowpass { 0.0f };
         float characteristicImpedance { 0.5f };
+        // A bend is a tension change at fixed length, so the port the string
+        // presents moves with it: Z = sqrt(T mu) = Z0 times the frequency
+        // ratio (see configureVoice). The junction sums impedances every
+        // sample, so the requested scale is followed at the delay's own 6 ms
+        // rate rather than stepping once per control period. Both are 1
+        // without a bend, and a scale of exactly 1 leaves every product
+        // bit-identical to the unbent engine.
+        float bendImpedanceScale { 1.0f };
+        float appliedBendImpedanceScale { 1.0f };
+        // The string's tension now, in newtons, bend included. Kept so the
+        // bend can be checked against Grimes' law rather than inferred.
+        float tensionNewtons { 0.0f };
         float bridgeTailStiffness { 10000.0f };
         float attackPitchCents { 0.0f };
         float attackPitchDecay { 1.0f };
@@ -433,6 +449,8 @@ private:
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
     float effectiveTouch(const Voice& voice) const noexcept;
+    [[nodiscard]] float vibratoSemitones(const Voice& voice,
+                                         int fret) const noexcept;
     void initialisePluck(Voice& voice, int stringIndex, float velocity) noexcept;
     void returnToOpenString(Voice& voice, int stringIndex,
                             bool clearDelay) noexcept;
@@ -498,6 +516,9 @@ private:
     float parameterSmoothing_ { 0.002f };
     float levelSmoothing_ { 0.0025f };
     std::array<float, midiChannelCount> pitchBendSemitones_ {};
+    float vibrato_ { 0.0f };
+    float vibratoPhase_ { 0.0f };
+    float vibratoOnset_ { 0.0f };
     float lastBridgeVelocity_ { 0.0f };
     float lastBridgeReactionForce_ { 0.0f };
     float lastBridgeBodyForce_ { 0.0f };

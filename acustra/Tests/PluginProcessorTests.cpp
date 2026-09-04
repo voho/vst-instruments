@@ -472,6 +472,47 @@ void testBridgeHandControllerReachesTheEngine()
             "CC2 did not reach the engine as bridge-hand pressure");
 }
 
+void testTheModulationWheelReachesTheEngineAsVibrato()
+{
+    // CC1 is MIDI's Modulation Wheel, which this instrument reads as the
+    // fretting hand's vibrato (see AcustraEngine's vibratoSemitones for what
+    // it is bounded by). Zero is the wheel untouched, down to the sample.
+    const auto phrase = [] (int wheel, bool send)
+    {
+        AcustraAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        std::vector<float> mono;
+        juce::MidiBuffer start;
+        if (send)
+            start.addEvent (juce::MidiMessage::controllerEvent (1, 1, wheel),
+                            0);
+        start.addEvent (juce::MidiMessage::noteOn (1, 52, 0.85f), 1);
+        const int blocks = static_cast<int> (2.0 * sampleRate / blockSize);
+        for (int block = 0; block < blocks; ++block)
+        {
+            juce::MidiBuffer empty;
+            processor.processBlock (audio, block == 0 ? start : empty);
+            for (int sample = 0; sample < blockSize; ++sample)
+                mono.push_back (audio.getSample (0, sample));
+        }
+        return mono;
+    };
+    const auto untouched = phrase (0, false);
+    const auto zeroed = phrase (0, true);
+    const auto deep = phrase (127, true);
+    expect (untouched == zeroed,
+            "CC1 at zero changed the sound through the wrapper");
+    expect (untouched.size() == deep.size() && untouched != deep,
+            "CC1 did not reach the engine as vibrato");
+    double largest = 0.0;
+    for (std::size_t index = 0; index < untouched.size(); ++index)
+        largest = std::max (largest, std::abs (
+            static_cast<double> (deep[index] - untouched[index])));
+    std::cout << "Acustra vibrato wrapper: largest sample difference "
+              << largest << "\n";
+}
+
 void testLegatoControllerReachesTheEngine()
 {
     // CC68 is MIDI's Legato Footswitch. With it down, a second note a
@@ -1274,6 +1315,7 @@ int main()
     testSameSampleNoteOnOffDoesNotStick();
     testSameSampleChordsAreStrummedAndAlternate();
     testBridgeHandControllerReachesTheEngine();
+    testTheModulationWheelReachesTheEngineAsVibrato();
     testLegatoControllerReachesTheEngine();
     testReleaseVelocityReachesTheEngineAsAFingerLift();
     testResetAllControllersReleasesSustain();
