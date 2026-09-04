@@ -92,6 +92,39 @@ fourth note into five bursts at about 2 Hz, which A11 has no modulation path to
 produce. Two independent disproofs, so takes 13-15 are void on any instrument
 without the 106's own bank.
 
+**A11 re-rendered through a JUNO-106 emulation is the first like-for-like in
+the exercise, and it carries two signals.** Unlike the Jun-6 V attempt, this
+one plays A11's own stored bytes: all four notes land within a few cents of
+this engine — 32.7, 65.3, 130.3 and 261.7 Hz against 32.7, 65.5, 130.1 and
+263.2 — including A11's 16' range, and the note windows agree to about 30 ms
+once the tempo was corrected. So the patch, the octave and the score are
+common ground, and what differs afterwards is the instruments.
+
+*Level against pitch differs systematically.* Referred to each take's own
+first note, so the chain cancels, the reference reads +0.00, +2.92, −1.62 and
++1.85 dB across the four notes where this engine reads +0.00, −1.28, −3.52 and
+−2.63. The reference's level rises with pitch about 4 dB more than ours over
+three octaves, consistently rather than at one note. A coarse brightness
+measure — the harmonic at which the series has fallen 20 dB, which the hiss
+floor cannot reach — puts its filter corner rising 0.894 octave per played
+octave against this engine's 1.111, where A11 stores VCF KYBD at 86/127. The
+two observations do not obviously point the same way and the cause is not
+isolated here; what is solid is that on identical stored bytes the two
+instruments distribute level across the keyboard differently.
+
+*The idle floor is 14.6 dB higher relative to signal*, at a signal-to-idle of
+48.4 dB against this engine's 63.0, and 97.8 % of its idle energy sits above
+2 kHz against our 72.6 %, rising to a 4–8 kHz peak. That shape is what BBD
+hiss looks like, and A11 has chorus I engaged, so the natural reading is
+OQ-03's chorus noise — where this project's 29.86 % default is declared
+session-compatibility policy rather than anything derived. It is not adopted,
+and not only because the reference is a model: the render came from a demo
+build, and a demo that injects noise and a chorus that models more hiss are
+indistinguishable in a single take with the chorus on. One file separates
+them — take 10-chorus-01, the same instrument with chorus off. If the floor
+collapses it is chorus hiss and OQ-03 has its first comparison; if it stays it
+is the demo, and the take is void.
+
 **One take returned nothing usable.** Take 06 sweeps the cutoff with the filter
 envelope, and in the reference the high-to-low band ratio stalls 39.8 dB below
 what that same instrument reaches with its filter wide open in take 04 — so its
