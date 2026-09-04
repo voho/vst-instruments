@@ -4,6 +4,52 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-09-04 — the refit chosen by ear, with two values pinned back
+
+An A/B was rendered for the calibration a converged bounded pattern search
+produced on the 115-note benchmark: A the shipping calibration, B the refit,
+same phrase, same seed, same rate and block size, level-matched on whole-file
+RMS (steel B trimmed −2.46 dB, nylon B +0.52 dB), letters only, key unread
+until the verdict. **The user chose B by ear**, on one low E let ring and a
+six-note chord, steel and nylon.
+
+That verdict licensed the direction, not the vector. B as the search produced
+it drove two values onto bounds that contradict what this repository has
+measured, and both are restored in what ships:
+
+- `bridgeTailLengthMetres` ran to 59.1 mm against a 60 mm ceiling, four times
+  longer than any length the chord-pull sweep ever covered. Measured on the
+  five-chord sweep, nylon's late pull reaches 8.7 cents there against the
+  7-cent bound the tuning work was promoted on; at DAFx-26's published 3.25 mm
+  stub it is 0.8. Held-out validation is also *better* pinned (5.731) than
+  free (5.894), so the long tail was fitting the training rows.
+- `bridgeMobilityScale` ran to its 0.25 floor, a quarter of the archive's own
+  measured mobility. At that floor a nylon hammer-on gets quieter as it is
+  played harder — −0.35 dB per velocity step at 44.1, 48 and 96 kHz — which is
+  a monotonicity the instrument does not have. Restored to 0.754677154 the
+  engine suite is green with every bound at its former value but two.
+
+Isolating that second one took the whole ladder: restoring nylon's transient,
+its velocity-brightness depth, its aperture, and finally its entire block each
+left the inversion in place, which is what showed the cause was shared rather
+than nylon's.
+
+What ships is therefore the refit with those two pinned: training 6.319236 →
+6.111540, development validation 6.327235 → 6.072344, and the eight
+never-fitted flat-top rows 7.948337 → 8.073304 — better on both fitted splits,
+1.6% worse on the split that is only ever reported. Two bounds moved with it,
+each for a value that genuinely changed: the steel attack-pitch cue from 4.0 to
+7.8 cents, because the fit raised the displacement scale 25% and the recordings'
+own early-minus-late fundamental says the loudest steel layer moves 1.81 times
+the previously fitted excursion; and the whole-tone bend's predicted H12 stretch
+movement from −0.5 to −0.3 cents, because steel's stiffness scale halved and a
+less inharmonic string stretches its twelfth partial less to begin with.
+
+The full-refit vector is kept at `scratchpad/1.6/refit.cal` with its
+919-evaluation log. Its numbers are better on every split; what it costs is a
+measured mobility, a published bridge dimension and a physical monotonicity,
+and that is why the numbers did not decide it.
+
 ## 2026-08-30 — initial identity failure
 
 In an informal, unblinded listen to the first implementation, the user reported

@@ -136,7 +136,7 @@
   "training": {
    "examples": 83,
    "unique_model_renders": 47,
-   "fitted_score": 6.319236,
+   "fitted_score": 6.11154,
    "terms": {
     "attack": {
      "neutral": 9.309916832505955,
@@ -173,7 +173,7 @@
   "held_out": {
    "examples": 24,
    "unique_model_renders": 24,
-   "fitted_score": 6.327235,
+   "fitted_score": 6.072344,
    "terms": {
     "attack": {
      "neutral": 9.155575861766145,
@@ -210,7 +210,7 @@
   "flat_top": {
    "examples": 8,
    "unique_model_renders": 8,
-   "fitted_score": 7.948337,
+   "fitted_score": 8.073304,
    "terms": {
     "attack": {
      "neutral": 9.036944038636934,
