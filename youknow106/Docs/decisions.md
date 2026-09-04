@@ -7,12 +7,29 @@ of these closes an open question — the captures named under
 
 ## 2026-09-04 — First calibration takes rendered, and why nothing moved
 
-Nine of the calibration takes were rendered through an unidentified software
-Juno and compared against this engine's own renders of the same files. A
-software instrument is a model, not the instrument, so by the tool's own
-protocol this pass can corroborate or contradict and nothing more. **No
-constant moved.** What it produced is a comparison, recorded here so a later
-pass does not have to redo it or, worse, mistake it for a measurement.
+Nine of the calibration takes were rendered through **Arturia's Jun-6 V** and
+compared against this engine's own renders of the same files. A software
+instrument is a model, not the instrument, so by the tool's own protocol this
+pass can corroborate or contradict and nothing more. **No constant moved.**
+What it produced is a comparison, recorded here so a later pass does not have
+to redo it or, worse, mistake it for a measurement.
+
+**The reference is two steps removed, not one, and that is the pass's main
+result.** Jun-6 V models the JUNO-6, a sibling instrument, and the two do not
+share this circuit. The 106 generates saw, pulse and sub inside the potted
+MC5534A and sums them on one WAVE node, with only the sub's R101/D6/R102 leg
+external; the JUNO-6 (CPU BOARD p. 9, MAY.10,1982) builds the same musical
+function discretely — a TL082 integrator whose ramp the drawing labels 12 Vp-p
+at TP3, an IC15 4013 divider for the sub, and TR2/TR3/TR4 as switches, each leg
+reaching the summing node through its own printed resistors, the saw through
+R37 15 kΩ and R24 68 kΩ. Those proportions are Roland's for the discrete
+instrument, and the project has already settled once that a sibling drawing
+describes the sibling rather than the hybrid: the same reasoning retired the
+10 kΩ/47 kΩ reading of the resonance network in favour of the 106's own.
+
+So a sub-to-saw balance measured on a JUNO-6 model is evidence about the
+JUNO-6's mixer proportions, which are drawn and different, not about the
+106's, which are inside a potted chip and are exactly what OQ-15 is open on.
 
 **Method note.** The renders came back at exactly 2x speed: the DAW applied its
 own tempo instead of the file's 60 BPM meta event, so every note is half as
@@ -33,15 +50,23 @@ about 2.1 dB above ours relative to the saw, consistently. Take 03's isolation
 was verified rather than assumed: in the reference the played pitch sits 61 dB
 below the sub's own fundamental, so saw and pulse really were off.
 
-That finding is **not** adopted, and the reason is on record above. On
-2026-08-19 `subMixVolts` moved 5.0 -> 2.0 against a hardware recording of A64,
-and that move was then reverted because the recording could not be shown to
-reproduce the patch it was named after — the sliders are not motorised, so a
-recording witnesses the slider, not the stored byte. The withdrawn hardware
-finding said the sub was too LOUD; this software model says it is too QUIET, by
-a comparable margin in the opposite direction. Two weak and opposed readings
-leave OQ-15's sub coordinate exactly where it was: the one source level with no
-end-to-end anchor, waiting on take 03 recorded from an identified unit.
+That finding is **not** adopted, for two independent reasons. The first is the
+instrument difference above: the JUNO-6 proportions this leg with its own
+printed resistors. The second is already on record. On 2026-08-19
+`subMixVolts` moved 5.0 -> 2.0 against a hardware recording of A64, and that
+move was then reverted because the recording could not be shown to reproduce
+the patch it was named after — the sliders are not motorised, so a recording
+witnesses the slider, not the stored byte. The withdrawn hardware finding said
+the sub was too LOUD; this sibling model says it is too QUIET, by a comparable
+margin in the opposite direction. Two weak and opposed readings leave OQ-15's
+sub coordinate exactly where it was: the one source level with no end-to-end
+anchor, waiting on take 03 recorded from an identified 106.
+
+What the pulse agreement is worth is correspondingly narrower too. Two
+instruments that proportion this mixer differently landing within 0.1 dB of
+each other on pulse-against-saw is a weaker coincidence than it first reads,
+because both may simply put the two switched legs on equal resistors — which
+the JUNO-6 drawing does, and which the 106's WAVE node does by construction.
 
 **Three places the reference differs where this model has a derivation and it
 does not**, all recorded as confidence rather than as defects:
@@ -55,6 +80,17 @@ does not**, all recorded as confidence rather than as defects:
   silent below byte 6, from Tr22's drawn grounded-base onset. A model that
   scales noise linearly from zero is the expected default, not a
   counter-measurement.
+
+**The factory route does not survive a different instrument either.** Take 13
+selects factory program A11 and exists so that a session with no SysEx path
+still compares identical tone bytes on both sides. Jun-6 V does not carry the
+106's bank, and the re-rendered take proves the patch differs rather than
+merely suspecting it: A11's stored bytes are 16', saw only, sub and noise at
+zero, with no LFO reaching any destination, so this engine sounds MIDI 36 at
+32.7 Hz; the reference sounds it at 65.4 Hz, an octave up, and breaks the held
+fourth note into five bursts at about 2 Hz, which A11 has no modulation path to
+produce. Two independent disproofs, so takes 13-15 are void on any instrument
+without the 106's own bank.
 
 **One take returned nothing usable.** Take 06 sweeps the cutoff with the filter
 envelope, and in the reference the high-to-low band ratio stalls 39.8 dB below
