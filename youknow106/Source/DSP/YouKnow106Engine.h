@@ -959,8 +959,12 @@ public:
     // rebased from the chart's NOISE-first origin to this queue's
     // RESONANCE-first ordinal 0): drawn-artwork proportions, deliberately
     // non-uniform, still not hardware timestamps -- the figure is drafting,
-    // not a capture. It ships as a selectable comparison profile only; the
-    // reset path keeps NormalizedServiceChart.
+    // not a capture. Since 2026-09-04 it is what the plug-in and the demo
+    // renderer select, chosen by ear over the normalised placement
+    // (decisions.md). The engine's own default stays NormalizedServiceChart
+    // so every frozen fingerprint and ordinal-gap fixture keeps testing the
+    // reference grid -- the same split the VCF solver ladder uses -- and a
+    // selection is consumed by the next reset/prepare, never mid-pass.
     [[nodiscard]] static std::array<double, converterWritesPerPass>
         converterEventPhases(ConverterTimingProfile profile) noexcept;
     // Selects the profile reset()/prepare() install, so a comparison profile

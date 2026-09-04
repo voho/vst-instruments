@@ -5,6 +5,39 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — Chart geometry chosen by ear; the noise crest stays put
+
+Two bracketed constants went to a blind listening test, keys unread until
+after the verdicts.
+
+**Converter intra-pass placement (OQ-08).** A was the shipping normalised
+`ordinal/23` placement, B the pixel-measured p. 8 chart geometry
+(`MeasuredChartGeometry`). Material: eight fast resonant filter-envelope
+stabs, a short chord and six PWM staccato notes; identical MIDI, controls,
+seed and rate; whole-file RMS matched within 0.03 dB with no trim, one common
+gain. The A/B null measured −3.2 dBc, almost all of it the free-running DCO
+phase each note-on catches at a different point in the pass.
+
+**Verdict, by ear:** very similar, B slightly better, heard as more resonant.
+The plug-in and the demo renderer now select `MeasuredChartGeometry` before
+preparing the engine, the way the VCF solver default is applied; the engine's
+own default stays the normalised grid so the frozen fingerprints and
+ordinal-gap fixtures keep testing the reference, and all three profiles
+remain selectable. This is a choice between two drafting-derived placements and moves no
+evidence class: neither profile is a hardware timestamp, and OQ-08's physical
+capture list is untouched.
+
+**Main NOISE level crest convention (OQ-16).** A was the shipping −11.96 dB
+reading of the "4 Vp-p at TP8" adjustment re the 4.8 Vp-p self-oscillation
+trim, B the six-sigma scope reading at +1.9 dB, C the bracket top at
++3.5 dB, through the comparison-only `mainNoiseLevelScale`. Material: saw +
+NOISE 10, then a NOISE-only resonant sweep; deliberately not level-matched,
+since level was the quantity under judgement; one common gain.
+
+**Verdict, by ear:** hard to say, no preference. Nothing moves:
+`noiseMixVolts` keeps its conservative reading inside the anchored bracket,
+and the comparison switch stays for a future set with different material.
+
 ## 2026-09-03 — Correction: the de-potted original corroborates the shipped value
 
 The entry below records the Sound Doctorin teardown as widening the resonance
@@ -601,17 +634,3 @@ new defaults stand. Chosen by ear, not settled by a measurement.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.
-- **Chart-geometry follow-on (OQ-08).** A two-letter set was rendered on
-  2026-09-04 (A `ordinal/23`, B `MeasuredChartGeometry`; fast resonant
-  stabs and PWM staccato, RMS-matched within 0.03 dB, one common gain; the
-  A/B null is −3.2 dBc, almost entirely DCO phase at note-on) with its key
-  unread by design. If the two prove indistinguishable by ear, OQ-08's
-  audible-impact priority drops. No verdict yet.
-- **NOISE crest convention (OQ-16).** The p. 19 "4 Vp-p at TP8" reading
-  brackets the main noise level between −12.6 and −8.5 dB re the 4.8 Vp-p
-  self-oscillation trim; the model ships at −11.96 dB. A three-letter set
-  was rendered on 2026-09-04 (A shipping, B the six-sigma scope reading at
-  +1.9 dB, C the bracket top at +3.5 dB; saw + NOISE 10 then a NOISE-only
-  resonant sweep; deliberately not level-matched, since level is what is
-  judged; one common gain), key unread by design. A choice pins
-  `noiseMixVolts` inside the bracket and nowhere else. No verdict yet.

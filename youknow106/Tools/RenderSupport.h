@@ -157,6 +157,10 @@ public:
     explicit Take(EngineParameters parameters)
         : engine_(std::make_unique<YouKnow106Engine>())
     {
+        // The product's converter placement (Docs/decisions.md, 2026-09-04),
+        // selected exactly as the plug-in selects it before prepare().
+        engine_->selectConverterTimingProfile(
+            YouKnow106Engine::ConverterTimingProfile::MeasuredChartGeometry);
         engine_->prepare(sampleRate, renderBlockSize, true);
         engine_->setParameters(parameters);
     }
