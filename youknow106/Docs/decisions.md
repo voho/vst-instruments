@@ -5,6 +5,56 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — The noise gap is a crest-factor reading, and this project's is the defensible one
+
+Twenty further factory presets compared against KR-106 put three of them 13 to
+15 dB apart where the other seventeen sat inside a 5 dB band — and all three
+were the noise-only patches, A67 Shaker, A84 Dust Storm and B18 Noise Sweep.
+Measured directly, noise at full against saw at full within each instrument so
+the chain cancels, KR-106 reads +4.66 dB where this engine reads −9.99: a
+14.7 dB gap on one leg. The control law's *shape* agrees almost exactly (at
+byte 64 against 127, −6.50 against −6.32), so the disagreement is where the
+whole leg sits, not how it moves.
+
+**The service manual anchors both ends of a ratio that settles most of it.**
+p. 19 s. 9 trims NOISE for 4 Vp-p at TP8; s. 6 trims VCA GAIN for 6 Vp-p at
+TP8 on the self-oscillating filter. Saw is never measured there, but noise
+against self-oscillation is fixed by Roland at both ends, and it is measurable
+on any model:
+
+| | noise / self-oscillation at TP8 |
+| --- | ---: |
+| KR-106 | −2.86 dB |
+| here | −11.81 dB |
+
+**What each implies about reading a scope.** A 6 Vp-p sine has 2.121 V RMS, so
+each ratio names an implied noise RMS, and the spec's 4 Vp-p marks ±2 V:
+
+- KR-106 implies 1.526 V RMS, so its 4 Vp-p band is **±1.31 σ**, which would
+  contain 81 % of the samples. The trace would visibly spill well past the
+  marks. That is what reading a noise peak-to-peak as though it were a sine
+  produces: the naive reading predicts −3.52 dB and KR-106 sits 0.66 dB from
+  it.
+- This engine implies 0.545 V RMS, so its band is **±3.67 σ**, containing
+  essentially all of them. A scope trace of Gaussian noise shows roughly ±3 to
+  ±4 σ depending on persistence, so this is the conventional reading and it
+  sits inside OQ-16's own −8.5…−12.6 dB bracket, near its quiet end.
+
+**So nothing moves, and for once the reason is not caution.** The gap is not a
+disagreement about the instrument; it is a disagreement about what a
+peak-to-peak figure means for noise, and one of the two readings is physically
+wrong. A ±1.31 σ band is not a reading a technician can take off a trace.
+
+**What that leaves.** The 14.7 dB noise-against-saw gap decomposes as about
+8.95 dB of this crest-factor difference and about 5.7 dB of saw-against-self-
+oscillation, which is OQ-15's drive coordinate and unanchored on both sides —
+the same coordinate the sub sits on. Worth recording beside it: a single aged
+unit's account measured its own noise trim 3.52 dB above the 4 Vp-p spec, so
+drift moves this in the loud direction too, and the 2026-08-19 A64 corpus work
+independently read this project's noise as quiet against the sub. Both point
+the same way as KR-106 and neither reaches 9 dB. A TP8 crest-factor capture is
+still what closes it.
+
 ## 2026-09-04 — The output uses 2.5 dB more of the range, and why not 18.7
 
 The owner reported that KR-106 is much louder, and it is: on A11 with the same
