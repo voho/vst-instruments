@@ -3,21 +3,35 @@
 
 The C++ renderer owns synthesis and the Python scorer owns descriptors.  This
 driver exports targets once, asks the renderer to replace model files for each
-candidate, and performs short bounded least-squares stages for the shared body,
-nylon strings, steel strings, then the shared body once more.
+candidate, and runs a bounded pattern search for the shared body, nylon
+strings, steel strings, then the shared body once more.
+
+The search is derivative-free because the objective is not differentiable.
+Each partial is read as the largest peak inside a fixed +/-65-cent window, so
+when two peaks compete inside one window the descriptor steps as the winner
+changes.  Measured on the shipping calibration by resampling a render through a
++/-30-cent sweep in 0.5-cent steps: the harmonics term of a low steel E moves a
+median 0.00024 per step, but a high steel note (E6, m84) moves 0.565 across one
+0.5-cent step at the operating point itself - 6.6% of that note's term, 470
+times its own median step - with no partial entering or leaving the search.
+A one-sided finite difference reads that step as a slope, so the stages poll
+the bounded box directly instead (Kolda, Lewis and Torczon, "Optimization by
+Direct Search", SIAM Review 45 (2003) 385-482).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
+import shutil
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy.optimize import least_squares
 
 from FitPhysicalModel import PreparedManifest
 
@@ -83,6 +97,16 @@ BY_EAR = (
     "steel.fundamentalT60Scale",
     "steel.frequencyLossScale",
     "bridgeConductanceFloor",
+    # The axial resonators were switched off by ear on 2026-09-01 - their
+    # narrow high-Q onset reads as a pitched water drop at every pluck - and
+    # the corpus disagrees: it scored 6.7685 with them on against 6.8353 off.
+    # That is exactly the disagreement freezing exists for.
+    "longitudinalGain",
+)
+# With longitudinalGain frozen at zero the axial resonators are not summed at
+# all, so their Q multiplies nothing and any value renders the same audio.
+INERT = (
+    "longitudinalQ",
 )
 # Values that are a published measurement rather than a fit. The corpus does
 # see the end correction, but only weakly and only on steel: with the
@@ -95,7 +119,7 @@ BY_EAR = (
 MEASURED = (
     "polarisationEndCorrectionMetres",
 )
-FROZEN = frozenset(NAMES.index(name) for name in BY_EAR + MEASURED)
+FROZEN = frozenset(NAMES.index(name) for name in BY_EAR + MEASURED + INERT)
 
 
 def _free(indices: np.ndarray) -> np.ndarray:
@@ -142,21 +166,61 @@ def _small_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# One evaluation is a 79-render corpus and a scored split - about 30 seconds -
+# and a stage of a few hundred of them only fits in a working day if several
+# run at once. Each candidate is independent and the renderer is deterministic,
+# so a worker owns its own copy of the corpus directory and the result does not
+# depend on how many workers there are.
+_WORKER: dict[str, Any] = {}
+
+
+def _worker_setup(renderer: Path, directories: Any) -> None:
+    directory = Path(directories.get())
+    _WORKER["renderer"] = renderer
+    _WORKER["directory"] = directory
+    _WORKER["train"] = PreparedManifest(directory / "train.json")
+
+
+def _worker_evaluate(job: tuple[list[float], str | None]) -> dict[str, Any]:
+    values, material = job
+    _run_renderer(_WORKER["renderer"], _WORKER["directory"],
+                  np.asarray(values, dtype=float), True)
+    return _small_report(_WORKER["train"].score(material=material))
+
+
+def _worker_directories(output: Path, jobs: int) -> list[Path]:
+    """Give every worker but the first its own copy of targets and manifests.
+
+    Model renders are not copied: the renderer writes every model the manifests
+    reference on the first evaluation.
+    """
+    directories = [output]
+    for index in range(1, jobs):
+        directory = output.parent / f"{output.name}-worker{index}"
+        directory.mkdir(parents=True, exist_ok=True)
+        for source in sorted(output.iterdir()):
+            if not source.is_file() or source.name.startswith("model-"):
+                continue
+            destination = directory / source.name
+            if not destination.is_file():
+                shutil.copy2(source, destination)
+        directories.append(directory)
+    return directories
+
+
 class Objective:
-    def __init__(self, renderer: Path, directory: Path,
-                 manifest: PreparedManifest, base: np.ndarray,
+    def __init__(self, executor: ProcessPoolExecutor, base: np.ndarray,
                  active: np.ndarray, material: str | None,
                  evaluations: list[dict[str, Any]]):
-        self.renderer = renderer
-        self.directory = directory
-        self.manifest = manifest
+        self.executor = executor
         self.base = base.copy()
         self.active = active
         self.material = material
         self.evaluations = evaluations
-        self.cache: dict[tuple[float, ...], np.ndarray] = {}
+        self.cache: dict[tuple[float, ...], float] = {}
         self.best_values = base.copy()
         self.best_score = float("inf")
+        self.count = 0
 
     def values(self, unit: np.ndarray) -> np.ndarray:
         values = self.base.copy()
@@ -165,72 +229,87 @@ class Objective:
         )
         return values
 
-    def __call__(self, unit: np.ndarray) -> np.ndarray:
-        values = self.values(unit)
+    def batch(self, units: list[np.ndarray]) -> np.ndarray:
+        candidates = [self.values(unit) for unit in units]
         # The C++ boundary is float, so parameters that serialize identically
         # are the same physical candidate and need only one render.
-        key = tuple(float(np.float32(value)) for value in values)
-        cached = self.cache.get(key)
-        if cached is not None:
-            return cached
-        _run_renderer(self.renderer, self.directory, values, True)
-        report = self.manifest.score(material=self.material)
-        residuals = np.asarray(report["weighted_residuals"], dtype=np.float64)
-        score = float(report["score"])
-        if score < self.best_score:
-            self.best_score = score
-            self.best_values = values.copy()
-        self.evaluations.append({
-            "stage_material": self.material,
-            "values": values.tolist(),
-            **_small_report(report),
-        })
-        print(
-            f"eval {len(self.evaluations):03d} "
-            f"{self.material or 'both':>5} score={score:.6f}",
-            flush=True,
-        )
-        self.cache[key] = residuals
-        return residuals
+        keys = [tuple(float(np.float32(value)) for value in candidate)
+                for candidate in candidates]
+        pending: dict[tuple[float, ...], np.ndarray] = {}
+        for key, candidate in zip(keys, candidates):
+            if key not in self.cache:
+                pending.setdefault(key, candidate)
+        if pending:
+            reports = self.executor.map(
+                _worker_evaluate,
+                [(values.tolist(), self.material) for values in pending.values()],
+            )
+            for (key, values), report in zip(pending.items(), reports):
+                score = float(report["score"])
+                self.cache[key] = score
+                self.count += 1
+                if score < self.best_score:
+                    self.best_score = score
+                    self.best_values = values.copy()
+                self.evaluations.append({
+                    "stage_material": self.material,
+                    "values": values.tolist(),
+                    **report,
+                })
+                print(
+                    f"eval {len(self.evaluations):04d} "
+                    f"{self.material or 'both':>5} score={score:.6f}",
+                    flush=True,
+                )
+        return np.asarray([self.cache[key] for key in keys])
 
-    def jacobian(self, unit: np.ndarray) -> np.ndarray:
-        """One-sided finite differences on a fixed fraction of each bound."""
-        baseline = self(unit)
-        result = np.empty((baseline.size, unit.size), dtype=np.float64)
+
+def _pattern_search(objective: Objective, unit: np.ndarray, budget: int,
+                    step: float = 0.25,
+                    smallest: float = 1.0 / 512.0) -> np.ndarray:
+    """Compass search in the unit box: poll +/-step on each free coordinate.
+
+    The poll is a full one so the step accepted is the best of the box, which
+    makes the walk independent of the order the workers finish in. A poll that
+    beats the incumbent moves it and keeps the step; a poll that does not halves
+    the step. The floor of 1/512 of a bound range is where the objective stops
+    resolving a coordinate: a nine-point sweep of highLossCutoffScale in steps
+    of 1/500 of its range, around the shipping value, reads 6.324086, 6.323484,
+    6.328220, 6.320992, 6.319236, 6.322703, 6.322967, 6.329617, 6.328153 - a
+    0.007 wiggle on steps that small, the size of the gain a whole stage is
+    looking for.
+    """
+    best = float(objective.batch([unit])[0])
+    while objective.count < budget and step >= smallest:
+        poll: list[np.ndarray] = []
         for index in range(unit.size):
-            candidate = unit.copy()
-            step = 0.04 if unit[index] <= 0.96 else -0.04
-            candidate[index] += step
-            result[:, index] = (self(candidate) - baseline) / step
-        return result
+            for direction in (step, -step):
+                candidate = unit.copy()
+                candidate[index] = min(1.0, max(0.0, unit[index] + direction))
+                if candidate[index] != unit[index]:
+                    poll.append(candidate)
+        if not poll:
+            break
+        scores = objective.batch(poll)
+        chosen = int(np.argmin(scores))
+        if scores[chosen] < best:
+            unit, best = poll[chosen], float(scores[chosen])
+        else:
+            step *= 0.5
+    return unit
 
 
 def _fit_stage(name: str, material: str | None, active: np.ndarray,
-               values: np.ndarray, renderer: Path, directory: Path,
-               manifest: PreparedManifest, max_nfev: int,
-               evaluations: list[dict[str, Any]]) -> tuple[np.ndarray, dict[str, Any]]:
+               values: np.ndarray, executor: ProcessPoolExecutor,
+               budget: int, evaluations: list[dict[str, Any]],
+               ) -> tuple[np.ndarray, dict[str, Any]]:
     unit = (values[active] - LOWER[active]) / (UPPER[active] - LOWER[active])
-    objective = Objective(
-        renderer, directory, manifest, values, active, material, evaluations
-    )
-    result = least_squares(
-        objective,
-        unit,
-        jac=objective.jacobian,
-        bounds=(np.zeros(unit.size), np.ones(unit.size)),
-        x_scale="jac",
-        max_nfev=max_nfev,
-        ftol=2.0e-3,
-        xtol=2.0e-3,
-        gtol=2.0e-3,
-        verbose=0,
-    )
-    # least_squares may stop immediately after a Jacobian probe. Preserve the
-    # lowest actual candidate, not merely the last vector it returned.
+    objective = Objective(executor, values, active, material, evaluations)
+    _pattern_search(objective, np.clip(unit, 0.0, 1.0), budget)
     fitted = objective.best_values
     print(
         f"stage {name}: {objective.best_score:.6f}; "
-        f"status={result.status} nfev={result.nfev}",
+        f"evaluations={objective.count}",
         flush=True,
     )
     return fitted, {
@@ -238,9 +317,7 @@ def _fit_stage(name: str, material: str | None, active: np.ndarray,
         "material": material,
         "active": [NAMES[index] for index in active],
         "best_score": objective.best_score,
-        "status": int(result.status),
-        "message": result.message,
-        "nfev": int(result.nfev),
+        "evaluations": int(objective.count),
     }
 
 
@@ -249,16 +326,23 @@ def main() -> int:
     parser.add_argument("renderer", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument(
-        "--max-nfev", type=int, default=3,
-        help="least-squares evaluations per stage (default: 3)",
+        "--evaluations", type=int, default=400,
+        help="renders the pattern search may spend per stage (default: 400)",
+    )
+    parser.add_argument(
+        "--jobs", type=int, default=1,
+        help="candidates rendered at once; each needs its own corpus copy "
+             "(default: 1)",
     )
     parser.add_argument(
         "--resume", action="store_true",
         help="reuse an existing renderer corpus and its current calibration",
     )
     arguments = parser.parse_args()
-    if arguments.max_nfev < 1:
-        parser.error("--max-nfev must be positive")
+    if arguments.evaluations < 1:
+        parser.error("--evaluations must be positive")
+    if arguments.jobs < 1:
+        parser.error("--jobs must be positive")
     renderer = arguments.renderer.resolve()
     output = arguments.output.resolve()
     if not renderer.is_file():
@@ -315,17 +399,36 @@ def main() -> int:
     print(f"baseline train score={baseline['score']:.6f}", flush=True)
     evaluations: list[dict[str, Any]] = []
     stages: list[dict[str, Any]] = []
-    for name, material, active in (
-        ("shared-body", None, GLOBAL),
-        ("nylon-string", "nylon", NYLON),
-        ("steel-string", "steel", STEEL),
-        ("shared-body-refine", None, GLOBAL),
-    ):
-        values, stage = _fit_stage(
-            name, material, active, values, renderer, output, train,
-            arguments.max_nfev, evaluations,
-        )
-        stages.append(stage)
+    directories = _worker_directories(output, arguments.jobs)
+    queue: Any = multiprocessing.Queue()
+    for directory in directories:
+        queue.put(str(directory))
+    with ProcessPoolExecutor(
+        max_workers=arguments.jobs,
+        initializer=_worker_setup,
+        initargs=(renderer, queue),
+    ) as executor:
+        for name, material, active in (
+            ("shared-body", None, GLOBAL),
+            ("nylon-string", "nylon", NYLON),
+            ("steel-string", "steel", STEEL),
+            ("shared-body-refine", None, GLOBAL),
+        ):
+            values, stage = _fit_stage(
+                name, material, active, values, executor,
+                arguments.evaluations, evaluations,
+            )
+            stages.append(stage)
+            # A full run is hours long; leave each stage's answer on disk so a
+            # crash costs one stage rather than the run.
+            (output / "fit-progress.json").write_text(
+                json.dumps({"parameter_order": NAMES,
+                            "values": values.tolist(),
+                            "stages": stages}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+    for directory in directories[1:]:
+        shutil.rmtree(directory, ignore_errors=True)
 
     _run_renderer(renderer, output, values, True)
     final_train = train.score()

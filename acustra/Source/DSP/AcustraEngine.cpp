@@ -2402,18 +2402,24 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
 
 void AcustraEngine::captureTail(Voice& voice) noexcept
 {
-    // A string is only taken or replucked while the plucking hand is on it,
-    // whatever the outgoing note's fret was. That is the contact beginRelease
-    // already models for a stopped fretted note, so the same 0.16 s damping
-    // applies here; the open-string 1.25 s case is a lifted fretting finger on
-    // a string nobody is touching, which this is not.
+    // A string is only taken or replucked while the plucking hand is on it:
+    // the picking hand landing to repluck or cut a note short, not the
+    // fretting finger beginRelease's 0.16 s models. Laurson, Erkut, Valimaki
+    // and Kuuskankare (CMJ 25(3), 2001, "Simulation of Playing Styles") give
+    // the loop gain driven to zero in about 10 ms before a re-pluck, and that
+    // is the value used directly. Erkut, Valimaki, Karjalainen and Laurson
+    // (AES 108th Convention, Paris, Feb 2000, preprint 5114, Sec. 3.2
+    // "Repeated Plucks") independently measure the finger-on-string contact
+    // regime for a repeated pluck at 20-60 ms - a different quantity (a
+    // contact-regime duration, not a decay time) that brackets the same
+    // mechanism at tens of milliseconds, consistent with the 10 ms figure.
     if (!(voice.level > 2.0e-7f))
     {
         voice.tailActive = false;
         return;
     }
     voice.tailLoop = voice.loops[0];
-    constexpr float contactSeconds = 0.16f;
+    constexpr float contactSeconds = 0.010f;
     voice.tailDamping = std::pow(0.001f,
         1.0f / std::max(contactSeconds * midiFrequency(voice.midiNote), 1.0f));
     voice.tailLevel = voice.level;
@@ -2686,26 +2692,33 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
 // String/Barrier Collisions: The Fretboard", Proc. 17th Int. Conf. Digital
 // Audio Effects (DAFx-14), Erlangen 2014, Fig. 4 caption, give the stopping
 // finger a mass M_FG = 5e-3 kg and a collision force f = K_FG [eta_FG]^a_FG
-// with K_FG = 1e10 N/m^2.3 and a_FG = 2.3; the real-time guitar of DAFx-24
-// runs the same finger ("parameters as given in [11]", [11] being that
-// paper). Such a contact has incremental stiffness a_FG K_FG eta^(a_FG - 1),
-// and driving the string's own drive-point resistance 2T/c through it is a
-// first-order lag of rise time 2(T/c) / (a_FG K_FG eta^(a_FG - 1)) at the
-// working penetration eta = (2(T/c) v / K_FG)^(1/a_FG). Swept over both
-// materials, frets 2 to 14 and velocities 0.1 to 1.0, that rise time is 0.7
-// to 20 % of the dent's own descent h/v; the worst case is the steel high E
-// at fret 14 at velocity 1.0, 2.23 us of rise against 11.04 us of descent.
-// K_FG would have to be 39.5 times softer (2.5e8 N/m^2.3) before the
-// finger's compliance began to shape the dent, so a mass-spring finger on
-// these constants writes this same dent and the rigid one stays.
+// with K_FG = 1e10 and a_FG = 2.3 (the caption prints no unit for K_FG; the
+// exponent makes it N/m^2.3); the real-time guitar of Bilbao, Russo, Webb
+// and Ducceschi, Proc. DAFx-24, Guildford 2024, Sec. 2.5, runs the same
+// finger ("parameters as given in [11]", [11] being that paper). Such a
+// contact has incremental stiffness a_FG K_FG eta^(a_FG - 1), and driving
+// the string's own drive-point resistance 2T/c through it is a first-order
+// lag of rise time 2(T/c) / (a_FG K_FG eta^(a_FG - 1)) at the working
+// penetration eta = (2(T/c) v / K_FG)^(1/a_FG). Swept over both materials,
+// all six strings, every fret pair up to fretCount and velocities 0.1 to
+// 1.0, that rise time is 0.15 % to 57 % of the dent's own descent h/v. The
+// worst case is the steel high E hammered from fret 19 to 20 at velocity
+// 1.0: 1.38 us of rise against 2.43 us of descent, a contact corner of
+// 115 kHz, above Nyquist at every supported rate. Where that corner does
+// fall inside the audio band the rise never exceeds 30 % of the descent.
+// K_FG would have to be 3.7 times softer (2.7e9 N/m^2.3) before the
+// contact's rise matched the descent, so a mass-spring finger on these
+// constants writes this same dent and the rigid one stays.
 //
-// The published finger does not bound the speed either. The descent below
-// reaches 26.7 m/s on the steel high E at fret 14 at velocity 1.0 (18.2 m/s
-// on nylon), far faster than a hand moves, but neither the mass nor the
-// stiffness limits it: Bilbao and Torin's finger is driven by an externally
-// supplied force f_e,FG whose only published value is the 0.9 N of one
-// finger-tap figure, not a playing range. Bounding the top of this map still
-// needs a measured fingertip speed -- see Known gaps.
+// The published finger does not bound the speed either. Over that same
+// sweep the descent below reaches 62 m/s on steel and 43 m/s on nylon at
+// velocity 1.0 -- far faster than a hand moves -- but neither the mass nor
+// the stiffness limits it, because the finger is driven. The only published
+// value for that driving force is DAFx-24 Sec. 6.2's f_e,FG = 0.9 N, from
+// one finger-tap demonstration; DAFx-14's own finger is unforced (Sec. 4.3)
+// and its one kinematic figure is the 3 m/s approach of the Fig. 4 caption.
+// Neither is a playing range. Bounding the top of this map still needs a
+// measured fingertip speed -- see Known gaps.
 void AcustraEngine::hammerString(Voice& voice, int stringIndex,
                                  int previousMidi, float velocity) noexcept
 {
