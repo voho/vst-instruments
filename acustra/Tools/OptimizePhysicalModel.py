@@ -84,10 +84,14 @@ BY_EAR = (
     "steel.frequencyLossScale",
     "bridgeConductanceFloor",
 )
-# Values that are a published measurement rather than a fit. The corpus
-# carries no signal for the end correction while the parallel polarisation it
-# lengthens does not radiate - its only outlet is the bridge-local direct
-# path, whose gain the fit put at zero - so fitting it would be fitting noise.
+# Values that are a published measurement rather than a fit. The corpus does
+# see the end correction, but only weakly and only on steel: with the
+# bridge-local direct path off, the polarisation it lengthens still reaches
+# the output through the shared slope energy that drives the steel attack
+# pitch. Zeroing it changes 40 of the 79 renders (all 32 steel and all 8 flat
+# top; all 39 nylon byte-identical) and moves the score from
+# 6.319236 / 6.327235 / 7.948337 to 6.320649 / 6.328354 / 7.953299 - a real
+# preference for the published value, and far too small a lever to fit it on.
 MEASURED = (
     "polarisationEndCorrectionMetres",
 )

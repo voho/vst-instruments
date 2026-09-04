@@ -109,10 +109,17 @@ inline constexpr PhysicalCalibration fittedPhysicalCalibration {
     // available for measurement work, but do not add that synthetic ping to
     // the shipping voice.
     0.011f, 2804.94773f, 0.00325f, 0.0f, 35.0f,
-    // Woodhouse's published 0.8 mm. The corpus carries no signal for it while
-    // the parallel polarisation does not radiate (its only outlet is the
-    // bridge-local direct path, whose gain the fit put at zero), so the fit
-    // does not move it and it ships at the measurement.
+    // Woodhouse's published 0.8 mm, shipped frozen at the measurement rather
+    // than fitted. The corpus does see the parallel loop, but only weakly and
+    // only on steel: with the bridge-local direct path off, loops[1] reaches
+    // the output through the shared slope energy in finishVoice, which on
+    // steel drives the attack pitch. Setting this value to zero changes 40 of
+    // the 79 corpus renders - all 32 steel and all 8 flat-top rows, while all
+    // 39 nylon rows stay byte-identical - and moves the score from
+    // 6.319236 / 6.327235 / 7.948337 to 6.320649 / 6.328354 / 7.953299
+    // (training / validation / flat top). That is a real preference for the
+    // published value on all three splits, but far too small a lever to fit
+    // an end correction against.
     0.0008f
 };
 
