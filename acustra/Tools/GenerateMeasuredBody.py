@@ -66,6 +66,14 @@ CONVERGENCE_BAND_HZ = 700.0
 CONVERGENCE_TOLERANCE = 0.10
 BASE_MODE_COUNT = 96
 MINIMUM_FREQUENCY = 80.0
+# The fit stops at 10 kHz because the archive's own record stops being a body
+# measurement there. Taking the far tail of the same one-second segment as the
+# noise estimate, the microphone signal-to-noise of the treble-side impact is
+# 25.6/24.7 dB (g21) and 24.6/20.7 dB (g34) over 5-8 kHz, 21.4/19.7 and
+# 16.4/13.9 dB over 8-10 kHz, then 13.8/13.8 and 12.0/9.0 dB over 10-12 kHz
+# and 3.3/2.4 and 2.5/2.8 dB over 16-20 kHz. Above roughly 12 kHz the H1
+# quotient is mostly the noise floor divided by a hammer spectrum already
+# 19-28 dB down, so fitting it would fit the laboratory, not the guitar.
 MAXIMUM_FREQUENCY = 10_000.0
 PEAK_PROMINENCE_DB = 0.5
 Q_MINIMUM = 2.0
@@ -75,6 +83,29 @@ MAX_COMPLEX_RELATIVE_ERROR = 0.30
 MAX_MEDIAN_MAGNITUDE_ERROR_DB = 1.25
 MAX_P90_MAGNITUDE_ERROR_DB = 3.75
 MAX_STEREO_RATIO_P90_ERROR_DB = 5.0
+# Above the modal-overlap frequency the peaks stop being separable and only the
+# band level survives. Elie, Gautier and David, "Macro parameters describing
+# the mechanical behavior of classical guitars", JASA 132 (2012) 4013-4024,
+# Eq. (1), put the modal overlap factor at the half-power bandwidth over the
+# spacing to the next mode and name f30 the frequency from which it exceeds
+# 0.3; their Table IV measures f30 at 465-910 Hz over nine luthier-made and
+# 506-635 Hz over three industrial classical guitars. Applying Eq. (1) to the
+# g34 bank below puts its own first crossing at 503 Hz, inside that range.
+# Everything from 5 kHz up is therefore a decade into the statistical regime,
+# where the audible unit is the auditory filter: Glasberg and Moore,
+# "Derivation of auditory filter shapes from notched-noise data", Hearing
+# Research 47 (1990) 103-138, give it as ERB(F) = 24.7 (4.37 F + 1) Hz for F
+# in kHz, about a sixth of an octave there. So the bank must hold the measured
+# level in every whole ERB band from 5 kHz to MAXIMUM_FREQUENCY and not merely
+# in aggregate; a fit that scattered its error across those bands would be
+# heard as a change of timbre while still passing the p90 above. The committed
+# banks reach 0.34/0.46 dB (g21 treble/bass mic) and 0.62/0.37 dB (g34), which
+# is what rules out splitting the body into a modal part below f30 and a
+# separately convolved measured residual above it: that residual is the
+# quotient measured here, a filter within 0.62 dB of unity in every band it
+# would cover.
+BAND_ERROR_FLOOR_HZ = 5_000.0
+MAX_BAND_MAGNITUDE_ERROR_DB = 1.0
 RAW_MD5 = "733cb10baf5ce36d8bf333610ffbb260"
 HAMMER_NEWTONS_PER_FULL_SCALE = (10_000.0 / 92.90) * 4.4482
 MIC_PASCALS_PER_FULL_SCALE = 10_000.0 / 50.0
@@ -329,11 +360,23 @@ def fit_residues(
     return solution[0::2] + 1j * solution[1::2]
 
 
+def erb_bands(low: float, high: float) -> list[tuple[float, float]]:
+    """Whole Glasberg-Moore ERBs tiled from low, dropping a partial last band."""
+    bands: list[tuple[float, float]] = []
+    edge = low
+    while True:
+        width = 24.7 * (4.37 * edge / 1000.0 + 1.0)
+        if edge + width > high:
+            return bands
+        bands.append((edge, edge + width))
+        edge += width
+
+
 def fit_errors(
     targets: list[np.ndarray],
     modes: list[tuple[float, float, float]],
     residues: list[np.ndarray],
-) -> tuple[list[tuple[float, float, float]], float]:
+) -> tuple[list[tuple[float, float, float]], float, float]:
     frequency = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
     indices = np.flatnonzero(
         (frequency >= MINIMUM_FREQUENCY) & (frequency <= MAXIMUM_FREQUENCY)
@@ -383,17 +426,32 @@ def fit_errors(
     stereo_ratio_p90_error_db = float(
         np.percentile(np.abs(model_ratio_db - desired_ratio_db), 90.0)
     )
-    return errors, stereo_ratio_p90_error_db
+
+    band_frequency = frequency[indices]
+    band_error_db = 0.0
+    for low, high in erb_bands(BAND_ERROR_FLOOR_HZ, MAXIMUM_FREQUENCY):
+        selected = np.flatnonzero(
+            (band_frequency >= low) & (band_frequency < high)
+        )
+        for target, model in zip(targets, models):
+            desired_level = np.sqrt(
+                np.mean(np.abs(target[indices][selected]) ** 2)
+            )
+            model_level = np.sqrt(np.mean(np.abs(model[selected]) ** 2))
+            band_error_db = max(band_error_db, abs(20.0 * np.log10(
+                max(model_level, 1.0e-30) / max(desired_level, 1.0e-30))))
+    return errors, stereo_ratio_p90_error_db, float(band_error_db)
 
 
 def within_limits(
-    errors: list[tuple[float, float, float]], stereo: float
+    errors: list[tuple[float, float, float]], stereo: float, band: float
 ) -> bool:
     return (
         all(error[0] <= MAX_COMPLEX_RELATIVE_ERROR for error in errors)
         and all(error[1] <= MAX_MEDIAN_MAGNITUDE_ERROR_DB for error in errors)
         and all(error[2] <= MAX_P90_MAGNITUDE_ERROR_DB for error in errors)
         and stereo <= MAX_STEREO_RATIO_P90_ERROR_DB
+        and band <= MAX_BAND_MAGNITUDE_ERROR_DB
     )
 
 
@@ -422,8 +480,8 @@ def modal_fit(path: Path, guitar: int) -> dict:
         )
         if not np.all(np.isfinite(values)):
             continue
-        errors, stereo = fit_errors(targets, modes, residues)
-        if within_limits(errors, stereo):
+        errors, stereo, band = fit_errors(targets, modes, residues)
+        if within_limits(errors, stereo, band):
             return {
                 "guitar": guitar,
                 "keep_samples": keep_samples,
@@ -432,6 +490,7 @@ def modal_fit(path: Path, guitar: int) -> dict:
                 "residues": residues,
                 "errors": errors,
                 "stereo": stereo,
+                "band": band,
             }
     raise ValueError(
         f"g{guitar}: no mode count up to {len(candidates)} met the fit limits"
@@ -471,7 +530,8 @@ def bank_block(name: str, bank: dict) -> str:
     comment = textwrap.fill(
         f'g{guitar}, {GUITAR_DESCRIPTION[guitar]}. Window {window}, with the'
         f' final tenth as the raised-cosine fade. {len(bank["modes"])} shared'
-        f' poles: {errors}; stereo-ratio p90 {bank["stereo"]:.3f} dB.',
+        f' poles: {errors}; stereo-ratio p90 {bank["stereo"]:.3f} dB;'
+        f' worst ERB-band level error above 5 kHz {bank["band"]:.3f} dB.',
         width=76, initial_indent="// ", subsequent_indent="// ")
     return f'''{comment}
 inline constexpr std::array<MeasuredBodyMode, {len(bank["modes"])}> {name} {{{{

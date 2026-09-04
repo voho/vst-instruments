@@ -35,7 +35,8 @@ struct MeasuredBodyMode
 // 3000 samples (62.5 ms), DAFx-26's length, with the final tenth as the
 // raised-cosine fade. 96 shared poles: channel 0 complex 0.2205, median
 // 0.970 dB, p90 2.952 dB; channel 1 complex 0.2412, median 1.146 dB, p90
-// 3.474 dB; stereo-ratio p90 4.736 dB.
+// 3.474 dB; stereo-ratio p90 4.736 dB; worst ERB-band level error above 5
+// kHz 0.464 dB.
 inline constexpr std::array<MeasuredBodyMode, 96> measuredSteelBodyModes {{
     { 96.9835739f, 6.56465101f, -0.000262581307f, 0.000702881662f, 0.00013207407f, 0.000486197532f },
     { 119.528427f, 10.3018904f, -7.67493766e-05f, 0.000163266959f, 2.93274461e-05f, 0.000216723362f },
@@ -142,7 +143,7 @@ inline constexpr std::array<MeasuredBodyMode, 96> measuredSteelBodyModes {{
 // twice that length, with the final tenth as the raised-cosine fade. 103
 // shared poles: channel 0 complex 0.2190, median 1.241 dB, p90 3.744 dB;
 // channel 1 complex 0.1675, median 0.819 dB, p90 2.622 dB; stereo-ratio p90
-// 4.054 dB.
+// 4.054 dB; worst ERB-band level error above 5 kHz 0.621 dB.
 inline constexpr std::array<MeasuredBodyMode, 103> measuredNylonBodyModes {{
     { 98.1445312f, 18.4096336f, -0.000504621887f, 0.00100172742f, -0.000566134579f, 0.000661891361f },
     { 200.361282f, 11.4784517f, 0.00686733657f, 0.0063833273f, 0.00397446332f, 0.0104112374f },
