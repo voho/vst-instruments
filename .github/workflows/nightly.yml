@@ -55,7 +55,7 @@ jobs:
             "electry:ElectryRenderDemos:23"
             "taikor:TaikorRenderDemos:27"
             "acustra:AcustraRenderDemos:8"
-            "youknow106:YouKnow106RenderDemos:10"
+            "youknow:YouKnowRenderDemos:10"
             "septum:SeptumRenderDemos:11"
             "ghostar:GhostarRenderDemos:12"
           )
@@ -129,10 +129,10 @@ jobs:
           # Stage before checking: a newly added demo is an untracked file,
           # which git diff alone would not see.
           git add -A drumalor/Docs/audio electry/Docs/audio \
-            taikor/Docs/audio acustra/Docs/audio youknow106/Docs/audio \
+            taikor/Docs/audio acustra/Docs/audio youknow/Docs/audio \
             septum/Docs/audio ghostar/Docs/audio \
             drumalor/README.md electry/README.md taikor/README.md \
-            acustra/README.md youknow106/README.md septum/README.md \
+            acustra/README.md youknow/README.md septum/README.md \
             ghostar/README.md
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
@@ -148,10 +148,10 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor electry taikor acustra youknow106 septum ghostar \
+                drumalor electry taikor acustra youknow septum ghostar \
                 ':(exclude)drumalor/Docs' ':(exclude)electry/Docs' \
                 ':(exclude)taikor/Docs' ':(exclude)acustra/Docs' \
-                ':(exclude)youknow106/Docs' \
+                ':(exclude)youknow/Docs' \
                 ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
@@ -205,9 +205,9 @@ jobs:
           - name: Acustra
             directory: acustra
             snapshot_variable: ACUSTRA_EDITOR_SNAPSHOT
-          - name: YouKnow106
-            directory: youknow106
-            snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: YouKnow
+            directory: youknow
+            snapshot_variable: YOUKNOW_EDITOR_SNAPSHOT
           - name: Septum
             directory: septum
             snapshot_variable: SEPTUM_EDITOR_SNAPSHOT
@@ -339,9 +339,9 @@ jobs:
           - name: Acustra
             directory: acustra
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
-          - name: YouKnow106
-            directory: youknow106
-            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: YouKnow
+            directory: youknow
+            build_plugin_option: YOUKNOW_BUILD_PLUGIN
           - name: Septum
             directory: septum
             build_plugin_option: SEPTUM_BUILD_PLUGIN
@@ -435,9 +435,9 @@ jobs:
           - name: Acustra
             directory: acustra
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
-          - name: YouKnow106
-            directory: youknow106
-            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: YouKnow
+            directory: youknow
+            build_plugin_option: YOUKNOW_BUILD_PLUGIN
           - name: Septum
             directory: septum
             build_plugin_option: SEPTUM_BUILD_PLUGIN
@@ -537,7 +537,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in drumalor electry taikor acustra youknow106 septum ghostar; do
+          for directory in drumalor electry taikor acustra youknow septum ghostar; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -566,7 +566,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in drumalor electry taikor acustra youknow106 septum ghostar; do
+          for directory in drumalor electry taikor acustra youknow septum ghostar; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -593,10 +593,10 @@ jobs:
             # churn (including the audio job's own commit) does not invalidate a
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor electry taikor acustra youknow106 septum ghostar \
+                drumalor electry taikor acustra youknow septum ghostar \
                 ':(exclude)drumalor/Docs' ':(exclude)electry/Docs' \
                 ':(exclude)taikor/Docs' ':(exclude)acustra/Docs' \
-                ':(exclude)youknow106/Docs' \
+                ':(exclude)youknow/Docs' \
                 ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
@@ -651,7 +651,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Drumalor Electry Taikor Acustra YouKnow106 Septum Ghostar; do
+          for product in Drumalor Electry Taikor Acustra YouKnow Septum Ghostar; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)

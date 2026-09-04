@@ -82,9 +82,9 @@ Age, Touch and Position controls keep the surface simple.
 
 ---
 
-## [YouKnow106](youknow106/README.md)
+## [YouKnow](youknow/README.md)
 
-[![YouKnow106](youknow106/Docs/screenshots/youknow106-standalone.png)](youknow106/README.md)
+[![YouKnow](youknow/Docs/screenshots/youknow-standalone.png)](youknow/README.md)
 
 Circuit-modelled six-voice DCO polysynth: integer-divided note timers with true
 pitch quantisation, a scanned control converter with per-hold slew and 7-bit
@@ -94,7 +94,7 @@ resonance loop and input-side compensation, a non-stealing key assigner, and an
 uncompanded two-line bucket-brigade chorus with authentic saturation and MN3009
 noise.
 
-[Ten audio demos](youknow106/README.md#audio-demos) · [How it works](youknow106/README.md#how-it-works)
+[Ten audio demos](youknow/README.md#audio-demos) · [How it works](youknow/README.md#how-it-works)
 
 ---
 

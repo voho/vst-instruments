@@ -42,10 +42,10 @@ jobs:
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
             target_demo: AcustraRenderDemos
             expected_demos: 8
-          - name: YouKnow106
-            directory: youknow106
-            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
-            target_demo: YouKnow106RenderDemos
+          - name: YouKnow
+            directory: youknow
+            build_plugin_option: YOUKNOW_BUILD_PLUGIN
+            target_demo: YouKnowRenderDemos
             expected_demos: 10
           - name: Septum
             directory: septum
@@ -167,9 +167,9 @@ jobs:
           - name: Acustra
             directory: acustra
             snapshot_variable: ACUSTRA_EDITOR_SNAPSHOT
-          - name: YouKnow106
-            directory: youknow106
-            snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: YouKnow
+            directory: youknow
+            snapshot_variable: YOUKNOW_EDITOR_SNAPSHOT
           - name: Septum
             directory: septum
             snapshot_variable: SEPTUM_EDITOR_SNAPSHOT
@@ -233,9 +233,9 @@ jobs:
           - name: Acustra
             directory: acustra
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
-          - name: YouKnow106
-            directory: youknow106
-            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: YouKnow
+            directory: youknow
+            build_plugin_option: YOUKNOW_BUILD_PLUGIN
           - name: Septum
             directory: septum
             build_plugin_option: SEPTUM_BUILD_PLUGIN
