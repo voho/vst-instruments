@@ -2133,10 +2133,11 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         "envelope amount reaching its filter, so quieter notes are darker. "
         "Zero matches the hardware's fixed velocity; 100% gives full dynamic "
         "response.",
-        "Scales every modeled component tolerance, trimmer residual, thermal "
-        "wander and inherent circuit non-linearity. Zero is the calibrated "
-        "digital reference; 100% matches real hardware; values above that "
-        "exaggerate the same behaviors for audible contrast.",
+        "Scales modeled component variation and thermal wander. Zero uses "
+        "nominal component values; 100% selects the default character profile; "
+        "higher values exaggerate it. Circuit saturation remains at zero. "
+        "The variation profile is provisional, not measured from a population "
+        "of original units.",
         "Scales the modeled hiss of the uncompanded bucket-brigade chorus. "
         "100% is the modeled floor; zero is a clean plug-in extension.",
         "Sets the active voice limit from 1 to 16. Six matches the hardware; "
@@ -2350,7 +2351,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
     // The hardware moves patches over its tape and MIDI jacks; here the same
     // dumps travel as .syx files. LOAD and SAVE speak the instrument's own
-    // F0 41 30 patch message, so files round-trip with real units and with
+    // manual patch message, so files round-trip with real units and with
     // any librarian that talks to them.
     syxLoadButton.setTooltip (
         "Loads a .syx patch dump and applies its tone to the panel, exactly "

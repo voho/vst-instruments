@@ -740,7 +740,9 @@ struct LimitCycle
 // builds the table converges in two or three passes instead of a dozen.
 LimitCycle limitCycleFor(double amplitude, double stageHeadroom,
                          double returnHeadroom,
-                         std::array<double, 4>& gains) noexcept
+                         std::array<double, 4>& gains,
+                         const std::array<double, 4>& poleScales =
+                             { 1.0, 1.0, 1.0, 1.0 }) noexcept
 {
     std::array<double, 4> ratios { 1.0, 1.0, 1.0, 1.0 };
     double droop = 1.0;
@@ -763,7 +765,8 @@ LimitCycle limitCycleFor(double amplitude, double stageHeadroom,
         for (std::size_t stage = 0; stage < 4; ++stage)
         {
             const double next =
-                describingGain(nodes[stage] * ratios[stage] / stageHeadroom);
+                poleScales[stage]
+                * describingGain(nodes[stage] * ratios[stage] / stageHeadroom);
             moved = std::max(moved, std::abs(next - gains[stage]));
             gains[stage] = next;
         }
@@ -5142,6 +5145,68 @@ void YouKnow106Engine::refreshVoiceCardThermalScales() noexcept
     }
 }
 
+void YouKnow106Engine::refreshVoiceCardServiceTrims() noexcept
+{
+    // Roland p. 19 trims EACH card after at least ten minutes, repeating
+    // FREQ/WIDTH to +/-10 cents. Drawing a final residual and then adding
+    // untrimmed capacitor and temperature errors counts those errors twice.
+    // Reuse the cascade's harmonic balance to set one fixed FREQ adjustment;
+    // it never follows a played note, resonance edit or the running drift.
+    // Ten minutes is the declared reference within our provisional warm-up
+    // model, not a measurement of an original instrument's temperature.
+    const auto& parameters = activeParameters_;
+    const double serviceWarmupFraction = 1.0 - std::exp(-600.0 / 900.0);
+    static const double nominalDroop = [] {
+        std::array<double, 4> gains { 1.0, 1.0, 1.0, 1.0 };
+        return limitCycleFor(2.4, otaHeadroomVolts,
+            VoicedResonanceCompatibilityProfile::loopHeadroomVolts, gains).droop;
+    }();
+    for (int index = 0; index < maxVoices; ++index)
+    {
+        auto& card = cards_[static_cast<std::size_t>(index)];
+        card.vcfServiceTrimCounts = 0.0f;
+        card.vcfServiceCvScale = 1.0f;
+        card.vcfServiceCvOffset = 0.0f;
+        if (parameters.calibration == 0.0f)
+            continue;
+        // WIDTH sees the converter's physical voltage, including carry
+        // error. C6's 8558-count sum is quantised to 8556 at the DAC.
+        const float low = vcfFreqTrimAnchorCounts
+            + vcfConverterCarryCounts(vcfFreqTrimAnchorCounts)
+                  * parameters.calibration;
+        constexpr float highCode = 8556.0f;
+        const float high = highCode
+            + vcfConverterCarryCounts(highCode) * parameters.calibration;
+        const float targetSpan = highCode - vcfFreqTrimAnchorCounts
+            + (vcfWidthTrimSpanCounts - (highCode - vcfFreqTrimAnchorCounts))
+                  * parameters.calibration;
+        card.vcfServiceCvScale = targetSpan / (high - low);
+        card.vcfServiceCvOffset = vcfFreqTrimAnchorCounts
+            - low * card.vcfServiceCvScale;
+        std::array<double, 4> poles {};
+        for (std::size_t stage = 0; stage < poles.size(); ++stage)
+            poles[stage] = voices_[static_cast<std::size_t>(index)]
+                               .filter.gScale[stage];
+        const double gradient = parameters.enableSpatialThermalGradient
+            ? chassisGradientCelsius(index) * parameters.calibration : 0.0;
+        const double temperatureRise = gradient
+            + 15.0 * parameters.calibration * serviceWarmupFraction;
+        const double headroom = otaHeadroomVolts
+            * (1.0 + temperatureRise / 298.15);
+        // The service procedure fixes 4.8 Vpp before adjusting frequency.
+        // One harmonic-balance evaluation at that amplitude is sufficient;
+        // there is no root search in the automatable Character setter.
+        auto gains = poles;
+        const auto cycle = limitCycleFor(
+            2.4, headroom,
+            VoicedResonanceCompatibilityProfile::loopHeadroomVolts,
+            gains, poles);
+        card.vcfServiceTrimCounts = static_cast<float>(
+            -vcfCountsPerOctave * std::log2(
+                cycle.droop * card.thermalFilterOmegaScale / nominalDroop));
+    }
+}
+
 void YouKnow106Engine::prepare(double sampleRate, int maxBlockSize,
                                bool oversamplingEnabled)
 {
@@ -5573,6 +5638,7 @@ void YouKnow106Engine::reset()
     // `voice = Voice {}` above zeroed the offsets, and the cards outlive a
     // reset, so put them back before anything can render a symmetric filter.
     refreshVoiceCardStageTrims();
+    refreshVoiceCardServiceTrims();
     refreshAgedUnitState();
 
     clearOutputPath();
@@ -5854,6 +5920,8 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         refreshVoiceCardStageTrims();
     if (thermalScalesChanged)
         refreshVoiceCardThermalScales();
+    if (startupSnapshot || stageTrimsChanged || thermalScalesChanged)
+        refreshVoiceCardServiceTrims();
     if (rampCurrentScalesChanged)
         refreshVoiceRampCurrentScales();
     if (agingChanged)
@@ -7229,12 +7297,15 @@ float YouKnow106Engine::cutoffAnalogCounts(
     float cutoffCounts, const VoiceCard& card, float calibration,
     float powerSupplyDroop) noexcept
 {
+    // Fixed FREQ/WIDTH trims absorb the line through the physical DAC
+    // endpoints, while preserving its carry discontinuities between them.
+    cutoffCounts = cutoffCounts * card.vcfServiceCvScale
+        + card.vcfServiceCvOffset;
     // The analogue side of the cutoff chain: the two per-voice trimmers --
     // one scales the control voltage, one offsets it -- imperfectly set, and
     // the slow thermal wander, all riding below the converter's own
-    // resolution on the slewed digital value. The five-per-cent scale and
-    // tenth-octave offset spans are voiced Unit Character policies, not
-    // measured post-calibration residual distributions.
+    // resolution on the slewed digital value. The final residual draws sit
+    // within the service windows; their distribution remains voiced.
     // A sagging rail pulls the cutoff reference down with it. `calibration`
     // is applied here and only here: the droop state itself is a pure load
     // measure, so this mechanism scales linearly with Unit Character like its
@@ -7260,6 +7331,7 @@ float YouKnow106Engine::cutoffAnalogCounts(
         + trimResidualCounts
         + card.driftValue * 40.0f * calibration
         + psuCutoffShift
+        + card.vcfServiceTrimCounts
         + card.agingCutoffCounts;
 }
 
@@ -8083,11 +8155,9 @@ YouKnow106Engine::VoiceFilterFrame YouKnow106Engine::prepareVoiceFilter(
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C.
     const float dynamicHeadroom =
         dynamicOtaHeadroomVolts(parameters, voice.cardIndex);
-    // The same gradient, through the control path's own temperature
-    // coefficient, and about the six-card mean: the FREQ trim is set with the
-    // instrument warm, so a calibrated unit carries the spread and not the
-    // mean. Roughly +/-10 cents at Unit Character 1, an upper bound on what
-    // R111's positor leaves uncancelled.
+    // The same gradient enters through the control path's coefficient. Its
+    // static pitch contribution is absorbed by the per-card service trim;
+    // thermal headroom still evolves with the running warm-up clock.
     // The continuous cascade advances directly at this internal boundary.
     // Two fixed Merson half-steps are a numerical solver, not a higher
     // modelled sample rate: they add neither an inter-domain boundary nor

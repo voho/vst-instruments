@@ -929,17 +929,14 @@ int main(int argc, char** argv)
     std::size_t manualFiles = 0;
     for (const auto& take : takes)
     {
-        std::uint8_t tone[sysex::toneByteCount] {};
-        sysex::toneBytesFromPatch(take.patch, tone);
-
-        std::vector<std::uint8_t> dump;
-        dump.push_back(0xf0u);
-        dump.push_back(sysex::manufacturerId);
-        dump.push_back(sysex::patchDataOpcode);
-        dump.push_back(0x00u);
-        for (const auto byte : tone)
-            dump.push_back(byte);
-        dump.push_back(0xf7u);
+        std::vector<std::uint8_t> dump(sysex::patchMessageBytes);
+        if (sysex::writePatchMessage(take.patch, 0, dump.data(), dump.size())
+            != dump.size())
+        {
+            std::fprintf(stderr, "FAIL %s: cannot encode hardware patch\n",
+                         take.id.c_str());
+            return 1;
+        }
 
         std::ofstream syx(outputDirectory / (take.id + ".syx"), std::ios::binary);
         syx.write(reinterpret_cast<const char*>(dump.data()),

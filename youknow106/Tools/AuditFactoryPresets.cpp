@@ -480,8 +480,8 @@ std::string makeReport (const std::vector<AuditRow>& rows, bool smoke,
            << " dBFS, and none may exceed "
            << factoryGatedCeilingDbfs
            << " dBFS gated RMS. Levels below those remain measurements rather "
-              "than targets: a noise sweep is quieter than an organ because the "
-              "instrument makes it quieter.\n\n"
+              "than targets; source-level fidelity is documented separately "
+              "in Docs/hardware-validation.md.\n\n"
            << "- Engine: 48 kHz, quality 4x.\n"
            << "- Analysis override: Chorus Noise = 0 so the signal metrics do not "
               "measure the continuously running BBD hiss.\n";

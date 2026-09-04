@@ -261,7 +261,7 @@ public:
     // junction threshold:
     //   - chorus OFF: Tr5 opens, C16 charges through R50 (22 ms), C13
     //     follows through R48 against R49+R42 (120 ms) and mutes when Tr4's
-    //     base reaches one junction drop -- about 60 ms after the command;
+    //     base reaches one junction drop -- about 81 ms after the command;
     //   - chorus ON: Tr5 saturates, C16 is emptied at once, C13 decays from
     //     its +9.0 V rest toward -15 V and un-mutes about 115 ms in.
     // Both are derived from the drawn parts with the same 0.6 V junction

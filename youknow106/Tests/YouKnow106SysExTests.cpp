@@ -288,8 +288,9 @@ void testPatchMessageFraming()
            "a patch message was not the documented length");
     expect(message[0] == 0xf0, "a patch message does not open with F0");
     expect(message[1] == 0x41, "a patch message does not carry the Roland id");
-    expect(message[2] == 0x30, "a patch message does not carry the patch opcode");
+    expect(message[2] == 0x31, "a patch message does not carry the Manual opcode");
     expect(message[3] == 0x05, "the channel nibble was not written");
+    expect(message[4] == 0, "a Manual message does not carry its zero marker");
     expect(message[written - 1] == 0xf7, "a patch message does not close with F7");
     for (std::size_t index = 4; index + 1 < written; ++index)
         expect((message[index] & 0x80u) == 0,
@@ -319,7 +320,7 @@ void testPatchMessageFraming()
     std::vector<std::uint8_t> good(message.begin(), message.end());
     auto other = good; other[1] = 0x43;
     refuses(other, "a message from another manufacturer");
-    auto opcode = good; opcode[2] = 0x31;
+    auto opcode = good; opcode[2] = 0x33;
     refuses(opcode, "an unknown opcode");
     auto truncated = good; truncated.pop_back();
     refuses(truncated, "a truncated message");
@@ -332,6 +333,74 @@ void testPatchMessageFraming()
     auto highNibble = good; highNibble[3] = 0x15;
     refuses(highNibble, "a message with a dirty channel nibble");
     refuses({}, "an empty message");
+}
+
+void testHardwareAndLegacyPatchMessages()
+{
+    // The recorded real-unit calibration's first frame. This literal is
+    // independent of our writer and has the Manual marker before LFO Rate.
+    const std::vector<std::uint8_t> manual {
+        0xf0, 0x41, 0x31, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        0x00, 0x40, 0x00, 0x00, 0x7f, 0x00, 0x00, 0x21, 0x14, 0xf7
+    };
+    const std::array<std::uint8_t, toneByteCount> expected {
+        0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 64, 0, 0, 127, 0, 0, 33, 20
+    };
+    const auto accepts = [&](const std::vector<std::uint8_t>& message) {
+        Patch decoded;
+        int channel = -1;
+        expect(readPatchMessage(message.data(), message.size(), decoded, channel),
+               "refused a documented or legacy full-tone frame");
+        expect(channel == message[3] && bytesOf(decoded) == expected,
+               "a patch program/Manual marker was decoded as a tone byte");
+    };
+    const auto refuses = [&](std::vector<std::uint8_t> message) {
+        Patch untouched;
+        const auto original = bytesOf(untouched);
+        int channel = -1;
+        expect(!readPatchMessage(message.data(), message.size(), untouched, channel),
+               "accepted a malformed full-tone frame");
+        expect(channel == -1 && bytesOf(untouched) == original,
+               "a rejected full-tone frame changed its outputs");
+    };
+    accepts(manual);
+    auto numbered = manual;
+    numbered[2] = 0x30;
+    numbered[3] = 15;
+    for (int program = 0; program < 128; ++program)
+    {
+        numbered[4] = static_cast<std::uint8_t>(program);
+        accepts(numbered);
+    }
+    auto legacy = numbered;
+    legacy.erase(legacy.begin() + 4);
+    accepts(legacy);
+    for (const auto& good : { manual, numbered, legacy })
+    {
+        for (std::size_t length = 0; length < good.size(); ++length)
+            refuses({ good.begin(), good.begin() + length });
+        auto overlong = good;
+        overlong.insert(overlong.end() - 1, 0);
+        // Adding a program to legacy 0x30 makes a valid hardware frame.
+        if (good.size() != static_cast<std::size_t>(legacyPatchMessageBytes))
+            refuses(overlong);
+        for (std::size_t index = 3; index + 1 < good.size(); ++index)
+        {
+            auto status = good;
+            status[index] = 0x80;
+            refuses(status);
+        }
+    }
+    for (int marker = 1; marker < 128; ++marker)
+    {
+        auto invalidManual = manual;
+        invalidManual[4] = static_cast<std::uint8_t>(marker);
+        refuses(invalidManual);
+    }
+    auto shortManual = legacy;
+    shortManual[2] = 0x31;
+    refuses(shortManual);
 }
 
 // The message the hardware sends when one control is moved.
@@ -645,6 +714,7 @@ int main()
     testPatchesRoundTripThroughTheToneBytes();
     testTheUnstorableChorusSettingIsReportedRatherThanHidden();
     testPatchMessageFraming();
+    testHardwareAndLegacyPatchMessages();
     testParameterMessages();
     testDefensiveNullAndCapacityGuards();
     testASwitchByteLeavesEverythingElseAlone();

@@ -21,11 +21,13 @@ namespace youknow106::sysex
 // byte layout directly rather than through a plug-in.
 
 inline constexpr std::uint8_t manufacturerId = 0x41;   // Roland
-inline constexpr std::uint8_t patchDataOpcode = 0x30;  // all parameters
+inline constexpr std::uint8_t patchDataOpcode = 0x30;  // numbered program
+inline constexpr std::uint8_t manualPatchOpcode = 0x31; // current manual tone
 inline constexpr std::uint8_t parameterOpcode = 0x32;  // one parameter
 
 inline constexpr int toneByteCount = 18;
-inline constexpr int patchMessageBytes = 5 + toneByteCount;  // F0 41 30 0n .. F7
+inline constexpr int patchMessageBytes = 6 + toneByteCount;  // F0 41 31 0n 00 .. F7
+inline constexpr int legacyPatchMessageBytes = 5 + toneByteCount;
 inline constexpr int parameterMessageBytes = 7;              // F0 41 32 0n p v F7
 
 // The continuous controls, in the order the message carries them. The order is
@@ -92,13 +94,18 @@ void toneBytesFromPatch(const Patch& patch, std::uint8_t* bytes) noexcept;
 
 // --- Messages ------------------------------------------------------------
 
-// Recognises `F0 41 30 0n <18 bytes> F7`. Returns false and leaves both
-// outputs untouched for anything else, including messages from other makers,
-// other opcodes and short or overlong bodies.
+// Roland's Owner's Manual, MIDI implementation sections 3.1/3.2, defines
+// `F0 41 30 0n <program 0..127> <18 bytes> F7` and
+// `F0 41 31 0n 00 <18 bytes> F7` (Manual). The program identifies the source
+// slot; this decoder returns its tone to the edit buffer without a bank write.
+// Also accepts this plug-in's former 23-byte 0x30 export, which omitted the
+// program byte, so existing files remain readable. Invalid messages leave
+// both outputs untouched.
+// https://synthfool.com/docs/Roland/Juno_Series/Roland_Juno_106/Roland_Juno106_Owners_Manual.pdf#page=35
 [[nodiscard]] bool readPatchMessage(const std::uint8_t* message, std::size_t length,
                                     Patch& patch, int& channel) noexcept;
 
-// Writes `F0 41 30 0n <18 bytes> F7` into `out`, which must have room for
+// Writes `F0 41 31 0n 00 <18 bytes> F7` into `out`, which must have room for
 // `patchMessageBytes`. Returns the number of bytes written, or 0.
 [[nodiscard]] std::size_t writePatchMessage(const Patch& patch, int channel,
                                             std::uint8_t* out,

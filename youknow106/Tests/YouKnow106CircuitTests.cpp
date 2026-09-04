@@ -5505,6 +5505,70 @@ void testChorusMuteDriveFollowsItsDrawnTiming()
                "C13's time constant is not R48 against R49+R42");
 }
 
+void testChorusOutputLoadingFollowsTheMuteTransistors()
+{
+    // C28/C25 see the 39 kOhm mixer legs only while Tr11/Tr12 conduct.
+    // Compare the delayed button command with a second chorus whose immediate
+    // command follows that actual switch state. Their audio and capacitor
+    // histories must agree even during the silent interval before re-entry.
+    const EngineParameters defaults;
+    expect(defaults.enableChorusMuteDrive,
+           "the chorus loading regression no longer exercises the engine default");
+    for (const float rate : { 48000.0f, 192000.0f })
+    {
+        Chorus delayed;
+        Chorus switched;
+        delayed.prepare(rate);
+        switched.prepare(rate);
+        double outputError = 0.0;
+        double capacitorError = 0.0;
+        int pendingMute = 0;
+        int pendingOpen = 0;
+        int switchCount = 0;
+        bool previousMuted = false;
+        const int offAt = static_cast<int>(0.15f * rate);
+        const int onAt = static_cast<int>(0.55f * rate);
+        for (int index = 0; index < static_cast<int>(0.9f * rate); ++index)
+        {
+            const auto command = index >= offAt && index < onAt
+                ? ChorusMode::Off : ChorusMode::One;
+            const float input = static_cast<float>(
+                0.25 * std::sin(2.0 * pi * 31.0 * index / rate));
+            float delayedLeft, delayedRight, switchedLeft, switchedRight;
+            delayed.process(input, command, 0.0f, delayedLeft, delayedRight,
+                            false, false, 1.0f, false, true,
+                            defaults.enableChorusMuteDrive, false);
+            const bool muted = delayed.muteDriveMuted();
+            const auto physicalMode = muted ? ChorusMode::Off : ChorusMode::One;
+            switched.process(input, physicalMode, 0.0f,
+                             switchedLeft, switchedRight);
+            outputError = std::max({ outputError,
+                std::abs(static_cast<double>(delayedLeft) - switchedLeft),
+                std::abs(static_cast<double>(delayedRight) - switchedRight) });
+            const auto& actual =
+                YouKnow106TestAccess::chorusExactOutputState(delayed);
+            const auto& expected =
+                YouKnow106TestAccess::chorusExactOutputState(switched);
+            capacitorError = std::max(capacitorError,
+                                     std::abs(actual[5] - expected[5]));
+            pendingMute += command == ChorusMode::Off && !muted;
+            pendingOpen += command == ChorusMode::One && muted;
+            switchCount += muted != previousMuted;
+            previousMuted = muted;
+        }
+        expect(pendingMute > rate * 0.02f && pendingOpen > rate * 0.02f
+                   && switchCount == 2,
+               "the chorus loading fixture missed a delayed switch boundary");
+        const auto context = " at " + std::to_string(rate) + " Hz";
+        expectNear(outputError, 0.0, 0.0,
+                   "chorus output loading followed the button before the JFET"
+                       + context);
+        expectNear(capacitorError, 0.0, 0.0,
+                   "chorus coupling charge followed the button before the JFET"
+                       + context);
+    }
+}
+
 void testChorusLineGainSpreadIsRelativeOnly()
 {
     // The two lines' insertion gains are +/- half of one draw, so their
@@ -6983,6 +7047,7 @@ int main()
     testHighPassStateGuardSelfHeals();
     testBoostBranchMatchesItsNetworkAndKeepsItsCharge();
     testChorusMuteDriveFollowsItsDrawnTiming();
+    testChorusOutputLoadingFollowsTheMuteTransistors();
     testChorusLineGainSpreadIsRelativeOnly();
     testPwmDispersionSitsInsideTheServiceWindow();
     testNoiseSourceShapingFollowsItsCircuit();

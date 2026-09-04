@@ -39,7 +39,7 @@ the high-pass ladder and the deterministic Unit Character profile.
 | `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −10.2 dBFS | +7.2 dB |
 | `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −12.7 dBFS | +9.7 dB |
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −24.2 dBFS | +21.2 dB |
-| `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −22.1 dBFS | +19.1 dB |
+| `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −22.0 dBFS | +19.0 dB |
 | `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −25.6 dBFS | +22.6 dB |
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −12.7 dBFS | +9.7 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −7.9 dBFS | +4.9 dB |
@@ -87,6 +87,10 @@ BGA/SGA and BBD polyBLEP); Danish, Bilbao & Ducceschi (DAFx-21, the basis of
 a rejected solver candidate).
 
 ### What is modelled
+
+The [hardware validation report](Docs/hardware-validation.md) records a
+reproducible comparison against Juno-106 #439522 with replacement voice cards,
+the resulting circuit and SysEx fixes, and the unresolved noise-level mismatch.
 
 Each mechanism carries an evidence class, defined and tracked per constant
 below: **anchored** (service
@@ -317,7 +321,9 @@ forty-year-old unit will null against the plug-in.
   through D4/D5. Solved from those parts with the same 0.6 V junction prior
   the other onsets use, the wet return mutes about 81 ms after CHORUS goes
   off and opens about 115 ms after it comes on (anchored parts, derived
-  timing); the JFET transition itself keeps the declared 5 ms glide, since
+  timing). The output coupling capacitors' mixer load follows this delayed
+  transistor state, preserving their charge through switching. The JFET
+  transition itself keeps the declared 5 ms glide, since
   the 2SK30A's pinch-off spread is unsourced (OQ-20). Each MN3009 also
   carries its own insertion gain — Panasonic's row is Min −4 / Typ 0 /
   Max +4 dB and nothing on the board trims it — so under Unit Character the
@@ -326,8 +332,8 @@ forty-year-old unit will null against the plug-in.
   voiced point; OQ-04).
 
 **Instrument-level extensions** (product policy): Unit Character scales
-every modelled tolerance from calibrated-nominal (0) through "matches real
-hardware" (100%) to exaggerated (200%); Aging drifts the instrument away
+every modelled tolerance from calibrated-nominal (0) through the default
+voiced profile (100%) to exaggerated (200%); Aging drifts the instrument away
 from a fresh service along one documented recalibration; Velocity,
 Transpose, Master Tune, Chorus Noise (HISS), Polyphony 1–16, the Quality
 ladder and the VCF numerical-kernel settings described under
@@ -345,7 +351,7 @@ detune generator; the LFO and envelope generator are shared and digital,
 exactly as in the hardware.
 
 At **Unit Character** 0% the engine is the deterministic calibrated-nominal
-model. At 100% — the default, the "matches real hardware" reference — a
+circuit model, including its nominal nonlinearities. At 100% — the default — a
 fixed-seed profile enables the full span of every modelled tolerance:
 per-card ramp current inside the ±2 % G class the module drawing prints on
 C54 (no per-card trimmer touches it), each card's net pulse duty inside the
@@ -355,7 +361,9 @@ inside the ±5 % "R20J" resistor class the module-board legend on p. 12
 prints for every untrimmed leg — R3, R101/R102 and their siblings — with the
 metal-oxide 1 % parts reserved for the DCO ranges), VCF trim
 residuals bounded by the service manual's own ±10-cent acceptance at its two
-check points, per-stage input offsets and capacitor staggering, slow cutoff
+check points (fixed service trims absorb static capacitor, converter and
+thermal errors; all twelve rendered endpoints are within 6 cents at the
+declared ten-minute service state), per-stage input offsets and capacitor staggering, slow cutoff
 wander, the R-2R carry error, the two chorus lines' relative insertion
 offset inside the MN3009's ±4 dB row, and the chassis warm-up law
 `25 + 15(1 − e^{−t/900})` °C with its spatial gradient across the cards.
@@ -422,10 +430,10 @@ What each preset carries besides its bytes is a VR1 volume shaft position —
 the one control a player moves when one patch arrives hotter than the last.
 The `YouKnow106AuditFactoryPresets` tool renders all
 128 tones through the shipping engine and enforces two contracts as build
-failures: no preset peaks above −1 dBFS and none exceeds −31 dBFS gated
+failures: no preset peaks above −1 dBFS and none exceeds −28.5 dBFS gated
 RMS. The trims are attenuation only, and below those ceilings the level
-differences are measurements, not targets — the quiet noise sweeps are
-quiet because the instrument makes them quiet.
+differences follow the original tone settings and current circuit model.
+The [noise-level mismatch](Docs/hardware-validation.md) remains a fidelity gap.
 
 The hardware stores positions, not names; labels such as "Brass Set 1" are
 conventional archival descriptions shown for navigation, not Roland-authored
@@ -458,8 +466,15 @@ directions:
 
 | Message | Bytes | Codec support |
 | --- | --- | --- |
-| Patch data | `F0 41 30 0n <18 tone bytes> F7` | decode and encode |
+| Program patch | `F0 41 30 0n <program> <18 tone bytes> F7` | decode |
+| Manual patch | `F0 41 31 0n 00 <18 tone bytes> F7` | decode and encode |
+| Legacy YouKnow106 patch | `F0 41 30 0n <18 tone bytes> F7` | decode only |
 | Parameter change | `F0 41 32 0n <parameter> <value> F7` | decode and encode |
+
+The program/manual frames follow the [Owner's Manual, MIDI implementation
+§3.1–3.2](https://synthfool.com/docs/Roland/Juno_Series/Roland_Juno_106/Roland_Juno106_Owners_Manual.pdf#page=35).
+Earlier YouKnow106 exports omitted the program byte; those files remain
+readable, while new exports use the documented manual frame.
 
 An incoming patch dump moves the whole panel; an incoming parameter change
 moves only the controls its byte names. Foreign manufacturers, other
@@ -616,7 +631,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
 | OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly. Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) has no minimum-stop resistor on LFO RATE, and the A-5 assigner's [exact ADC conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296) maps raw codes 0–5 to stored byte 0; the physical control path therefore does not force byte 1. Its coincidental 0.109 Hz rate cannot replace the reachable byte-0 rate without a unit measurement. The [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bounds PWM's loaded full-travel duty while raw SysEx retains its overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. The 0.1 Hz floor is no longer a contradiction, only a spec convention: the [rate table at `$0C60`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1809-L1810) opens `0005 000f 0019 0028`, which the model's compact generator reproduces entry for entry, and those coefficients give 0.0363 Hz at byte 0 and **0.1088 Hz at byte 1**. Roland's printed 0.1 Hz to 30 Hz is therefore byte 1 to byte 127 — both endpoints land inside 0.9 % — and byte 0 is a below-spec entry the panel can still reach because nothing stops the slider short. A suspected misread of table entry 0 was checked against the listing and refuted; the entry really is 5. What remains open is only whether a real unit's slowest setting measures 0.036 Hz | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
-| OQ-16 | Installed main-noise spectrum and self-oscillation startup. Level is settled; Roland's p. 13 designators settle the shape class and state ordering (C42's 33.9 Hz high-pass, scanned BA662 level OTA, then C41/R79's 4822.877 Hz pole). Installed-device PSD and startup remain capture questions, as do IC5's output noise versus VCA LEVEL (−16.3..+4.7 dB; NEC publishes NV only at 0 dB) and the six voice cards' contribution to the dry floor: a silent-patch capture at the mono jack with chorus Off would close both. VR32's installed position (hence the NOISE deadband, 4–11 % of travel) and Tr21's selected amplitude are unmeasured; a TP8-versus-NOISE level sweep or a trimmer reading closes both, and a TP8 crest-factor capture would settle whether the BA662 input saturates. The 4 Vp-p reading's scope-crest convention brackets the shipped level between −12.6 and −8.5 dB re the 4.8 Vp-p self-oscillation trim; the model sits at −11.96 dB, exposed through the comparison-only `mainNoiseLevelScale`. A comparison against KR-106 sharpened what that bracket is *about*. The manual anchors both ends of noise-against-self-oscillation at TP8 — 4 Vp-p in s. 9, 6 Vp-p in s. 6 — and the two models read that ratio −11.81 dB here against −2.86 there. Expressed as a scope reading, with the spec's 4 Vp-p marking ±2 V against a 6 Vp-p sine's 2.121 V RMS, this model's band is ±3.67 σ and KR-106's is ±1.31 σ, which would contain 81 % of the samples and visibly spill past the marks; the naive reading that treats a noise peak-to-peak as a sine's predicts −3.52 dB, and KR-106 sits 0.66 dB from it. The shipped reading therefore stands, and the remaining ~5.7 dB of the two models' noise-against-saw difference belongs to OQ-15's drive coordinate rather than here | P2 |
+| OQ-16 | Installed main-noise level, spectrum and self-oscillation startup. Roland’s p. 13 designators settle the shape and ordering (C42 high-pass, scanned BA662 level OTA, C41/R79 low-pass), but the earlier claim that level was settled is withdrawn. A [verified hardware recording](Docs/hardware-validation.md) from Juno-106 #439522 with Borish replacement voice cards puts noise relative to saw about 11.7 dB above this model; a separate same-gain noise take agrees within 0.3 dB. Noise relative to its noise-driven resonator output also differs by roughly 9 dB; a later same-file take with all sources disabled during true self-oscillation confirms an 8.33 dB deficit, contradicting the prior assertion that a stronger reading must be a crest-factor mistake. The shipped level remains provisional: this capture does not establish original 80017A gain, noise-trim condition or the physical TP8 crest factor, and a universal gain correction is not justified. The comparison-only `mainNoiseLevelScale` retains access to level candidates. Original-card TP8-versus-NOISE captures, VR32 position, Tr21 amplitude, installed PSD, startup, and dry-floor measurements remain open | P0 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy. The integrator capacitor no longer splits the saturation bracket: a de-potted original measures ~250 pF across all four stages ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)), which is the 240 pF the sibling schematic prints, and the competing 270 pF is the Analogue Renaissance clone's own value rather than Roland's. The shipped 240 pF stands and the 64.8 kHz branch of the bracket can be retired | P2 |
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled. The gate drive is now read off p. 15 and solved — Tr5/R50/C16 (22 ms) into R48/C13 against R49+R42 (120 ms) into Tr4, whose collector pulls the D4/D5 gate node down — giving about 81 ms from CHORUS off to mute and 115 ms from CHORUS on to open, with Tr4's 0.6 V junction as the only prior. Open are the 2SK30A pair's pinch-off spread (hence the transition's own shape and duration, kept at the declared 5 ms glide), the gate diodes' leakage, and a capture of the switch event on an original | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. **What remains open is the TC4052 itself:** its on-resistance and charge injection are unmodelled, and no capture of a real switch event exists | P2 |

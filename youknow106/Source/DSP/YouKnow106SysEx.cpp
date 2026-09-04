@@ -199,10 +199,18 @@ bool survivesPatchMemory(const Patch& patch) noexcept
 bool readPatchMessage(const std::uint8_t* message, std::size_t length,
                       Patch& patch, int& channel) noexcept
 {
-    if (message == nullptr || length != static_cast<std::size_t>(patchMessageBytes))
+    if (message == nullptr
+        || (length != static_cast<std::size_t>(patchMessageBytes)
+            && length != static_cast<std::size_t>(legacyPatchMessageBytes)))
         return false;
     if (message[0] != sysExStart || message[1] != manufacturerId
-        || message[2] != patchDataOpcode)
+        || (message[2] != patchDataOpcode && message[2] != manualPatchOpcode))
+        return false;
+    // Manual always carries its documented zero marker. Only numbered 0x30
+    // has the older plug-in's short form; hardware 0x30 accepts every program.
+    if (message[2] == manualPatchOpcode
+        && (length != static_cast<std::size_t>(patchMessageBytes)
+            || message[4] != 0))
         return false;
     if (message[length - 1] != sysExEnd)
         return false;
@@ -217,7 +225,7 @@ bool readPatchMessage(const std::uint8_t* message, std::size_t length,
             return false;
 
     channel = message[3] & 0x0fu;
-    patch = patchFromToneBytes(message + 4);
+    patch = patchFromToneBytes(message + length - toneByteCount - 1);
     return true;
 }
 
@@ -229,9 +237,10 @@ std::size_t writePatchMessage(const Patch& patch, int channel, std::uint8_t* out
 
     out[0] = sysExStart;
     out[1] = manufacturerId;
-    out[2] = patchDataOpcode;
+    out[2] = manualPatchOpcode;
     out[3] = static_cast<std::uint8_t>(std::clamp(channel, 0, 15));
-    toneBytesFromPatch(patch, out + 4);
+    out[4] = 0;
+    toneBytesFromPatch(patch, out + 5);
     out[static_cast<std::size_t>(patchMessageBytes) - 1] = sysExEnd;
     return static_cast<std::size_t>(patchMessageBytes);
 }

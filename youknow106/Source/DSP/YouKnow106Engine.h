@@ -178,8 +178,7 @@ struct EngineParameters
     // optional non-linear shapes leaning in -- and one selects the declared
     // full-character reference. Neither end is a claim that any real instrument
     // sits exactly there (no qualifying post-calibration residual data exists
-    // to describe a real population, OQ-10); one is simply the declared
-    // "matches real hardware" reference. The shipped default is 1.0.
+    // to describe a real population, OQ-10). The shipped default is 1.0.
     //
     // Bounded at 2. Every mechanism is written as
     // nominal + (physical - nominal) * calibration, which interpolates only on
@@ -1625,9 +1624,9 @@ private:
     static constexpr float chassisGradientPeakCelsius = 4.0f;
     static constexpr float chassisGradientCards = 2.5f;
     [[nodiscard]] static float chassisGradientCelsius(int cardIndex) noexcept;
-    // The same profile averaged over the six physical cards. The FREQ trim is
-    // set at operating temperature, so what a calibrated instrument carries is
-    // the spread about that mean, not the mean itself.
+    // The same profile averaged over the six physical cards. This centres
+    // the raw thermal model; each card's fixed service trim subsequently
+    // absorbs its own temperature offset at the declared reference time.
     [[nodiscard]] static float chassisGradientMeanCelsius() noexcept;
     [[nodiscard]] static float boundedThermalFilterOmegaStep(
         float baseOmegaStep, const EngineParameters& parameters,
@@ -2281,6 +2280,12 @@ private:
         // then applies it without rebuilding the same exponent-derived card
         // coordinate every internal sample.
         double thermalFilterOmegaScale { 1.0 };
+        // Fixed FREQ adjustment at the declared service temperature. Removes
+        // the pole spread and static thermal contribution already absorbed
+        // by each card's trimmer, before adding its final trim residual.
+        float vcfServiceTrimCounts { 0.0f };
+        float vcfServiceCvScale { 1.0f };
+        float vcfServiceCvOffset { 0.0f };
         // How much of the aged-unit cutoff flattening this card takes: a
         // seeded uniform [0, 1] draw, so some cards drift little -- the
         // documented recalibration's qualitative pattern (most voices about a
@@ -2526,6 +2531,7 @@ private:
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
     void refreshVoiceCardThermalScales() noexcept;
+    void refreshVoiceCardServiceTrims() noexcept;
     void refreshVoiceRampCurrentScales() noexcept;
     void refreshAgedUnitState() noexcept;
     // One internal sample of chassis warm-up: the wall-clock timer and the

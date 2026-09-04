@@ -2958,6 +2958,58 @@ void testSysExPatchRoundTripsThroughTheParameters()
     processor.releaseResources();
 }
 
+void testHardwarePatchFramingReachesLiveAndFilePaths()
+{
+    // A literal Manual dump from the real-unit calibration MIDI, independent
+    // of our writer. The marker at byte four must never become LFO Rate.
+    const std::vector<std::uint8_t> manual {
+        0xf0, 0x41, 0x31, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        0x00, 0x40, 0x00, 0x00, 0x7f, 0x00, 0x00, 0x21, 0x14, 0xf7
+    };
+    auto numbered = manual;
+    numbered[2] = 0x30;
+    numbered[3] = 15;
+    numbered[4] = 127;
+    auto legacy = numbered;
+    legacy.erase (legacy.begin() + 4);
+    for (const auto& message : { manual, numbered, legacy })
+    {
+        YouKnow106AudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        buffer.clear();
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::createSysExMessage (
+            message.data() + 1, static_cast<int> (message.size()) - 2), 0);
+        processor.processBlock (buffer, midi);
+        processor.flushPendingMidiEvents();
+        std::array<std::uint8_t, sysex::toneByteCount> tone {};
+        sysex::toneBytesFromPatch (processor.currentPatch(), tone.data());
+        expect (std::equal (tone.begin(), tone.end(), manual.begin() + 5),
+                "hardware/legacy MIDI framing shifted or discarded the tone bytes");
+        expect (processor.sysExMidiChannel() == message[3],
+                "hardware/legacy MIDI framing lost its channel");
+
+        // The same input must survive file import and export to a documented
+        // Manual frame, even when the original named a program or was legacy.
+        setParameterValue (processor, parameters::cutoff, 1.0f);
+        int count = 0;
+        expect (processor.importPatchSysExBytes (
+                    message.data(), message.size(), count) && count == 1,
+                "hardware/legacy full-tone file did not import");
+        const auto exported = processor.currentPatchAsSysEx (message[3]);
+        expect (exported.getRawDataSize() == 24
+                    && exported.getRawData()[2] == 0x31
+                    && exported.getRawData()[3] == message[3]
+                    && exported.getRawData()[4] == 0
+                    && std::equal (manual.begin() + 5, manual.end(),
+                                   exported.getRawData() + 5),
+                "hardware/legacy file did not export as the documented Manual tone");
+        processor.releaseResources();
+    }
+}
+
 // A .syx file is the live stream written to disk. The importer must find the
 // instrument's patches anywhere in a longer stream, apply exactly the first
 // -- a bank file must not silently keep only its last patch -- and adopt the
@@ -6881,6 +6933,7 @@ int main()
     testProgramChangeAffectsFollowingNoteWithoutTheMessageThread();
     testZeroSampleBlockStillHandlesProgramAndSysEx();
     testSysExPatchRoundTripsThroughTheParameters();
+    testHardwarePatchFramingReachesLiveAndFilePaths();
     testPatchFileImportAppliesFirstPatchAndCountsTheRest();
     testOrderedSysExAffectsAudioWithoutTheMessageThread();
     testReflectionAckCannotRetireShadowAgainstAStaleSnapshot();

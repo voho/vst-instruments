@@ -1487,6 +1487,21 @@ struct YouKnow106TestAccess
         return engine.thermalWarmupFraction_;
     }
 
+    static void startServiceCalibrationVoice(YouKnow106Engine& engine,
+                                             int card, int note) noexcept
+    {
+        // Service p. 19 isolates each card after ten minutes. Suppress only
+        // random control wander while measuring its fixed trim; the entire
+        // oscillator/filter/VCA/output pipeline still renders normally.
+        engine.thermalWarmupSeconds_ = 600.0;
+        engine.thermalWarmupFraction_ = 1.0f - std::exp(-600.0f / 900.0f);
+        engine.driftControlCountdown_ = 1000000000;
+        for (auto& voiceCard : engine.cards_)
+            voiceCard.driftValue = 0.0f;
+        engine.initialiseVoice(engine.voices_[static_cast<std::size_t>(card)],
+                               card, note, 1.0f);
+    }
+
     static std::array<float, 2> thermalOmegaPair(
         const YouKnow106Engine& engine, int cardIndex,
         float baseOmegaStep) noexcept
@@ -8578,6 +8593,53 @@ void testVcfTrimResidualHonoursPrintedWindows()
                "opposed draws do not stay inside their own windows");
 }
 
+void testCompleteVoiceHonoursServiceFrequencyWindows()
+{
+    // Checking cutoffAnalogCounts alone misses the DAC carry, static chassis
+    // gradient and four capacitor errors surrounding those drawn residuals.
+    // These are actual output frequencies at both Roland p. 19 check points.
+    // This validates the simulated circuit's calibration, not a hardware A/B.
+    constexpr double sampleRate = 48000.0;
+    double worstCents = 0.0;
+    for (const int note : { 60, 84 })
+        for (int card = 0; card < YouKnow106Engine::hardwareVoices; ++card)
+        {
+            YouKnow106Engine engine;
+            engine.prepare(sampleRate, blockSize, 4);
+            auto parameters = plainPatch();
+            parameters.calibration = 1.0f;
+            parameters.sawEnabled = false;
+            parameters.pulseEnabled = false;
+            parameters.subLevel = 0.0f;
+            parameters.noiseLevel = 0.0f;
+            parameters.cutoff = 49.0f / 127.0f;
+            parameters.resonance = 1.0f;
+            parameters.keyFollow = 1.0f;
+            parameters.envDepth = 0.0f;
+            parameters.vcfLfoDepth = 0.0f;
+            parameters.vcaMode = VcaMode::Gate;
+            parameters.vcaLevel = 1.0f;
+            parameters.chorus = ChorusMode::Off;
+            parameters.chorusNoise = 0.0f;
+            parameters.aging = 0.0f;
+            engine.setParameters(parameters);
+            YouKnow106TestAccess::startServiceCalibrationVoice(engine, card, note);
+            const auto output = render(engine, 72000);
+            const double frequency = measuredFrequency(
+                output.left, output.left.size() / 2, sampleRate);
+            const double target = note == 60 ? 248.0 : 992.0;
+            const double cents = 1200.0 * std::log2(frequency / target);
+            worstCents = std::max(worstCents, std::abs(cents));
+            expect(std::isfinite(cents) && std::abs(cents) <= 10.0,
+                   "service calibration missed +/-10 cents at MIDI "
+                       + std::to_string(note) + " on card "
+                       + std::to_string(card + 1) + ": "
+                       + std::to_string(cents) + " cents");
+        }
+    std::cout << "Complete-voice VCF service calibration: worst "
+              << worstCents << " cents\n";
+}
+
 void testConverterTimingProfileSelectionAppliesAtReset()
 {
     // The measured-chart profile must be able to drive the complete shipping
@@ -14576,6 +14638,7 @@ int main()
     testRepressingPolyModeRebuildsHeldAssignments();
     testInactiveVoiceKeepsAdvancingPortamento();
     testVcfTrimResidualHonoursPrintedWindows();
+    testCompleteVoiceHonoursServiceFrequencyWindows();
     testConverterTimingProfileSelectionAppliesAtReset();
     testAgedUnitExtensionStaysInertByDefault();
     testPortamentoStateUsesEightEightGrid();

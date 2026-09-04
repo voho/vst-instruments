@@ -108,7 +108,7 @@ public:
     // The current patch as a system-exclusive message the hardware would accept.
     juce::MidiMessage currentPatchAsSysEx (int channel) const;
     // Message thread. Scans a .syx file image for the instrument's own
-    // F0 41 30 0n patch dumps, applies the first and counts every one the
+    // program/manual patch dumps, applies the first and counts every one the
     // file carries. Anything else in the stream -- other makers, other
     // opcodes, single-parameter messages -- is passed over, exactly as the
     // live MIDI path passes it over.

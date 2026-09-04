@@ -1408,7 +1408,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float clockB = std::clamp(clockForDelaySeconds(delayB),
                                     minimumClockHz, maximumClockHz);
 
-    const auto& wetOutputTransition = mode == ChorusMode::Off
+    // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
+    // loading follows the RC-delayed gate state. The button command can
+    // precede that switch by roughly 81 ms off or 115 ms on.
+    const auto& wetOutputTransition = muteDriveMuted_
         ? support_.exactOutputMuted
         : support_.exactOutputConnected;
     // The relative real-instrument calibration and its alternative causal

@@ -4,6 +4,7 @@
 /cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
+__pycache__/
 
 # Xcode user state
 *.xcuserstate

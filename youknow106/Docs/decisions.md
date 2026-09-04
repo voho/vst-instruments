@@ -5,7 +5,36 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
-## 2026-09-04 — The noise gap is a crest-factor reading, and this project's is the defensible one
+## 2026-09-04 — Identified hardware comparison and complete-voice calibration
+
+The [hardware validation report](hardware-validation.md) supersedes the noise
+certainty in the entry below. The corrected 96 kHz calibration recording from
+Juno-106 #439522 (Borish replacement voice cards, serviced 2022) puts noise
+relative to saw about 11.7 dB above this model, independently corroborated by
+another same-gain noise recording. The pulse level differs by about 1.3 dB;
+the default sub level agrees within about 0.2 dB. No source level was fitted
+to this one restored unit. Original-card TP8 captures remain necessary to
+resolve the noise level and original-module drive; OQ-16 is reopened as P0.
+A later same-file noise/isolated-self-oscillation take confirms an 8.33 dB
+noise deficit against the nominal model, removing the ambiguity of a
+noise-driven resonance reference.
+
+The recording's exact Manual SysEx messages also exposed the codec's missing
+program/manual byte. New exports use documented 24-byte Manual frames;
+numbered hardware dumps and earlier YouKnow106 exports are accepted. The
+live MIDI path and calibration-take generator share that correction.
+
+Separately, fixed per-card FREQ/WIDTH calibration now absorbs the static
+capacitor, converter and thermal errors that were previously added after
+the final trim residual. The full output, at the declared ten-minute service
+state and with random wander suppressed, improves from about 53 cents worst
+error to under 6 cents at the twelve 248/992 Hz check points. This is a
+service-procedure result, not a fit to the recording. The chorus's output
+coupling load now follows the modeled mute transistor's delayed state,
+correcting its previously premature load change. Unit Character text no
+longer claims a measured hardware population.
+
+## 2026-09-04 — Earlier noise crest-factor interpretation (certainty withdrawn above)
 
 Twenty further factory presets compared against KR-106 put three of them 13 to
 15 dB apart where the other seventeen sat inside a 5 dB band — and all three

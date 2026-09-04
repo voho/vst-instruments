@@ -284,7 +284,7 @@ private:
     void selectHardwareProgram();
     void refreshPresetBar();
     // Patch-file transfer, LOAD/SAVE keys and drag-and-drop alike. Files
-    // carry the hardware's own F0 41 30 patch dumps and nothing else.
+    // carry the hardware's program/manual patch dumps.
     void chooseAndImportPatchFile();
     void chooseAndExportPatchFile();
     void importPatchFile (const juce::File& file);

@@ -547,9 +547,8 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
     // Keep the historical id and parameter slot so existing automation remains
     // attached; a stored session value still wins over this default, so only
-    // new instances move. Zero is the calibrated nominal model and one is the
-    // "matches real hardware" reference every rendered fixture in this
-    // repository defaults to.
+    // new instances move. Zero is the nominal circuit model and one is the
+    // default voiced character profile, not a measured population of units.
     //
     // The range used to continue to 100, to reach the exaggerated-for-contrast
     // territory the comparison-rendering tools used. Those tools no longer
@@ -1204,7 +1203,8 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 // switch combinations before the consumer had even seen them.
                 PendingMidiEvent event;
                 event.kind = PendingMidiEventKind::FullPatch;
-                std::copy_n (raw + 4, sysex::toneByteCount, event.bytes.begin());
+                std::copy_n (raw + length - 1 - sysex::toneByteCount,
+                             sysex::toneByteCount, event.bytes.begin());
                 stageAndApplyPendingMidiEvent (event);
             }
             else if (sysex::readParameterMessage (

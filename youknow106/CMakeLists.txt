@@ -262,6 +262,10 @@ if(YOUKNOW106_BUILD_TOOLS)
         PRIVATE YouKnow106DSP Threads::Threads)
     target_compile_features(YouKnow106MakeCalibrationTakes PRIVATE cxx_std_20)
 
+    add_executable(YouKnow106RenderCalibrationEvents Tools/RenderCalibrationEvents.cpp)
+    target_link_libraries(YouKnow106RenderCalibrationEvents PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderCalibrationEvents PRIVATE cxx_std_20)
+
     add_executable(YouKnow106AuditFactoryPresets Tools/AuditFactoryPresets.cpp)
     target_link_libraries(YouKnow106AuditFactoryPresets
         PRIVATE YouKnow106DSP Threads::Threads)
@@ -486,6 +490,8 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow106.SysEx COMMAND YouKnow106SysExTests)
 
     if(YOUKNOW106_BUILD_TOOLS)
+        add_test(NAME YouKnow106.CalibrationEvents
+                 COMMAND YouKnow106RenderCalibrationEvents --self-test)
         # Guards the renderer that produces the committed demonstration WAVs:
         # it renders a short take to a temporary directory and checks that the
         # audio is finite, audible and written as a readable WAV.
