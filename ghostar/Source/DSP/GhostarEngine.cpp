@@ -520,27 +520,47 @@ namespace
              * selectedWaveConditionerGain * bipolarDelta;
     }
 
-    // Registers the discontinuity events one linear phase segment crosses:
-    // the pulse's falling edge at the duty boundary, the triangle's corner
-    // at 0.5, and the wrap at 1 (a saw or pulse value jump and a triangle
-    // corner at once). The frequency cap keeps a sample's advance under
-    // half a cycle, so each boundary is crossed at most once — except the
-    // duty and 0.5 boundaries, which can be crossed a second time after a
-    // wrap, and are re-checked there.
+    // The CEM3340 diagram compares half the saw voltage against pin 5's
+    // continuous PWM control. Interpolate that control over the circuit
+    // tick and solve its crossing with the saw, including a boundary moving
+    // backwards through the phase. Quantizing such a crossing to the sample
+    // start adds timing modulation absent from the analog comparator.
+    // Each no-wrap segment is linear in both inputs, hence has at most one
+    // crossing. The existing BLEP corrects it at that fractional instant.
+    // Source: CES CEM3340/3345 datasheet, circuit block diagram, p. 1:
+    // https://sandsoftwaresound.net/wp-content/uploads/2021/03/CES_CEM3340_VCO.pdf
     void scanLinearSegment(double startPhase, double uStart, double uEnd,
-                           double step, Waveform waveform, double duty,
+                           double step, Waveform waveform,
+                           double dutyStart, double dutyEnd,
                            OscCorrections& c, double& endPhase) noexcept
     {
-        const double advance = (uEnd - uStart) * step;
-        const double target = startPhase + advance;
         const bool isPulse =
             waveform != Waveform::Triangle && waveform != Waveform::Sawtooth;
+        // Subtract the two affine inputs before evaluating either one.
+        // Separately rounding phase and duty at a wrap can make coincident,
+        // equal-slope inputs appear to cross over the entire remaining tick.
+        const double phaseIntercept = std::fma(-step, uStart, startPhase);
+        const double relativeSlope = step - (dutyEnd - dutyStart);
+        const double target = std::fma(step, uEnd, phaseIntercept);
 
         const auto crossing = [&](double boundary) noexcept {
             return uStart + (boundary - startPhase) / step;
         };
-        const auto pulseEdge = [&](double u) noexcept {
-            addStepEvent(c.selectedHeld, c.selectedNow, u, -2.0);
+        const auto pulseSegment = [&](double relativeIntercept,
+                                      double firstU, double lastU) noexcept {
+            if (!isPulse)
+                return;
+            const double firstDifference =
+                std::fma(relativeSlope, firstU, relativeIntercept);
+            const double lastDifference =
+                std::fma(relativeSlope, lastU, relativeIntercept);
+            if ((firstDifference < 0.0) == (lastDifference < 0.0))
+                return;
+            const double fraction = firstDifference
+                                  / (firstDifference - lastDifference);
+            addStepEvent(c.selectedHeld, c.selectedNow,
+                         std::lerp(firstU, lastU, fraction),
+                         firstDifference < 0.0 ? -2.0 : 2.0);
         };
         const auto triangleCorner = [&](double u, double change) noexcept {
             addRampEvent(c.triangleHeld, c.triangleNow, u, change * step);
@@ -549,42 +569,41 @@ namespace
                              change * step);
         };
 
-        // Boundaries below 1, in phase order. duty may sit on either side
-        // of the triangle corner, or exactly on it (the 50 % position), so
-        // each boundary fires its own events once and a coincident pair is
-        // visited once.
-        const double first = std::min(duty, 0.5);
-        const double second = std::max(duty, 0.5);
-        for (int index = 0; index < (second > first ? 2 : 1); ++index)
-        {
-            const double boundary = index == 0 ? first : second;
-            if (!(startPhase < boundary && boundary <= target))
-                continue;
-            const double u = crossing(boundary);
-            if (boundary == duty && isPulse)
-                pulseEdge(u);
-            if (boundary == 0.5)
-                triangleCorner(u, -8.0);
-        }
+        if (startPhase < 0.5 && 0.5 <= target)
+            triangleCorner(crossing(0.5), -8.0);
 
         if (target >= 1.0)
         {
             const double u = crossing(1.0);
+            const double beforeIntercept = phaseIntercept - dutyStart;
+            const double afterIntercept = (phaseIntercept - 1.0) - dutyStart;
+            pulseSegment(beforeIntercept, uStart, u);
             if (waveform == Waveform::Sawtooth)
                 addStepEvent(c.selectedHeld, c.selectedNow, u, -2.0);
             else if (isPulse)
-                addStepEvent(c.selectedHeld, c.selectedNow, u, 2.0);
+            {
+                const double before =
+                    std::fma(relativeSlope, u, beforeIntercept);
+                const double after =
+                    std::fma(relativeSlope, u, afterIntercept);
+                addStepEvent(c.selectedHeld, c.selectedNow, u,
+                             (after < 0.0 ? 1.0 : -1.0)
+                                 - (before < 0.0 ? 1.0 : -1.0));
+            }
             triangleCorner(u, 8.0);
 
-            const double wrapped = target - 1.0;
-            if (isPulse && duty <= wrapped)
-                pulseEdge(crossing(1.0 + duty));
+            // Subtract the wrap before adding the phase advance, matching
+            // the comparator's affine origin. Adding across 1 first can
+            // discard the low bits that decide an equal-input endpoint.
+            const double wrapped = std::fma(step, uEnd, phaseIntercept - 1.0);
+            pulseSegment(afterIntercept, u, uEnd);
             if (0.5 <= wrapped)
                 triangleCorner(crossing(1.5), -8.0);
             endPhase = wrapped;
         }
         else
         {
+            pulseSegment(phaseIntercept - dutyStart, uStart, uEnd);
             endPhase = target;
         }
     }
@@ -595,19 +614,37 @@ namespace
     // corrected against the phase the wave actually held at the reset
     // instant. Returns the end-of-sample phase.
     [[nodiscard]] double scanOscillatorSample(double oldPhase, double step,
-                                              Waveform waveform, double duty,
+                                              Waveform waveform,
+                                              double dutyStart, double dutyEnd,
                                               double resetU,
                                               OscCorrections& c) noexcept
     {
         double endPhase = oldPhase;
         if (resetU >= 0.0)
         {
-            scanLinearSegment(oldPhase, 0.0, resetU, step, waveform, duty, c,
-                              endPhase);
+            scanLinearSegment(oldPhase, 0.0, resetU, step, waveform,
+                              dutyStart, dutyEnd, c, endPhase);
             const double preReset = endPhase;
 
-            const double selectedJump = naiveWave(waveform, 0.0, duty)
-                                      - naiveWave(waveform, preReset, duty);
+            const double duty = std::lerp(dutyStart, dutyEnd, resetU);
+            double selectedJump = naiveWave(waveform, 0.0, duty)
+                                - naiveWave(waveform, preReset, duty);
+            if (waveform != Waveform::Triangle && waveform != Waveform::Sawtooth)
+            {
+                // Use the same affine differences as the segments on both
+                // sides of reset, including a natural wrap before reset.
+                const double relativeSlope = step - (dutyEnd - dutyStart);
+                const double beforeIntercept =
+                    (std::fma(step, resetU, oldPhase) >= 1.0
+                        ? oldPhase - 1.0 : oldPhase) - dutyStart;
+                const double afterIntercept =
+                    std::fma(-step, resetU, 0.0) - dutyStart;
+                selectedJump =
+                    (std::fma(relativeSlope, resetU, afterIntercept) < 0.0
+                        ? 1.0 : -1.0)
+                    - (std::fma(relativeSlope, resetU, beforeIntercept) < 0.0
+                        ? 1.0 : -1.0);
+            }
             if (selectedJump != 0.0)
                 addStepEvent(c.selectedHeld, c.selectedNow, resetU,
                              selectedJump);
@@ -620,13 +657,13 @@ namespace
             addRampEvent(c.triangleHeld, c.triangleNow, resetU,
                          (4.0 - triangleSlope(preReset)) * step);
 
-            scanLinearSegment(0.0, resetU, 1.0, step, waveform, duty, c,
-                              endPhase);
+            scanLinearSegment(0.0, resetU, 1.0, step, waveform,
+                              dutyStart, dutyEnd, c, endPhase);
         }
         else
         {
-            scanLinearSegment(oldPhase, 0.0, 1.0, step, waveform, duty, c,
-                              endPhase);
+            scanLinearSegment(oldPhase, 0.0, 1.0, step, waveform,
+                              dutyStart, dutyEnd, c, endPhase);
         }
         return endPhase;
     }
@@ -3057,32 +3094,17 @@ void GhostarEngine::renderVoiceSample(double externalAudio) noexcept
         0.45 * internalRate_);
     const double stepB = frequencyB * dt;
     // The selector's narrowest B pulse is 3%, but the CEM3340 PWM input is
-    // explicitly capable of 0..100%.  Wheel modulation therefore reaches
-    // the constant-low/high endpoint plateaus instead of an invented 3%
-    // guard band; coincident endpoint BLEP events cancel algebraically.
-    const double dutyB =
-        std::clamp(oscBDuty_ + controlPwmB_, 0.0, 1.0);
+    // explicitly capable of 0..100%. Preserve the raw comparator control
+    // outside that range: the comparator naturally stays low/high there,
+    // but a return from overrange must cross from the actual old voltage,
+    // not from an artificially clamped endpoint.
+    const double dutyB = oscBDuty_ + controlPwmB_;
+    // A selector change has no preceding boundary in the new waveform.
+    // Preserve the old held voltage separately and start the new position
+    // at its selected duty; only same-selector PWM interpolates the input.
+    const double dutyStartB = heldWaveformB_ == p.oscBWaveform
+        ? heldDutyB_ : dutyB;
     OscCorrections corrB {};
-
-    // A modulated duty boundary can cross the standing phase between two
-    // samples — a value jump no phase crossing sees — so the jump the duty
-    // move itself makes is registered as an event at this sample's start.
-    const auto dutyMoveEvent = [](Waveform previousWaveform,
-                                  Waveform waveform, double phase,
-                                  double previousDuty, double duty,
-                                  OscCorrections& c) noexcept {
-        // A selector change has no previous duty boundary in the newly
-        // selected waveform. Its old held sample is handled separately;
-        // only continuous pulse-to-same-pulse PWM can move a boundary.
-        if (previousWaveform != waveform
-            || waveform == Waveform::Triangle
-            || waveform == Waveform::Sawtooth)
-            return;
-        const double jump = naiveWave(waveform, phase, duty)
-                          - naiveWave(waveform, phase, previousDuty);
-        if (jump != 0.0)
-            addStepEvent(c.selectedHeld, c.selectedNow, 0.0, jump);
-    };
 
     double waveB = 0.0;
     double triB = 0.0;
@@ -3118,10 +3140,8 @@ void GhostarEngine::renderVoiceSample(double externalAudio) noexcept
     // first and let A/PWM receive the fully corrected physical waveform.
     if (!p.sync)
     {
-        dutyMoveEvent(heldWaveformB_, p.oscBWaveform, phaseB_,
-                      heldDutyB_, dutyB, corrB);
         phaseB_ = scanOscillatorSample(
-            phaseB_, stepB, p.oscBWaveform, dutyB, -1.0, corrB);
+            phaseB_, stepB, p.oscBWaveform, dutyStartB, dutyB, -1.0, corrB);
         emitB();
     }
 
@@ -3146,16 +3166,13 @@ void GhostarEngine::renderVoiceSample(double externalAudio) noexcept
         std::min(440.0 * std::exp2(pitchA),
                  0.45 * internalRate_);
     const double stepA = frequencyA * dt;
-    const double dutyA =
-        std::clamp(oscADuty_ + controlPwmA_ + audioModDuty, 0.0, 1.0);
+    const double dutyA = oscADuty_ + controlPwmA_ + audioModDuty;
+    const double dutyStartA = heldWaveformA_ == p.oscAWaveform
+        ? heldDutyA_ : dutyA;
     OscCorrections corrA {};
-    dutyMoveEvent(heldWaveformA_, p.oscAWaveform, phaseA_,
-                  heldDutyA_, dutyA, corrA);
 
     if (p.sync)
     {
-        dutyMoveEvent(heldWaveformB_, p.oscBWaveform, phaseB_,
-                      heldDutyB_, dutyB, corrB);
         // P1014's conventional hard-sync network leaves both CEM pin-6
         // inputs open.  Instead A's raw 8->0 V saw fall (before RS5) passes
         // SW2/C24/BC308/R107 into B's pins 9/10 and resets B at that wrap's
@@ -3166,15 +3183,15 @@ void GhostarEngine::renderVoiceSample(double externalAudio) noexcept
                                   ? (1.0 - phaseA_) / stepA
                                   : -1.0;
         phaseA_ = scanOscillatorSample(
-            phaseA_, stepA, p.oscAWaveform, dutyA, -1.0, corrA);
+            phaseA_, stepA, p.oscAWaveform, dutyStartA, dutyA, -1.0, corrA);
         phaseB_ = scanOscillatorSample(
-            phaseB_, stepB, p.oscBWaveform, dutyB, resetU, corrB);
+            phaseB_, stepB, p.oscBWaveform, dutyStartB, dutyB, resetU, corrB);
         emitB();
     }
     else
     {
         phaseA_ = scanOscillatorSample(
-            phaseA_, stepA, p.oscAWaveform, dutyA, -1.0, corrA);
+            phaseA_, stepA, p.oscAWaveform, dutyStartA, dutyA, -1.0, corrA);
     }
 
     // Cyclic routes predicted their phase step from causal prior B above.

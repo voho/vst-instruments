@@ -119,7 +119,7 @@ self-oscillation as the manual warns; and the arpeggiator runs the documented
 [![Ghostar](ghostar/Docs/screenshots/ghostar-standalone.png)](ghostar/README.md)
 
 Circuit-modelled monophonic dual-filter analog synthesizer, built from the
-documentation of a 1983 Moog-designed Italian mono synth: two bandlimited
+documentation of a 1983 Italian mono synth: two bandlimited
 oscillators with hard sync, a triangle-cross ring modulator, and the signature
 series dual filter — a lower multimode section sliding against a 12/24 dB upper
 lowpass with a frozen-formant tracking mode — feeding two parallel audio paths.
@@ -128,7 +128,7 @@ voiced: the resonance curve from the filter chip's own Q scale, both filter
 nonlinearities from a diode's forward characteristic, and the envelope timing
 from the 556 timer circuit the service drawing shows.
 
-[Twelve audio demos](ghostar/README.md#audio-demos) · [How it works](ghostar/README.md#how-it-works)
+[Thirteen audio demos](ghostar/README.md#audio-demos) · [How it works](ghostar/README.md#how-it-works)
 
 ---
 

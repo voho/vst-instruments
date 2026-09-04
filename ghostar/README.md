@@ -1,8 +1,7 @@
 # Ghostar
 
 A circuit-modelled monophonic dual-filter analog synthesizer, built block by
-block from the documentation of a 1983 instrument — the Crumar Spirit,
-designed by Jim Scott, Tom Rhea and Bob Moog for Crumar s.p.a. VST3, Audio
+block from the documentation and circuitry of a 1983 Italian instrument. VST3, Audio
 Unit and Standalone, universal `arm64`/`x86_64` on macOS, plus Linux and
 Windows.
 
@@ -22,7 +21,7 @@ Ghostar is at version 0.9.0: a complete front-panel instrument whose remaining
 measured and modelled uncertainties are kept explicit rather than presented as
 circuit facts. It is
 an independent original implementation, not affiliated with, endorsed by, or
-licensed by Crumar or its successors, and contains no firmware, ROM data,
+licensed by the original manufacturer or its successors, and contains no firmware, ROM data,
 samples or captured audio. Its name and livery are its own.
 
 The modelled hardware shipped no presets — its manual taught eleven **Sound
@@ -34,7 +33,7 @@ as playable.
 
 ## Audio demos
 
-Twelve maintained takes, rendered by
+Thirteen maintained takes, rendered by
 [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp) from the same JUCE-free
 `ghostar::GhostarEngine` the plug-in runs — no samples and no external
 processing anywhere. Each exercises one signature mechanism: the
@@ -65,6 +64,7 @@ Files are 44.1 kHz 16-bit stereo, peak-normalised to −3 dBFS.
 | `10-red-noise-drift.wav` | RED NOISE wander on both oscillators' pitch | 8.3 s | −4.6 dBFS | +1.6 dB |
 | `11-resonance-sweep.wav` | The resonance travel end to end: gentle for half its journey, then steep into self-oscillation | 10.8 s | −12.8 dBFS | +9.8 dB |
 | `12-program-tour.wav` | Six of the Ghostar Programs in turn, each with a phrase that suits it | 20.1 s | −0.7 dBFS | −2.3 dB |
+| `13-high-register-sync.wav` | Bright high-register hard sync: saw and 20 % pulse phrases through an open upper filter | 8.8 s | −6.9 dBFS | +3.9 dB |
 <!-- peaks-table-end -->
 
 ## How it works
@@ -79,19 +79,19 @@ under [Known gaps](#known-gaps) with the measurement that would close each.
 
 ### Primary sources
 
-- **OM** — Crumar Spirit Owner's Manual, 30-page factory scan
+- **OM** — Original instrument's owner's manual, 30-page factory scan
   ([manuals.fdiskc.com](https://manuals.fdiskc.com/tree/Crumar/Crumar%20Spirit%20Owners%20Manual.pdf),
   mirror [archive.org](https://archive.org/details/manualzilla-id-6890440)).
   Printed pages 17–25 — the generic tutorial chapter — are missing from every
   circulating scan; every control-reference page survives.
-- **SM** — Crumar Spirit Service Manual: schematics DWG 1–3, PCB layouts,
+- **SM** — Original instrument's service manual: schematics DWG 1–3, PCB layouts,
   component list, errata
   ([midimanuals.com](http://www.midimanuals.com/manuals/crumar/spirit/service_manual/spiritservicemanual.pdf),
   600 dpi mirror [archive.org](https://archive.org/details/sm_Crumar_Spirit_Service_Manual)).
   No calibration text exists — schematics, parts and errata only.
 - **RM** — 2023 reissue User Manual, a verbatim re-typeset of OM plus a
   trimmers chapter and MIDI addendum, linked from
-  [crumarspirit.com](https://www.crumarspirit.com/).
+  [the manufacturer's historical page](https://www.crumarspirit.com/).
 - [**CEM3340/3345 datasheet**](https://sandsoftwaresound.net/wp-content/uploads/2021/03/CES_CEM3340_VCO.pdf)
   (VCO, CES © 1980) and the complete four-page
   [**CEM3350 preliminary datasheet**](https://sandsoftwaresound.net/wp-content/uploads/2021/03/CES_CEM3350_VCF_Prelim.pdf)
@@ -116,7 +116,7 @@ under [Known gaps](#known-gaps) with the measurement that would close each.
   (curve set D4) — the BA130 forward characteristic used by the local high-Q
   and OVERDRIVE branches.
 - [**Tom Rhea memo, 25 May 1981**](https://www.drtomrhea.com/_files/ugd/a27ff8_9336666b18834d1790849ade46fc221c.pdf),
-  to Bob Moog and Jim Scott, preserving the project's earlier dual-filter
+  to the co-designers, preserving the project's earlier dual-filter
   proposal and its SERIES/PARALLEL plus CLEAN/DISTORT concept. Design-history
   evidence, not a truth table for the production RS7 switch.
 - **Signetics 555/556 1973 databook** and **AN170**, for the 556A timer
@@ -124,9 +124,9 @@ under [Known gaps](#known-gaps) with the measurement that would close each.
 - [**National Semiconductor 1977 MOS/LSI databook**](https://bitsavers.trailing-edge.com/components/national/_dataBooks/1977_National_MOS_LSI_databook.pdf),
   MM5837 pp. 3-14–3-15: the self-clocked digital noise source's levels,
   1.1–2.4 s cycle and 24–56 kHz half-power point.
-- [**US 3,943,456**](https://till.com/articles/moog/patents.html) (Luce/Moog
-  Music, 1976) — the variable-rate-integrator signal generator that is the
-  Shaper Y core, attributed to the Spirit by J. D. Tillman and corroborated by
+- [**US 3,943,456**](https://till.com/articles/moog/patents.html) (D. A. Luce,
+  1976) — the variable-rate-integrator signal generator that is the
+  Shaper Y core, attributed to this instrument by J. D. Tillman and corroborated by
   the P1015 schematic's OTA-integrator topology.
 - Panel silkscreen verified against photos of serials 00045 and 00046.
   Where OM prose and the silkscreen disagree the silkscreen wins — it agrees
@@ -135,6 +135,33 @@ under [Known gaps](#known-gaps) with the measurement that would close each.
 - Secondary colour: Sound On Sound Retrozone (Gordon Reid, 2001), Amazona
   Blue Box, GreatSynthesizers reissue notes, and Cherry Audio's licensed 2025
   behavioural recreation with its history chapter.
+
+### Real recording references
+
+Original-hardware performances were retrieved and analyzed on 5 September
+2026 from [the recordist's archive](https://greatsynthesizers.com/en/general/crumar-spirit-reissue-soundfiles-soundsheet/)
+and [a performer's account of sessions on a co-designer's instrument](https://inspiredbysound.net/crumar-spirit-2/).
+The archive explicitly identifies its recordings as vintage hardware. The
+second performer documents overdubs and digital spring reverb, with no EQ.
+Downloaded recordings are research references only; none is bundled.
+
+| Hardware recording | Duration | Decoded sample peak | Whole-file RMS | Crest factor |
+| --- | ---: | ---: | ---: | ---: |
+| [Filter performance](https://greatsynthesizers.com/wp/wp-content/uploads/2023/08/Crumar-Spirit-Filter-Power.mp3) | 155.737 s | +1.96 dBFS | −16.90 dBFS | 18.86 dB |
+| [Hard-sync performance](https://greatsynthesizers.com/wp/wp-content/uploads/2023/08/Crumar-Spirit-OscSync-Power.mp3) | 98.376 s | +1.16 dBFS | −15.13 dBFS | 16.29 dB |
+| [Owner's second performance](https://inspiredbysound.net/wp-content/uploads/2022/08/34db5-thats-the-spirit.mp3) | 352.261 s | −0.26 dBFS | −18.21 dBFS | 17.95 dB |
+
+These measurements use untrimmed, native 44.1 kHz stereo float32 decoding
+with FFmpeg; RMS includes silence and both channels, and peak means sample
+peak, not reconstructed true peak. An independent `astats` pass agrees with
+the numerical reductions. Float decoding preserves the MP3 overshoots above
+full scale; those peaks cannot identify the analog circuit's clipping level.
+Unknown patches, gain and processing prevent parameter fitting or claims of
+matched hardware response. The recordings guide audition coverage; the
+remaining circuit calibration still requires controlled same-unit captures.
+
+Reproduce the decoded peak and RMS with
+`ffmpeg -i reference.mp3 -af astats=metadata=0:reset=0 -f null -`.
 
 ### Architecture
 
@@ -199,7 +226,16 @@ and PWM.
 **Band-limiting.** Every phase or same-selector duty discontinuity is
 corrected as a sub-sample event — BLEP for the value jumps of saw, pulse and a
 moving duty edge, BLAMP for the triangle's corners, and both for the hard-sync
-reset. The CEM3340's documented 0…100 % PWM span is preserved, so wheel
+reset. The pulse comparator solves the intersection of the saw and a linearly
+interpolated PWM control on each circuit tick, including reverse crossings and
+both segments around a hard-sync reset. The raw control is retained beyond
+the saw's range: the comparator supplies the constant-output plateaus, so
+leaving a plateau does not acquire a false edge from premature control clipping.
+This is a first-order reconstruction of the control voltage, not an invented
+component time constant. Hand-solved regressions check emitted and deferred
+BLEP samples at four sample rates. Shared affine calculations across wrap and
+sync preserve coincident inputs and real near-coincident crossings without
+an epsilon deadband. The CEM3340's documented 0…100 % PWM span is preserved, so wheel
 modulation can reach constant-low and constant-high plateaus; the panel's 3 %
 is only Osc B's narrowest detent. A live selector change emits the already
 deferred sample in its old waveform's physical scale, suppresses any fictitious
@@ -272,7 +308,7 @@ removes a trapezoidal alternating mode without inventing resistance.
 ### Filters — the signature
 
 Both hardware filters are CEM3350 dual state-variable sections, not a
-transistor ladder despite the Moog pedigree. Ghostar models the resolved Upper
+transistor ladder. Ghostar models the resolved Upper
 sections as TPT state-variable filters; its controlled half includes the
 complete external C37 high-Q loop, and the fixed half stays linear because it
 has no such branch. Lower uses the production topology, reduced with the two
@@ -347,7 +383,7 @@ UNPLUGGED/PLUGGED state and a source-side PITCH CV control. Its
 `−5.5…+5.5 V` range is a product policy, not a documented hardware-safe
 range. In PLUGGED, 0 V maps to P1016's cancellation point, MIDI-equivalent
 60.006015, and each +1.1 V moves one calibrated octave. Ghostar models the
-control as a Spirit-compatible 15 kΩ Thevenin source: D loads to
+control as a hardware-compatible 15 kΩ Thevenin source: D loads to
 `N = D·95.3/(15 + 95.3)`, then IC16B's 100 kΩ feedback gives
 `P = −N·100/95.3`. The resulting 0.9504 V/octave at N and
 −0.9973 V/octave at P reproduce the schematic's rounded 0.95/−1 labels; the
@@ -571,9 +607,9 @@ drives the LFO's rate, and the S&H runs off Y's own staircase.
 
 ## Known gaps
 
-**No calibration-grade hardware data set exists.** No filter, envelope,
-noise-level or control-depth captures of a Spirit have been published. The
-first measured unit would become this project's ground truth; isolated
+**This project has no calibration-grade hardware data set.** Public musical
+recordings do not establish filter, envelope, noise-level or control-depth
+calibration. The first measured unit would become this project's ground truth; isolated
 observations such as SOS's interval endpoint are useful corroboration, not a
 same-unit calibration set.
 
@@ -611,6 +647,19 @@ now gives is a sound upper bound on how far the shipping render differs from a
 ## Release history
 
 ### 0.9.0 — unreleased
+
+**Comparator and panel accuracy.** Moving pulse-width edges now occur at the
+analog comparator's interpolated crossing instead of the circuit tick's
+start, including reverse motion, sync and overrange PWM. The panel follows
+an [overhead photograph of original hardware published in 2014](https://www.matrixsynth.com/2014/06/crumar-spirit-vintage-analog.html):
+the stepped mixer under the wheel destinations, stacked filter and envelope
+sections, full-height modulation columns, wood rails and three performance
+wheels. Rotary selectors and paddles retain native keyboard-accessible
+menus. A separate preset strip and rear-connections drawer accommodate host
+controls. Public labels, tooltips and programs use Ghostar's identity; the
+first performance preset is now **Ghost Bass**, at the same saved index.
+Hardware photos and recordings are references; neither is embedded in the
+product. A high-register saw/pulse sync audition extends the demo coverage.
 
 **First complete front-panel instrument.** VST3, Audio Unit and Standalone for macOS
 (universal), Linux and Windows, wrapping the circuit-modelled engine: two
@@ -716,17 +765,12 @@ being pinned to one window size. Standalone powers up at Init rather than
 letting an automatic last-state restore put an edited panel behind the Init
 name.
 
-The fidelity pass also carries ten panel details into the software rather
-than treating the original layout as decoration: (1) engraved 0--10 knob
-divisions, (2) a positive centre index on bipolar controls, (3) 0/5/10 slider
-marks, (4) multi-position selector index slots, (5) explicit ON/OFF rocker
-legends, (6) the dark wood side cheeks, (7) recessed chassis screws, (8) an
-`L -> U` reminder of the Spirit's defining series-filter order, (9) visible
-keyboard-focus rings, and (10) safe editing semantics -- keyboard operation,
-double-click return to the patch default, and disabled accidental wheel
-scrolling. These are derived from the surviving panel silkscreen and control
-geometry cited under Primary sources; the accessibility treatment is an
-intentional software addition, not attributed to the hardware.
+The panel carries the hardware's 0–10 knob scales, centre indices, 0/5/10
+fader-bank markings, detented selectors and explicit paddle legends into the
+software. Keyboard focus rings, native selection menus, double-click return
+to defaults and protection against accidental knob scrolling support editing.
+These interaction aids are software additions; the hardware photographs
+establish the geometry and physical control styling.
 
 **Host behaviour.** Every modelled panel control is an automatable parameter
 with the silkscreen's own detent labels — the spring-loaded bend wheel is the

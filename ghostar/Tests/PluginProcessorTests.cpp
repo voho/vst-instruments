@@ -261,6 +261,20 @@ juce::Image renderEditorSnapshot(juce::AudioProcessorEditor& editor)
     return snapshot;
 }
 
+void saveRequestedSnapshot(const juce::Image& snapshot, const char* variable)
+{
+    const auto path = juce::SystemStats::getEnvironmentVariable(variable, {});
+    if (path.isEmpty())
+        return;
+    const juce::File file { path };
+    file.getParentDirectory().createDirectory();
+    juce::FileOutputStream output { file };
+    juce::PNGImageFormat png;
+    expect(snapshot.isValid() && output.openedOk() && output.setPosition(0)
+               && output.truncate() && png.writeImageToStream(snapshot, output),
+           std::string("could not write requested snapshot: ") + variable);
+}
+
 // A panel that rendered as one flat colour would still be "valid"; what we
 // actually want to know is that it drew something.
 bool snapshotHasDetail(const juce::Image& snapshot)
@@ -280,6 +294,94 @@ bool snapshotHasDetail(const juce::Image& snapshot)
                 return true;
         }
     return distinct.size() > 8;
+}
+
+// Check the actual host strings and component tree, including the tooltips
+// and choices that are invisible in a screenshot. Source-reference URLs and
+// circuit part numbers belong in engineering documentation, not the panel.
+void checkPublicText(const juce::String& text)
+{
+    for (const auto* excluded : { "crumar", "spirit", "moog" })
+        expect(!text.containsIgnoreCase(excluded),
+               "original manufacturer/model name in public text: "
+                   + text.toStdString());
+}
+
+void checkComponentText(juce::Component& component)
+{
+    checkPublicText(component.getName());
+    checkPublicText(component.getTitle());
+    checkPublicText(component.getDescription());
+    if (auto* tooltip = dynamic_cast<juce::TooltipClient*>(&component))
+        checkPublicText(tooltip->getTooltip());
+    if (const auto* label = dynamic_cast<const juce::Label*>(&component))
+        checkPublicText(label->getText());
+    if (const auto* button = dynamic_cast<const juce::Button*>(&component))
+        checkPublicText(button->getButtonText());
+    if (const auto* box = dynamic_cast<const juce::ComboBox*>(&component))
+        for (int item = 0; item < box->getNumItems(); ++item)
+            checkPublicText(box->getItemText(item));
+    for (auto* child : component.getChildren())
+        checkComponentText(*child);
+}
+
+void testPublicIdentity()
+{
+    GhostarAudioProcessor processor;
+    checkPublicText(processor.getName());
+    for (const auto* parameter : processor.getParameters())
+        checkPublicText(parameter->getName(256));
+    for (int program = 0; program < processor.getNumPrograms(); ++program)
+    {
+        checkPublicText(processor.getProgramName(program));
+        checkPublicText(ghostar::factoryPresetDescription(program));
+    }
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    expect(editor != nullptr, "the public identity check needs an editor");
+    if (editor != nullptr)
+        checkComponentText(*editor);
+}
+
+void collectPanelControls(juce::Component& parent,
+                          std::vector<juce::Component*>& controls)
+{
+    for (auto* child : parent.getChildren())
+    {
+        if (!child->isVisible())
+            continue;
+        if (dynamic_cast<juce::Slider*>(child)
+            || dynamic_cast<juce::ComboBox*>(child)
+            || dynamic_cast<juce::Button*>(child))
+            controls.push_back(child);
+        else
+            collectPanelControls(*child, controls);
+    }
+}
+
+// Check actual click targets at both scales. A detailed-looking screenshot
+// alone cannot catch a negative-width control or a drawer blocking its peers.
+void checkPanelControlGeometry(juce::AudioProcessorEditor& editor)
+{
+    // An offscreen editor defaults to hidden; getComponentAt deliberately
+    // returns null in that state even though paintEntireComponent draws it.
+    const bool wasVisible = editor.isVisible();
+    editor.setVisible(true);
+    std::vector<juce::Component*> controls;
+    collectPanelControls(editor, controls);
+    expect(!controls.empty(), "the panel has no visible interactive controls");
+    for (auto* control : controls)
+    {
+        const auto bounds = editor.getLocalArea(control,
+                                                control->getLocalBounds());
+        const auto name = control->getName().toStdString();
+        expect(!bounds.isEmpty(), "empty panel control: " + name);
+        expect(editor.getLocalBounds().expanded(1).contains(bounds),
+               "panel control outside editor: " + name);
+        auto* hit = editor.getComponentAt(bounds.getCentre());
+        expect(hit == control || (hit != nullptr && control->isParentOf(hit)),
+               "panel control cannot be clicked at its centre: " + name);
+    }
+    editor.setVisible(wasVisible);
 }
 
 // The automation contract: every published ID, exactly once. A removed or
@@ -1178,7 +1280,7 @@ void testFactoryProgramsAreTheSoundCharts()
            "the Preparatory Pattern does not warn that it is silent");
     expect(processor.getProgramName(3) == "Fat Filter",
            "program 3 is not the Fat Filter chart");
-    expect(processor.getProgramName(12) == "Spirit Bass",
+    expect(processor.getProgramName(12) == "Ghost Bass",
            "the performance bank does not begin where it should");
 
     processor.setCurrentProgram(3);
@@ -1210,7 +1312,7 @@ void testFactoryProgramsAreTheSoundCharts()
            "the performance program was not selected");
     auto* slope = processor.parameters.getRawParameterValue(ids::slope);
     expect(slope != nullptr && std::lround(slope->load()) == 1,
-           "Spirit Bass did not select the 24 dB slope");
+           "Ghost Bass did not select the 24 dB slope");
 
     // Ghostar Programs can store a musically useful wheel stance, unlike the
     // historical charts whose drawings always begin with both wheels back.
@@ -1262,6 +1364,7 @@ void testEditorRendering()
     // than taken from whatever the build machine happens to have.
     editor->setSize(1460, 780);
     editor->resized();
+    checkPanelControlGeometry(*editor);
     const auto snapshot = renderEditorSnapshot(*editor);
     expect(snapshotHasDetail(snapshot),
            "the editor rendered as a flat surface at its default size");
@@ -1269,20 +1372,46 @@ void testEditorRendering()
            "the documentation screenshot is no longer the design size");
 
     // Committed documentation image, regenerated by the nightly build.
-    const auto snapshotPath = juce::SystemStats::getEnvironmentVariable(
-        "GHOSTAR_EDITOR_SNAPSHOT", {});
-    if (snapshotPath.isNotEmpty() && snapshot.isValid())
+    saveRequestedSnapshot(snapshot, "GHOSTAR_EDITOR_SNAPSHOT");
+
+    std::vector<juce::Component*> controls;
+    collectPanelControls(*editor, controls);
+    juce::Button* connections = nullptr;
+    for (auto* control : controls)
+        if (auto* button = dynamic_cast<juce::Button*>(control);
+            button != nullptr && button->getButtonText() == "REAR CONNECTIONS")
+            connections = button;
+    expect(connections != nullptr, "rear connections cannot be opened");
+    if (connections != nullptr)
     {
-        const juce::File snapshotFile { snapshotPath };
-        snapshotFile.getParentDirectory().createDirectory();
-        juce::FileOutputStream output { snapshotFile };
-        juce::PNGImageFormat png;
-        const bool prepared = output.openedOk() && output.setPosition(0)
-                           && output.truncate();
-        const bool wrote =
-            prepared && png.writeImageToStream(snapshot, output);
-        output.flush();
-        expect(wrote, "could not write the requested editor snapshot");
+        connections->setToggleState(true, juce::dontSendNotification);
+        connections->onClick();
+        checkPanelControlGeometry(*editor);
+        controls.clear();
+        collectPanelControls(*editor, controls);
+        juce::ComboBox* gate = nullptr;
+        for (auto* control : controls)
+            if (control->getName() == "EXT GATE")
+                gate = dynamic_cast<juce::ComboBox*>(control);
+        expect(gate != nullptr, "rear gate selector is inaccessible");
+        if (gate != nullptr)
+            gate->setSelectedItemIndex(2, juce::sendNotificationSync);
+        expect(processor.parameters.getRawParameterValue(
+                   ghostar::parameters::externalGate)->load() == 2.0f,
+               "rear gate selector did not update its parameter");
+
+        saveRequestedSnapshot(renderEditorSnapshot(*editor),
+                              "GHOSTAR_EDITOR_REAR_SNAPSHOT");
+        editor->setSize(876, 468);
+        checkPanelControlGeometry(*editor);
+        connections->setToggleState(false, juce::dontSendNotification);
+        connections->onClick();
+        checkPanelControlGeometry(*editor);
+        saveRequestedSnapshot(renderEditorSnapshot(*editor),
+                              "GHOSTAR_EDITOR_SMALL_SNAPSHOT");
+        expect(processor.parameters.getRawParameterValue(
+                   ghostar::parameters::externalGate)->load() == 2.0f,
+               "closing rear connections changed the cable state");
     }
 
     editor.reset();
@@ -1364,6 +1493,7 @@ void testEditorFitsASmallDisplay()
     // And at that size the panel is still a panel: it draws, including the
     // keys, which are the part a clipped window loses first.
     editor->setSize(asked.getWidth(), asked.getHeight());
+    checkPanelControlGeometry(*editor);
     const auto small = renderEditorSnapshot(*editor);
     expect(snapshotHasDetail(small),
            "the editor rendered as a flat surface at a small size");
@@ -1393,6 +1523,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI guiInitialiser;
     testParameterLayoutIsStable();
+    testPublicIdentity();
     testMidiProducesAudio();
     testAllNotesOffReleasesEveryKey();
     testStateRoundTrip();

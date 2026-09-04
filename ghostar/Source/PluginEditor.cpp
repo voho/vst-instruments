@@ -6,30 +6,31 @@ namespace
 {
 namespace ids = ghostar::parameters;
 
-// Ghostar's livery: a charcoal panel with grey knob caps, their markings
-// in black, and the silkscreen in white — the monochrome scheme a machined
-// front panel of the period actually wears. Nothing is coloured for its own
-// sake: value is shown by a black arc against a pale track, and the only
-// thing that lights is a state you need to see (a thrown rocker, the gate).
-const juce::Colour panelCharcoal { 0xff3a3a3c };
-const juce::Colour sectionCharcoal { 0xff333335 };
-const juce::Colour accentCharcoal { 0xff3f3f42 };
-const juce::Colour headerCharcoal { 0xff2b2b2d };
-const juce::Colour silkscreen { 0xffffffff };
-const juce::Colour silkscreenDim { 0xffbdbdbd };
-const juce::Colour knobFace { 0xff9c9c9e };
-const juce::Colour knobFaceTop { 0xffb0b0b2 };
-const juce::Colour knobRim { 0xff77777a };
-const juce::Colour markingBlack { 0xff141416 };
-const juce::Colour controlBody { 0xff4a4a4d };
-const juce::Colour controlRim { 0xff5c5c60 };
-const juce::Colour trackSilver { 0xffd2d2d5 };
-const juce::Colour trackPale { 0xff8b8b8e };
-const juce::Colour hairline { 0xff4c4c50 };
-const juce::Colour lampLit { 0xfff2f2f2 };
-const juce::Colour lampDark { 0xff2a2a2c };
-const juce::Colour walnutDark { 0xff38251d };
-const juce::Colour walnutLight { 0xff684735 };
+// Original overhead hardware photograph (published June 2014, before the
+// reissue and software instruments):
+// https://www.matrixsynth.com/2014/06/crumar-spirit-vintage-analog.html
+// https://1.bp.blogspot.com/-IFfD8JLxD44/U4toXGGZSrI/AAAAAAAIdXQ/zLg7p19lw3Y/s1600/1.jpg
+// Angled original-unit photograph cross-check (July 2001):
+// https://www.soundonsound.com/reviews/crumar-spirit-retrozone
+// The photos supply the stepped mixer outline, panel proportions, three
+// wheels, walnut crossbars, black knob skirts and pale index caps. Artwork
+// below is drawn from geometry; no third-party photograph or logo is shipped.
+const juce::Colour panelCharcoal { 0xff242526 };
+const juce::Colour sectionCharcoal { 0xff242526 };
+const juce::Colour headerCharcoal { 0xff17191b };
+const juce::Colour silkscreen { 0xffeeeae0 };
+const juce::Colour silkscreenDim { 0xffc3c1b8 };
+const juce::Colour knobFace { 0xff94948f };
+const juce::Colour knobFaceTop { 0xffc1c0b7 };
+const juce::Colour knobRim { 0xff555651 };
+const juce::Colour markingBlack { 0xff111315 };
+const juce::Colour controlBody { 0xff303334 };
+const juce::Colour controlRim { 0xff666962 };
+const juce::Colour hairline { 0xff73756f };
+const juce::Colour lampLit { 0xffef5146 };
+const juce::Colour lampDark { 0xff3d2421 };
+const juce::Colour walnutDark { 0xff422519 };
+const juce::Colour walnutLight { 0xff825237 };
 const juce::Colour focusGold { 0xffffd36a };
 
 // The panel's design geometry. Everything is laid out and painted against
@@ -46,8 +47,6 @@ constexpr int minimumHeight = 468;
 // thing that overflows.
 constexpr int windowChromeWidth = 32;
 constexpr int windowChromeHeight = 64;
-constexpr int margin = 12;
-constexpr int gap = 8;
 
 // A control's caption shows its value for about this long after it stops
 // moving, then returns to naming itself.
@@ -101,257 +100,263 @@ GhostarLookAndFeel::GhostarLookAndFeel()
               juce::Colour { 0xff55555c });
 }
 
-void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
-                                        int width, int height,
-                                        float sliderPosProportional,
-                                        float rotaryStartAngle,
-                                        float rotaryEndAngle,
-                                        juce::Slider& slider)
+namespace
 {
-    const auto bounds =
-        juce::Rectangle<int>(x, y, width, height).toFloat().reduced(3.0f);
-    const float radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
-    const auto centre = bounds.getCentre();
-    const float angle = rotaryStartAngle
-        + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
-
-    // The travel arc, outside the cap: a dim track for the whole sweep, lit
-    // from the start of travel to where the pointer stands. A bipolar
-    // control lights from its centre instead, because that is where its
-    // zero is and the silkscreen circles it.
-    const float arcRadius = radius * 0.94f;
-    const float arcThickness = 2.6f;
-    juce::Path track;
-    track.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
-                        rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour(trackPale);
-    g.strokePath(track, juce::PathStrokeType(arcThickness,
-                                             juce::PathStrokeType::curved,
-                                             juce::PathStrokeType::rounded));
-
-    // Eleven engraved divisions reproduce the panel's 0--10 control scale.
-    // Longer end and centre marks make the range readable even at the
-    // minimum editor size, without turning the software panel into a meter.
+void paintPanelKnob(juce::Graphics& g, juce::Point<float> centre, float radius,
+                    float position, float start, float end, int divisions,
+                    bool bipolar, bool numbered = true)
+{
+    const float angle = start + position * (end - start);
     g.setColour(silkscreenDim);
-    for (int division = 0; division <= 10; ++division)
+    for (int i = 0; i <= divisions; ++i)
     {
-        const float tickAngle = rotaryStartAngle
-            + static_cast<float>(division) * (rotaryEndAngle - rotaryStartAngle)
-                  / 10.0f;
-        const float length = (division == 0 || division == 5 || division == 10)
-            ? radius * 0.13f : radius * 0.075f;
-        const auto outer = centre.getPointOnCircumference(radius, tickAngle);
-        const auto inner = centre.getPointOnCircumference(radius - length,
-                                                           tickAngle);
-        g.drawLine({ inner, outer }, division % 5 == 0 ? 1.4f : 0.8f);
+        const float tick = start + static_cast<float>(i) / divisions * (end - start);
+        const auto outer = centre.getPointOnCircumference(radius, tick);
+        const auto inner = centre.getPointOnCircumference(radius - 3.0f, tick);
+        g.drawLine({ inner, outer }, 1.0f);
+        if (numbered && divisions == 10 && i % 2 == 0 && radius >= 24.0f)
+        {
+            const auto number = centre.getPointOnCircumference(radius + 6.0f, tick);
+            g.setFont(juce::FontOptions { 8.0f });
+            g.drawText(juce::String(i),
+                       juce::Rectangle<float>(15.0f, 10.0f).withCentre(number),
+                       juce::Justification::centred);
+        }
     }
-
-    const bool bipolar = slider.getProperties()["bipolar"];
-    const float originAngle = bipolar
-        ? (rotaryStartAngle + rotaryEndAngle) * 0.5f
-        : rotaryStartAngle;
-    if (std::abs(angle - originAngle) > 0.001f)
-    {
-        juce::Path lit;
-        lit.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
-                          juce::jmin(originAngle, angle),
-                          juce::jmax(originAngle, angle), true);
-        g.setColour(markingBlack);
-        g.strokePath(lit, juce::PathStrokeType(arcThickness,
-                                               juce::PathStrokeType::curved,
-                                               juce::PathStrokeType::rounded));
-    }
-
-    // Conical black cap with a lighter top, as the hardware knobs wear.
-    const float capOuter = radius * 0.80f;
-    g.setColour(knobRim);
-    g.fillEllipse(centre.x - capOuter, centre.y - capOuter, capOuter * 2.0f,
-                  capOuter * 2.0f);
-    const float capRadius = radius * 0.70f;
-    g.setColour(knobFace);
-    g.fillEllipse(centre.x - capRadius, centre.y - capRadius, capRadius * 2.0f,
-                  capRadius * 2.0f);
-    g.setColour(knobFaceTop);
-    const float topRadius = radius * 0.36f;
-    g.fillEllipse(centre.x - topRadius, centre.y - topRadius, topRadius * 2.0f,
-                  topRadius * 2.0f);
-
-    juce::Path pointer;
-    pointer.addRoundedRectangle(-1.8f, -capRadius * 0.96f, 3.6f,
-                                capRadius * 0.66f, 1.8f);
-    g.setColour(markingBlack);
-    g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(
-                            centre.x, centre.y));
-
-    // The original bipolar controls call out electrical zero at noon.
     if (bipolar)
     {
-        juce::Path zero;
-        zero.addTriangle(centre.x - 3.5f, bounds.getY(), centre.x + 3.5f,
-                         bounds.getY(), centre.x, bounds.getY() + 5.0f);
         g.setColour(silkscreen);
-        g.fillPath(zero);
+        g.drawEllipse(centre.x - 2.0f, centre.y - radius - 3.0f, 4.0f, 4.0f, 1.0f);
     }
 
+    const auto skirt = juce::Rectangle<float>(radius * 1.53f, radius * 1.53f)
+                           .withCentre(centre);
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.fillEllipse(skirt.translated(1.0f, 3.0f).expanded(1.5f));
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff414342),
+        skirt.getX(), skirt.getY(), markingBlack,
+        skirt.getRight(), skirt.getBottom(), false));
+    g.fillEllipse(skirt);
+    g.setColour(juce::Colour(0xff555753));
+    for (int i = 0; i < 28; ++i)
+    {
+        const float rib = static_cast<float>(i) * juce::MathConstants<float>::twoPi / 28;
+        g.drawLine({ centre.getPointOnCircumference(radius * 0.72f, rib),
+                     centre.getPointOnCircumference(radius * 0.65f, rib) }, 0.7f);
+    }
+    const auto face = skirt.reduced(radius * 0.23f);
+    g.setGradientFill(juce::ColourGradient(knobFaceTop, face.getX(), face.getY(),
+                                          knobFace, face.getRight(), face.getBottom(), false));
+    g.fillEllipse(face);
+    g.setColour(knobRim);
+    g.drawEllipse(face, 1.0f);
+    g.setColour(markingBlack);
+    g.drawLine({ centre.getPointOnCircumference(radius * 0.18f, angle),
+                 centre.getPointOnCircumference(radius * 0.52f, angle) }, 2.0f);
+}
+
+void paintPaddle(juce::Graphics& g, juce::Rectangle<float> body, bool up)
+{
+    g.setColour(markingBlack);
+    g.fillRoundedRectangle(body.expanded(2.0f), 1.5f);
+    g.setGradientFill(juce::ColourGradient(up ? knobFaceTop : knobRim,
+        body.getCentreX(), body.getY(), up ? knobRim : knobFaceTop,
+        body.getCentreX(), body.getBottom(), false));
+    g.fillRect(body);
+    const auto activeHalf = up ? body.withHeight(body.getHeight() * 0.5f)
+                              : body.withTrimmedTop(body.getHeight() * 0.5f);
+    g.setColour(juce::Colour(0xffb3bec3).withAlpha(0.8f));
+    g.fillRect(activeHalf.reduced(1.0f, 4.0f));
+    g.setColour(knobFaceTop);
+    g.drawHorizontalLine(juce::roundToInt(body.getCentreY()), body.getX(), body.getRight());
+}
+} // namespace
+
+void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
+                                        int width, int height, float position,
+                                        float start, float end,
+                                        juce::Slider& slider)
+{
+    const auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat();
+    const float radius = juce::jmin(35.0f, juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.46f);
+    // Rear source controls use actual volts or resistance in their readout,
+    // so the front panel's 0–10 pot scale would be misleading on them.
+    const bool physicalUnits = static_cast<bool>(slider.getProperties()["volts"])
+                            || static_cast<bool>(slider.getProperties()["kilohms"]);
+    paintPanelKnob(g, bounds.getCentre(), radius, position, start, end, 10,
+                    static_cast<bool>(slider.getProperties()["bipolar"]), !physicalUnits);
     if (slider.hasKeyboardFocus(false))
     {
         g.setColour(focusGold);
-        g.drawEllipse(bounds.expanded(1.0f), 1.5f);
+        g.drawEllipse(bounds.withSizeKeepingCentre(radius * 2.1f, radius * 2.1f), 1.5f);
     }
 }
 
 void GhostarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y,
                                         int width, int height, float sliderPos,
-                                        float, float,
+                                        float minSliderPos, float maxSliderPos,
                                         juce::Slider::SliderStyle style,
                                         juce::Slider& slider)
 {
     if (style != juce::Slider::LinearVertical)
     {
         LookAndFeel_V4::drawLinearSlider(g, x, y, width, height, sliderPos,
-                                         0.0f, 0.0f, style, slider);
+                                         minSliderPos, maxSliderPos, style, slider);
         return;
     }
-
-    const auto track = juce::Rectangle<float>(
-        static_cast<float>(x) + static_cast<float>(width) / 2.0f - 2.0f,
-        static_cast<float>(y), 4.0f, static_cast<float>(height));
-    // The untravelled slot is black; the travelled part below the cap is
-    // silver, so a bank of faders reads as a shape at a glance.
-    g.setColour(markingBlack);
-    g.fillRoundedRectangle(track, 2.0f);
-    g.setColour(knobRim);
-    g.drawRoundedRectangle(track.reduced(0.5f), 2.0f, 1.0f);
-
-    // The travelled part of the track lights, so a bank of faders reads as
-    // a shape at a glance rather than as eight identical caps.
-    auto lit = track;
-    lit.setTop(sliderPos);
-    g.setColour(trackSilver);
-    g.fillRoundedRectangle(lit, 2.0f);
-
-    // The black cap with its pale index stripe.
-    const float capWidth = juce::jmin(24.0f, static_cast<float>(width));
-    const juce::Rectangle<float> cap { track.getCentreX() - capWidth / 2.0f,
-                                       sliderPos - 8.0f, capWidth, 16.0f };
-    g.setColour(knobFace);
-    g.fillRoundedRectangle(cap, 3.0f);
-    g.setColour(knobRim);
-    g.drawRoundedRectangle(cap.reduced(0.5f), 3.0f, 1.0f);
-    g.setColour(markingBlack);
-    g.fillRect(cap.getX() + 4.0f, cap.getCentreY() - 1.0f,
-               cap.getWidth() - 8.0f, 2.0f);
-
-    // The Spirit's mixer and envelope travels are explicitly 0--10. Three
-    // restrained scale marks preserve that orientation without crowding the
-    // narrow ADSR banks.
-    g.setColour(silkscreenDim);
-    for (int division : { 0, 5, 10 })
+    const float cx = static_cast<float>(x) + static_cast<float>(width) * 0.5f;
+    if (static_cast<bool>(slider.getProperties()["performanceWheel"]))
     {
-        const float yy = track.getBottom()
-            - static_cast<float>(division) * track.getHeight() / 10.0f;
-        g.drawHorizontalLine(juce::roundToInt(yy), track.getX() - 5.0f,
-                             track.getX() - 1.0f);
+        const auto wheel = juce::Rectangle<float>(cx - 11.0f, static_cast<float>(y),
+                                                  22.0f, static_cast<float>(height));
+        g.setColour(markingBlack);
+        g.fillRoundedRectangle(wheel.expanded(3.0f), 9.0f);
+        juce::ColourGradient contour(markingBlack, cx, wheel.getY(), markingBlack,
+                                     cx, wheel.getBottom(), false);
+        contour.addColour(0.28, juce::Colour(0xff45484a));
+        contour.addColour(0.5, juce::Colour(0xff25282a));
+        contour.addColour(0.78, juce::Colour(0xff3c3f40));
+        g.setGradientFill(contour);
+        g.fillRoundedRectangle(wheel, 7.0f);
+        g.setColour(juce::Colours::black.withAlpha(0.6f));
+        for (float yy = wheel.getY() + 7.0f; yy < wheel.getBottom() - 5.0f; yy += 5.0f)
+            g.drawHorizontalLine(juce::roundToInt(yy), wheel.getX() + 2.0f, wheel.getRight() - 2.0f);
+        g.setColour(knobFaceTop);
+        g.fillRect(wheel.getX() + 3.0f, sliderPos - 1.0f, wheel.getWidth() - 6.0f, 2.0f);
+    }
+    else
+    {
+        const auto slot = juce::Rectangle<float>(cx - 2.0f, static_cast<float>(y),
+                                                 4.0f, static_cast<float>(height));
+        const bool numbered = static_cast<bool>(slider.getProperties()["scaleNumbers"]);
+        g.setColour(silkscreenDim);
+        for (int i = 0; i <= 5; ++i)
+        {
+            const float yy = slot.getBottom() - static_cast<float>(i) * slot.getHeight() / 5;
+            g.drawHorizontalLine(juce::roundToInt(yy), cx - (numbered ? 8.0f : 14.0f), cx + 14.0f);
+        }
+        if (numbered)
+        {
+            g.setFont(juce::FontOptions { 8.0f });
+            for (int number : { 0, 5, 10 })
+            {
+                const float yy = slot.getBottom() - number * slot.getHeight() / 10.0f;
+                g.drawText(juce::String(number),
+                           juce::Rectangle<float>(juce::jmax(0.0f, cx - 21.0f), yy - 5.0f, 11.0f, 10.0f),
+                           juce::Justification::centred);
+            }
+        }
+        g.setColour(markingBlack);
+        g.fillRect(slot.expanded(1.0f, 0.0f));
+        g.setColour(juce::Colour(0xff9b8855));
+        g.drawVerticalLine(juce::roundToInt(cx - 1.0f), slot.getY(), slot.getBottom());
+        const auto cap = juce::Rectangle<float>(cx - 13.0f, sliderPos - 6.0f, 26.0f, 12.0f);
+        g.setColour(juce::Colours::black.withAlpha(0.6f));
+        g.fillRoundedRectangle(cap.translated(1.0f, 2.0f).expanded(1.0f), 2.0f);
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff484b49), cx, cap.getY(),
+                                              markingBlack, cx, cap.getBottom(), false));
+        g.fillRoundedRectangle(cap, 2.0f);
+        g.setColour(knobFaceTop);
+        g.drawHorizontalLine(juce::roundToInt(sliderPos), cap.getX() + 3.0f, cap.getRight() - 3.0f);
     }
     if (slider.hasKeyboardFocus(false))
     {
         g.setColour(focusGold);
-        g.drawRoundedRectangle(slider.getLocalBounds().toFloat().reduced(1.0f),
-                               3.0f, 1.5f);
+        g.drawRoundedRectangle(slider.getLocalBounds().toFloat().reduced(1.0f), 3.0f, 1.5f);
     }
 }
 
 void GhostarLookAndFeel::drawToggleButton(juce::Graphics& g,
                                         juce::ToggleButton& button,
-                                        bool shouldDrawButtonAsHighlighted,
-                                        bool)
+                                        bool highlighted, bool)
 {
-    const auto rocker =
-        button.getLocalBounds().toFloat().withSizeKeepingCentre(38.0f, 24.0f);
-
-    // The panel's paddle switches: a grey body in a black surround, with
-    // the thrown half standing pale and the resting half sunk dark, so
-    // which way it sits reads at a glance and without colour.
-    g.setColour(markingBlack);
-    g.fillRoundedRectangle(rocker.expanded(1.5f), 3.0f);
-    auto body = rocker.reduced(1.0f);
-    auto thrown = body;
-    auto resting = body;
-    if (button.getToggleState())
+    const bool compact = button.getHeight() < 45;
+    const auto paddle = button.getLocalBounds().toFloat().withSizeKeepingCentre(
+        compact ? 23.0f : 30.0f, compact ? 23.0f : 52.0f);
+    paintPaddle(g, paddle, button.getToggleState());
+    g.setColour(silkscreenDim);
+    g.setFont(juce::FontOptions { compact ? 8.0f : 9.0f });
+    if (compact)
     {
-        thrown = thrown.removeFromTop(body.getHeight() / 2.0f);
-        resting = resting.withTrimmedTop(body.getHeight() / 2.0f);
+        g.drawText(button.getToggleState() ? "ON" : "OFF",
+                   button.getLocalBounds().withWidth(25), juce::Justification::centredLeft);
     }
     else
     {
-        thrown = thrown.removeFromBottom(body.getHeight() / 2.0f);
-        resting = resting.withTrimmedBottom(body.getHeight() / 2.0f);
+        g.drawText("ON", button.getLocalBounds().withHeight(12), juce::Justification::centred);
+        g.drawText("OFF", button.getLocalBounds().withTrimmedTop(button.getHeight() - 12),
+                   juce::Justification::centred);
     }
-    g.setColour(knobFaceTop);
-    g.fillRoundedRectangle(thrown, 2.0f);
-    g.setColour(juce::Colour { 0xff56565a });
-    g.fillRoundedRectangle(resting, 2.0f);
-    g.setColour(shouldDrawButtonAsHighlighted ? silkscreen : knobRim);
-    g.drawRoundedRectangle(rocker.reduced(0.5f), 2.5f, 1.0f);
-
-    g.setColour(button.getToggleState() ? silkscreen : silkscreenDim);
-    g.setFont(juce::FontOptions { 13.5f });
-    g.drawText(button.getButtonText(),
-               button.getLocalBounds().withTrimmedLeft(33),
-               juce::Justification::centredLeft);
-
-    // Small polarity legends make the two physical throws unambiguous; the
-    // highlighted paddle alone is deliberately not the only state cue.
-    g.setColour(silkscreenDim);
-    g.setFont(juce::FontOptions { 8.0f, juce::Font::bold });
-    g.drawText("ON", juce::Rectangle<int>(0, 0, 17, button.getHeight() / 2),
-               juce::Justification::centred);
-    g.drawText("OFF", juce::Rectangle<int>(0, button.getHeight() / 2, 20,
-                                            button.getHeight() / 2),
-               juce::Justification::centred);
-    if (button.hasKeyboardFocus(false))
+    if (highlighted || button.hasKeyboardFocus(false))
     {
-        g.setColour(focusGold);
-        g.drawRoundedRectangle(button.getLocalBounds().toFloat().reduced(0.5f),
-                               3.0f, 1.5f);
+        g.setColour(button.hasKeyboardFocus(false) ? focusGold : silkscreen);
+        g.drawRoundedRectangle(button.getLocalBounds().toFloat().reduced(1.0f), 2.0f, 1.0f);
     }
 }
 
 void GhostarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height,
-                                    bool, int, int, int, int,
-                                    juce::ComboBox& box)
+                                    bool, int, int, int, int, juce::ComboBox& box)
 {
-    const auto bounds =
-        juce::Rectangle<int>(0, 0, width, height).toFloat().reduced(0.5f);
-    g.setColour(controlBody);
-    g.fillRoundedRectangle(bounds, 3.0f);
-    g.setColour(box.isMouseOver() ? silkscreen : controlRim);
-    g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
-
-    juce::Path arrow;
-    const float cx = bounds.getRight() - 12.0f;
-    const float cy = bounds.getCentreY();
-    arrow.startNewSubPath(cx - 4.0f, cy - 2.0f);
-    arrow.lineTo(cx, cy + 3.0f);
-    arrow.lineTo(cx + 4.0f, cy - 2.0f);
-    g.setColour(silkscreen);
-    g.strokePath(arrow, juce::PathStrokeType(1.6f));
-
-    // A short index slot reads like the multi-position rotary selectors on
-    // the hardware while retaining a conventional, accessible popup.
-    g.setColour(trackPale);
-    g.fillRoundedRectangle(bounds.getX() + 6.0f, bounds.getBottom() - 4.0f,
-                           bounds.getWidth() - 25.0f, 1.5f, 0.75f);
-    if (box.hasKeyboardFocus(false))
+    const auto bounds = juce::Rectangle<int>(0, 0, width, height).toFloat();
+    if (static_cast<bool>(box.getProperties()["panelSelector"]))
     {
-        g.setColour(focusGold);
-        g.drawRoundedRectangle(bounds, 3.0f, 1.5f);
+        if (box.getNumItems() == 2)
+        {
+            const auto body = bounds.withSizeKeepingCentre(30.0f, 48.0f);
+            paintPaddle(g, body, box.getSelectedItemIndex() == 0);
+            g.setFont(juce::FontOptions { 9.0f });
+            g.setColour(silkscreenDim);
+            g.drawText(box.getItemText(0).toUpperCase(), bounds.withHeight(13.0f),
+                       juce::Justification::centred);
+            g.drawText(box.getItemText(1).toUpperCase(), bounds.withTrimmedTop(height - 13.0f),
+                       juce::Justification::centred);
+        }
+        else
+        {
+            const auto dial = bounds.withTrimmedBottom(17.0f);
+            const float radius = juce::jmin(33.0f, juce::jmin(dial.getWidth(), dial.getHeight()) * 0.45f);
+            paintPanelKnob(g, dial.getCentre(), radius,
+                static_cast<float>(juce::jmax(0, box.getSelectedItemIndex())) / juce::jmax(1, box.getNumItems() - 1),
+                rotaryStart, rotaryEnd, juce::jmax(1, box.getNumItems() - 1), false);
+        }
+        if (box.isMouseOver() || box.hasKeyboardFocus(false))
+        {
+            g.setColour(box.hasKeyboardFocus(false) ? focusGold : silkscreenDim);
+            g.drawRoundedRectangle(bounds.reduced(1.0f), 2.0f, 1.0f);
+        }
+        return;
     }
+    g.setColour(controlBody);
+    g.fillRoundedRectangle(bounds.reduced(0.5f), 3.0f);
+    g.setColour(box.hasKeyboardFocus(false) ? focusGold : controlRim);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 3.0f, 1.0f);
+    juce::Path arrow;
+    arrow.addTriangle(width - 16.0f, height * 0.4f, width - 8.0f,
+                       height * 0.4f, width - 12.0f, height * 0.65f);
+    g.setColour(silkscreenDim);
+    g.fillPath(arrow);
 }
 
-juce::Font GhostarLookAndFeel::getComboBoxFont(juce::ComboBox&)
+juce::Font GhostarLookAndFeel::getComboBoxFont(juce::ComboBox& box)
 {
-    return juce::Font { juce::FontOptions { 13.5f } };
+    return juce::Font { juce::FontOptions {
+        static_cast<bool>(box.getProperties()["panelSelector"]) ? 10.5f : 12.0f } };
+}
+
+void GhostarLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& label)
+{
+    if (static_cast<bool>(box.getProperties()["panelSelector"]))
+    {
+        // The native label remains the accessible current value. Two-position
+        // paddles have both legends painted above/below their physical throws.
+        label.setBounds(box.getLocalBounds().withTrimmedTop(box.getHeight() - 17));
+        label.setJustificationType(juce::Justification::centred);
+        label.setColour(juce::Label::textColourId,
+                        box.getNumItems() == 2 ? juce::Colours::transparentBlack : silkscreen);
+        label.setFont(getComboBoxFont(box));
+    }
+    else
+        LookAndFeel_V4::positionComboBoxText(box, label);
 }
 
 void GhostarLookAndFeel::drawButtonBackground(
@@ -530,6 +535,10 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
              "Loudness envelope sustain level.");
     addFader(loudnessRelease, ids::loudnessRelease, "R",
              "Loudness envelope release.");
+    // One numbered reference per fader bank keeps the original 0–10
+    // silkscreen readable without repeating tiny numerals on every slot.
+    for (auto* fader : { &shaperPathA, &filterPathA, &filterAttack, &loudnessAttack })
+        fader->slider.getProperties().set("scaleNumbers", true);
     addKnob(glide, ids::glide, "GLIDE",
             "Portamento time between notes.");
     addSelector(glideMode, ids::glideMode, "GLIDE MODE",
@@ -546,7 +555,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     addSelector(externalGate, ids::externalGate, "EXT GATE",
                 "Rear switching jack: UNPLUGGED uses the normalled Shaper Y "
                 "gate; LOW inserts a cable at 6 V or below; HIGH supplies "
-                "the greater-than-6 V external gate the Spirit accepts. "
+                "the greater-than-6 V external gate the hardware accepts. "
                 "This is a saved jack state, not an audio-rate CV input.");
     addSelector(externalPitchConnected, ids::externalPitchConnected,
                 "EXT PITCH",
@@ -554,7 +563,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
                 "arpeggiator pitch with PITCH CV before GLIDE. The keyboard "
                 "still gates and triggers the instrument.");
     addKnob(externalPitchVolts, ids::externalPitchVolts, "PITCH CV",
-            "Spirit Keyboard Pitch Out-equivalent source voltage behind "
+            "Keyboard Pitch Out-equivalent source voltage behind "
             "15 kΩ. The rear input requires 1.1 V per octave; 0 V is its "
             "keyboard-CV cancellation point near the second C. This saved "
             "host control is block-latched, not an audio-rate CV lane.");
@@ -568,7 +577,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
             "Tip-to-sleeve resistance of the documented 100 kΩ OSC B "
             "pedal: zero is a short and 100 kΩ is maximum resistance. "
             "It changes Osc B only, including in BASS and WIDE. Pedal "
-            "direction and taper are not specified by Crumar.");
+            "direction and taper are not specified in the manual.");
     oscBPedalResistance.slider.getProperties().set("kilohms", true);
     addRocker(filterPedalConnected, ids::filterPedalConnected, "F JACK",
               "Insert the rear FILTER PEDAL cable. The unswitched TS jack "
@@ -578,7 +587,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
             "Tip-to-sleeve resistance of the documented 100 kΩ FILTER "
             "pedal: zero is a short and 100 kΩ is maximum resistance. "
             "It moves Upper always and Lower only in DYNAMIC. Pedal "
-            "direction and taper are not specified by Crumar.");
+            "direction and taper are not specified in the manual.");
     filterPedalResistance.slider.getProperties().set("kilohms", true);
     addSelector(externalAudioConnected, ids::externalAudioConnected,
                 "EXT AUDIO",
@@ -601,6 +610,11 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     // A scroll is not a drag, so onDragEnd would never spring the wheel
     // back and the bend would latch; the spring only answers to dragging.
     pitchWheel.setScrollWheelEnabled(false);
+    pitchWheel.setName("PITCH BEND");
+    pitchWheel.setWantsKeyboardFocus(true);
+    pitchWheel.getProperties().set("performanceWheel", true);
+    xWheel.slider.getProperties().set("performanceWheel", true);
+    yWheel.slider.getProperties().set("performanceWheel", true);
     pitchWheel.onValueChange = [this] {
         processor.setUiPitchBend(static_cast<float>(pitchWheel.getValue()));
     };
@@ -619,6 +633,34 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     panicButton.onClick = [this] { processor.requestPanic(); };
     canvas.addAndMakeVisible(panicButton);
 
+    connectionsButton.setClickingTogglesState(true);
+    connectionsButton.setTooltip("Show rear audio, gate, pitch and pedal connections.");
+    connectionsButton.onClick = [this] {
+        const bool showing = connectionsButton.getToggleState();
+        rearConnections.setVisible(showing);
+        keyboard.setVisible(!showing);
+        canvas.repaint();
+    };
+    canvas.addAndMakeVisible(connectionsButton);
+    canvas.addChildComponent(rearConnections);
+    rearConnections.setName("Rear connections");
+    for (auto* selector : { &externalGate, &externalPitchConnected, &externalAudioConnected })
+    {
+        selector->box.getProperties().set("panelSelector", false);
+        rearConnections.addAndMakeVisible(selector->box);
+        rearConnections.addAndMakeVisible(selector->label);
+    }
+    for (auto* knob : { &externalPitchVolts, &oscBPedalResistance, &filterPedalResistance })
+    {
+        rearConnections.addAndMakeVisible(knob->slider);
+        rearConnections.addAndMakeVisible(knob->label);
+    }
+    for (auto* rocker : { &oscBPedalConnected, &filterPedalConnected, &splitPaths })
+    {
+        rearConnections.addAndMakeVisible(rocker->button);
+        rearConnections.addAndMakeVisible(rocker->label);
+    }
+
     const auto addCaption = [this](juce::Label& label,
                                    const juce::String& text) {
         label.setText(text, juce::dontSendNotification);
@@ -631,8 +673,8 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     addCaption(shaperPathCaption, "SHAPER Y PATH");
     addCaption(filterPathCaption, "FILTER PATH");
 
-    wordmark.setText("ghostar", juce::dontSendNotification);
-    wordmark.setFont(juce::FontOptions { 30.0f, juce::Font::bold });
+    wordmark.setText("GHOSTAR", juce::dontSendNotification);
+    wordmark.setFont(juce::FontOptions { 23.0f, juce::Font::bold });
     wordmark.setColour(juce::Label::textColourId, silkscreen);
     wordmark.setJustificationType(juce::Justification::centredLeft);
     canvas.addAndMakeVisible(wordmark);
@@ -659,6 +701,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
 
     keyboard.setAvailableRange(48, 84); // the hardware's 37 keys, C to C
     keyboard.setOctaveForMiddleC(4);
+    keyboard.setScrollButtonsVisible(false);
     canvas.addAndMakeVisible(keyboard);
 
     addAndMakeVisible(canvas);
@@ -819,6 +862,7 @@ void GhostarAudioProcessorEditor::addSelector(Selector& selector,
                                             const juce::String& text,
                                             const juce::String& tooltip)
 {
+    selector.box.getProperties().set("panelSelector", true);
     selector.box.setTooltip(tooltip);
     selector.box.setName(text);
     selector.box.setWantsKeyboardFocus(true);
@@ -984,14 +1028,14 @@ void GhostarAudioProcessorEditor::layoutSelector(Selector& selector,
                                                juce::Rectangle<int> area)
 {
     selector.label.setBounds(area.removeFromTop(16));
-    selector.box.setBounds(area.removeFromTop(26));
+    selector.box.setBounds(area);
 }
 
 void GhostarAudioProcessorEditor::layoutRocker(Rocker& rocker,
                                               juce::Rectangle<int> area)
 {
     rocker.label.setBounds(area.removeFromTop(16));
-    rocker.button.setBounds(area.removeFromTop(26));
+    rocker.button.setBounds(area);
 }
 
 void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
@@ -1003,95 +1047,123 @@ void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
 
 void GhostarAudioProcessorEditor::PanelCanvas::paint(juce::Graphics& g)
 {
-    const auto& sections = owner.sections;
-
     g.fillAll(panelCharcoal);
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff303233), 0.0f, 82.0f,
+                                          panelCharcoal, 0.0f, 550.0f, false));
+    g.fillRect(20, 80, editorWidth - 40, 490);
 
-    // Dark walnut cheeks and recessed cross-head fasteners frame the panel as
-    // an instrument rather than a generic collection of widgets. They remain
-    // deliberately narrow so the modelled control geometry does not move.
-    const auto cheek = [this, &g](bool left) {
-        const float x = left ? 0.0f : static_cast<float>(getWidth() - 8);
-        juce::ColourGradient grain(walnutLight, x, 0.0f, walnutDark, x + 8.0f,
-                                   0.0f, false);
-        g.setGradientFill(grain);
-        g.fillRect(x, 0.0f, 8.0f, static_cast<float>(getHeight()));
+    // Horizontal rails and substantial cheeks are visible in the original
+    // overhead photograph; the software browser occupies a separate top strip.
+    const auto wood = [&g](juce::Rectangle<float> bounds, bool vertical) {
+        juce::ColourGradient stain(walnutLight, bounds.getX(), bounds.getY(),
+            walnutDark, vertical ? bounds.getRight() : bounds.getX(),
+            vertical ? bounds.getY() : bounds.getBottom(), false);
+        stain.addColour(0.24, juce::Colour(0xff956143));
+        stain.addColour(0.7, juce::Colour(0xff68402a));
+        g.setGradientFill(stain);
+        g.fillRoundedRectangle(bounds, 3.0f);
+        g.setColour(juce::Colour(0xff291d15).withAlpha(0.25f));
+        for (int i = 1; i < 7; ++i)
+        {
+            const float offset = static_cast<float>(i) / 7.0f;
+            if (vertical)
+                g.drawLine(bounds.getX() + offset * bounds.getWidth(), bounds.getY() + 4.0f,
+                           bounds.getX() + offset * bounds.getWidth() - 2.0f, bounds.getBottom() - 4.0f, 0.5f);
+            else
+                g.drawLine(bounds.getX() + 4.0f, bounds.getY() + offset * bounds.getHeight(),
+                           bounds.getRight() - 4.0f, bounds.getY() + offset * bounds.getHeight() + 1.0f, 0.5f);
+        }
+        g.setColour(juce::Colour(0xffc18e62).withAlpha(0.35f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 3.0f, 1.0f);
     };
-    cheek(true);
-    cheek(false);
+    wood({ 0.0f, 56.0f, 24.0f, 724.0f }, true);
+    wood({ 1436.0f, 56.0f, 24.0f, 724.0f }, true);
+    wood({ 20.0f, 56.0f, 1420.0f, 30.0f }, false);
+    wood({ 20.0f, 542.0f, 1420.0f, 29.0f }, false);
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.fillRect(24, 571, 1412, 6);
+    g.fillRect(24, 86, 1412, 4);
 
-    const auto screw = [&g](float x, float y) {
-        g.setColour(markingBlack);
-        g.fillEllipse(x - 4.0f, y - 4.0f, 8.0f, 8.0f);
-        g.setColour(knobRim);
-        g.fillEllipse(x - 3.0f, y - 3.0f, 6.0f, 6.0f);
-        g.setColour(markingBlack);
-        g.drawLine(x - 2.0f, y, x + 2.0f, y, 0.8f);
-        g.drawLine(x, y - 2.0f, x, y + 2.0f, 0.8f);
-    };
-    for (const auto point : { juce::Point<float> { 17.0f, 17.0f },
-                              juce::Point<float> { getWidth() - 17.0f, 17.0f },
-                              juce::Point<float> { 17.0f, getHeight() - 17.0f },
-                              juce::Point<float> { getWidth() - 17.0f,
-                                                   getHeight() - 17.0f } })
-        screw(point.x, point.y);
-
-    // The header plate, so the browser reads as chrome rather than as
-    // another panel section.
-    const auto header =
-        getLocalBounds().withHeight(margin + 48).toFloat();
     g.setColour(headerCharcoal);
-    g.fillRect(header);
+    g.fillRect(0, 0, editorWidth, 56);
     g.setColour(hairline);
-    g.drawLine(0.0f, header.getBottom() - 0.5f,
-               static_cast<float>(getWidth()), header.getBottom() - 0.5f, 1.0f);
+    g.drawHorizontalLine(55, 0.0f, static_cast<float>(editorWidth));
 
-    // The gate lamp: lit while a gate source is holding the envelopes open,
-    // which is the difference between a silent patch and a silent host.
+    const auto lamp = owner.gateLampBounds.toFloat();
+    const bool open = owner.processor.isGateOpenForDisplay();
+    const auto dot = juce::Rectangle<float>(8.0f, 8.0f)
+                         .withCentre({ lamp.getX() + 5.0f, lamp.getCentreY() });
+    g.setColour(markingBlack);
+    g.fillEllipse(dot.expanded(2.0f));
+    g.setColour(open ? lampLit : lampDark);
+    g.fillEllipse(dot);
+    g.setColour(silkscreenDim);
+    g.setFont(juce::FontOptions { 11.0f });
+    g.drawText("GATE", lamp.withTrimmedLeft(16.0f), juce::Justification::centredLeft);
+
+    for (const auto& section : owner.sections)
     {
-        const auto lamp = owner.gateLampBounds.toFloat();
-        const bool open = owner.processor.isGateOpenForDisplay();
-        const auto dot = juce::Rectangle<float> { lamp.getX(),
-                                                  lamp.getCentreY() - 4.0f,
-                                                  8.0f, 8.0f };
-        g.setColour(open ? lampLit : lampDark);
-        g.fillEllipse(dot);
-        g.setColour(open ? lampLit.withAlpha(0.28f) : hairline);
-        g.drawEllipse(dot.expanded(2.5f), 1.0f);
-        g.setColour(open ? silkscreen : silkscreenDim);
-        g.setFont(juce::FontOptions { 11.0f });
-        g.drawText("GATE", lamp.withTrimmedLeft(14.0f),
-                   juce::Justification::centredLeft);
+        auto frame = section.bounds.toFloat();
+        auto title = section.bounds.withHeight(18);
+        g.setColour(silkscreenDim);
+        if (section.title == "AUDIO MIXER")
+        {
+            // Hardware silkscreen encloses both mixer rows in a single
+            // stepped outline, wrapping beneath WHEEL DESTINATIONS.
+            juce::Path outline;
+            outline.startNewSubPath(320.0f, frame.getY());
+            outline.lineTo(frame.getRight(), frame.getY());
+            outline.lineTo(frame.getRight(), frame.getBottom());
+            outline.lineTo(frame.getX(), frame.getBottom());
+            outline.lineTo(frame.getX(), 374.0f);
+            outline.lineTo(320.0f, 374.0f);
+            outline.closeSubPath();
+            g.strokePath(outline, juce::PathStrokeType(1.2f));
+            title.setLeft(320);
+        }
+        else
+            g.drawRect(frame, 1.2f);
+        g.drawHorizontalLine(title.getBottom(), static_cast<float>(title.getX()),
+                             static_cast<float>(title.getRight()));
+        g.setColour(silkscreen);
+        g.setFont(juce::FontOptions { 13.5f, juce::Font::bold });
+        g.drawText(section.title, title.reduced(3, 0), juce::Justification::centred);
+        if (section.accent || section.title == "FILTER ENVELOPE")
+        {
+            const auto footer = section.bounds.withTrimmedTop(section.bounds.getHeight() - 18);
+            g.setColour(silkscreenDim);
+            g.drawHorizontalLine(footer.getY(), frame.getX(), frame.getRight());
+            g.setColour(silkscreen);
+            g.drawText(section.accent ? "LOWER FILTER L" : "LOUDNESS ENVELOPE",
+                       footer, juce::Justification::centred);
+        }
     }
 
-    for (const auto& section : sections)
+    // The keybed has no decorative title on the hardware. Its top edge sits
+    // directly behind the front rail; the three performance wheels are left.
+    g.setColour(markingBlack);
+    g.fillRect(374, 575, 1036, 195);
+    g.setColour(silkscreenDim);
+    g.drawRect(46, 582, 294, 182, 1);
+    g.setFont(juce::FontOptions { 10.0f });
+    g.drawText("UP", 53, 660, 24, 13, juce::Justification::centred);
+    g.drawText("DOWN", 48, 734, 34, 13, juce::Justification::centred);
+    g.drawArrow({ 65.0f, 678.0f, 65.0f, 729.0f }, 1.0f, 4.0f, 4.0f);
+
+    if (owner.rearConnections.isVisible())
     {
-        const auto frame = section.bounds.toFloat();
-        g.setColour(section.accent ? accentCharcoal : sectionCharcoal);
-        g.fillRoundedRectangle(frame, 5.0f);
-        g.setColour(section.accent ? silkscreenDim : hairline);
-        g.drawRoundedRectangle(frame.reduced(0.5f), 5.0f, 1.0f);
-
-        // The silkscreened section name, with a hairline running out from it
-        // across the top of the frame.
-        g.setColour(section.accent ? silkscreen : silkscreenDim);
-        g.setFont(juce::FontOptions { 12.0f, juce::Font::bold });
-        const auto titleArea = section.bounds.withHeight(20).reduced(9, 4);
-        g.drawText(section.title, titleArea, juce::Justification::centredLeft);
-
-        // The series order is the Spirit's defining architecture. A subtle
-        // L -> U arrow makes that hardware routing visible on the one block
-        // where the order matters, instead of relying on a tooltip.
-        if (section.accent)
-        {
-            const float y = frame.getY() + 12.0f;
-            const float right = frame.getRight() - 10.0f;
-            g.setColour(silkscreenDim);
-            g.drawText("L  →  U", juce::Rectangle<float> { right - 54.0f,
-                                                               y - 7.0f,
-                                                               54.0f, 14.0f },
-                       juce::Justification::centredRight);
-        }
+        const auto drawer = owner.rearConnections.getBounds();
+        g.setColour(juce::Colour(0xff202324));
+        g.fillRect(drawer);
+        g.setColour(silkscreenDim);
+        g.drawRect(drawer, 1);
+        g.setFont(juce::FontOptions { 13.0f, juce::Font::bold });
+        g.drawText("REAR CONNECTIONS", drawer.withHeight(27).reduced(14, 0),
+                   juce::Justification::centredLeft);
+        g.setFont(juce::FontOptions { 11.0f });
+        g.drawText("Close REAR CONNECTIONS to return to the keyboard.",
+                   drawer.withTrimmedTop(drawer.getHeight() - 26).reduced(14, 0),
+                   juce::Justification::centredLeft);
     }
 }
 
@@ -1118,292 +1190,113 @@ void GhostarAudioProcessorEditor::resized()
 
 void GhostarAudioProcessorEditor::layoutPanel()
 {
+    // Measured relative geometry from the 2014 overhead photo linked above.
+    // Top: master 20%, oscillators 43%, trigger/gates 20%, modulators 17%.
+    // The main panel, wood rail, three wheels and 37-note keybed preserve
+    // their physical relationships. Selected detent labels and the browser
+    // are software conveniences; native combo boxes retain accessible menus.
     sections.clear();
-    auto area =
-        juce::Rectangle<int> { editorWidth, editorHeight }.reduced(margin);
+    wordmark.setBounds(28, 7, 176, 27);
+    subtitle.setBounds(28, 32, 280, 15);
+    previousProgram.setBounds(397, 17, 28, 28);
+    programBank.setBounds(431, 1, 432, 16);
+    programName.setBounds(431, 18, 432, 28);
+    nextProgram.setBounds(869, 17, 28, 28);
+    gateLampBounds = { 965, 18, 70, 28 };
+    connectionsButton.setBounds(1100, 17, 184, 28);
+    panicButton.setBounds(1312, 17, 112, 28);
 
-    // ---- Header: identity, program browser, rear/product controls ---------
-    // PANIC, SPLIT and the rear-jack state live up here rather than on the
-    // front panel, keeping the hardware silkscreen below honest.
-    {
-        auto header = area.removeFromTop(48);
-        auto identity = header.removeFromLeft(250);
-        wordmark.setBounds(identity.removeFromTop(30));
-        subtitle.setBounds(identity);
-
-        panicButton.setBounds(
-            header.removeFromRight(92).withSizeKeepingCentre(88, 28));
-        header.removeFromRight(14);
-        auto splitCell = header.removeFromRight(70);
-        splitPaths.label.setBounds(splitCell.removeFromTop(14));
-        splitPaths.button.setBounds(splitCell.removeFromTop(24));
-        header.removeFromRight(14);
-        auto externalGateCell = header.removeFromRight(112);
-        externalGate.label.setBounds(externalGateCell.removeFromTop(14));
-        externalGate.box.setBounds(externalGateCell.removeFromTop(26));
-        header.removeFromRight(14);
-        auto externalPitchCell = header.removeFromRight(102);
-        externalPitchConnected.label.setBounds(
-            externalPitchCell.removeFromTop(14));
-        externalPitchConnected.box.setBounds(
-            externalPitchCell.removeFromTop(26));
-        header.removeFromRight(8);
-        auto externalPitchVoltsCell = header.removeFromRight(54);
-        externalPitchVolts.label.setBounds(
-            externalPitchVoltsCell.removeFromTop(14));
-        externalPitchVolts.slider.setBounds(
-            externalPitchVoltsCell.reduced(10, 0));
-        header.removeFromRight(8);
-        auto oscBPedalResistanceCell = header.removeFromRight(58);
-        oscBPedalResistance.label.setBounds(
-            oscBPedalResistanceCell.removeFromTop(14));
-        oscBPedalResistance.slider.setBounds(
-            oscBPedalResistanceCell.reduced(12, 0));
-        auto oscBPedalJackCell = header.removeFromRight(34);
-        oscBPedalConnected.label.setBounds(
-            oscBPedalJackCell.removeFromTop(14));
-        oscBPedalConnected.button.setBounds(
-            oscBPedalJackCell.removeFromTop(24));
-        header.removeFromRight(8);
-        auto filterPedalResistanceCell = header.removeFromRight(58);
-        filterPedalResistance.label.setBounds(
-            filterPedalResistanceCell.removeFromTop(14));
-        filterPedalResistance.slider.setBounds(
-            filterPedalResistanceCell.reduced(12, 0));
-        auto filterPedalJackCell = header.removeFromRight(34);
-        filterPedalConnected.label.setBounds(
-            filterPedalJackCell.removeFromTop(14));
-        filterPedalConnected.button.setBounds(
-            filterPedalJackCell.removeFromTop(24));
-        header.removeFromRight(14);
-        auto externalAudioCell = header.removeFromRight(112);
-        externalAudioConnected.label.setBounds(
-            externalAudioCell.removeFromTop(14));
-        externalAudioConnected.box.setBounds(
-            externalAudioCell.removeFromTop(26));
-        header.removeFromRight(14);
-        gateLampBounds =
-            header.removeFromRight(66).withSizeKeepingCentre(66, 28);
-        header.removeFromRight(14);
-
-        auto browser = header.withSizeKeepingCentre(
-            juce::jmin(header.getWidth(), 480), 44);
-        previousProgram.setBounds(
-            browser.removeFromLeft(32).withSizeKeepingCentre(30, 28));
-        nextProgram.setBounds(
-            browser.removeFromRight(32).withSizeKeepingCentre(30, 28));
-        browser.reduce(6, 0);
-        programBank.setBounds(browser.removeFromTop(14));
-        programName.setBounds(
-            browser.withSizeKeepingCentre(browser.getWidth(), 28));
-    }
-    area.removeFromTop(10);
-
-    // A framed, titled block of panel. Returns the area inside it that the
-    // controls may use.
-    const auto frame = [this](juce::Rectangle<int> bounds,
-                              const juce::String& title,
-                              bool accent = false) {
+    const auto frame = [this](juce::Rectangle<int> bounds, const char* title, bool accent = false) {
         sections.push_back({ title, bounds, accent });
-        return bounds.reduced(10, 6).withTrimmedTop(18);
     };
-    const auto column = [&frame](juce::Rectangle<int>& row, int width,
-                                 const juce::String& title,
-                                 bool accent = false) {
-        auto bounds = row.removeFromLeft(width);
-        row.removeFromLeft(gap);
-        return frame(bounds, title, accent);
-    };
-    // A knob and its caption want this much height; a captioned selector or
-    // rocker wants far less, so the short ones are centred in their cell
-    // rather than left hanging at the top of it.
-    constexpr int knobCell = 106;
-    constexpr int selectorCell = 42;
-    const auto centred = [](juce::Rectangle<int> cell, int height) {
-        return cell.withSizeKeepingCentre(cell.getWidth(), height);
-    };
+    frame({ 54, 102, 264, 142 }, "MASTER");
+    frame({ 320, 102, 180, 142 }, "OSCILLATOR A");
+    frame({ 500, 102, 392, 142 }, "OSCILLATOR B");
+    frame({ 902, 102, 82, 142 }, "TRIGGER");
+    frame({ 988, 102, 188, 142 }, "GATE SELECT");
+    frame({ 1184, 102, 110, 408 }, "MOD X");
+    frame({ 1300, 102, 110, 408 }, "SHAPER Y");
+    frame({ 54, 250, 264, 122 }, "WHEEL DESTINATIONS");
+    frame({ 54, 250, 434, 260 }, "AUDIO MIXER");
+    frame({ 494, 250, 398, 260 }, "UPPER FILTER U", true);
+    frame({ 902, 250, 274, 260 }, "FILTER ENVELOPE");
 
-    // ---- The keyboard and the levers beside it --------------------------
-    // The instrument puts GLIDE and the three levers on their own sub-panel
-    // to the left of the keys; this follows it, and the keys take the rest.
-    {
-        auto bottom = area.removeFromBottom(206);
-        area.removeFromBottom(10);
+    layoutKnob(tune, { 69, 128, 99, 107 });
+    layoutSelector(octave, { 200, 128, 104, 107 });
+    layoutSelector(oscAWaveform, { 327, 128, 106, 107 });
+    layoutRocker(sync, { 438, 128, 54, 107 });
+    layoutSelector(oscBWaveform, { 512, 128, 117, 107 });
+    layoutSelector(oscBRange, { 641, 128, 117, 107 });
+    layoutKnob(interval, { 772, 128, 105, 107 });
+    trigger.label.setVisible(false);
+    trigger.box.setBounds(909, 132, 68, 102);
+    layoutRocker(gateKbd, { 991, 128, 58, 107 });
+    layoutRocker(gateX, { 1051, 128, 58, 107 });
+    layoutRocker(gateYExt, { 1111, 128, 61, 107 });
 
-        auto levers = frame(bottom.removeFromLeft(330), "GLIDE  /  LEVERS");
-        bottom.removeFromLeft(gap);
-        auto glideRow = levers.removeFromLeft(150);
-        layoutKnob(glide, centred(glideRow.removeFromTop(112), knobCell));
-        layoutSelector(glideMode, centred(glideRow, selectorCell));
-        auto leverRow = levers.withTrimmedLeft(8);
-        const int leverWidth = leverRow.getWidth() / 3;
-        pitchWheelLabel.setBounds(
-            leverRow.removeFromTop(16).removeFromLeft(leverWidth));
-        auto leverBodies = leverRow;
-        xWheel.label.setBounds(
-            juce::Rectangle<int> { leverBodies.getX() + leverWidth,
-                                   leverBodies.getY() - 16, leverWidth, 16 });
-        yWheel.label.setBounds(
-            juce::Rectangle<int> { leverBodies.getX() + 2 * leverWidth,
-                                   leverBodies.getY() - 16, leverWidth, 16 });
-        pitchWheel.setBounds(leverBodies.removeFromLeft(leverWidth)
-                                 .reduced(leverWidth / 2 - 14, 2));
-        xWheel.slider.setBounds(leverBodies.removeFromLeft(leverWidth)
-                                    .reduced(leverWidth / 2 - 14, 2));
-        yWheel.slider.setBounds(
-            leverBodies.reduced(leverBodies.getWidth() / 2 - 14, 2));
+    layoutSelector(arpeggiator, { 1189, 128, 100, 112 });
+    layoutSelector(modSource, { 1189, 260, 100, 110 });
+    layoutKnob(lfoRate, { 1189, 395, 100, 107 });
+    layoutSelector(shaperMode, { 1305, 128, 100, 112 });
+    layoutKnob(shaperShape, { 1305, 260, 100, 110 });
+    layoutKnob(shaperRate, { 1305, 395, 100, 107 });
 
-        auto keys = frame(bottom, "KEYBOARD  /  37 KEYS, C TO C");
-        keyboard.setKeyWidth(static_cast<float>(keys.getWidth()) / 22.0f);
-        keyboard.setBounds(keys);
-    }
+    layoutSelector(modXTo, { 59, 273, 83, 96 });
+    layoutRocker(shapeXWithY, { 145, 273, 85, 96 });
+    shapeXWithY.label.setFont(juce::FontOptions { 10.0f });
+    layoutSelector(shaperYTo, { 232, 273, 81, 96 });
+    layoutKnob(masterVolume, { 337, 276, 136, 94 });
+    layoutKnob(brightness, { 59, 389, 72, 96 });
 
-    // ---- MOD X and SHAPER Y: full-height columns on the right ----------
-    // Both are tall columns on the instrument's own panel, spanning the
-    // whole depth beside everything else, and they are here too.
-    {
-        auto right = area.removeFromRight(316);
-        area.removeFromRight(gap);
+    layoutFader(shaperPathA, { 138, 389, 40, 101 });
+    layoutFader(shaperPathB, { 181, 389, 40, 101 });
+    layoutFader(shaperPathRing, { 224, 389, 40, 101 });
+    layoutFader(shaperPathNoise, { 267, 389, 45, 101 });
+    layoutFader(filterPathA, { 334, 389, 42, 101 });
+    layoutFader(filterPathB, { 382, 389, 42, 101 });
+    layoutFader(filterPathNoise, { 432, 389, 48, 101 });
+    shaperPathCaption.setBounds(132, 490, 182, 18);
+    filterPathCaption.setBounds(323, 490, 159, 18);
 
-        auto modX = frame(right.removeFromLeft(154), "MOD X");
-        right.removeFromLeft(gap);
-        const int modXSpacing =
-            juce::jmax(12, (modX.getHeight() - 2 * selectorCell - knobCell)
-                               / 3);
-        layoutSelector(arpeggiator, modX.removeFromTop(selectorCell));
-        modX.removeFromTop(modXSpacing);
-        layoutSelector(modSource, modX.removeFromTop(selectorCell));
-        modX.removeFromTop(modXSpacing);
-        layoutKnob(lfoRate, modX.removeFromTop(knobCell));
+    layoutKnob(cutoff, { 504, 279, 88, 94 });
+    layoutSelector(upperResonance, { 603, 279, 85, 94 });
+    layoutSelector(slope, { 704, 279, 79, 94 });
+    layoutKnob(kbAmount, { 795, 279, 88, 94 });
+    layoutKnob(lowerOnly, { 504, 388, 88, 99 });
+    layoutKnob(resonance, { 601, 388, 89, 99 });
+    layoutSelector(lowerMode, { 697, 388, 95, 99 });
+    layoutSelector(tracking, { 798, 388, 85, 99 });
 
-        auto shaper = frame(right, "SHAPER Y");
-        const int shaperSpacing =
-            juce::jmax(10, (shaper.getHeight() - selectorCell - 2 * knobCell)
-                               / 3);
-        layoutSelector(shaperMode, shaper.removeFromTop(selectorCell));
-        shaper.removeFromTop(shaperSpacing);
-        layoutKnob(shaperShape, shaper.removeFromTop(knobCell));
-        shaper.removeFromTop(shaperSpacing);
-        layoutKnob(shaperRate, shaper.removeFromTop(knobCell));
-    }
+    layoutKnob(filterEnvAmount, { 910, 278, 88, 95 });
+    layoutFader(filterAttack, { 1003, 278, 37, 95 });
+    layoutFader(filterDecay, { 1045, 278, 37, 95 });
+    layoutFader(filterSustain, { 1087, 278, 37, 95 });
+    layoutFader(filterRelease, { 1129, 278, 37, 95 });
+    layoutRocker(vcaBypass, { 910, 388, 88, 99 });
+    layoutFader(loudnessAttack, { 1003, 388, 37, 99 });
+    layoutFader(loudnessDecay, { 1045, 388, 37, 99 });
+    layoutFader(loudnessSustain, { 1087, 388, 37, 99 });
+    layoutFader(loudnessRelease, { 1129, 388, 37, 99 });
 
-    // ---- Row 1: master, the oscillators, trigger and gating -------------
-    {
-        auto row1 = area.removeFromTop(142);
-        auto master = column(row1, 190, "MASTER");
-        layoutKnob(tune, centred(master.removeFromLeft(96), knobCell));
-        master.removeFromLeft(10);
-        layoutSelector(octave, centred(master, selectorCell));
+    layoutKnob(glide, { 86, 589, 90, 65 });
+    layoutSelector(glideMode, { 209, 589, 100, 65 });
+    pitchWheel.setBounds(92, 660, 43, 80);
+    pitchWheelLabel.setBounds(79, 744, 70, 16);
+    xWheel.slider.setBounds(179, 660, 43, 80);
+    xWheel.label.setBounds(164, 744, 74, 16);
+    yWheel.slider.setBounds(265, 660, 43, 80);
+    yWheel.label.setBounds(249, 744, 76, 16);
+    keyboard.setKeyWidth(1034.0f / 22.0f);
+    keyboard.setBounds(376, 578, 1034, 190);
 
-        auto oscA = column(row1, 190, "OSCILLATOR A");
-        layoutSelector(oscAWaveform,
-                       centred(oscA.removeFromLeft(104), selectorCell));
-        oscA.removeFromLeft(10);
-        layoutRocker(sync, centred(oscA, selectorCell));
-
-        auto oscB = column(row1, 350, "OSCILLATOR B");
-        layoutSelector(oscBWaveform,
-                       centred(oscB.removeFromLeft(112), selectorCell));
-        oscB.removeFromLeft(8);
-        layoutSelector(oscBRange,
-                       centred(oscB.removeFromLeft(120), selectorCell));
-        oscB.removeFromLeft(8);
-        layoutKnob(interval, centred(oscB, knobCell));
-
-        auto triggerSection = column(row1, 130, "TRIGGER");
-        layoutSelector(trigger, centred(triggerSection, selectorCell));
-
-        auto gates = column(row1, row1.getWidth(), "GATE SELECT");
-        const int gateCell = gates.getWidth() / 3;
-        layoutRocker(gateKbd,
-                     centred(gates.removeFromLeft(gateCell), selectorCell));
-        layoutRocker(gateX,
-                     centred(gates.removeFromLeft(gateCell), selectorCell));
-        layoutRocker(gateYExt, centred(gates, selectorCell));
-    }
-    area.removeFromTop(gap);
-
-    // ---- Row 2: routing, the mixer, the filters, the envelopes ----------
-    {
-        auto row2 = area;
-
-        auto destinations = column(row2, 186, "WHEEL DESTINATIONS");
-        const int destinationSpacing =
-            juce::jmax(14, (destinations.getHeight() - 3 * selectorCell) / 3);
-        layoutSelector(modXTo, destinations.removeFromTop(selectorCell));
-        destinations.removeFromTop(destinationSpacing);
-        layoutRocker(shapeXWithY, destinations.removeFromTop(selectorCell));
-        destinations.removeFromTop(destinationSpacing);
-        layoutSelector(shaperYTo, destinations.removeFromTop(selectorCell));
-
-        auto mixer = column(row2, 386, "AUDIO MIXER");
-        auto mixerKnobs = mixer.removeFromLeft(96);
-        layoutKnob(masterVolume, mixerKnobs.removeFromTop(knobCell + 8));
-        mixerKnobs.removeFromTop(8);
-        layoutKnob(brightness, mixerKnobs.removeFromTop(knobCell + 8));
-        mixer.removeFromLeft(8);
-        // The two path groups are captioned under their faders, as the
-        // instrument's own silkscreen brackets them.
-        auto pathCaptions = mixer.removeFromBottom(15);
-        auto shaperGroup = mixer.removeFromLeft(mixer.getWidth() * 4 / 7);
-        auto filterGroup = mixer.withTrimmedLeft(10);
-        shaperPathCaption.setBounds(
-            pathCaptions.removeFromLeft(shaperGroup.getWidth()));
-        filterPathCaption.setBounds(pathCaptions.withTrimmedLeft(10));
-        const int shaperWidth = shaperGroup.getWidth() / 4;
-        layoutFader(shaperPathA, shaperGroup.removeFromLeft(shaperWidth));
-        layoutFader(shaperPathB, shaperGroup.removeFromLeft(shaperWidth));
-        layoutFader(shaperPathRing, shaperGroup.removeFromLeft(shaperWidth));
-        layoutFader(shaperPathNoise, shaperGroup);
-        const int filterWidth = filterGroup.getWidth() / 3;
-        layoutFader(filterPathA, filterGroup.removeFromLeft(filterWidth));
-        layoutFader(filterPathB, filterGroup.removeFromLeft(filterWidth));
-        layoutFader(filterPathNoise, filterGroup);
-
-        auto filters = column(row2, 330,
-                              "UPPER FILTER U  /  LOWER FILTER L", true);
-        auto upperRow = filters.removeFromTop(filters.getHeight() / 2);
-        const int filterCell = upperRow.getWidth() / 4;
-        layoutKnob(cutoff,
-                   centred(upperRow.removeFromLeft(filterCell), knobCell));
-        layoutSelector(upperResonance,
-                       centred(upperRow.removeFromLeft(filterCell),
-                               selectorCell));
-        layoutSelector(slope, centred(upperRow.removeFromLeft(filterCell),
-                                      selectorCell));
-        layoutKnob(kbAmount, centred(upperRow, knobCell));
-        auto lowerRow = filters;
-        layoutKnob(lowerOnly,
-                   centred(lowerRow.removeFromLeft(filterCell), knobCell));
-        layoutKnob(resonance,
-                   centred(lowerRow.removeFromLeft(filterCell), knobCell));
-        layoutSelector(lowerMode,
-                       centred(lowerRow.removeFromLeft(filterCell),
-                               selectorCell));
-        layoutSelector(tracking, centred(lowerRow, selectorCell));
-
-        // The two envelopes stack in one column, as they do on the panel.
-        auto envelopes = row2;
-        auto filterEnv = frame(
-            envelopes.removeFromTop(envelopes.getHeight() / 2),
-            "FILTER ENVELOPE");
-        auto loudness = frame(envelopes.withTrimmedTop(gap),
-                              "LOUDNESS ENVELOPE");
-
-        layoutKnob(filterEnvAmount,
-                   centred(filterEnv.removeFromLeft(76), knobCell));
-        const int envFader = filterEnv.getWidth() / 4;
-        layoutFader(filterAttack, filterEnv.removeFromLeft(envFader));
-        layoutFader(filterDecay, filterEnv.removeFromLeft(envFader));
-        layoutFader(filterSustain, filterEnv.removeFromLeft(envFader));
-        layoutFader(filterRelease, filterEnv);
-
-        layoutRocker(vcaBypass,
-                     centred(loudness.removeFromLeft(76), selectorCell));
-        const int loudFader = loudness.getWidth() / 4;
-        layoutFader(loudnessAttack, loudness.removeFromLeft(loudFader));
-        layoutFader(loudnessDecay, loudness.removeFromLeft(loudFader));
-        layoutFader(loudnessSustain, loudness.removeFromLeft(loudFader));
-        layoutFader(loudnessRelease, loudness);
-    }
+    rearConnections.setBounds(376, 578, 1034, 190);
+    layoutSelector(externalAudioConnected, { 16, 42, 140, 44 });
+    layoutSelector(externalGate, { 16, 101, 140, 44 });
+    layoutSelector(externalPitchConnected, { 180, 42, 132, 44 });
+    layoutKnob(externalPitchVolts, { 319, 43, 90, 112 });
+    layoutRocker(oscBPedalConnected, { 440, 51, 67, 91 });
+    layoutKnob(oscBPedalResistance, { 511, 43, 96, 112 });
+    layoutRocker(filterPedalConnected, { 646, 51, 67, 91 });
+    layoutKnob(filterPedalResistance, { 717, 43, 96, 112 });
+    layoutRocker(splitPaths, { 884, 51, 80, 91 });
 }

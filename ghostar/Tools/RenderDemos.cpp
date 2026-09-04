@@ -482,6 +482,45 @@ Take renderSyncSweep()
     return take;
 }
 
+// Extend the bass-focused sync take into the bright register heard in the
+// original-hardware performance at
+// https://greatsynthesizers.com/wp/wp-content/uploads/2023/08/Crumar-Spirit-OscSync-Power.mp3
+// (inspected 2026-09-05). Its unknown patch is an audition reference, not a
+// calibration target. Repeat one phrase as saw and 20 % pulse, leaving the
+// upper filter open so hard resets and pulse-comparator phase remain exposed.
+Take renderHighRegisterSync()
+{
+    auto parameters = plainPanel();
+    parameters.filterPathA = 0.0f;
+    parameters.filterPathB = 0.8f;
+    parameters.sync = true;
+    parameters.oscBRange = OscBRange::PlusOne;
+    parameters.interval = 0.75f;
+    parameters.cutoff = 1.0f;
+    parameters.slope = UpperSlope::TwelveDb;
+    parameters.kbAmount = 0.0f;
+    parameters.filterEnvAmount = 0.5f;
+    parameters.loudnessRelease = 0.25f;
+    parameters.shaperMode = ShaperMode::Reset;
+    parameters.shaperRate = 0.62f;
+    parameters.shaperShape = 0.15f;
+    parameters.shaperYTo = ShaperYDestination::OscB;
+    Take take(parameters);
+
+    take.yWheel(0.6f);
+    take.rest(0.1);
+    for (const auto waveform : { Waveform::Sawtooth, Waveform::RectMid })
+    {
+        parameters.oscBWaveform = waveform;
+        take.setParameters(parameters);
+        for (const int note : { 72, 76, 79 })
+            take.hit(note, 1.0f, 0.85, 0.25);
+        take.rest(0.55);
+    }
+    take.rest(1.0);
+    return take;
+}
+
 // The ring modulator's clangorous register, on the Shaper path with KBD
 // HOLD shaping and a slightly offset Osc B for inharmonic partials.
 Take renderRingBells()
@@ -731,10 +770,10 @@ Take renderProgramTour()
         take.yWheel(program.y);
     };
 
-    const auto spiritBass = programNamed("Spirit Bass");
-    Take take(spiritBass.parameters);
-    take.xWheel(spiritBass.x);
-    take.yWheel(spiritBass.y);
+    const auto ghostBass = programNamed("Ghost Bass");
+    Take take(ghostBass.parameters);
+    take.xWheel(ghostBass.x);
+    take.yWheel(ghostBass.y);
     take.rest(0.15);
     const int bassRiff[] = { 33, 33, 40, 33, 36, 33 };
     for (const int note : bassRiff)
@@ -788,9 +827,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 12>& demos()
+const std::array<Demo, 13>& demos()
 {
-    static const std::array<Demo, 12> table {{
+    static const std::array<Demo, 13> table {{
         { "01-dual-filter-vocal.wav",
           "The signature dual filter: the lower parametric boost slid "
           "against the upper lowpass",
@@ -834,6 +873,10 @@ const std::array<Demo, 12>& demos()
           "Six of the Ghostar Programs in turn, each with a phrase that "
           "suits it",
           renderProgramTour },
+        { "13-high-register-sync.wav",
+          "Bright high-register hard sync: saw and 20 % pulse phrases "
+          "through an open upper filter",
+          renderHighRegisterSync },
     }};
     return table;
 }

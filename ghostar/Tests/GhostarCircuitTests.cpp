@@ -880,6 +880,41 @@ struct GhostarCircuitTestAccess
         return engine.lastOscBWave_;
     }
 
+    static std::array<double, 3> movingPulseStep(
+        double hostRate, double phase, double phaseStep,
+        double previousDuty, double duty, bool oscA,
+        double resetU = -1.0) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        engine.parameters_.oscAWaveform = Waveform::RectThin;
+        engine.parameters_.oscBWaveform = Waveform::RectThin;
+        engine.parameters_.sync = resetU >= 0.0;
+        engine.targetParameters_ = engine.parameters_;
+        engine.phaseA_ = resetU >= 0.0
+            ? 1.0 - resetU * phaseStep : phase;
+        engine.phaseB_ = phase;
+        engine.heldWaveformA_ = Waveform::RectThin;
+        engine.heldWaveformB_ = Waveform::RectThin;
+        engine.heldWaveA_ = engine.heldWaveB_ =
+            phase < previousDuty ? 1.0 : -1.0;
+        engine.heldDutyA_ = engine.heldDutyB_ = previousDuty;
+        engine.oscADuty_ = engine.oscBDuty_ = duty;
+        engine.controlOscAOctaves_ = engine.controlOscBOctaves_ =
+            std::log2(phaseStep * engine.internalRate_ / 440.0);
+        engine.controlOscBDrone_ = false;
+        engine.controlPwmA_ = engine.controlPwmB_ = 0.0;
+        engine.controlAudioRateMod_ = GhostarEngine::AudioRateMod {};
+        engine.renderVoiceSample();
+        return oscA
+            ? std::array<double, 3> {
+                engine.preMixerDelay_[0].oscillatorA,
+                engine.heldWaveA_, engine.phaseA_ }
+            : std::array<double, 3> {
+                engine.preMixerDelay_[0].oscillatorB,
+                engine.heldWaveB_, engine.phaseB_ };
+    }
+
     static std::array<double, 2> pulseDutyEndpointRange(
         double duty) noexcept
     {
@@ -2769,6 +2804,129 @@ void testPulseWidthReachesTheCemEndpoints()
     check(std::abs(one[0] - expectedHigh) < 1.0e-13
               && std::abs(one[1] - expectedHigh) < 1.0e-13,
           "hundred-percent PWM is the constant conditioned pulse high");
+}
+
+// The chip's pin-5 comparator sees half the saw, not a sampled duty latch.
+// These hand-solved trajectories include edges moving in either direction,
+// a wrap followed by a second crossing, and resets on each side of an edge.
+// Each event's two BLEP halves are checked in the real emitted/held samples.
+void testPulseWidthUsesContinuousComparatorCrossings()
+{
+    struct Stroke
+    {
+        double phase, step, oldDuty, duty, resetU;
+        std::array<std::pair<double, double>, 3> events;
+    };
+    const std::array<Stroke, 16> strokes {{
+        { 0.1, 0.4, 0.3, 0.3, -1.0, {{{ 0.5, -2.0 }}} },
+        { 0.1, 0.1, 0.3, 0.1, -1.0, {{{ 2.0 / 3.0, -2.0 }}} },
+        { 0.4, 0.1, 0.1, 0.7, -1.0, {{{ 0.6, 2.0 }}} },
+        { 0.4, 0.1, 0.1, 0.2, -1.0, {} },
+        { 0.25, 0.1, 0.25, 0.6, -1.0, {{{ 0.0, 2.0 }}} },
+        { 0.1, 0.1, 0.4, 0.19, -1.0, {{{ 30.0 / 31.0, -2.0 }}} },
+        { 0.9, 0.2, 0.4, 0.05, -1.0,
+          {{{ 0.5, 2.0 }, { 10.0 / 11.0, -2.0 }}} },
+        { 0.9, 0.2, 0.0, 0.0, -1.0, {} },
+        { 0.9, 0.2, 1.0, 1.0, -1.0, {} },
+        { 0.8, 0.1, 1.1, 0.8, -1.0, {{{ 0.75, -2.0 }}} },
+        { 0.1, 0.1, -0.1, 0.3, -1.0, {{{ 2.0 / 3.0, 2.0 }}} },
+        { 0.9, 0.2, -0.5, -0.1, -1.0, {} },
+        { 0.9, 0.2, 1.1, 1.5, -1.0, {} },
+        { 0.3, 0.2, -0.2, 1.2, -1.0, {{{ 5.0 / 12.0, 2.0 }}} },
+        { 0.4, 0.2, 0.5, 0.1, 0.75,
+          {{{ 1.0 / 6.0, -2.0 }, { 0.75, 2.0 }}} },
+        { 0.7, 0.4, 0.2, 0.0, 0.25,
+          {{{ 0.25, 2.0 }, { 0.5, -2.0 }}} }
+    }};
+    constexpr double gain = 1.0 + 10.0 / 24.0 + 10.0 / 91.0;
+    constexpr double pulseHigh = (12.0 - 0.3)
+        / (1.0 + 1.3e3 / 16.8e3) * 6.8e3 / 16.8e3;
+
+    for (const double hostRate : { 8000.0, 44100.0, 96000.0, 768000.0 })
+        for (const auto& stroke : strokes)
+            for (const bool oscA : { false, true })
+            {
+                if (oscA && stroke.resetU >= 0.0)
+                    continue; // Only B accepts the physical sync input.
+                const auto actual =
+                    ghostar::GhostarCircuitTestAccess::movingPulseStep(
+                        hostRate, stroke.phase, stroke.step,
+                        stroke.oldDuty, stroke.duty, oscA, stroke.resetU);
+                double endPhase = stroke.resetU >= 0.0
+                    ? (1.0 - stroke.resetU) * stroke.step
+                    : stroke.phase + stroke.step;
+                endPhase -= std::floor(endPhase);
+                double held = stroke.phase < stroke.oldDuty ? 1.0 : -1.0;
+                double now = endPhase < stroke.duty ? 1.0 : -1.0;
+                for (const auto& [u, jump] : stroke.events)
+                {
+                    held += 0.5 * jump * (1.0 - u) * (1.0 - u);
+                    now -= 0.5 * jump * u * u;
+                }
+                const double volts = (0.5 * pulseHigh * (held + 1.0)
+                                      * gain - 5.0) / 5.0;
+                if (std::abs(actual[0] - volts) >= 2.0e-13
+                    || std::abs(actual[1] - now) >= 2.0e-13
+                    || std::abs(actual[2] - endPhase) >= 2.0e-13)
+                    std::cerr << "PWM stroke " << (&stroke - strokes.data())
+                              << " at " << hostRate << ", A=" << oscA
+                              << ": actual=" << actual[0] << ',' << actual[1]
+                              << ',' << actual[2] << " expected=" << volts
+                              << ',' << now << ',' << endPhase << '\n';
+                check(std::abs(actual[0] - volts) < 2.0e-13
+                          && std::abs(actual[1] - now) < 2.0e-13
+                          && std::abs(actual[2] - endPhase) < 2.0e-13,
+                      "PWM solves the moving comparator edge before BLEP correction");
+            }
+}
+
+// Equal-slope comparator inputs must not acquire a pulse when a rounded
+// wrap time is substituted into them. These binary-rational trajectories
+// also keep real crossings separated by only 2^-48 of comparator voltage:
+// an epsilon deadband would incorrectly erase those finite-width pulses.
+void testPulseComparatorPreservesCoincidentAndNearbyInputs()
+{
+    constexpr double epsilon = 0x1p-48;
+    struct Stroke
+    {
+        double phase, step, oldDuty, duty, expectedHeld, expectedNow;
+        double hostRate { 44100.0 };
+    };
+    constexpr double wrapU = 5.0 / 6.0;
+    const std::array<Stroke, 7> strokes {{
+        { 11.0 / 16.0, 3.0 / 8.0, -5.0 / 16.0, 1.0 / 16.0,
+          -1.0, -1.0 },
+        { 123.0 / 128.0, 3.0 / 64.0, -5.0 / 128.0, 1.0 / 128.0,
+          -1.0, -1.0 },
+        { 11.0 / 16.0, 3.0 / 8.0,
+          -5.0 / 16.0 + epsilon, 1.0 / 16.0 + epsilon,
+          -1.0 + (1.0 - wrapU) * (1.0 - wrapU), 1.0 - wrapU * wrapU },
+        { 11.0 / 16.0, 3.0 / 8.0,
+          -5.0 / 16.0 - epsilon, 1.0 / 16.0 - epsilon, -1.0, -1.0 },
+        { 0.25, 0.125, 0.25 + epsilon, 0.375 - epsilon, 0.75, -0.75 },
+        { 0.25, 0.125, 0.25 - epsilon, 0.375 + epsilon, -0.75, 0.75 },
+        // Here adding phase+step before subtracting 1 rounds the raw
+        // endpoint below duty even though the relative inputs coincide.
+        { 0.98234650620167774, 0.14281802677290223,
+          -0.017653493798322262, 0.12516453297457997,
+          -1.0, -1.0, 8000.0 }
+    }};
+    for (const auto& stroke : strokes)
+        for (const bool oscA : { false, true })
+        {
+            // The selected rates isolate comparator arithmetic from pitch
+            // rounding for these particular frequency/phase increments.
+            const auto actual =
+                ghostar::GhostarCircuitTestAccess::movingPulseStep(
+                    stroke.hostRate, stroke.phase, stroke.step,
+                    stroke.oldDuty, stroke.duty, oscA);
+            const double expectedVolts = ghostar::GhostarCircuitTestAccess::
+                selectedWaveVolts(ghostar::Waveform::RectThin,
+                                  stroke.expectedHeld) / 5.0;
+            check(std::abs(actual[0] - expectedVolts) < 2.0e-13
+                      && std::abs(actual[1] - stroke.expectedNow) < 2.0e-13,
+                  "the PWM comparator preserves coincident and nearby inputs");
+        }
 }
 
 // One internal sample of the generic C37 companion integration must satisfy
@@ -6210,6 +6368,8 @@ int main()
     testP1014SelectedWaveConditioner();
     testCem3340PitchMultiplierBypass();
     testPulseWidthReachesTheCemEndpoints();
+    testPulseWidthUsesContinuousComparatorCrossings();
+    testPulseComparatorPreservesCoincidentAndNearbyInputs();
     testHighQCompanionsSatisfyTheirIntegratedEquations();
     testUpperCascadeMatchesP1013();
     testLowerMixerMnaSatisfiesP1013();

@@ -574,6 +574,8 @@ private:
     double heldWaveB_ { 0.0 };
     Waveform heldWaveformB_ { Waveform::Sawtooth };
     double heldTriB_ { 0.0 };
+    // Raw comparator thresholds; values outside 0..1 retain the voltage
+    // trajectory into and out of the constant-low/high PWM plateaus.
     double heldDutyA_ { 0.5 };
     double heldDutyB_ { 0.5 };
     PitchControlLag pitchLagA_ {};

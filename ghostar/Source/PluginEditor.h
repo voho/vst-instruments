@@ -7,12 +7,11 @@
 #include <memory>
 #include <vector>
 
-// The panel follows the modelled instrument's functional geometry — which
-// controls exist, how they group into silkscreened sections, and which are
-// knobs, rockers, sliders or wheels — in a charcoal livery with grey knob
-// caps, their markings in black and the silkscreen in white. The keys have
-// the bottom of the window to themselves, with the performance wheels
-// standing to their left, so the controls own everything above.
+// Geometry and materials follow an overhead photograph of the original
+// instrument: stepped mixer silkscreen, full-height modulation columns,
+// black skirts with grey index caps, walnut rails and three ribbed wheels.
+// The controls remain native JUCE widgets with host attachments and keyboard
+// focus; rear connections open above the keybed from a separate browser strip.
 class GhostarLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -33,6 +32,7 @@ public:
                       int buttonX, int buttonY, int buttonW, int buttonH,
                       juce::ComboBox& box) override;
     juce::Font getComboBoxFont(juce::ComboBox&) override;
+    void positionComboBoxText(juce::ComboBox&, juce::Label&) override;
     void drawButtonBackground(juce::Graphics& g, juce::Button& button,
                               const juce::Colour& backgroundColour,
                               bool shouldDrawButtonAsHighlighted,
@@ -171,6 +171,8 @@ private:
     juce::TextButton programName { "Init" };
     juce::Label programBank;
     juce::TextButton panicButton { "PANIC" };
+    juce::TextButton connectionsButton { "REAR CONNECTIONS" };
+    juce::Component rearConnections;
     juce::Rectangle<int> gateLampBounds;
     bool gateLampLit { false };
     int shownProgram { -1 };

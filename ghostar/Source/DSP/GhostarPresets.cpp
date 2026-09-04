@@ -324,7 +324,7 @@ namespace
 
     // A dry benchmark for the performance bank: fast 24 dB lowpass punch,
     // with a slightly detuned rectangular undertone behind the saw.
-    EngineParameters spiritBass()
+    EngineParameters ghostBass()
     {
         auto p = playablePanel();
         p.octave = MasterOctave::Sixteen;
@@ -406,7 +406,7 @@ namespace
     // resulting edge is darkened again by the 24 dB upper section.
     EngineParameters diodeGrowl()
     {
-        auto p = spiritBass();
+        auto p = ghostBass();
         p.lowerMode = LowerFilterMode::Overdrive;
         p.oscBWaveform = Waveform::RectNarrow;
         p.resonance = 0.66f;
@@ -827,9 +827,9 @@ namespace
               PresetBank::SoundCharts, invertedGuitar() },
 
             // --- Ghostar Programs: the performance bank ------------------
-            { "Spirit Bass",
+            { "Ghost Bass",
               "Fast 24 dB lowpass punch over a detuned rectangular undertone",
-              PresetBank::Programs, spiritBass(), 0.0f, 0.0f },
+              PresetBank::Programs, ghostBass(), 0.0f, 0.0f },
             { "Vowel Motion",
               "Dynamic dual peaks; the Y wheel makes the lower vowel roam",
               PresetBank::Programs, vowelMotion(), 0.0f, 0.45f },

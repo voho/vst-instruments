@@ -49,7 +49,8 @@ fi
 
 cmake "${cmake_args[@]}"
 cmake --build "${BUILD_DIR}" --config "${CONFIG}" --parallel
-ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure
+GHOSTAR_EDITOR_SNAPSHOT="${PROJECT_DIR}/Docs/screenshots/ghostar-standalone.png" \
+    ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure
 
 echo
 echo "Build complete. Artifacts:"
