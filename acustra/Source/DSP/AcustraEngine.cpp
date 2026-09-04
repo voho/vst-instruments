@@ -1142,6 +1142,8 @@ void AcustraEngine::reset() noexcept
     resetSoundState();
     palmMute_ = targetPalmMute_;
     pitchBendSemitones_.fill(0.0f);
+    mpeTimbre_.fill(-1.0f);
+    mpePressure_.fill(-1.0f);
     sustainPedals_.fill(false);
     vibrato_ = 0.0f;
     vibratoPhase_ = 0.0f;
@@ -1938,7 +1940,17 @@ float AcustraEngine::vibratoSemitones(const Voice& voice,
         || voice.harmonic > 1 || fret <= 0)
         return 0.0f;
     constexpr float fullWheelSemitones = 0.20f;
-    return fullWheelSemitones * vibrato_ * vibratoOnset_
+    // MPE channel pressure biases how deep this one note's vibrato reaches,
+    // a firmer grip letting more of the wheel's own travel through; it never
+    // raises the wheel's own 20-cent ceiling above, only trims it down for a
+    // lighter grip, so no new pitch magnitude enters the model. A pressure
+    // that was never sent leaves the factor at 1, exactly as before.
+    constexpr float pressureDepthFloor = 0.5f;
+    const float pressure = mpePressureFor(voice);
+    const float depthBias = pressure >= 0.0f
+        ? pressureDepthFloor + (1.0f - pressureDepthFloor) * pressure
+        : 1.0f;
+    return fullWheelSemitones * depthBias * vibrato_ * vibratoOnset_
         * 0.5f * (1.0f - std::cos(vibratoPhase_));
 }
 
@@ -1948,6 +1960,17 @@ float AcustraEngine::effectiveTouch(const Voice& voice) const noexcept
         ? physicalCalibration_.steel : physicalCalibration_.nylon;
     return clamp(parameters_.touch + physical.velocityBrightnessDepth
         * (voice.velocity - 0.5f), 0.0f, 1.0f);
+}
+
+// -1: no lower zone, off a member channel, or no channel-pressure message
+// received for this note yet -- every caller must treat that as "apply no
+// bias", not as a pressure of zero.
+float AcustraEngine::mpePressureFor(const Voice& voice) const noexcept
+{
+    if (!voice.mpeMember || voice.midiChannel < 1
+        || voice.midiChannel > midiChannelCount)
+        return -1.0f;
+    return mpePressure_[static_cast<std::size_t>(voice.midiChannel - 1)];
 }
 
 namespace
@@ -2002,8 +2025,21 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     // which for three draws from a uniform spread is the spread's half-width;
     // each pluck draws its own offset within it.
     const float takeOffset = 0.02f * nextNoise(voice);
-    const float position = clamp(distanceFromBridge / soundingLength
-                                     + takeOffset, 0.05f, 0.46f);
+    // MPE Timbre, CC74, on this note's own member channel says directly
+    // where the string was met (0-1 across the same 0.05-0.46 band the
+    // panel control reaches), in place of the panel's one hand position for
+    // every string. -1 is "no CC74 received this note", the panel's own
+    // distance-from-bridge law applies unchanged, and this is the only path
+    // reachable without a lower zone.
+    const std::size_t channelIndex
+        = static_cast<std::size_t>(voice.midiChannel - 1);
+    const bool hasTimbre = voice.mpeMember && voice.midiChannel >= 1
+        && voice.midiChannel <= midiChannelCount
+        && mpeTimbre_[channelIndex] >= 0.0f;
+    const float basePosition = hasTimbre
+        ? 0.05f + 0.41f * mpeTimbre_[channelIndex]
+        : distanceFromBridge / soundingLength;
+    const float position = clamp(basePosition + takeOffset, 0.05f, 0.46f);
     voice.pluckPoint = position;
     // Velocity response has two bounded parts: touch brightens with velocity,
     // while the displacement exponent moves from the legacy 1.32 toward the
@@ -2387,6 +2423,16 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
         physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
     const float waveSpeed = 2.0f * scaleLength * midiFrequency(voice.openMidi);
     const float tension = voice.characteristicImpedance * waveSpeed;
+    // MPE channel pressure, read before a full release to the open string
+    // clears the note's own member channel below, biases how easily this
+    // lift's energy clears the fret: a firmer grip needs less of it to snap
+    // clean, down to 60% of the unbiased elastic energy. It reshapes the
+    // same triangle either way -- see addReleasedTriangle and
+    // addTriangleVelocity -- and adds no energy of its own.
+    constexpr float pressureThresholdFloor = 0.6f;
+    const float liftPressure = mpePressureFor(voice);
+    const float elasticBias = liftPressure >= 0.0f
+        ? 1.0f - (1.0f - pressureThresholdFloor) * liftPressure : 1.0f;
 
     voice.fingerLift = 0.0f;
     voice.releaseDamping = 1.0f;
@@ -2413,7 +2459,7 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
     configureVoice(voice, stringIndex, targetMidi, false);
 
     const float energy = pluckEnergy(lift, targetLength, tension);
-    const float elastic = 0.5f * tension * height * height
+    const float elastic = elasticBias * 0.5f * tension * height * height
         * (1.0f / apex + 1.0f / (1.0f - apex)) / targetLength;
     voice.touchDamping = handContactGain(midiFrequency(targetMidi));
     if (energy >= elastic)
@@ -2709,17 +2755,35 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
         }
     }
 
-    int string = chooseString(midiNote);
+    int string = -1;
     int harmonic = 1;
-    if (string < 0)
+    // Guitar-controller mode: the channel already says which string, the way
+    // a GK pickup or TriplePlay does in mono mode, so the fret-distance guess
+    // below never runs. A note the channel's own string cannot fret is
+    // dropped rather than handed to a different string, matching what such
+    // a controller can physically pick.
+    if (stringPerChannelMode_ && midiChannel >= 1 && midiChannel <= stringCount)
     {
-        // Above the fretted range the guitar still reaches, through the
-        // natural harmonics of its open strings. Below it, it does not.
-        const auto choice = chooseHarmonic(midiNote);
-        if (choice.string < 0)
+        const int candidate = midiChannel - 1;
+        const int fret = midiNote
+            - voices_[static_cast<std::size_t>(candidate)].openMidi;
+        if (fret < 0 || fret > fretCount)
             return;
-        string = choice.string;
-        harmonic = choice.harmonic;
+        string = candidate;
+    }
+    else
+    {
+        string = chooseString(midiNote);
+        if (string < 0)
+        {
+            // Above the fretted range the guitar still reaches, through the
+            // natural harmonics of its open strings. Below it, it does not.
+            const auto choice = chooseHarmonic(midiNote);
+            if (choice.string < 0)
+                return;
+            string = choice.string;
+            harmonic = choice.harmonic;
+        }
     }
     auto& voice = voices_[static_cast<std::size_t>(string)];
     // Taking a string that is still sounding, for any note, is a refret and a
@@ -2991,6 +3055,29 @@ void AcustraEngine::setVibrato(float amount) noexcept
     vibrato_ = clamp(std::isfinite(amount) ? amount : 0.0f, 0.0f, 1.0f);
 }
 
+void AcustraEngine::setMpeTimbre(float value, int midiChannel) noexcept
+{
+    if (midiChannel < 1 || midiChannel > midiChannelCount)
+        return;
+    mpeTimbre_[static_cast<std::size_t>(midiChannel - 1)]
+        = std::isfinite(value) && value >= 0.0f
+            ? clamp(value, 0.0f, 1.0f) : -1.0f;
+}
+
+void AcustraEngine::setMpePressure(float value, int midiChannel) noexcept
+{
+    if (midiChannel < 1 || midiChannel > midiChannelCount)
+        return;
+    mpePressure_[static_cast<std::size_t>(midiChannel - 1)]
+        = std::isfinite(value) && value >= 0.0f
+            ? clamp(value, 0.0f, 1.0f) : -1.0f;
+}
+
+void AcustraEngine::setStringPerChannelMode(bool enabled) noexcept
+{
+    stringPerChannelMode_ = enabled;
+}
+
 void AcustraEngine::setLowerZoneMemberCount(int memberCount) noexcept
 {
     const int next = std::clamp(memberCount, 0, midiChannelCount - 1);
@@ -3010,6 +3097,8 @@ void AcustraEngine::setLowerZoneMemberCount(int memberCount) noexcept
     for (int midiChannel = 1; midiChannel <= lastAffectedChannel; ++midiChannel)
     {
         pitchBendSemitones_[static_cast<std::size_t>(midiChannel - 1)] = 0.0f;
+        mpeTimbre_[static_cast<std::size_t>(midiChannel - 1)] = -1.0f;
+        mpePressure_[static_cast<std::size_t>(midiChannel - 1)] = -1.0f;
         sustainPedals_[static_cast<std::size_t>(midiChannel - 1)] = false;
     }
     lowerZoneMemberCount_ = next;

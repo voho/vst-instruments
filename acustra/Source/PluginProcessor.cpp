@@ -484,6 +484,15 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
         rawPitchWheels[static_cast<std::size_t> (midiChannel - 1)] = normalised;
         refreshPitchBend (midiChannel);
     }
+    else if (kind == 0xd0u && numBytes >= 2)
+    {
+        // MPE channel pressure: the fretting hand's grip on this note's own
+        // member channel. Forwarded unconditionally; the engine applies it
+        // only on a channel the lower zone actually made a member (see
+        // AcustraEngine::mpePressureFor), so it is inert without an MPE zone.
+        engine.setMpePressure (static_cast<float> (data[1] & 0x7fu) / 127.0f,
+                               midiChannel);
+    }
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
@@ -510,6 +519,29 @@ void AcustraAudioProcessor::dispatchMidiData (const juce::uint8* data,
         else if (controller == 64u)
         {
             engine.setSustainPedal (value >= 64u, midiChannel);
+        }
+        else if (controller == 74u)
+        {
+            // MPE Timbre: where this one note's own member channel met the
+            // string. Forwarded unconditionally; the engine reads it only on
+            // a lower-zone member channel, at that note's own pluck (see
+            // AcustraEngine::initialisePluck), so it is inert without an MPE
+            // zone.
+            engine.setMpeTimbre (static_cast<float> (value) / 127.0f,
+                                 midiChannel);
+        }
+        else if (controller == 126u)
+        {
+            // MIDI's own Mono Mode On channel-mode message: value is how
+            // many consecutive channels become monophonic voices. Roland's
+            // GK and Fishman's TriplePlay send exactly this, value 6, to put
+            // one string on each of channels 1-6.
+            engine.setStringPerChannelMode (
+                value == static_cast<unsigned> (acustra::AcustraEngine::stringCount));
+        }
+        else if (controller == 127u)
+        {
+            engine.setStringPerChannelMode (false);
         }
         else if (controller == 68u)
         {

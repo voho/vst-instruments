@@ -713,6 +713,126 @@ struct AcustraEngineTestAccess
         }
         return delays;
     }
+
+    // One note plucked on midiChannel with CC74 pre-set to timbre (negative:
+    // never sent). A fresh engine's voice.randomState starts at the same
+    // seed every time and initialisePluck's takeOffset is the first draw
+    // from it, so two calls with the same midiChannel and midiNote draw the
+    // identical offset and differ only by what timbre itself moved.
+    static double mpeTimbrePluckPoint(float timbre, int midiChannel,
+                                      int midiNote = 52)
+    {
+        AcustraEngine engine;
+        engine.prepare(48000.0, 64);
+        if (midiChannel > 1)
+            engine.setLowerZoneMemberCount(2);
+        if (timbre >= 0.0f)
+            engine.setMpeTimbre(timbre, midiChannel);
+        engine.noteOn(midiNote, 0.8f, midiChannel);
+        return lastPluckPoint(engine);
+    }
+
+    // The wheel's own vibrato depth for one held, fretted note, with the
+    // transient forced fully open and the phase parked at its peak so the
+    // comparison is not diluted by the onset ramp. pressure negative means
+    // no channel-pressure message was ever sent.
+    static double vibratoDepthCents(float wheel, float pressure,
+                                    int midiChannel)
+    {
+        AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = StringMaterial::Steel;
+        engine.setParameters(parameters);
+        engine.prepare(48000.0, 64);
+        if (midiChannel > 1)
+            engine.setLowerZoneMemberCount(2);
+        if (pressure >= 0.0f)
+            engine.setMpePressure(pressure, midiChannel);
+        engine.noteOn(52, 0.8f, midiChannel);
+        engine.setVibrato(wheel);
+        const auto selected = std::find_if(engine.voices_.begin(),
+            engine.voices_.end(), [midiChannel] (const auto& voice)
+            { return voice.played && voice.midiChannel == midiChannel; });
+        if (selected == engine.voices_.end())
+            return 0.0;
+        engine.vibratoOnset_ = 1.0f;
+        engine.vibratoPhase_ = std::numbers::pi_v<float>;
+        return 100.0 * static_cast<double>(
+            engine.vibratoSemitones(*selected, selected->fret));
+    }
+
+    // A pull-off's lift velocity, and the channel pressure biasing whether
+    // it clears the fret whole (see AcustraEngine::liftFinger): true is a
+    // full release (touchSamples left at 0), false is the slower
+    // finger-still-clearing case.
+    static bool pullOffClearsWhole(float lift, float pressure,
+                                   int midiChannel)
+    {
+        AcustraEngine engine;
+        EngineParameters parameters;
+        parameters.stringMaterial = StringMaterial::Steel;
+        engine.setParameters(parameters);
+        engine.prepare(48000.0, 64);
+        engine.setBridgeCouplingEnabled(false);
+        if (midiChannel > 1)
+            engine.setLowerZoneMemberCount(2);
+        if (pressure >= 0.0f)
+            engine.setMpePressure(pressure, midiChannel);
+        constexpr int fretted = 57;
+        engine.noteOn(fretted, 0.8f, midiChannel);
+        const auto taken = std::find_if(engine.voices_.begin(),
+            engine.voices_.end(), [midiChannel, fretted] (const auto& voice)
+            { return voice.played && voice.midiChannel == midiChannel
+                  && voice.midiNote == fretted; });
+        if (taken == engine.voices_.end())
+            return false;
+        const auto stringIndex = std::distance(engine.voices_.begin(), taken);
+        // A release to the open string clears the note's own member channel
+        // (see liftFinger), so identify the voice by its string, taken
+        // before the release, not by the channel it no longer carries.
+        engine.noteOff(fretted, midiChannel, lift);
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+                   .touchSamples == 0;
+    }
+
+    struct StringModeSnapshot
+    {
+        int activeWithAllocator;
+        int activeWithModeForcingAnUnfrettableString;
+        bool ownNoteLandedOnItsOwnString;
+        bool leakedOntoAnotherString;
+        int activeAfterModeOff;
+    };
+
+    // Channel 6 is string index 5, the highest string in standard tuning; a
+    // low note is far below any fret it can reach there.
+    static StringModeSnapshot stringPerChannelBehaviour()
+    {
+        AcustraEngine engine;
+        engine.prepare(48000.0, 64);
+        engine.noteOn(40, 0.8f, 6);
+        const int before = engine.getActiveVoiceCount();
+        engine.allSoundOff(6);
+
+        engine.setStringPerChannelMode(true);
+        engine.noteOn(40, 0.8f, 6);
+        const int forced = engine.getActiveVoiceCount();
+
+        const int openLowE = engine.voices_[0].openMidi;
+        engine.noteOn(openLowE + 2, 0.8f, 1);
+        const bool landed = engine.voices_[0].played
+            && engine.voices_[0].midiNote == openLowE + 2;
+        bool leaked = false;
+        for (int string = 1; string < AcustraEngine::stringCount; ++string)
+            leaked |= engine.voices_[static_cast<std::size_t>(string)].played;
+
+        engine.setStringPerChannelMode(false);
+        engine.allSoundOff(1);
+        engine.noteOn(40, 0.8f, 6);
+        const int after = engine.getActiveVoiceCount();
+
+        return { before, forced, landed, leaked, after };
+    }
 };
 } // namespace acustra
 
@@ -2636,6 +2756,111 @@ void testTheVibratoWheelAtZeroIsExact()
                "CC1 at zero changed the sound at "
                    + std::to_string(static_cast<int>(rate)) + " Hz");
     }
+}
+
+void testMpeTimbreSetsPerNotePluckPointOnMemberChannelOnly()
+{
+    using acustra::AcustraEngineTestAccess;
+    constexpr float span = 0.46f - 0.05f;
+
+    const double conventionalLow
+        = AcustraEngineTestAccess::mpeTimbrePluckPoint(0.1f, 1);
+    const double conventionalHigh
+        = AcustraEngineTestAccess::mpeTimbrePluckPoint(0.9f, 1);
+    expect(conventionalLow == conventionalHigh,
+           "CC74 moved the pluck point on a conventional, non-member channel");
+
+    const double memberUnset
+        = AcustraEngineTestAccess::mpeTimbrePluckPoint(-1.0f, 2);
+    expect(memberUnset == conventionalLow,
+           "an MPE member channel that never received CC74 did not fall back "
+           "to the panel pluck position");
+
+    const double memberLow
+        = AcustraEngineTestAccess::mpeTimbrePluckPoint(0.1f, 2);
+    const double memberHigh
+        = AcustraEngineTestAccess::mpeTimbrePluckPoint(0.9f, 2);
+    expect(memberLow >= 0.05 - 1.0e-6 && memberLow <= 0.46 + 1.0e-6
+               && memberHigh >= 0.05 - 1.0e-6 && memberHigh <= 0.46 + 1.0e-6,
+           "CC74's pluck point left its published 0.05-0.46 band");
+    expect(std::abs((memberHigh - memberLow) - 0.8 * span) < 1.0e-4,
+           "CC74 did not move the pluck point across its own 0.05-0.46 span");
+}
+
+void testMpePressureBiasesVibratoDepthWithinTheWheelsOwnBound()
+{
+    using acustra::AcustraEngineTestAccess;
+
+    const double conventionalLight
+        = AcustraEngineTestAccess::vibratoDepthCents(1.0f, 0.0f, 1);
+    const double conventionalFirm
+        = AcustraEngineTestAccess::vibratoDepthCents(1.0f, 1.0f, 1);
+    expect(conventionalLight == conventionalFirm,
+           "channel pressure moved the vibrato depth on a conventional, "
+           "non-member channel");
+
+    const double memberUnset
+        = AcustraEngineTestAccess::vibratoDepthCents(1.0f, -1.0f, 2);
+    const double memberFull
+        = AcustraEngineTestAccess::vibratoDepthCents(1.0f, 1.0f, 2);
+    expect(memberUnset == memberFull,
+           "full member pressure did not reproduce the wheel's own unbiased "
+           "depth");
+    expect(std::abs(memberFull - 20.0) < 1.0e-3,
+           "the wheel's own top depth moved off its published 20 cents");
+
+    const double memberLight
+        = AcustraEngineTestAccess::vibratoDepthCents(1.0f, 0.0f, 2);
+    expect(std::abs(memberLight - 10.0) < 1.0e-3,
+           "a light grip did not sit at the authored 50% depth floor");
+}
+
+void testMpePressureLowersThePullOffThresholdOnlyAtRelease()
+{
+    using acustra::AcustraEngineTestAccess;
+
+    bool foundCrossing = false;
+    for (float lift = 0.05f; lift <= 0.95f; lift += 0.05f)
+    {
+        const bool light
+            = AcustraEngineTestAccess::pullOffClearsWhole(lift, 0.0f, 2);
+        const bool firm
+            = AcustraEngineTestAccess::pullOffClearsWhole(lift, 1.0f, 2);
+        expect(!(light && !firm),
+               "raising pressure made a pull-off harder to clear, not easier, "
+               "at lift " + std::to_string(lift));
+        if (!light && firm)
+            foundCrossing = true;
+    }
+    expect(foundCrossing,
+           "no lift velocity showed member pressure moving the pull-off "
+           "threshold");
+
+    const bool conventionalLight
+        = AcustraEngineTestAccess::pullOffClearsWhole(0.5f, 0.0f, 1);
+    const bool conventionalFirm
+        = AcustraEngineTestAccess::pullOffClearsWhole(0.5f, 1.0f, 1);
+    expect(conventionalLight == conventionalFirm,
+           "channel pressure changed a pull-off on a conventional, "
+           "non-member channel");
+}
+
+void testStringPerChannelModeIsOptInAndBypassesTheAllocator()
+{
+    using acustra::AcustraEngineTestAccess;
+    const auto snapshot = AcustraEngineTestAccess::stringPerChannelBehaviour();
+    expect(snapshot.activeWithAllocator == 1,
+           "the fret-distance allocator, left alone, dropped a note it can "
+           "reach on some other string");
+    expect(snapshot.activeWithModeForcingAnUnfrettableString == 0,
+           "string-per-channel mode reassigned a note instead of dropping it");
+    expect(snapshot.ownNoteLandedOnItsOwnString,
+           "string-per-channel mode did not put channel 1's note on string 0");
+    expect(!snapshot.leakedOntoAnotherString,
+           "string-per-channel mode's note leaked onto another string");
+    expect(snapshot.activeAfterModeOff == 1,
+           "turning string-per-channel mode back off did not restore the "
+           "allocator");
 }
 
 // What the wheel does when it is not zero, against what the sources measured.
@@ -5142,6 +5367,10 @@ int main()
     testABendDoesNotStepTheJunctionPort();
     testAnExtremeBendSaturatesInsideTheBendRange();
     testTheVibratoWheelAtZeroIsExact();
+    testMpeTimbreSetsPerNotePluckPointOnMemberChannelOnly();
+    testMpePressureBiasesVibratoDepthWithinTheWheelsOwnBound();
+    testMpePressureLowersThePullOffThresholdOnlyAtRelease();
+    testStringPerChannelModeIsOptInAndBypassesTheAllocator();
     testTheVibratoWheelStaysInsideItsPublishedBounds();
     testAMemberBendRetunesOnlyItsOwnString();
     testBlockPartitionIsDeterministic();

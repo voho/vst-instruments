@@ -134,6 +134,26 @@ public:
     // and the contiguous channels above it are members. Zero restores
     // conventional, fully independent MIDI channels.
     void setLowerZoneMemberCount(int memberCount) noexcept;
+    // MPE Timbre, CC74, on a lower-zone member channel: where the string is
+    // met this note (Traube and Smith DAFx-00; Traube and Depalle DAFx-03),
+    // in place of the panel Pluck Position for that one pluck. value is 0-1
+    // MIDI CC74; a negative value clears it back to the panel control. Read
+    // once, at the pluck, like the panel control it replaces; inert on a
+    // conventional or manager channel and inert with no lower zone.
+    void setMpeTimbre(float value, int midiChannel) noexcept;
+    // MPE channel pressure, 0xD0, on a lower-zone member channel: the
+    // fretting hand's grip. It biases how readily a pull-off's lift energy
+    // clears the fret (see liftFinger) and how deep the wheel's vibrato
+    // reaches (see vibratoSemitones); it adds no string energy of its own.
+    // 0-1; inert on a conventional or manager channel and inert with no
+    // lower zone.
+    void setMpePressure(float value, int midiChannel) noexcept;
+    // Opt-in guitar-controller mode, the convention Roland's GK and
+    // Fishman's TriplePlay send in "mono mode": channels 1-6 are the six
+    // strings directly, bypassing chooseString's fret-distance guess. A note
+    // on channel 1-6 with no playable fret on that channel's string is
+    // dropped rather than reassigned. Off, the default, is an exact no-op.
+    void setStringPerChannelMode(bool enabled) noexcept;
     void allNotesOff(int midiChannel = 1) noexcept;
     void allSoundOff(int midiChannel = 1) noexcept;
     void setBridgeCouplingEnabled(bool enabled) noexcept;
@@ -449,6 +469,9 @@ private:
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
     float effectiveTouch(const Voice& voice) const noexcept;
+    // MPE channel pressure for this voice's own member channel, 0 with no
+    // lower zone, no CC message received yet, or off a member channel.
+    [[nodiscard]] float mpePressureFor(const Voice& voice) const noexcept;
     [[nodiscard]] float vibratoSemitones(const Voice& voice,
                                          int fret) const noexcept;
     void initialisePluck(Voice& voice, int stringIndex, float velocity) noexcept;
@@ -538,6 +561,11 @@ private:
     float bodyModelFadeStep_ { 1.0f / 1920.0f };
     int controlCounter_ { 0 };
     int lowerZoneMemberCount_ { 0 };
+    // -1 means no CC74 has been received on that channel this note; the
+    // panel Pluck Position control applies as it always did.
+    std::array<float, midiChannelCount> mpeTimbre_ {};
+    std::array<float, midiChannelCount> mpePressure_ {};
+    bool stringPerChannelMode_ { false };
     std::array<bool, midiChannelCount> sustainPedals_ {};
     bool bridgeCouplingEnabled_ { true };
     bool sympatheticStringsEnabled_ { true };

@@ -1305,6 +1305,117 @@ void testEditorRendering()
 }
 } // namespace
 
+void testMpeTimbreReachesTheEngineOnMemberChannelOnly()
+{
+    // CC74 is MPE Timbre. On a lower-zone member channel it places this one
+    // note's own pluck point (see AcustraEngine::initialisePluck); off a
+    // member channel, or with no lower zone at all, it must not move a
+    // single sample.
+    const auto phrase = [] (int timbre, int channel, bool memberZone)
+    {
+        AcustraAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        juce::MidiBuffer start;
+        if (memberZone)
+            addLowerZone (start, 2);
+        start.addEvent (juce::MidiMessage::controllerEvent (channel, 74, timbre), 0);
+        start.addEvent (juce::MidiMessage::noteOn (channel, 52, 0.8f), 1);
+        std::vector<float> mono;
+        const int blocks = static_cast<int> (0.5 * sampleRate / blockSize);
+        for (int block = 0; block < blocks; ++block)
+        {
+            juce::MidiBuffer empty;
+            processor.processBlock (audio, block == 0 ? start : empty);
+            for (int sample = 0; sample < blockSize; ++sample)
+                mono.push_back (audio.getSample (0, sample));
+        }
+        return mono;
+    };
+    const auto conventionalLow = phrase (10, 1, false);
+    const auto conventionalHigh = phrase (110, 1, false);
+    expect (conventionalLow == conventionalHigh,
+            "CC74 moved the sound on a conventional, non-member channel");
+
+    const auto memberLow = phrase (10, 2, true);
+    const auto memberHigh = phrase (110, 2, true);
+    expect (memberLow.size() == memberHigh.size() && memberLow != memberHigh,
+            "CC74 did not reach the engine as a member channel's pluck point");
+}
+
+void testMpePressureReachesTheEngineOnMemberChannelOnly()
+{
+    // MPE channel pressure, status 0xD0, biases this note's own pull-off
+    // threshold and vibrato depth (see AcustraEngine::mpePressureFor) and
+    // must be inert off a member channel or with no lower zone.
+    const auto phrase = [] (int pressure, int channel, bool memberZone)
+    {
+        AcustraAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        juce::MidiBuffer start;
+        if (memberZone)
+            addLowerZone (start, 2);
+        start.addEvent (juce::MidiMessage::channelPressureChange (channel, pressure), 0);
+        start.addEvent (juce::MidiMessage::controllerEvent (channel, 1, 127), 1);
+        start.addEvent (juce::MidiMessage::noteOn (channel, 52, 0.8f), 2);
+        std::vector<float> mono;
+        const int blocks = static_cast<int> (1.0 * sampleRate / blockSize);
+        for (int block = 0; block < blocks; ++block)
+        {
+            juce::MidiBuffer empty;
+            processor.processBlock (audio, block == 0 ? start : empty);
+            for (int sample = 0; sample < blockSize; ++sample)
+                mono.push_back (audio.getSample (0, sample));
+        }
+        return mono;
+    };
+    const auto conventionalLight = phrase (0, 1, false);
+    const auto conventionalFirm = phrase (127, 1, false);
+    expect (conventionalLight == conventionalFirm,
+            "channel pressure moved the sound on a conventional, non-member "
+            "channel");
+
+    const auto memberLight = phrase (0, 2, true);
+    const auto memberFirm = phrase (127, 2, true);
+    expect (memberLight.size() == memberFirm.size() && memberLight != memberFirm,
+            "channel pressure did not reach the engine on a member channel");
+}
+
+void testStringPerChannelModeViaMonoModeOn()
+{
+    // MIDI's own Mono Mode On (CC126, value = channel count) is the
+    // convention Roland's GK and Fishman's TriplePlay send for one string
+    // per channel; Poly Mode On (CC127) restores the fret-distance
+    // allocator. Never sending either leaves the allocator exactly as it
+    // was.
+    const auto activeVoices = [] (bool sendMonoOn, bool sendPolyOnAfter,
+                                  int channel, int midiNote)
+    {
+        AcustraAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        juce::MidiBuffer start;
+        if (sendMonoOn)
+            start.addEvent (juce::MidiMessage::controllerEvent (1, 126, 6), 0);
+        if (sendPolyOnAfter)
+            start.addEvent (juce::MidiMessage::controllerEvent (1, 127, 0), 1);
+        start.addEvent (juce::MidiMessage::noteOn (channel, midiNote, 0.8f), 2);
+        processor.processBlock (audio, start);
+        return processor.getActiveVoiceCount();
+    };
+    // Channel 6 is string index 5, the highest string; MIDI note 40 is far
+    // below what any fret on it can reach, so a controller enforcing the
+    // channel-to-string mapping cannot play it at all.
+    expect (activeVoices (false, false, 6, 40) == 1,
+            "the allocator, left alone, could not reach a low note on a high "
+            "channel it is free to reassign");
+    expect (activeVoices (true, false, 6, 40) == 0,
+            "Mono Mode On did not force the channel's own string");
+    expect (activeVoices (true, true, 6, 40) == 1,
+            "Poly Mode On did not restore the fret-distance allocator");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI gui;
@@ -1316,6 +1427,9 @@ int main()
     testSameSampleChordsAreStrummedAndAlternate();
     testBridgeHandControllerReachesTheEngine();
     testTheModulationWheelReachesTheEngineAsVibrato();
+    testMpeTimbreReachesTheEngineOnMemberChannelOnly();
+    testMpePressureReachesTheEngineOnMemberChannelOnly();
+    testStringPerChannelModeViaMonoModeOn();
     testLegatoControllerReachesTheEngine();
     testReleaseVelocityReachesTheEngineAsAFingerLift();
     testResetAllControllersReleasesSustain();
