@@ -30,6 +30,37 @@ struct YouKnow106TestAccess
         return chorus.runningMode_;
     }
 
+    static float boostBranchStep(YouKnow106Engine& engine, float coupled,
+                                 bool selected) noexcept
+    {
+        return engine.processBoostBranch(coupled, selected);
+    }
+
+    static double boostBranchNodeVolts(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.boostBranch_.vN;
+    }
+
+    static double engineProcessingRate(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.oversampledRate_;
+    }
+
+    static float voicePulseDuty(const YouKnow106Engine& engine, int voice) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(voice)].pulseDuty;
+    }
+
+    static int voiceCard(const YouKnow106Engine& engine, int voice) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(voice)].cardIndex;
+    }
+
+    static constexpr float pwmDutyAcceptanceHalfWidth() noexcept
+    {
+        return YouKnow106Engine::pwmDutyAcceptanceHalfWidth;
+    }
+
     static constexpr float headroom() noexcept
     {
         return YouKnow106Engine::otaHeadroomVolts;
@@ -5350,6 +5381,225 @@ void testHighPassStateGuardSelfHeals()
            "after its state healed");
 }
 
+void testBoostBranchMatchesItsNetworkAndKeepsItsCharge()
+{
+    using Complex = std::complex<double>;
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, 256, 4);
+    const double rate = YouKnow106TestAccess::engineProcessingRate(engine);
+
+    // The three-capacitor branch, driven, against the exact p. 15 analytic
+    // (C9||R22 into C8, IC4b's R18/C6 over R19, R25 and R24 into R29).
+    const auto exact = [](double frequency) {
+        const Complex s { 0.0, 2.0 * pi * frequency };
+        const double r22 = 47.0e3, c9 = 47.0e-9, c8 = 10.0e-9;
+        const double r18 = 100.0e3, r19 = 10.0e3, c6 = 22.0e-9;
+        const double r29 = 47.0e3, r24 = 220.0e3, r25 = 47.0e3;
+        const Complex first = (1.0 + s * r22 * c9) / (1.0 + s * r22 * (c9 + c8));
+        const Complex amplifier =
+            (1.0 + r18 / r19 + s * r18 * c6) / (1.0 + s * r18 * c6);
+        return r29 / r25 + (r29 / r24) * first * amplifier;
+    };
+    // Integer cycle counts over the window so the projection has no leakage.
+    for (double frequency : { 20.0, 100.0, 300.0, 1000.0, 5000.0 })
+    {
+        const int settle = static_cast<int>(rate * 0.5);
+        const int window = static_cast<int>(rate * 0.5);
+        double re = 0.0;
+        double im = 0.0;
+        for (int index = 0; index < settle + window; ++index)
+        {
+            const double t = index / rate;
+            const double drive = 0.05 * std::sin(2.0 * pi * frequency * t);
+            const double out = YouKnow106TestAccess::boostBranchStep(
+                engine, static_cast<float>(drive), true);
+            if (index >= settle)
+            {
+                re += out * std::sin(2.0 * pi * frequency * t);
+                im += out * std::cos(2.0 * pi * frequency * t);
+            }
+        }
+        const double magnitude = 2.0 * std::hypot(re, im) / window / 0.05;
+        expectNear(20.0 * std::log10(magnitude / std::abs(exact(frequency))),
+                   0.0, 0.01,
+                   "the driven Boost branch left its own network at "
+                       + std::to_string(frequency) + " Hz");
+    }
+
+    // Deselected, the stored charge keeps reaching the summing node: the
+    // tail starts at about the shelf's own DC gain times the node voltage
+    // (IC4b at its rail here) and is gone within 30 ms. The undriven pair's
+    // slow eigenmode is 2.77 ms, so a 940 us single-pole reading is too
+    // short by design.
+    engine.reset();
+    for (int index = 0; index < static_cast<int>(rate * 0.2); ++index)
+        YouKnow106TestAccess::boostBranchStep(engine, 0.2f, true);
+    expectNear(YouKnow106TestAccess::boostBranchNodeVolts(engine), 0.2, 1.0e-4,
+               "node N did not settle to the driven bus voltage");
+    double first = 0.0;
+    double atFiveMs = 0.0;
+    double atThirtyMs = 0.0;
+    for (int index = 0; index < static_cast<int>(rate * 0.03); ++index)
+    {
+        const double out =
+            YouKnow106TestAccess::boostBranchStep(engine, 0.0f, false);
+        if (index == 0)
+            first = out;
+        if (index == static_cast<int>(rate * 0.005))
+            atFiveMs = out;
+        atThirtyMs = out;
+    }
+    expect(first > 0.5 && first < 0.7,
+           "the departing Boost tail did not start near the stored charge: "
+               + std::to_string(first));
+    expect(atFiveMs > 0.02 && atFiveMs < first,
+           "the departing Boost tail decayed unlike its 2.77 ms mode");
+    expect(std::abs(atThirtyMs) < 1.0e-4,
+           "the departing Boost tail did not die away");
+
+    // Re-entry hands C9/(C8+C9) of the bus step to node N.
+    YouKnow106TestAccess::boostBranchStep(engine, 1.0f, true);
+    expectNear(YouKnow106TestAccess::boostBranchNodeVolts(engine),
+               47.0 / 57.0, 0.01,
+               "re-selection did not redistribute the C9/C8 charge");
+}
+
+void testChorusMuteDriveFollowsItsDrawnTiming()
+{
+    constexpr float rate = 48000.0f;
+    Chorus chorus;
+    chorus.prepare(rate);
+    float left = 0.0f;
+    float right = 0.0f;
+    const auto step = [&](ChorusMode mode) {
+        chorus.process(0.0f, mode, 0.0f, left, right, false, false, 1.0f,
+                       false, true, true, false);
+    };
+    // Primed on: no start-up delay for a patch loaded with the effect on.
+    step(ChorusMode::One);
+    expect(!chorus.muteDriveMuted(), "a primed-on chorus began muted");
+
+    int mutedAfter = -1;
+    for (int index = 0; index < 48000; ++index)
+    {
+        step(ChorusMode::Off);
+        if (mutedAfter < 0 && chorus.muteDriveMuted())
+            mutedAfter = index;
+    }
+    int openAfter = -1;
+    for (int index = 0; index < 48000; ++index)
+    {
+        step(ChorusMode::One);
+        if (openAfter < 0 && !chorus.muteDriveMuted())
+            openAfter = index;
+    }
+    // C16 through R50 then C13 through R48 to Tr4's threshold: about 81 ms
+    // to mute; C13 alone from its +9.0 V rest: about 115 ms to open.
+    expectNear(1000.0 * mutedAfter / rate, 81.4, 2.0,
+               "the wet mute did not engage on the drawn RC timing");
+    expectNear(1000.0 * openAfter / rate, 114.8, 2.0,
+               "the wet return did not open on the drawn RC timing");
+    expectNear(Chorus::muteDriveThresholdVolts, -5.785, 0.01,
+               "Tr4's divided junction threshold moved");
+    expectNear(Chorus::muteDriveHoldSeconds, 0.1200, 0.0005,
+               "C13's time constant is not R48 against R49+R42");
+}
+
+void testChorusLineGainSpreadIsRelativeOnly()
+{
+    // The two lines' insertion gains are +/- half of one draw, so their
+    // product is unity at every Unit Character: the absolute wet level
+    // stays the normalised policy and only the L/R offset moves.
+    const float draw = Chorus::lineInsertionGainDraw();
+    expect(std::abs(draw) <= 1.0f, "the line draw is not bipolar unit");
+    expect(Chorus::lineInsertionGainSpreadDb
+               <= 0.5f * Chorus::lineInsertionGainBoundDb,
+           "the voiced line spread left the conservative half of its bound");
+    constexpr float rate = 48000.0f;
+    for (float calibration : { 0.0f, 1.0f, 2.0f })
+    {
+        Chorus spread;
+        Chorus flat;
+        spread.prepare(rate);
+        flat.prepare(rate);
+        double spreadLeft = 0.0, spreadRight = 0.0, flatLeft = 0.0, flatRight = 0.0;
+        for (int index = 0; index < 24000; ++index)
+        {
+            const float input = static_cast<float>(
+                0.2 * std::sin(2.0 * pi * 440.0 * index / rate));
+            float l1 = 0.0f, r1 = 0.0f, l2 = 0.0f, r2 = 0.0f;
+            spread.process(input, ChorusMode::One, 0.0f, l1, r1, false, false,
+                           calibration, false, true, false, true);
+            flat.process(input, ChorusMode::One, 0.0f, l2, r2, false, false,
+                         calibration, false, true, false, false);
+            if (index >= 12000)
+            {
+                const double dry = Chorus::dryMixGain * input;
+                spreadLeft += (l1 - dry) * (l1 - dry);
+                spreadRight += (r1 - dry) * (r1 - dry);
+                flatLeft += (l2 - dry) * (l2 - dry);
+                flatRight += (r2 - dry) * (r2 - dry);
+            }
+        }
+        const double offsetDb = 10.0 * std::log10(spreadLeft / spreadRight)
+                              - 10.0 * std::log10(flatLeft / flatRight);
+        expectNear(offsetDb,
+                   draw * Chorus::lineInsertionGainSpreadDb * calibration, 0.05,
+                   "the L/R wet offset is not the scaled draw");
+        expectNear(10.0 * std::log10((spreadLeft * spreadRight)
+                                     / (flatLeft * flatRight)),
+                   0.0, 0.02, "the line spread moved the absolute wet level");
+    }
+}
+
+void testPwmDispersionSitsInsideTheServiceWindow()
+{
+    // ADJUSTMENT s. 10: CH1 trimmed to 50 %, the rest accepted at 48-52 %.
+    // Read every card's duty at the setting where the nominal instrument
+    // sits at 50 %, at Unit Character 0 and 1.
+    const auto dutiesAt = [](float calibration) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, 64, 4);
+        EngineParameters parameters {};
+        parameters.pulseEnabled = true;
+        parameters.sawEnabled = false;
+        parameters.pwmDepth = 0.0f;
+        parameters.cutoff = 1.0f;
+        parameters.vcaLevel = 1.0f;
+        parameters.sustain = 1.0f;
+        parameters.keyMode = KeyMode::Unison;
+        parameters.polyphony = 6;
+        parameters.calibration = calibration;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        std::vector<float> left(64), right(64);
+        for (int block = 0; block < 60; ++block)
+            engine.process(left.data(), right.data(), 64);
+        std::array<float, 6> duties {};
+        for (int voice = 0; voice < 6; ++voice)
+            duties[static_cast<std::size_t>(
+                YouKnow106TestAccess::voiceCard(engine, voice))] =
+                YouKnow106TestAccess::voicePulseDuty(engine, voice);
+        return duties;
+    };
+    const auto nominal = dutiesAt(0.0f);
+    const auto dispersed = dutiesAt(1.0f);
+    for (std::size_t card = 0; card < 6; ++card)
+        expectNear(nominal[card], 0.5, 0.005,
+                   "the calibrated instrument is not at its 50 % point");
+    expectNear(dispersed[0], nominal[0], 0.005,
+               "CH1 is not held at the trimmed 50 %");
+    bool anySpread = false;
+    for (std::size_t card = 1; card < 6; ++card)
+    {
+        expect(std::abs(dispersed[card] - dispersed[0])
+                   <= YouKnow106TestAccess::pwmDutyAcceptanceHalfWidth() + 0.001f,
+               "a card left the 48-52 % acceptance window relative to CH1");
+        anySpread = anySpread || std::abs(dispersed[card] - dispersed[0]) > 0.002f;
+    }
+    expect(anySpread, "Unit Character produced no duty dispersion at all");
+}
+
 void testNoiseSourceShapingFollowsItsCircuit()
 {
     // Module board p. 13: the shared noise source is band-shaped by its own
@@ -6727,6 +6977,10 @@ int main()
     testSallenKeyQNonPositiveShuntGuard();
     testHighPassReachesTheSummedSignal();
     testHighPassStateGuardSelfHeals();
+    testBoostBranchMatchesItsNetworkAndKeepsItsCharge();
+    testChorusMuteDriveFollowsItsDrawnTiming();
+    testChorusLineGainSpreadIsRelativeOnly();
+    testPwmDispersionSitsInsideTheServiceWindow();
     testNoiseSourceShapingFollowsItsCircuit();
     testNoiseLevelControlPrecedesC41();
     testNoiseSourceLowRateSafetyAndStateSemantics();

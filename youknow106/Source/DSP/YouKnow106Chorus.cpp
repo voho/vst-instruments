@@ -1169,6 +1169,8 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
     wetMuteGlide_ = 1.0f - std::exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds);
+    muteDriveNodeGlide_ = 1.0f - std::exp(-inverseSampleRate_ / muteDriveNodeSeconds);
+    muteDriveHoldGlide_ = 1.0f - std::exp(-inverseSampleRate_ / muteDriveHoldSeconds);
     const auto cached = supportRatesPrepared_
         ? std::find(preparedSupportRates_.begin(), preparedSupportRates_.end(),
                     sampleRate_)
@@ -1216,8 +1218,21 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. The first sample after a
     // reset takes the mode as it stands, and only changes made afterwards
-    // glide.
+    // glide. The mute drive is primed to the same rest on that first sample.
     primed_ = false;
+    muteDriveNodeVolts_ = muteDriveRailVolts;
+    muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveRailVolts);
+    muteDriveMuted_ = true;
+}
+
+float Chorus::lineInsertionGainDraw() noexcept
+{
+    // One fixed-seed bipolar draw, from line A's own noise seed, so the same
+    // instrument renders every launch. Plain integer hash; no claim of a
+    // distribution shape.
+    std::uint32_t x = 0x9e3779b9u;
+    x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+    return static_cast<float>(x & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
 }
 
 float Chorus::rateProportionalNoiseGain(float rateHz) noexcept
@@ -1255,7 +1270,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableHyperbolicSweep,
                      float calibration,
                      bool useRateProportionalNoiseHypothesis,
-                     bool enableNarrowOneTwo) noexcept
+                     bool enableNarrowOneTwo,
+                     bool enableMuteDrive,
+                     bool enableLineGainSpread) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -1276,12 +1293,20 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 
     const auto target = settingsFor(mode);
 
+    const bool commandMute = mode == ChorusMode::Off;
     if (!primed_)
     {
         rateHz_ = target.rateHz;
         sweep_ = target.sweepSeconds;
         centreDelay_ = target.centreDelaySeconds;
         wetGain_ = target.wetGain;
+        // The drive rests where the command has held it: Tr5 open and both
+        // capacitors at their positive rests when muted, both on the
+        // negative rail when conducting.
+        muteDriveNodeVolts_ = commandMute ? muteDriveRailVolts
+                                          : -muteDriveRailVolts;
+        muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
+        muteDriveMuted_ = commandMute;
         primed_ = true;
     }
 
@@ -1292,7 +1317,30 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         centreDelay_ = target.centreDelaySeconds;
         runningMode_ = mode;
     }
-    wetGain_ += (target.wetGain - wetGain_) * wetMuteGlide_;
+    float wetTarget = target.wetGain;
+    if (enableMuteDrive)
+    {
+        // Tr5 open: C16 charges toward +15 V through R50. Tr5 saturated:
+        // it empties C16 within a millisecond, immediate on this scale.
+        if (commandMute)
+            muteDriveNodeVolts_ += (muteDriveRailVolts - muteDriveNodeVolts_)
+                                 * muteDriveNodeGlide_;
+        else
+            muteDriveNodeVolts_ = -muteDriveRailVolts;
+        // C13 follows through R48 against the R49+R42 return to -15 V.
+        muteDriveHoldVolts_ += (muteDriveHoldRestVolts(muteDriveNodeVolts_)
+                                - muteDriveHoldVolts_)
+                             * muteDriveHoldGlide_;
+        // Tr4 conducts above the divided junction drop and pulls the gates
+        // down; the JFET transition itself remains the declared glide.
+        muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
+        wetTarget = muteDriveMuted_ ? 0.0f : settingsFor(runningMode_).wetGain;
+    }
+    else
+    {
+        muteDriveMuted_ = commandMute;
+    }
+    wetGain_ += (wetTarget - wetGain_) * wetMuteGlide_;
     // TR11/TR12 add no modelled distortion or switching artefact of their own.
     // Conducting, a 2SK30A's few hundred ohms sit against IC6's 39 kOhm wet
     // input, so it drops about 1% of the signal and sees some 30 mV across
@@ -1464,6 +1512,26 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // the known two-line circuit: it preserves the exact mono sum (and thus
     // the comb colour heard in mono) while removing only the unsupported side.
     // The comparison switch retains the former wide result pending a capture.
+    // Each MN3009 carries its own insertion gain inside Panasonic's +/-4 dB
+    // row and nothing on the board trims it; solved only when Unit Character
+    // moves. The narrow I+II fold below then averages the two returns exactly
+    // as the summed mono output would.
+    if (enableLineGainSpread)
+    {
+        if (calibration != lineGainCalibration_)
+        {
+            // One draw sets the two parts' relative offset, split evenly so
+            // the normalised absolute wet level (OQ-04 policy) stays put.
+            const float halfOffsetDb = 0.5f * lineInsertionGainSpreadDb
+                                     * lineInsertionGainDraw()
+                                     * std::clamp(calibration, 0.0f, 2.0f);
+            lineGainA_ = std::pow(10.0f, halfOffsetDb / 20.0f);
+            lineGainB_ = std::pow(10.0f, -halfOffsetDb / 20.0f);
+            lineGainCalibration_ = calibration;
+        }
+        wetA *= lineGainA_;
+        wetB *= lineGainB_;
+    }
     if (mode == ChorusMode::OneTwo && enableNarrowOneTwo)
     {
         const float wetMid = 0.5f * (wetA + wetB);

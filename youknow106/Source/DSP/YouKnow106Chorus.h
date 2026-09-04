@@ -244,7 +244,78 @@ public:
                  bool enableHyperbolicSweep = false,
                  float calibration = 1.0f,
                  bool useRateProportionalNoiseHypothesis = false,
-                 bool enableNarrowOneTwo = true) noexcept;
+                 bool enableNarrowOneTwo = true,
+                 bool enableMuteDrive = false,
+                 bool enableLineGainSpread = false) noexcept;
+
+    // ------------------------------------------------------------------
+    // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
+    // Tr6, then Tr5, an open-collector switch to -15 V on a node R50 10 kOhm
+    // pulls to +15 V with C16 2.2 uF to the -15 V rail. That node crosses
+    // R48 150 kOhm into C13 1 uF (to -15 V), then R49 560 kOhm into Tr4's
+    // base with R42 39 kOhm to its -15 V emitter. Tr4's collector, R43
+    // 100 kOhm to +15 V, drives the Tr11/Tr12 2SK30A gates through D4/D5:
+    // Tr4 conducting pulls the gates to the negative rail and mutes the wet
+    // return; Tr4 off lets the gates float to their sources and the JFETs
+    // conduct. So the button reaches the JFETs only after two RCs and a
+    // junction threshold:
+    //   - chorus OFF: Tr5 opens, C16 charges through R50 (22 ms), C13
+    //     follows through R48 against R49+R42 (120 ms) and mutes when Tr4's
+    //     base reaches one junction drop -- about 60 ms after the command;
+    //   - chorus ON: Tr5 saturates, C16 is emptied at once, C13 decays from
+    //     its +9.0 V rest toward -15 V and un-mutes about 115 ms in.
+    // Both are derived from the drawn parts with the same 0.6 V junction
+    // prior the resonance and NOISE onsets use; the JFET transition itself
+    // keeps the declared 5 ms glide policy below, because the 2SK30A's
+    // pinch-off spread is not fixed by any source. Off by default at this
+    // level so the bare-chorus suites keep their immediate switching; the
+    // engine enables it.
+    static constexpr float muteDrivePullUpOhms = 10.0e3f;        // R50
+    static constexpr float muteDriveNodeFarads = 2.2e-6f;        // C16
+    static constexpr float muteDriveSeriesOhms = 150.0e3f;       // R48
+    static constexpr float muteDriveHoldFarads = 1.0e-6f;        // C13
+    static constexpr float muteDriveBaseOhms = 560.0e3f;         // R49
+    static constexpr float muteDriveEmitterOhms = 39.0e3f;       // R42
+    static constexpr float muteDriveRailVolts = 15.0f;
+    static constexpr float muteDriveJunctionVolts = 0.6f;
+    // Tr4 conducts once C13 stands one junction drop, scaled by the R49/R42
+    // divider, above the negative rail: -15 + 0.6 * 599/39 = -5.785 V.
+    static constexpr float muteDriveThresholdVolts =
+        -muteDriveRailVolts
+        + muteDriveJunctionVolts
+              * (muteDriveBaseOhms + muteDriveEmitterOhms)
+              / muteDriveEmitterOhms;
+    // C13 sees R48 against R49+R42: 120.0 ms.
+    static constexpr float muteDriveHoldSeconds =
+        muteDriveHoldFarads
+        * (muteDriveSeriesOhms * (muteDriveBaseOhms + muteDriveEmitterOhms)
+           / (muteDriveSeriesOhms + muteDriveBaseOhms + muteDriveEmitterOhms));
+    static constexpr float muteDriveNodeSeconds =
+        muteDrivePullUpOhms * muteDriveNodeFarads;                // 22 ms
+    // Where C13 rests for a given Tr5 node voltage: the R48 / (R49+R42)
+    // divider between that node and the -15 V rail.
+    [[nodiscard]] static constexpr float muteDriveHoldRestVolts(
+        float nodeVolts) noexcept
+    {
+        const float lower = muteDriveBaseOhms + muteDriveEmitterOhms;
+        return (nodeVolts * lower - muteDriveRailVolts * muteDriveSeriesOhms)
+             / (lower + muteDriveSeriesOhms);
+    }
+    [[nodiscard]] bool muteDriveMuted() const noexcept { return muteDriveMuted_; }
+
+    // ------------------------------------------------------------------
+    // Panasonic specifies the MN3009's insertion loss as Min -4 / Typ 0 /
+    // Max +4 dB (the same table the noise row is read from), and there is
+    // no wet-level trim on the jack board -- VR1/VR2 set bias only -- so the
+    // two lines' wet returns differ by whatever their two parts drew. The
+    // absolute wet level is already a normalised policy (OQ-04), so what is
+    // modelled is only the two parts' RELATIVE offset: one fixed-seed draw,
+    // applied +/- half to the two lines. Its full span is voiced at the same
+    // conservative fraction of the anchored bound the IR3109 stage
+    // capacitors use (0.02 inside 0.05), scaled by Unit Character.
+    static constexpr float lineInsertionGainBoundDb = 4.0f;
+    static constexpr float lineInsertionGainSpreadDb = 1.6f;
+    [[nodiscard]] static float lineInsertionGainDraw() noexcept;
 
     // The one usable real-instrument observation of this circuit's noise:
     // mode II's output floor was reported about 3.95 dB above mode I's, on
@@ -650,6 +721,17 @@ private:
     ChorusMode runningMode_ { ChorusMode::One };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
+    // The wet-mute drive's two capacitor voltages and Tr4's state; the
+    // per-sample glides are solved in prepare().
+    float muteDriveNodeVolts_ { 15.0f };
+    float muteDriveHoldVolts_ { 0.0f };
+    float muteDriveNodeGlide_ { 0.0f };
+    float muteDriveHoldGlide_ { 0.0f };
+    bool muteDriveMuted_ { true };
+    // Per-line insertion gains at the last calibration they were solved for.
+    float lineGainA_ { 1.0f };
+    float lineGainB_ { 1.0f };
+    float lineGainCalibration_ { 0.0f };
 };
 
 } // namespace youknow106

@@ -226,7 +226,17 @@ forty-year-old unit will null against the plug-in.
 **Bus and output**
 
 - Six voices sum at 0.1 each; one continuous C14 state feeds the
-  four-position high-pass (derived shelf and cut corners, MNA-qualified);
+  four-position high-pass (derived shelf and cut corners, MNA-qualified).
+  The two cut legs and the Boost leg keep their own charge: IC3 selects
+  which leg drives IC4a's summing node but disconnects none of them, so a
+  departed cut leg's capacitor bleeds into the node through its 1 MΩ and
+  47 kΩ, and the Boost leg runs as its three real stores — C9‖R22 into C8,
+  and C6 across IC4b's ×11 feedback — so that leaving Boost discharges C8
+  back through R22 and R25 while IC4b keeps amplifying it (a 2.77 ms slow
+  mode, gone in 30 ms), re-entering Boost hands C9/(C8+C9) of the bus step
+  to C8, and IC4b's ×11 low band stops at the shared ±13.5 V summer-stage
+  swing policy, which a loud unison 16' bass in Boost does reach (anchored
+  parts and topology; swing provisional under OQ-05);
   the stored VCA LEVEL byte drives the common µPC1252H2 through its derived
   gain law and 9.08 ms control settling (anchored/derived); its NEC-typical
   −94 dBV output noise (10 Hz–20 kHz, RIN 33 kΩ — the installed test-circuit
@@ -293,6 +303,20 @@ forty-year-old unit will null against the plug-in.
   incompatible 1.5 V input-swing and 88 dB maximum-output S/N rows. Mode II
   keeps the reported +3.95 dB relative lift (product/empirical policy;
   installed-unit absolute noise PSD is OQ-03).
+- The CHORUS button does not reach the wet return at once. The jack-board
+  drawing takes the on/off line through Tr6 and Tr5 onto a node R50 10 kΩ
+  pulls up with C16 2.2 µF, then R48 150 kΩ into C13 1 µF and R49 560 kΩ /
+  R42 39 kΩ into Tr4, whose collector pulls the Tr11/Tr12 JFET gates down
+  through D4/D5. Solved from those parts with the same 0.6 V junction prior
+  the other onsets use, the wet return mutes about 81 ms after CHORUS goes
+  off and opens about 115 ms after it comes on (anchored parts, derived
+  timing); the JFET transition itself keeps the declared 5 ms glide, since
+  the 2SK30A's pinch-off spread is unsourced (OQ-20). Each MN3009 also
+  carries its own insertion gain — Panasonic's row is Min −4 / Typ 0 /
+  Max +4 dB and nothing on the board trims it — so under Unit Character the
+  two returns take a fixed-seed relative offset of up to 1.6 dB, split ±
+  so the normalised absolute wet level does not move (anchored bound,
+  voiced point; OQ-04).
 
 **Instrument-level extensions** (product policy): Unit Character scales
 every modelled tolerance from calibrated-nominal (0) through "matches real
@@ -316,15 +340,20 @@ exactly as in the hardware.
 At **Unit Character** 0% the engine is the deterministic calibrated-nominal
 model. At 100% — the default, the "matches real hardware" reference — a
 fixed-seed profile enables the full span of every modelled tolerance:
-per-card ramp-current, comparator-threshold, VCA and sub/noise-level
-errors (±3% class), VCF trim residuals bounded by the service manual's own
-±10-cent acceptance at its two check points, per-stage input offsets and
-capacitor staggering, slow cutoff wander, the R-2R carry error, and the
-chassis warm-up law `25 + 15(1 − e^{−t/900})` °C with its spatial gradient
-across the cards. Everything scales linearly with the knob, seeds are
-fixed, and the same patch renders identically every launch. These spans are
-voiced sound design, not measured population statistics — OQ-10 owns the
-data that would replace them.
+per-card ramp current inside the ±2 % G class the module drawing prints on
+C54 (no per-card trimmer touches it), each card's net pulse duty inside the
+48–52 % window the service procedure accepts after the one shared VR31 puts
+CH1 at exactly 50 %, VCA and sub/noise-level errors (±3% class), VCF trim
+residuals bounded by the service manual's own ±10-cent acceptance at its two
+check points, per-stage input offsets and capacitor staggering, slow cutoff
+wander, the R-2R carry error, the two chorus lines' relative insertion
+offset inside the MN3009's ±4 dB row, and the chassis warm-up law
+`25 + 15(1 − e^{−t/900})` °C with its spatial gradient across the cards.
+Everything scales linearly with the knob, seeds are fixed, and the same
+patch renders identically every launch. Where a drawing or a procedure
+bounds a span it sits inside that bound; the points inside are still voiced
+sound design, not measured population statistics — OQ-10 owns the data that
+would replace them.
 
 **Aging** sits beside Unit Character: zero is a freshly serviced
 instrument; raising it drifts each voice's filter trim flat by its own
@@ -525,8 +554,11 @@ Deliberate, each with its reason recorded:
   magnitude the sources cannot fix either ship voiced and labelled (mixer
   level coordinates, sub half-wave DC magnitude, resonance
   onset/compensation, noise control onset, upper cutoff knee, noise
-  distribution) or are left out entirely until measured: chorus wet-mute
-  click and leakage, HPF mode-change transients, converter charge injection,
+  distribution) or are left out entirely until measured: the chorus
+  wet-mute JFETs' own transition shape, click and leakage (their drive
+  delay is derived), the HPF multiplexer's on-resistance and charge
+  injection (the legs' stored-charge transients are derived), converter
+  charge injection,
   envelope/LFO physical timing against a real unit, and the common
   µPC1252H2's untrimmed even-order distortion (Roland fits no symmetry
   trimmer; NEC bounds it only as ≥ 0.05 % — the trimmed curve puts it at
@@ -565,14 +597,14 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. Roland establishes that about −0.8 V holds the comparator high and the module drawing keeps that output on the fixed WAVE node ahead of C56/C50. The model now retains the high state and lets its existing coupling node reject the settled DC, replacing the contradicted hard-zero mixer gate; the transient therefore follows actual comparator crossings. Absolute WAVE level is still an OQ-15 coordinate, while installed residual bleed, loading and switching-waveform detail remain unmeasured | P1 |
 | OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled and the control law now follows the traced stage's ideal-junction physics with one voiced knee; the measured gain sweep would fix that knee (and the implied Is, currently 1.2e-13 A) and the BA662's low-current gm, not the law's shape. The signal-path saturation now ships from the sibling JUNO-6/60 drawing's 47 kΩ load (R42) through the p. 19 trims, with the 80017A's own printed load and input network unread; a level-swept THD capture TP19 against TP8 at bank-3 full sustain would confirm the headroom directly — the pair predicts HD3 = −48 dBc at the 4.8 Vp-p trim, rising 12 dB per doubling, and one reading gives H = 2.4 V / √(12·HD3) | P1 |
 | OQ-02 | Installed common-VCA tolerance. The nominal law is fully derived and an identified unit's endpoints sit within 0.8 dB of it; installed component spread is open | P2 |
-| OQ-04 | Loaded post-BBD support-chain transfer. Roland's designators and Panasonic's typical Gi–RL curve now anchor the nominal ideal-follower MNA: both finite-source MN3009 outputs, the shared 47 kΩ/2.2 nF tap, both 22 kΩ Sallen-Key sections and loaded output coupling are one continuous solve. The ≈3.7 kΩ per-output source value is a local typical-curve estimate, not a guaranteed parameter; installed-part spread, finite Tr15–Tr18 impedance, absolute wet gain and an original-unit wet-only sweep remain open | P2 |
+| OQ-04 | Loaded post-BBD support-chain transfer. Roland's designators and Panasonic's typical Gi–RL curve now anchor the nominal ideal-follower MNA: both finite-source MN3009 outputs, the shared 47 kΩ/2.2 nF tap, both 22 kΩ Sallen-Key sections and loaded output coupling are one continuous solve. The ≈3.7 kΩ per-output source value is a local typical-curve estimate, not a guaranteed parameter; installed-part spread, finite Tr15–Tr18 impedance, absolute wet gain and an original-unit wet-only sweep remain open. The two parts' relative insertion offset now lives under Unit Character inside Panasonic's ±4 dB row (voiced point, split ± so the normalised absolute level stays); a stereo capture of an identified unit's wet-only returns would fix both the offset and the absolute gain | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law is ROM-resolved for B-2; the printed spec endpoints reconcile with the model under stated threshold conventions | P2 |
 | OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly. Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) has no minimum-stop resistor on LFO RATE, and the A-5 assigner's [exact ADC conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296) maps raw codes 0–5 to stored byte 0; the physical control path therefore does not force byte 1. Its coincidental 0.109 Hz rate cannot replace the reachable byte-0 rate without a unit measurement. The [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bounds PWM's loaded full-travel duty while raw SysEx retains its overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. The 0.1 Hz floor is no longer a contradiction, only a spec convention: the [rate table at `$0C60`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1809-L1810) opens `0005 000f 0019 0028`, which the model's compact generator reproduces entry for entry, and those coefficients give 0.0363 Hz at byte 0 and **0.1088 Hz at byte 1**. Roland's printed 0.1 Hz to 30 Hz is therefore byte 1 to byte 127 — both endpoints land inside 0.9 % — and byte 0 is a below-spec entry the panel can still reach because nothing stops the slider short. A suspected misread of table entry 0 was checked against the listing and refuted; the entry really is 5. What remains open is only whether a real unit's slowest setting measures 0.036 Hz | P2 |
 | OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
 | OQ-16 | Installed main-noise spectrum and self-oscillation startup. Level is settled; Roland's p. 13 designators settle the shape class and state ordering (C42's 33.9 Hz high-pass, scanned BA662 level OTA, then C41/R79's 4822.877 Hz pole). Installed-device PSD and startup remain capture questions, as do IC5's output noise versus VCA LEVEL (−16.3..+4.7 dB; NEC publishes NV only at 0 dB) and the six voice cards' contribution to the dry floor: a silent-patch capture at the mono jack with chorus Off would close both. VR32's installed position (hence the NOISE deadband, 4–11 % of travel) and Tr21's selected amplitude are unmeasured; a TP8-versus-NOISE level sweep or a trimmer reading closes both, and a TP8 crest-factor capture would settle whether the BA662 input saturates | P2 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy. The integrator capacitor no longer splits the saturation bracket: a de-potted original measures ~250 pF across all four stages ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)), which is the 240 pF the sibling schematic prints, and the competing 270 pF is the Analogue Renaissance clone's own value rather than Roland's. The shipped 240 pF stands and the 64.8 kHz branch of the bracket can be retired | P2 |
-| OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled | P2 |
-| OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. **Two switching transients remain open, and the larger is unmodelled:** Boost's own departing tail runs C8 through R22+R25 into IC4b and back through R24, derived at about 2.35× the stored C8 voltage with τ ≈ 940 µs — roughly 34 dB larger than the cut-leg tails, though 5–16× shorter — and the TC4052's own on-resistance and charge injection are unmodelled | P2 |
+| OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled. The gate drive is now read off p. 15 and solved — Tr5/R50/C16 (22 ms) into R48/C13 against R49+R42 (120 ms) into Tr4, whose collector pulls the D4/D5 gate node down — giving about 81 ms from CHORUS off to mute and 115 ms from CHORUS on to open, with Tr4's 0.6 V junction as the only prior. Open are the 2SK30A pair's pinch-off spread (hence the transition's own shape and duration, kept at the declared 5 ms glide), the gate diodes' leakage, and a capture of the switch event on an original | P2 |
+| OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. **What remains open is the TC4052 itself:** its on-resistance and charge injection are unmodelled, and no capture of a real switch event exists | P2 |
 | OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model is settled policy: zero inter-voice spread, zero drift, with all seeded variation living in Unit Character as voiced sound design | P3 |
 | OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled and the ladder's ideal taps land within 1.2 dB of the published steps | P3 |
 
@@ -679,6 +711,32 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### 1.1.0 — unreleased
 
+- The Boost position of the high-pass is now its own three-capacitor
+  network instead of a collapsed shelf. Held still it matches the former
+  shelf to 0.016 dB; what changes is every switch event that touches Boost.
+  Leaving it, the stored C8 charge keeps flowing into IC4a while IC4b keeps
+  amplifying it — a tail that starts near the shelf's own DC gain times the
+  node voltage and dies within 30 ms — and entering it redistributes the bus
+  step between C9 and C8. IC4b's ×11 low band also stops at the shared
+  ±13.5 V summer-stage swing, so a loud unison 16' bass in Boost now
+  compresses its lowest octave by about a decibel where the former shelf
+  passed it untouched.
+- The chorus button reaches the wet return through the drawn Tr5/C16/R48/
+  C13/Tr4 gate drive: the wet mutes about 81 ms after CHORUS goes off and
+  opens about 115 ms after it comes on. A patch loaded with the effect on
+  still starts with it on. `enableChorusMuteDrive` restores the immediate
+  switch for A/B renders.
+- Under Unit Character the two chorus lines take a fixed-seed relative
+  insertion offset of up to 1.6 dB inside the MN3009's ±4 dB row, split
+  ± so the absolute wet level stays where it was; the L/R image is no longer
+  perfectly symmetric at 100 %. `enableChorusLineGainSpread` keeps the
+  former identical returns.
+- The DCO ramp dispersion sits inside the ±2 % G class the module drawing
+  prints on C54 instead of a voiced 3 %, and each card's net pulse duty at
+  the PWM trim point is drawn inside the 48–52 % window the service
+  procedure accepts, with CH1 held at the trimmed 50 %: previously the
+  threshold and ramp draws were independent and could leave a card outside
+  the window Roland ships them inside. Unit Character 0 is unchanged.
 - The switched high-pass no longer discards the leg it leaves. Selecting a new
   position steps as before, but the departing cut leg's capacitor keeps
   discharging into the same summing node, adding a soft low tail of −26.96 dB

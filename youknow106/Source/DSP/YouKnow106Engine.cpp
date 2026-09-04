@@ -110,6 +110,25 @@ constexpr float highPassCutBleedResistanceOhms = 1000000.0f; // R21 / R23
 // leg delivers through its own 47 kOhm. 47/1047 = 0.0448902, or -26.96 dB.
 constexpr float highPassDepartRatio =
     47000.0f / (highPassCutBleedResistanceOhms + 47000.0f);
+// The Boost leg's own parts, jack board p. 15 (read at designator level from
+// the 300 dpi scan): the C9||R22 link from Y3 to node N, C8 from N to ground,
+// IC4b's R18/C6 over R19, and the two returns into IC4a's R29 summing node.
+constexpr double boostLinkOhms = 47.0e3;        // R22
+constexpr double boostLinkFarads = 47.0e-9;     // C9
+constexpr double boostShuntFarads = 10.0e-9;    // C8
+constexpr double boostSumOhms = 47.0e3;         // R25 (Y3 into the node)
+constexpr double boostFeedbackOhms = 100.0e3;   // R18
+constexpr double boostFeedbackFarads = 22.0e-9; // C6
+constexpr double boostGroundOhms = 10.0e3;      // R19
+constexpr double boostReturnOhms = 220.0e3;     // R24 (IC4b into the node)
+constexpr double boostSummerOhms = 47.0e3;      // R29
+// Fraction of a Y3 step that C9 in series with C8 hands to node N, and the
+// gains the two returns carry into IC4a's output.
+constexpr double boostLinkShare =
+    boostLinkFarads / (boostLinkFarads + boostShuntFarads);
+constexpr double boostDirectGain = boostSummerOhms / boostSumOhms;   // 1
+constexpr double boostReturnGain = boostSummerOhms / boostReturnOhms; // 0.2136
+constexpr double boostAmplifierDcGain = 1.0 + boostFeedbackOhms / boostGroundOhms;
 
 // Per-voice module-input coupling, module board p. 13: the summed WAVE node
 // reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
@@ -4752,6 +4771,127 @@ float YouKnow106Engine::HighPass::process(float input, float g,
                             + static_cast<double>(shelfGain) * low);
 }
 
+void YouKnow106Engine::BoostBranch::reset() noexcept
+{
+    vN = 0.0;
+    vC9 = 0.0;
+    vC6 = 0.0;
+    linkState = 0.0;
+    c6State = 0.0;
+    selected = false;
+}
+
+void YouKnow106Engine::updateBoostBranchCoefficients() noexcept
+{
+    const double h = static_cast<double>(inverseOversampledRate_);
+    auto& c = boostBranchCoefficients_;
+    // Driven configuration: with Y3 held at the bus, C9 is across a known
+    // voltage and the only free state is w = vN - share * u, a single pole
+    // at R22 (C8 + C9) -- the same 59.41 Hz corner the collapsed shelf used,
+    // bilinear like every other one-pole in this file.
+    const double linkTau = boostLinkOhms * (boostLinkFarads + boostShuntFarads);
+    c.linkG = std::tan(0.5 * h / linkTau);
+    // IC4b's feedback pole, R18 C6 (72.34 Hz), driven by R18/R19 times the
+    // voltage on its inverting input.
+    const double c6Tau = boostFeedbackOhms * boostFeedbackFarads;
+    c.c6G = std::tan(0.5 * h / c6Tau);
+    // Undriven configuration, exact trapezoidal step of the linear pair
+    //   C8  dvN/dt  = -(vN + vC9) / R25
+    //   C9  dvC9/dt = -vC9 / R22 - (vN + vC9) / R25
+    // with Y3 = vN + vC9 hanging on R25 into the virtual earth.
+    const double a00 = -1.0 / (boostSumOhms * boostShuntFarads);
+    const double a01 = a00;
+    const double a10 = -1.0 / (boostSumOhms * boostLinkFarads);
+    const double a11 = -(1.0 / boostLinkOhms + 1.0 / boostSumOhms)
+                     / boostLinkFarads;
+    // (I - hA/2)^-1 (I + hA/2)
+    const double p00 = 1.0 - 0.5 * h * a00, p01 = -0.5 * h * a01;
+    const double p10 = -0.5 * h * a10,      p11 = 1.0 - 0.5 * h * a11;
+    const double q00 = 1.0 + 0.5 * h * a00, q01 = 0.5 * h * a01;
+    const double q10 = 0.5 * h * a10,       q11 = 1.0 + 0.5 * h * a11;
+    const double det = p00 * p11 - p01 * p10;
+    const double i00 = p11 / det, i01 = -p01 / det;
+    const double i10 = -p10 / det, i11 = p00 / det;
+    c.m00 = i00 * q00 + i01 * q10;
+    c.m01 = i00 * q01 + i01 * q11;
+    c.m10 = i10 * q00 + i11 * q10;
+    c.m11 = i10 * q01 + i11 * q11;
+}
+
+float YouKnow106Engine::processBoostBranch(float coupled,
+                                           bool selected) noexcept
+{
+    auto& b = boostBranch_;
+    const auto& c = boostBranchCoefficients_;
+    const double u = static_cast<double>(coupled);
+
+    if (selected)
+    {
+        if (!b.selected)
+        {
+            // Re-selection puts the bus step across C9 in series with C8;
+            // the charge redistributes and N jumps by C9/(C8+C9) of it. The
+            // integrator behind the driven pole restarts at rest on the new
+            // node voltage.
+            b.vN += boostLinkShare * (u - b.vN - b.vC9);
+            b.linkState = b.vN - boostLinkShare * u;
+            b.selected = true;
+        }
+        // Bilinear one-pole on w = vN - share*u with input (1 - share)*u:
+        // v = (x - s) g/(1+g), w = v + s, s <- w + v.
+        const double v = ((1.0 - boostLinkShare) * u - b.linkState) * c.linkG
+                       / (1.0 + c.linkG);
+        const double w = v + b.linkState;
+        b.linkState = w + v;
+        b.vN = w + boostLinkShare * u;
+        b.vC9 = u - b.vN;
+    }
+    else
+    {
+        b.selected = false;
+        const double vN = c.m00 * b.vN + c.m01 * b.vC9;
+        const double vC9 = c.m10 * b.vN + c.m11 * b.vC9;
+        b.vN = vN;
+        b.vC9 = vC9;
+    }
+
+    // IC4b: non-inverting, its inverting input tracks N while the output is
+    // inside its swing; C6 charges from R19's current less its own R18 leak,
+    // so its voltage settles to (R18/R19) times the inverting input.
+    // The output bound is the shared summer-stage swing policy (OQ-05): a
+    // x11 stage inside +/-15 V rails cannot pass more than about 1.2 V of
+    // low band linearly, so on a loud bass chord in Boost this is the first
+    // stage in the chain to run out of rail.
+    const auto stepC6 = [&](double inverting, double& stateOut) {
+        const double x = (boostAmplifierDcGain - 1.0) * inverting;
+        const double v = (x - b.c6State) * c.c6G / (1.0 + c.c6G);
+        const double y = v + b.c6State;
+        stateOut = y + v;
+        return y;
+    };
+    double c6State = b.c6State;
+    double vC6 = stepC6(b.vN, c6State);
+    double linear = b.vN + vC6;
+    double out = static_cast<double>(outputSummerClip(static_cast<float>(linear)));
+    if (std::abs(out - linear) > 1.0e-6 * std::max(1.0, std::abs(linear)))
+    {
+        // Saturated: the inverting input is what the clipped output leaves
+        // across the divider, not N. One corrected step is enough at these
+        // corners (940 us and slower against a 5 us grid).
+        vC6 = stepC6(out - vC6, c6State);
+        linear = b.vN + vC6;
+        out = static_cast<double>(outputSummerClip(static_cast<float>(linear)));
+    }
+    b.vC6 = vC6;
+    b.c6State = c6State;
+    if (!std::isfinite(b.vN) || !std::isfinite(b.vC9) || !std::isfinite(b.vC6)
+        || !std::isfinite(b.linkState) || !std::isfinite(b.c6State))
+        b.reset();
+
+    const double y3 = selected ? u : b.vN + b.vC9;
+    return static_cast<float>(boostDirectGain * y3 + boostReturnGain * out);
+}
+
 void YouKnow106Engine::HalfbandDecimator::reset() noexcept
 {
     left.fill(0.0f);
@@ -5103,6 +5243,7 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     highPassThreeDepartG_ = std::tan(
         pi * highPassCornerHz(HighPassMode::Three) * highPassDepartRatio
         * inverseOversampledRate_);
+    updateBoostBranchCoefficients();
     moduleCouplingG_ = std::tan(
         pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
@@ -5293,6 +5434,7 @@ void YouKnow106Engine::clearRateDependentOutputPath(
         highPass_.reset();
         highPassTwoLeg_.reset();
         highPassThreeLeg_.reset();
+        boostBranch_.reset();
         commonVcaInputCoupling_.reset();
         noiseSourceHighPass_.reset();
         noiseSourceLowPass_.reset();
@@ -7115,14 +7257,22 @@ float YouKnow106Engine::cutoffAnalogCounts(
 float YouKnow106Engine::rampCurrentScaleFor(
     const VoiceCard& card, float calibration) noexcept
 {
-    // The ramp's charging resistor carries the same per-card tolerance class
-    // as every other analogue trim here. updatePulseComparator solves the
-    // comparator crossing against this cycle's ramp slope, and renderVoice's
-    // amplitude has to scale the rendered ramp by that identical slope; the
-    // former resolves it here and caches it on the voice (Voice::
-    // rampCurrentScale) so the latter reads the exact value the comparator
-    // was solved against instead of re-deriving it.
-    return 1.0f + card.rampCurrentError * 0.03f * calibration;
+    // Nothing trims a card's ramp: VR33 (DCO CV OFFSET, p. 18 s. 2) is one
+    // shared converter zero, and the per-card trimmers are VCF, RES, VCA
+    // and VCA OFFSET only. What bounds it is the drawing: module board
+    // p. 13 prints the integrator as "C54 .001G" -- the G code is +/-2 % --
+    // and the three range resistors as "399K MF / 200K MF / 100K MF",
+    // metal film. The +/-2 % capacitor class is therefore the anchored
+    // bound the dispersion sits inside (a 1 % film resistor adds 2.24 %
+    // in quadrature); the former 0.03 was a voiced class with no part
+    // behind it. Anchored bound, point at the bound's own class.
+    // updatePulseComparator solves the comparator crossing against this
+    // cycle's ramp slope, and renderVoice's amplitude has to scale the
+    // rendered ramp by that identical slope; the former resolves it here
+    // and caches it on the voice (Voice::rampCurrentScale) so the latter
+    // reads the exact value the comparator was solved against instead of
+    // re-deriving it.
+    return 1.0f + card.rampCurrentError * rampCapacitorToleranceClass * calibration;
 }
 
 void YouKnow106Engine::refreshVoiceRampCurrentScales() noexcept
@@ -7231,12 +7381,26 @@ void YouKnow106Engine::updatePulseComparator(
     // waveform that did not exist.
     const float cardCurrent = voice.rampCurrentScale;
     const float amplitudeScale = voice.dco.renderScale * cardCurrent;
-    // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
-    // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
-    // pins the comparator high even while this card's VCA is shut.
-    const float threshold = static_cast<float>(pwmVolts_)
-                          + card.comparatorOffset * 0.24f
-                                * parameters.calibration;
+    // ADJUSTMENT s. 10 (p. 19) is a joint window: the one shared VR31 puts
+    // CH1 at exactly 50 % with PWM at 5, and every other card is accepted
+    // within 48-52 % as it stands, ramp error and comparator error together.
+    // So CH1's net residual at the trim point is zero and the others' is a
+    // draw inside +/-2 points; the comparator offset is whatever threshold
+    // shift leaves that net after this card's own ramp error -- at
+    // calibration 0 both vanish and the threshold is the shared hold alone.
+    // An earlier revision drew +/-2 points on the threshold and +/-3 % on the
+    // ramp independently, which put some cards outside the window Roland
+    // ships them inside. Pulse Off remains separate at -0.8 V and pins the
+    // comparator high even while this card's VCA is shut.
+    const float netDuty = voice.cardIndex == 0
+        ? 0.0f
+        : card.comparatorOffset * pwmDutyAcceptanceHalfWidth
+              * parameters.calibration;
+    // duty = 1 - V_th / (12 V * scale) at the 6 V hold, so the threshold
+    // that lands 0.5 + netDuty is 6 V * scale * (1 - 2 netDuty).
+    const float thresholdOffset =
+        0.5f * rampAmplitudeVolts * (cardCurrent * (1.0f - 2.0f * netDuty) - 1.0f);
+    const float threshold = static_cast<float>(pwmVolts_) + thresholdOffset;
     voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
     voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
@@ -8911,10 +9075,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // it does not disconnect the leg it just left: that leg's 47 kOhm
             // is unswitched, so its capacitor keeps discharging through its
             // own 1 MOhm bleed into the same summing node. The shared filter
-            // still runs every sample whichever leg is selected -- One is a
-            // bare wire and Boost's own C8 tail is not modelled here, so
-            // freezing it would manufacture a stale-state step on the next
-            // entry to Boost larger than the tail this models.
+            // still runs every sample whichever leg is selected so the legacy
+            // switch below stays bit-identical; with the physical legs on,
+            // Boost is rendered by its own three-capacitor branch and One is
+            // a bare wire, so the shared state is only read on the legacy path.
             const float sharedLeg = highPass_.process(coupled,
                                                       highPassG_,
                                                       highPassShelf_,
@@ -8926,6 +9090,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     parameters.highPass == HighPassMode::Two;
                 const bool threeActive =
                     parameters.highPass == HighPassMode::Three;
+                const bool boostActive =
+                    parameters.highPass == HighPassMode::Boost;
+                // Runs in both configurations: driven while selected, and
+                // discharging its stored charge into the same summing node
+                // while not. Its selected output replaces the shelf.
+                const float boostLeg = processBoostBranch(coupled, boostActive);
                 const float twoLeg = twoActive
                     ? highPassTwoLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
                     : highPassTwoLeg_.process(0.0f, highPassTwoDepartG_,
@@ -8936,6 +9106,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                                                 1.0f, 0.0f);
                 shaped = twoActive ? twoLeg
                        : threeActive ? threeLeg
+                       : boostActive ? boostLeg
                        : sharedLeg;
                 // output = +R29 * i and the departing current is
                 // i = -Vc / (R_bleed + R_sum), hence the sign.
@@ -8943,6 +9114,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     shaped -= highPassDepartRatio * twoLeg;
                 if (!threeActive)
                     shaped -= highPassDepartRatio * threeLeg;
+                // The boost branch's node voltages already carry their own
+                // sign into the summing node, selected or not.
+                if (!boostActive)
+                    shaped += boostLeg;
             }
 
             // VCA LEVEL is the one common uPC1252H2 on the jack board, after
@@ -8996,7 +9171,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                                 parameters.enableChorusHyperbolicSweep,
                                 parameters.calibration,
                                 parameters.useChorusRateNoiseHypothesis,
-                                parameters.enableNarrowOneTwoChorus);
+                                parameters.enableNarrowOneTwoChorus,
+                                parameters.enableChorusMuteDrive,
+                                parameters.enableChorusLineGainSpread);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional

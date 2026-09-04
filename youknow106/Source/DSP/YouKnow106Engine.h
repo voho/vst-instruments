@@ -245,6 +245,15 @@ struct EngineParameters
     // narrow/near-mono result while preserving the ordinary I/II topology.
     // False retains the former anti-phase stereo I+II path for controlled A/Bs.
     bool enableNarrowOneTwoChorus { true };
+    // On by default: the chorus button reaches the wet-return JFETs through
+    // the drawn Tr5/C16/R48/C13/Tr4 drive (see Chorus::muteDrive*), so the
+    // wet return mutes about 60 ms after CHORUS goes off and returns about
+    // 115 ms after it comes on. False switches at the command, as before.
+    bool enableChorusMuteDrive { true };
+    // On by default: each MN3009 line carries its own fixed-seed insertion
+    // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
+    // keeps the two returns identical for controlled A/B renders.
+    bool enableChorusLineGainSpread { true };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
@@ -275,9 +284,18 @@ struct EngineParameters
     // or -26.96 dB, of the stored capacitor voltage, decaying with 15.71 ms
     // leaving Two and 4.92 ms leaving Three. False restores the former
     // single-shared-state swap for controlled A/B renders; with the selector
-    // held still the two paths are bit-identical either way. Boost's own
-    // departing tail (C8 through R22+R25 into IC4b) is larger and shorter and
-    // is still unmodelled; OQ-21 owns the switching transient.
+    // held still the two cut paths are bit-identical either way.
+    //
+    // The same switch also runs the Boost leg as its own three-capacitor
+    // network (C9, C8, C6 -- see BoostBranch) instead of the collapsed
+    // single-corner shelf: while Boost is selected the two agree to 0.016 dB,
+    // and what the physical states add is the leg's departing tail (C8
+    // discharging through R22||C9 and R25 into the summing node while IC4b
+    // keeps amplifying it -- the undriven pair's eigenmodes are 0.37 and
+    // 2.77 ms, so the earlier 940 us single-pole reading was short),
+    // the charge redistribution between C9 and C8 on re-entry, and IC4b's
+    // finite swing on its x11 low band. OQ-21 still owns the TC4052's own
+    // on-resistance and charge injection.
     bool enableHighPassDepartingLegTail { true };
     // On by default: uses CircuitDerivedResonanceProfile's
     // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
@@ -1415,6 +1433,15 @@ private:
     // its finite slope.
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
+    // C54 ".001G" on module board p. 13: the G tolerance code is +/-2 %,
+    // and no per-card trimmer touches the ramp. See rampCurrentScaleFor.
+    static constexpr float rampCapacitorToleranceClass = 0.02f;
+    // ADJUSTMENT s. 10 (p. 19): VR31 -- one shared PWM trimmer -- is set for
+    // exactly 50 % on CH1 with PWM at 5, and the other channels are then
+    // accepted if they read 48-52 %. That is a joint window on each card's
+    // NET duty at the trim point, ramp error and comparator error together,
+    // relative to a trimmed CH1. The dispersion draws that net residual.
+    static constexpr float pwmDutyAcceptanceHalfWidth = 0.02f;
     // At B-2 coordinate 0x5400 the pair is code 0x0100 and count 0x1dfb.
     // Their product is a gain-free centre anchor for the approximately 12 Vpp
     // ramp: other pairs retain the B-2 law's small settled amplitude ripple,
@@ -2879,6 +2906,40 @@ private:
     HighPass highPassThreeLeg_ {};
     float highPassTwoDepartG_ { 0.001f };
     float highPassThreeDepartG_ { 0.001f };
+    // The Boost leg (IC3 Y3), jack board p. 15, as its three real charge
+    // stores rather than the collapsed shelf: Y3 -> (C9 47 nF || R22 47 kOhm)
+    // -> node N, C8 10 nF to ground, R20 into IC4b(+); IC4b is non-inverting
+    // with R18 100 kOhm (C6 22 nF across it) over R19 10 kOhm, so x11 at DC
+    // and x1 above C6's corner; its output reaches IC4a's summing node
+    // through R24 220 kOhm and Y3 itself through R25 47 kOhm, against R29
+    // 47 kOhm feedback. While selected, Y3 is the coupled bus. Deselected,
+    // Y3 hangs on R25 to the virtual earth and C8 discharges back through
+    // R22||C9 and R25 into that node -- the departing tail -- while IC4b keeps
+    // amplifying whatever N holds. Re-selection puts the bus step across C9
+    // in series with C8, so N jumps by C9/(C8+C9) of it.
+    struct BoostBranch
+    {
+        double vN { 0.0 };    // across C8, node N to ground
+        double vC9 { 0.0 };   // across C9, Y3 side positive
+        double vC6 { 0.0 };   // across C6, IC4b output side positive
+        // Bilinear integrator states behind the driven link pole and C6.
+        double linkState { 0.0 };
+        double c6State { 0.0 };
+        bool selected { false };
+        void reset() noexcept;
+    };
+    struct BoostBranchCoefficients
+    {
+        double linkG { 0.0 };   // TPT g of the R22 (C8 + C9) pole
+        double c6G { 0.0 };     // TPT g of the R18 C6 pole
+        // Trapezoidal one-step map of [vN, vC9] with Y3 undriven.
+        double m00 { 1.0 }, m01 { 0.0 }, m10 { 0.0 }, m11 { 1.0 };
+    };
+    BoostBranch boostBranch_ {};
+    BoostBranchCoefficients boostBranchCoefficients_ {};
+    void updateBoostBranchCoefficients() noexcept;
+    [[nodiscard]] float processBoostBranch(float coupled,
+                                           bool selected) noexcept;
 
     // C12/R36 immediately before the shared uPC1252H2 VCA.
     HighPass commonVcaInputCoupling_ {};
