@@ -601,6 +601,17 @@ new defaults stand. Chosen by ear, not settled by a measurement.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.
-- **Chart-geometry follow-on (OQ-08).** If `MeasuredChartGeometry` and the
-  normalised profile prove indistinguishable by ear, OQ-08's audible-impact
-  priority drops. No verdict yet.
+- **Chart-geometry follow-on (OQ-08).** A two-letter set was rendered on
+  2026-09-04 (A `ordinal/23`, B `MeasuredChartGeometry`; fast resonant
+  stabs and PWM staccato, RMS-matched within 0.03 dB, one common gain; the
+  A/B null is −3.2 dBc, almost entirely DCO phase at note-on) with its key
+  unread by design. If the two prove indistinguishable by ear, OQ-08's
+  audible-impact priority drops. No verdict yet.
+- **NOISE crest convention (OQ-16).** The p. 19 "4 Vp-p at TP8" reading
+  brackets the main noise level between −12.6 and −8.5 dB re the 4.8 Vp-p
+  self-oscillation trim; the model ships at −11.96 dB. A three-letter set
+  was rendered on 2026-09-04 (A shipping, B the six-sigma scope reading at
+  +1.9 dB, C the bracket top at +3.5 dB; saw + NOISE 10 then a NOISE-only
+  resonant sweep; deliberately not level-matched, since level is what is
+  judged; one common gain), key unread by design. A choice pins
+  `noiseMixVolts` inside the bracket and nowhere else. No verdict yet.

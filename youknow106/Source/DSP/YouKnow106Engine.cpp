@@ -5695,6 +5695,9 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.portamento, 0.0f);
     fix01(result.benderDcoDepth, 0.30f);
     fix01(result.benderVcfDepth, 0.0f);
+    result.mainNoiseLevelScale = std::isfinite(result.mainNoiseLevelScale)
+        ? std::clamp(result.mainNoiseLevelScale, 0.0f, 4.0f)
+        : 1.0f;
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
@@ -8796,7 +8799,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 noiseState_ = 0x6d2b79f5u;
             noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
-                bipolarFromState(noiseState_) * noiseRateScale_;
+                bipolarFromState(noiseState_) * noiseRateScale_
+                * parameters.mainNoiseLevelScale;
             // The hold voltage is what moves; Tr22 converts it to control
             // current instantaneously, so the onset law is applied after the
             // hold and ahead of both the C41-driven and legacy level paths.

@@ -190,6 +190,11 @@ struct EngineParameters
     // Bound for the affine blends above; see the note on `calibration`.
     static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { Chorus::defaultNoiseScale };
+    // Comparison-only, not serialised: a linear scale on the shared Tr21
+    // noise rail for listening tests of the scope-crest convention behind
+    // the 4 Vp-p TP8 anchor (OQ-16). 1.0 is the shipped, conservative
+    // reading; the anchored bracket admits up to about +3.5 dB.
+    float mainNoiseLevelScale { 1.0f };
     int polyphony { 6 };           // 6 is the hardware voice count.
     // Exact preserves the established always-running sound and state.
     // ZonedHermite and PolyZoned trade bounded kernel error for lower VCF CPU
@@ -2184,7 +2189,13 @@ private:
     // envelopes are computed digitally in the shared processor and are
     // therefore identical across voices. What differs between voices is the
     // analogue chain each envelope drives, not the envelope itself. The
-    // distribution magnitudes remain voiced rather than measured residuals.
+    // distribution magnitudes remain voiced rather than measured residuals,
+    // but the untrimmed legs now have an anchored bound: the module-board
+    // legend (p. 12) prints every plain resistor as "R20J" -- J is +/-5 % --
+    // and only the DCO range resistors as 1 % metal-oxide film, so the 3 %
+    // classes on the sub leg (R101/R102), the noise leg (R102) and the
+    // per-voice summer leg (R3) sit inside that 5 %; the ramp uses C54's own
+    // G class (rampCapacitorToleranceClass).
     struct VoiceCard
     {
         float rampCurrentError { 0.0f };
