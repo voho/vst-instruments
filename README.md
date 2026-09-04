@@ -81,7 +81,7 @@ real string-tension bend, plus per-note pluck point and pressure. A
 fret/tuning allocator enforces guitar playability while bounded Shape,
 Material, String Age, Touch and Position controls keep the surface simple.
 
-[Eight audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
+[Ten audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
 
 ---
 

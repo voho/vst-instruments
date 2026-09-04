@@ -1,4 +1,4 @@
-// Renders Acustra's seven committed demonstrations through AcustraEngine, the
+// Renders Acustra's ten committed demonstrations through AcustraEngine, the
 // same JUCE-free signal path used by the plug-in. Every score and engine seed
 // is deterministic. The engine's strings, passive bridge, and modal body are
 // the source; no sample playback, convolution, room, or post-effect is used.
@@ -9,6 +9,7 @@
 // cleaned, and this tool never deletes an existing demonstration directory.
 
 #include "DSP/AcustraEngine.h"
+#include "RepertoireScores.h"
 
 #include <algorithm>
 #include <array>
@@ -130,6 +131,65 @@ private:
     AcustraEngine engine_;
     Audio audio_;
 };
+
+// Plays a written score: the notes carry their own onsets and lengths in
+// beats, so overlapping voices keep the timing the composer wrote instead of
+// the sequence of rests a hand-authored take spells out. Every onset is placed
+// at its own sample from the start of the piece, so the rests cannot
+// accumulate a rounding drift over a few hundred notes.
+Audio playScore(const EngineParameters& parameters, double beatsPerMinute,
+                const acustra::repertoire::ScoreNote* score, std::size_t count,
+                double tailSeconds)
+{
+    struct Event
+    {
+        long long sample;
+        int note;
+        float velocity;
+        bool starts;
+    };
+
+    const double samplesPerBeat = 60.0 / beatsPerMinute * demoSampleRate;
+    std::vector<Event> events;
+    events.reserve(count * 2);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const auto& note = score[index];
+        const auto onset = std::llround(note.startBeats * samplesPerBeat);
+        const auto end
+            = std::llround((note.startBeats + note.heldBeats) * samplesPerBeat);
+        events.push_back({ onset, note.note, note.velocity, true });
+        events.push_back({ end, note.note, 0.0f, false });
+    }
+    // A note that ends where the next begins is released first, so a repeated
+    // note - every note of a tremolo - is plucked again rather than doubled.
+    std::stable_sort(events.begin(), events.end(),
+                     [](const Event& left, const Event& right)
+                     {
+                         if (left.sample != right.sample)
+                             return left.sample < right.sample;
+                         return static_cast<int>(left.starts)
+                              < static_cast<int>(right.starts);
+                     });
+
+    Take take(parameters);
+    long long rendered = 0;
+    for (const auto& event : events)
+    {
+        if (event.sample > rendered)
+        {
+            take.rest(static_cast<double>(event.sample - rendered)
+                      / demoSampleRate);
+            rendered = event.sample;
+        }
+        if (event.starts)
+            take.noteOn(event.note, event.velocity);
+        else
+            take.noteOff(event.note);
+    }
+    take.rest(tailSeconds);
+    return take.finish();
+}
 
 void append(Audio& destination, Audio source, double silenceSeconds = 0.0)
 {
@@ -424,6 +484,46 @@ Audio alternateTunings()
     return result;
 }
 
+Audio recuerdosDeLaAlhambra()
+{
+    // Tárrega's tremolo: the thumb keeps an arpeggio underneath while the ring,
+    // middle and index fingers repeat one melody note on one string, eleven
+    // strokes a second. Every stroke lands on a string that is still ringing
+    // from the last, which is what the two-way junction and the take-to-take
+    // pluck point are for.
+    auto parameters = baseParameters();
+    parameters.stringMaterial = StringMaterial::Nylon;
+    parameters.shape = BodyShape::Auditorium;
+    parameters.bodyMaterial = BodyMaterial::Cedar;
+    parameters.stringAge = 0.10f;
+    parameters.pluckPosition = 0.38f;
+    parameters.touch = 0.10f;
+    parameters.bodyAmount = 0.90f;
+
+    return playScore(parameters, acustra::repertoire::recuerdosBeatsPerMinute,
+                     acustra::repertoire::recuerdos.data(),
+                     acustra::repertoire::recuerdos.size(), 2.4);
+}
+
+Audio lagrima()
+{
+    // The same guitar played slowly: a sung melody over held bass, where the
+    // sustain and the beating between coupled strings carry the piece rather
+    // than the attack.
+    auto parameters = baseParameters();
+    parameters.stringMaterial = StringMaterial::Nylon;
+    parameters.shape = BodyShape::Auditorium;
+    parameters.bodyMaterial = BodyMaterial::Cedar;
+    parameters.stringAge = 0.06f;
+    parameters.pluckPosition = 0.44f;
+    parameters.touch = 0.08f;
+    parameters.bodyAmount = 0.88f;
+
+    return playScore(parameters, acustra::repertoire::lagrimaBeatsPerMinute,
+                     acustra::repertoire::lagrima.data(),
+                     acustra::repertoire::lagrima.size(), 3.0);
+}
+
 struct Demo
 {
     const char* fileName;
@@ -431,7 +531,7 @@ struct Demo
     Audio (*render)();
 };
 
-constexpr std::array<Demo, 8> demos {{
+constexpr std::array<Demo, 10> demos {{
     { "01-steel-sustain-range.wav",
       "Steel sustain from open E2 to B5, one held pluck at a time",
       steelSustainRange },
@@ -459,6 +559,13 @@ constexpr std::array<Demo, 8> demos {{
       "Same-sample chords swept as alternating strums, then one chord eight "
       "times hand-damped, no two strokes the same take",
       strummedChords },
+    { "09-recuerdos-de-la-alhambra.wav",
+      "Tarrega, Recuerdos de la Alhambra, bars 1-12: a nylon tremolo over a "
+      "thumb arpeggio",
+      recuerdosDeLaAlhambra },
+    { "10-lagrima.wav",
+      "Tarrega, Lagrima, bars 1-8: a sung nylon melody over held bass",
+      lagrima },
 }};
 
 double peak(const Audio& audio)

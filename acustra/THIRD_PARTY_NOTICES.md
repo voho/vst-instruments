@@ -4,6 +4,27 @@ Acustra's original source code is covered by the project's `LICENSE` file.
 The separately licensed framework, recordings and adapted measurement data
 below are not relicensed by Acustra.
 
+## Tárrega scores for the repertoire demonstrations
+
+Works: *Recuerdos de la Alhambra* and *Lágrima* by Francisco Tárrega
+(1852–1909)
+
+Licence: public domain. Tárrega died in 1909, so every copyright term
+measured from the author's death expired in 1979 at the latest.
+
+`Tools/GenerateRepertoireScores.py` reads two Mutopia Project MIDI files —
+[`recuerdos.mid`](https://www.mutopiaproject.org/ftp/TarregaF/recuerdos/recuerdos.mid)
+(md5 `b91ef372bc2f64e383be1a539f033f62`) and
+[`lagrima-duo.mid`](https://www.mutopiaproject.org/ftp/TarregaF/lagrima-duo/lagrima-duo.mid)
+(md5 `0b20164983fe93c99a0afc689d55f86b`) — and takes from them only Tárrega's
+composition: which pitch sounds when, and for how long. Mutopia declares the
+Lágrima file public domain; the Recuerdos typesetting carries CC BY-SA 3.0,
+which covers that edition's own engraving. No engraving, fingering, barre
+indication or editorial marking is read or reproduced, and none appears in
+`Tools/RepertoireScores.h`, which holds pitch, onset and length alone. The
+velocities in that header are an authored performance written by this project,
+not data from either file.
+
 ## FreePats Spanish classical guitar recordings
 
 Work: *Spanish classical guitar*, version 2019-06-18
