@@ -5181,17 +5181,20 @@ void testFrettingHandFollowsThePluckLaw()
     const auto peakAfter = [] (const Phrase& phrase, double rate,
                                double begin, double end)
     {
-        const auto from = phrase.event + static_cast<std::size_t>(begin * rate);
-        const auto to = phrase.event + static_cast<std::size_t>(end * rate);
-        return peak(phrase.audio, static_cast<int>(from), static_cast<int>(to));
+        const auto from = static_cast<int>(phrase.event)
+                          + static_cast<int>(std::round(begin * rate));
+        const auto to = static_cast<int>(phrase.event)
+                        + static_cast<int>(std::round(end * rate));
+        return peak(phrase.audio, from, to);
     };
     const auto energyAfter = [] (const Phrase& phrase, double rate,
                                  double begin, double end)
     {
-        const auto from = phrase.event + static_cast<std::size_t>(begin * rate);
-        const auto to = phrase.event + static_cast<std::size_t>(end * rate);
-        const double r = rms(phrase.audio, static_cast<int>(from),
-                             static_cast<int>(to));
+        const auto from = static_cast<int>(phrase.event)
+                          + static_cast<int>(std::round(begin * rate));
+        const auto to = static_cast<int>(phrase.event)
+                        + static_cast<int>(std::round(end * rate));
+        const double r = rms(phrase.audio, from, to);
         return r * r * static_cast<double>(to - from);
     };
     const auto bandAfter = [] (const Phrase& phrase, double rate,

@@ -1693,8 +1693,10 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // Sample-accurate segmentation around MIDI events.
     int position = 0;
-    for (const auto metadata : midiMessages)
+    auto it = midiMessages.begin();
+    while (it != midiMessages.end())
     {
+        const auto metadata = *it;
         const int eventPosition =
             juce::jlimit (0, buffer.getNumSamples(), metadata.samplePosition);
         if (eventPosition > position)
@@ -1707,7 +1709,53 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                              externalInputR));
             position = eventPosition;
         }
-        if (handleMidiMessage (metadata.getMessage()))
+
+        const auto& message = metadata.getMessage();
+        if (message.isSysEx())
+        {
+            // Consecutive SysEx packets (such as multi-packet patch dumps)
+            // are decoded into livePatch and committed in a single atomic
+            // seqlock burst so concurrent state saves never see a partially
+            // applied patch dump.
+            Patch livePatch = snapshotPatch();
+            bool anyHandled = false;
+            bool anyPatchDecoded = false;
+            while (it != midiMessages.end())
+            {
+                const auto nextMeta = *it;
+                const auto& nextMsg = nextMeta.getMessage();
+                if (! nextMsg.isSysEx())
+                    break;
+                const auto* rawData = nextMsg.getSysExData();
+                const auto rawSize = (std::size_t) nextMsg.getSysExDataSize();
+                if (handleDeviceControlSysEx (rawData, rawSize))
+                {
+                    anyHandled = true;
+                }
+                else if (septum::sysex::decodeSysExMessage (rawData, rawSize, livePatch))
+                {
+                    anyHandled = true;
+                    anyPatchDecoded = true;
+                }
+                position = juce::jlimit (0, buffer.getNumSamples(), nextMeta.samplePosition);
+                ++it;
+            }
+            if (anyPatchDecoded)
+            {
+                writePatchToParameters (livePatch, true);
+                patchReconciler.triggerAsyncUpdate();
+            }
+            if (anyHandled)
+            {
+                engine.setMasterLevel ((int) std::lround (
+                    masterValue->load (std::memory_order_relaxed)));
+                applySystemSettings();
+                applyCurrentPatch();
+            }
+            continue;
+        }
+
+        if (handleMidiMessage (message))
         {
             // SYSTEM COMMON goes with it. The three Universal Realtime
             // device-control messages land on MASTER LEVEL, MASTER TUNE and
@@ -1720,6 +1768,7 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             applySystemSettings();
             applyCurrentPatch();  // panel CC or program: next segment uses it
         }
+        ++it;
     }
     if (position < samples)
         engine.process (left + position, right + position, samples - position,
