@@ -66,14 +66,20 @@ CONVERGENCE_BAND_HZ = 700.0
 CONVERGENCE_TOLERANCE = 0.10
 BASE_MODE_COUNT = 96
 MINIMUM_FREQUENCY = 80.0
-# The fit stops at 10 kHz because the archive's own record stops being a body
-# measurement there. Taking the far tail of the same one-second segment as the
-# noise estimate, the microphone signal-to-noise of the treble-side impact is
-# 25.6/24.7 dB (g21) and 24.6/20.7 dB (g34) over 5-8 kHz, 21.4/19.7 and
-# 16.4/13.9 dB over 8-10 kHz, then 13.8/13.8 and 12.0/9.0 dB over 10-12 kHz
-# and 3.3/2.4 and 2.5/2.8 dB over 16-20 kHz. Above roughly 12 kHz the H1
-# quotient is mostly the noise floor divided by a hammer spectrum already
-# 19-28 dB down, so fitting it would fit the laboratory, not the guitar.
+# The fit's band is the one the 2026-08-30 body regression gate was set over,
+# 80 Hz to 10 kHz, and the archive gives no reason to widen it: what thins out
+# above it is the excitation. Measuring the force channel of the same
+# one-second segment, shaped by the same full_taper this file applies to the
+# whole record, mean power per band against its own 80-1000 Hz mean, the
+# hammer is 5.4 dB (g21) and 4.4 dB (g34) down over 5-8 kHz, 15.9 and 13.5 dB
+# down over 10-12 kHz and 31.6 and 27.8 dB down over 16-20 kHz, and H1 divides
+# by it. The microphone noise floor is not the limit: taking the segment's
+# first 3000 samples as signal (the impact lands at sample 102), its last 3000
+# as noise, that same taper shape on both windows and mean power per band, the
+# treble/bass microphones read 56.6/55.1 dB (g21) and 62.1/61.6 dB (g34) over
+# 5-8 kHz and still 28.1/32.3 and 44.1/40.9 dB over 16-20 kHz. So the ceiling
+# rests on the thinning excitation and on the existing gate's band, not on any
+# claim that the record goes silent up there.
 MAXIMUM_FREQUENCY = 10_000.0
 PEAK_PROMINENCE_DB = 0.5
 Q_MINIMUM = 2.0
