@@ -842,7 +842,9 @@ PhysicalCalibration AcustraEngine::sanitise(
         bounded(source.longitudinalGain, 0.0f, 0.5f,
                 fittedPhysicalCalibration.longitudinalGain),
         bounded(source.longitudinalQ, 10.0f, 400.0f,
-                fittedPhysicalCalibration.longitudinalQ)
+                fittedPhysicalCalibration.longitudinalQ),
+        bounded(source.polarisationEndCorrectionMetres, 0.0f, 0.82e-3f,
+                fittedPhysicalCalibration.polarisationEndCorrectionMetres)
     };
 }
 
@@ -1992,12 +1994,21 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     for (int polarisation = 0; polarisation < 2; ++polarisation)
     {
         auto& loop = voice.loops[static_cast<std::size_t>(polarisation)];
-        const float splitCents = polarisation == 0 ? -0.32f : 0.41f;
-        const float split = std::exp2(splitCents / 1200.0f);
+        // The pair is split by an end correction, not by the body: see
+        // polarisationEndCorrectionMetres in FittedPhysicalData.h for the
+        // measurement and its bound. The whole difference lengthens the
+        // parallel loop, so the normal one is the higher member as Woodhouse
+        // measures it, and the normal loop keeps exactly the sounding length
+        // that the tuning, the fret compensation and the bridge phase delay
+        // are all built on. The previous split was an authored -0.32 / +0.41
+        // cents with the opposite sign and a third of the measured size.
+        const float endCorrection = polarisation == 0 ? 0.0f
+            : physicalCalibration_.polarisationEndCorrectionMetres;
         const float polarisationDelay = rawDelay
             - (polarisation == 0 ? measuredBridgeDelay : 0.0f);
-        loop.targetDelay = clamp(polarisationDelay / split, 3.0f,
-                                 static_cast<float>(maximumDelaySamples - 3));
+        loop.targetDelay = clamp(
+            polarisationDelay * (1.0f + endCorrection / soundingLength),
+            3.0f, static_cast<float>(maximumDelaySamples - 3));
         if (clearDelay)
             loop.currentDelay = loop.targetDelay;
         loop.loopGain = clamp(loopGain

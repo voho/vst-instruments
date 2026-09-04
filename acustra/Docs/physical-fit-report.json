@@ -30,10 +30,11 @@
     ]
   ],
   "split_role": "held_out is development validation used for promotion gates, not an untouched final test",
-  "stored_calibration_values": 28,
+  "stored_calibration_values": 29,
   "active_fit_parameters": 27,
   "inactive_parameters": [
-    "directGain"
+    "directGain",
+    "polarisationEndCorrectionMetres"
   ],
   "calibration_order": [
     "bodyFrequencyScale",
@@ -63,7 +64,8 @@
     "bridgeConductanceCornerHz",
     "bridgeTailLengthMetres",
     "longitudinalGain",
-    "longitudinalQ"
+    "longitudinalQ",
+    "polarisationEndCorrectionMetres"
   ],
   "calibration": [
     1.04,
@@ -93,7 +95,8 @@
     2804.94773,
     0.00325,
     0.0,
-    35.0
+    35.0,
+    0.0008
   ],
   "neutral_baseline": {
     "definition": "original unity scales; direct branch off; both velocityBrightnessDepth values 0; apertureRegisterExponent 1; lowBodyModeGain 1; steelDisplacementScaleMetres 0; legacy +0.018 steelFretT60Slope; highLossCutoffScale 1; plate conductance floor 0; 20 mm saddle-to-anchor length; 20 mm saddle-to-anchor length",
@@ -133,31 +136,31 @@
     "training": {
       "examples": 83,
       "unique_model_renders": 47,
-      "fitted_score": 6.322154,
+      "fitted_score": 6.319236,
       "terms": {
         "attack": {
           "neutral": 9.309916832505955,
-          "fitted": 6.9609
+          "fitted": 6.9599
         },
         "harmonics": {
           "neutral": 10.441357549351897,
-          "fitted": 8.1862
+          "fitted": 8.1921
         },
         "tuning": {
           "neutral": 4.7200069586896545,
-          "fitted": 3.4751
+          "fitted": 3.4591
         },
         "pitch_trajectory": {
           "neutral": 0.5545940344615841,
-          "fitted": 0.5209
+          "fitted": 0.5226
         },
         "decay": {
           "neutral": 6.5023449891362235,
-          "fitted": 5.2476
+          "fitted": 5.2355
         },
         "body": {
           "neutral": 15.462399754765235,
-          "fitted": 11.3226
+          "fitted": 11.3239
         },
         "dynamics": {
           "neutral": 5.262953607125741,
@@ -165,73 +168,73 @@
         }
       },
       "neutral_score": 8.768534755725106,
-      "change_percent": -27.89953879270226
+      "change_percent": -27.93281687257866
     },
     "held_out": {
       "examples": 24,
       "unique_model_renders": 24,
-      "fitted_score": 6.319706,
+      "fitted_score": 6.327235,
       "terms": {
         "attack": {
           "neutral": 9.155575861766145,
-          "fitted": 7.5635
+          "fitted": 7.5668
         },
         "harmonics": {
           "neutral": 10.831031892275846,
-          "fitted": 8.5598
+          "fitted": 8.5855
         },
         "tuning": {
           "neutral": 5.134666492710443,
-          "fitted": 3.3923
+          "fitted": 3.3783
         },
         "pitch_trajectory": {
           "neutral": 0.2159873722123093,
-          "fitted": 0.1587
+          "fitted": 0.1584
         },
         "decay": {
           "neutral": 5.464938238665436,
-          "fitted": 4.575
+          "fitted": 4.5842
         },
         "body": {
           "neutral": 15.82243218879784,
-          "fitted": 11.3782
+          "fitted": 11.3809
         },
         "dynamics": {
           "neutral": 0.42473841202342505,
-          "fitted": 0.0233
+          "fitted": 0.0234
         }
       },
       "neutral_score": 8.145301055652865,
-      "change_percent": -22.412861638624104
+      "change_percent": -22.320427977197006
     },
     "flat_top": {
       "examples": 8,
       "unique_model_renders": 8,
-      "fitted_score": 7.950448,
+      "fitted_score": 7.948337,
       "terms": {
         "attack": {
           "neutral": 9.036944038636934,
-          "fitted": 7.5354
+          "fitted": 7.5325
         },
         "harmonics": {
           "neutral": 8.586058487630032,
-          "fitted": 7.8745
+          "fitted": 7.8669
         },
         "tuning": {
           "neutral": 8.267588323509182,
-          "fitted": 2.4401
+          "fitted": 2.429
         },
         "pitch_trajectory": {
           "neutral": 0.6100492795473387,
-          "fitted": 0.5257
+          "fitted": 0.5306
         },
         "decay": {
           "neutral": 8.690178706006728,
-          "fitted": 6.0733
+          "fitted": 6.0885
         },
         "body": {
           "neutral": 13.894703320071423,
-          "fitted": 15.7902
+          "fitted": 15.7703
         },
         "dynamics": {
           "neutral": null,
@@ -239,7 +242,7 @@
         }
       },
       "neutral_score": 9.309314823108725,
-      "change_percent": -14.596851099455554,
+      "change_percent": -14.619527311831137,
       "role": "reported only; never fitted and never used to gate. Eight Eastman E1D flat-top steel regions at one captured dynamic, so the dynamics term is undefined; the guitar is tuned about four cents sharp of A440 across them (-0.5 to +10.3 cents by its own settled-H1 roots), so part of its tuning term is the recording's tuning"
     }
   },
@@ -1434,5 +1437,15 @@
     ],
     "cost": "held-out development validation is 2.89% worse, on its attack, harmonics and decay terms, where training is 2.02% and the flat-top rows 4.10% better. Idle open-string content over 0.5-2.0 s, measured as the power in +/-25-cent bands at the idle open strings' partials against the played fundamental, has a worse median share: -11.1 to -8.3 dB on the steel rows, -20.3 to -18.2 on nylon and -16.5 to -14.9 on the flat-top rows, against recorded targets of -28.2, -19.5 and -13.5. The idle bands' own median level barely moves (0.2 to 0.3 dB); what changes is which rows carry the content, and the softer end anchor is the route",
     "cost_note": "the plan's fuller gate asked for that share not to get worse; it did. The chord-tuning gate, the doublet and the low-E decay all passed"
+  },
+  "polarisation_end_correction": {
+    "source": "J. Woodhouse, Plucked guitar transients: comparison of measurements and synthesis, Acta Acustica 90 (2004) 945-965, Sec. 4.3, https://euphonics.org/wp-content/uploads/2022/03/Guitar_II.pdf",
+    "measured": "the doublet between a string's two transverse polarisations is an end correction at the terminations, not body coupling (his measured 2x2 admittance matrix splits the pair by about 0.1 Hz): the polarisation parallel to the soundboard is longer by about 0.8 mm in 650 mm on the B string, so the normal polarisation is the higher member, and this is 'more significant ... than that coming from the body admittance matrix'",
+    "what_changed": "the authored -0.32 / +0.41 cents split, whose sign was opposite to the measurement and whose total was a third of its size, is replaced by the published 0.8 mm carried as a length; the whole difference lengthens the parallel loop, so the normal loop now runs at exactly the sounding length the tuning is built on",
+    "bounded_not_fixed": "Woodhouse calls the attribution tentative and says the exact amount would require detailed computation, so the length is calibration value 29, bounded 0 to 0.82 mm - one string diameter, the B string it was measured on",
+    "not_fitted": "the corpus carries no signal for it while the parallel polarisation does not radiate (its only outlet is the bridge-local direct path, whose gain the fit put at zero), so it is frozen in the fitter at the measurement",
+    "measured_effect": "every note plays 0.31 cents sharper, the removal of the old split's detune of the radiating loop: single nylon notes at one second move from a mean 0.43 cents off equal temperament to 0.32, and the chord pull itself - the spread of notes inside a chord about its own mean - is unchanged, steel worst separable note 2.01/2.50 to 2.01/2.51 cents early/late and nylon 2.19/1.11 to 2.20/1.09",
+    "rocking_only_second_axis_rejected": "terminating the parallel polarisation on h^2 times the measured rocking mobility - the moment a horizontal saddle-top force makes about the along-string axis, the coordinate the archive's two bridge-end accelerometers trace - renders 64.2 dB (h = 3 mm) and 60.2 dB (h = 6 mm) below the shipping engine on the same nylon phrase, and still 47.7 dB down at an implausible 30 mm. Inaudible at any plausible saddle height, and h is not published for these guitars; the second radiating axis needs the measured tangential admittance per body mode",
+    "whirling_probe_rejected": "one shared slope-energy tension ripple modulating both loops (Gough, JASA 75 (1984); Elliott, Am. J. Phys. 48 (1980) 478) measures, on a steel E2 at velocity 1.0, an rms |dT/T| of 0.451 percent but a peak of 9.75 percent - 80.5 cents of instantaneous pitch. Applied per sample it moves the E2 spectral centroid from 319 Hz to 6313 Hz and the H5-H12 band from 11.22 to 15.85 dB re H1; bounding it would need a calibrated ripple amplitude, a new constant, so it does not ship"
   }
 }

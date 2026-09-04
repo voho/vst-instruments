@@ -125,6 +125,26 @@ struct AcustraEngineTestAccess
                  voice.dispersionDesignInharmonicity };
     }
 
+    // Both polarisations' loop lengths, with the bridge coupling off so that
+    // the only difference between them is the end correction.
+    static std::array<double, 2> polarisationDelays(
+        StringMaterial material, int midiNote,
+        PhysicalCalibration calibration = fittedPhysicalCalibration)
+    {
+        AcustraEngine engine;
+        engine.setPhysicalCalibration(calibration);
+        engine.prepare(48000.0, 64);
+        engine.setBridgeCouplingEnabled(false);
+        EngineParameters parameters;
+        parameters.stringMaterial = material;
+        engine.setParameters(parameters);
+        const int stringIndex = engine.chooseString(midiNote);
+        auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        voice.attackPitchCents = 0.0f;
+        engine.configureVoice(voice, stringIndex, midiNote, true);
+        return { voice.loops[0].targetDelay, voice.loops[1].targetDelay };
+    }
+
     static BodyModeSnapshot configuredBody(
         PhysicalCalibration calibration, int index,
         StringMaterial material = StringMaterial::Steel)
@@ -1941,14 +1961,18 @@ void testPhysicalSustainSettlesNearRequestedPitch()
         // point on the saddle, and B3 ends a quarter of the way in from the
         // treble impact, three semitones above the archive's 208.7 Hz
         // rocking mode. With the rocking bank in, that termination is
-        // reactive enough for the string to form a resolvable pair with it:
-        // over 0.4-5.4 s the note reads a main member 1.29 cents sharp and a
-        // second 16 cents above it, 25 dB down, where the one-point bridge
-        // read a single peak 0.09 cents flat. The other six notes stay
-        // inside 0.6 cents, and the pull vanishes with the mobility scale
-        // (0.06 cents at its 0.25 floor), so this is the coupling and not a
-        // compensation error.
-        expect(std::abs(alone) < 1.5,
+        // reactive enough for the string to form a resolvable pair with it,
+        // where the one-point bridge read a single peak 0.09 cents flat; the
+        // pull vanishes with the mobility scale (0.06 cents at its 0.25
+        // floor), so this is the coupling and not a compensation error.
+        // The bound is 1.6 rather than 1.5 because the whole engine moved
+        // +0.31 cents when the radiating polarisation stopped carrying the
+        // old authored split's 0.32-cent detune of itself (see
+        // polarisationEndCorrectionMetres): B3 now reads 1.487, 1.488 and
+        // 1.546 cents at 44.1, 48 and 96 kHz against 1.237, 1.238 and 1.297,
+        // and the other five notes moved from -0.06 to -0.62 cents to +0.06
+        // to +0.30, closer to nominal rather than further.
+        expect(std::abs(alone) < 1.6,
                "the played steel string missed settled pitch for MIDI "
                    + std::to_string(midiNote) + " by "
                    + std::to_string(alone) + " cents");
@@ -3116,12 +3140,14 @@ void testHostilePhysicalCalibrationIsSanitised()
     const acustra::PhysicalCalibration lowSource {
         -100.0f, -100.0f, -100.0f, -100.0f, -100.0f,
         uniformMaterial(-100.0f), uniformMaterial(-100.0f), -100.0f, -100.0f,
-        -100.0f, -100.0f, -100.0f, -100.0f, -100.0f, -100.0f
+        -100.0f, -100.0f, -100.0f, -100.0f, -100.0f, -100.0f,
+        -100.0f, -100.0f, -100.0f
     };
     const acustra::PhysicalCalibration highSource {
         100.0f, 100.0f, 100.0f, 100.0f, 100.0f,
         uniformMaterial(100.0f), uniformMaterial(100.0f), 100.0f, 100.0f,
-        100.0f, 100.0f, 100.0f, 100.0f, 100000.0f, 100.0f
+        100.0f, 100.0f, 100.0f, 100.0f, 100000.0f, 100.0f,
+        100.0f, 100000.0f, 100.0f
     };
     const auto sanitised = [] (acustra::PhysicalCalibration source)
     {
@@ -3139,10 +3165,11 @@ void testHostilePhysicalCalibrationIsSanitised()
                         low.steelFretT60Slope, low.highLossCutoffScale,
                         low.bridgeConductanceFloor,
                         low.bridgeConductanceCornerHz,
-                        low.bridgeTailLengthMetres }
+                        low.bridgeTailLengthMetres,
+                        low.polarisationEndCorrectionMetres }
                == std::array { 0.96f, 0.05f, 0.25f, -6.0f, 0.0f, -1.0f,
                                0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f,
-                               0.00325f },
+                               0.00325f, 0.0f },
            "low physical calibration bounds were not enforced");
     expect(std::array { high.bodyFrequencyScale, high.bodyQScale,
                         high.bridgeMobilityScale, high.residueTiltDbPerOctave,
@@ -3152,10 +3179,11 @@ void testHostilePhysicalCalibrationIsSanitised()
                         high.steelFretT60Slope, high.highLossCutoffScale,
                         high.bridgeConductanceFloor,
                         high.bridgeConductanceCornerHz,
-                        high.bridgeTailLengthMetres }
+                        high.bridgeTailLengthMetres,
+                        high.polarisationEndCorrectionMetres }
                == std::array { 1.04f, 1.8f, 4.0f, 6.0f, 0.12f, 1.0f,
                                32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f,
-                               0.060f },
+                               0.060f, 0.82e-3f },
            "high physical calibration bounds were not enforced");
     const std::array materialLow {
         0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f
@@ -3172,7 +3200,7 @@ void testHostilePhysicalCalibrationIsSanitised()
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const acustra::PhysicalCalibration poisoned {
         nan, nan, nan, nan, nan, uniformMaterial(nan), uniformMaterial(nan),
-        nan, nan, nan, nan, nan, nan, nan
+        nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan
     };
     const auto fallback = sanitised(poisoned);
     expect(std::array { fallback.bodyFrequencyScale, fallback.bodyQScale,
@@ -3184,7 +3212,8 @@ void testHostilePhysicalCalibrationIsSanitised()
                         fallback.steelFretT60Slope,
                         fallback.highLossCutoffScale,
                         fallback.bridgeConductanceFloor,
-                        fallback.bridgeConductanceCornerHz }
+                        fallback.bridgeConductanceCornerHz,
+                        fallback.polarisationEndCorrectionMetres }
                == std::array {
                     acustra::fittedPhysicalCalibration.bodyFrequencyScale,
                     acustra::fittedPhysicalCalibration.bodyQScale,
@@ -3197,7 +3226,8 @@ void testHostilePhysicalCalibrationIsSanitised()
                     acustra::fittedPhysicalCalibration.steelFretT60Slope,
                     acustra::fittedPhysicalCalibration.highLossCutoffScale,
                     acustra::fittedPhysicalCalibration.bridgeConductanceFloor,
-                    acustra::fittedPhysicalCalibration.bridgeConductanceCornerHz }
+                    acustra::fittedPhysicalCalibration.bridgeConductanceCornerHz,
+                    acustra::fittedPhysicalCalibration.polarisationEndCorrectionMetres }
                && values(fallback.nylon)
                     == values(acustra::fittedPhysicalCalibration.nylon)
                && values(fallback.steel)
@@ -5392,6 +5422,74 @@ void testEachStringMaterialPlaysItsOwnMeasuredGuitar()
             }
 }
 
+// Woodhouse (Acta Acustica 90 (2004) 945-965, Sec. 4.3) measures the two
+// polarisations of a plucked string as a doublet split not by the body -- the
+// measured 2x2 admittance matrix splits it by about 0.1 Hz -- but by an end
+// correction at the terminations, the parallel polarisation running about
+// 0.8 mm longer on 650 mm and so lower. The engine had that sign backwards
+// and at a third of the size. What is pinned here is that it is a LENGTH: the
+// same 0.8 mm splits a stopped string wider than an open one, and it never
+// moves the normal loop, which is the one the tuning is built on.
+void testTheNormalPolarisationIsTheHigherMemberByALength()
+{
+    using acustra::AcustraEngineTestAccess;
+    const auto cents = [] (std::array<double, 2> delays)
+    {
+        return 1200.0 * std::log2(delays[1] / delays[0]);
+    };
+    const auto shipped
+        = acustra::fittedPhysicalCalibration.polarisationEndCorrectionMetres;
+    const double openNylon = cents(AcustraEngineTestAccess::polarisationDelays(
+        acustra::StringMaterial::Nylon, 59));
+    const double openSteel = cents(AcustraEngineTestAccess::polarisationDelays(
+        acustra::StringMaterial::Steel, 40));
+    const double stoppedNylon = cents(
+        AcustraEngineTestAccess::polarisationDelays(
+            acustra::StringMaterial::Nylon, 71));
+    const double expectedNylon
+        = 1200.0 * std::log2(1.0 + static_cast<double>(shipped) / 0.650);
+    const double expectedSteel
+        = 1200.0 * std::log2(1.0 + static_cast<double>(shipped) / 0.648);
+    expect(openNylon > 0.0 && openSteel > 0.0,
+           "the parallel polarisation is not the lower member of the pair");
+    // The tolerance is float rounding of one product, not slack in the law.
+    expect(std::abs(openNylon - expectedNylon) < 1.0e-3
+               && std::abs(openSteel - expectedSteel) < 1.0e-3,
+           "the open-string split is not the measured end correction over "
+           "the scale length");
+    expect(stoppedNylon > openNylon * 1.2,
+           "a stopped string did not split wider than an open one, so the "
+           "correction is not being carried as a length");
+
+    auto zero = acustra::fittedPhysicalCalibration;
+    zero.polarisationEndCorrectionMetres = 0.0f;
+    const auto none = AcustraEngineTestAccess::polarisationDelays(
+        acustra::StringMaterial::Nylon, 59, zero);
+    expect(none[0] == none[1],
+           "a zero end correction did not leave the two polarisations "
+           "exactly in tune");
+    auto shipping = AcustraEngineTestAccess::polarisationDelays(
+        acustra::StringMaterial::Nylon, 59);
+    expect(shipping[0] == none[0],
+           "the end correction moved the normal loop, which carries the "
+           "tuning");
+
+    // The bound is one string diameter, the 0.82 mm B string the 0.8 mm was
+    // measured on: an out-of-range request is clamped, not taken.
+    auto huge = acustra::fittedPhysicalCalibration;
+    huge.polarisationEndCorrectionMetres = 0.01f;
+    const double clamped = cents(AcustraEngineTestAccess::polarisationDelays(
+        acustra::StringMaterial::Nylon, 59, huge));
+    expect(std::abs(clamped
+                    - 1200.0 * std::log2(1.0 + 0.82e-3 / 0.650)) < 1.0e-3,
+           "the end correction was not bounded at one string diameter");
+
+    std::cout << "Acustra polarisation split: nylon open B " << openNylon
+              << " cents, steel open E " << openSteel
+              << " cents, nylon m71 " << stoppedNylon
+              << " cents, normal loop unmoved\n";
+}
+
 void testPerformance()
 {
     acustra::AcustraEngine engine;
@@ -5480,6 +5578,7 @@ int main()
     testNoTwoPlucksLandInTheSamePlace();
     testFrettingHandFollowsThePluckLaw();
     testEachStringMaterialPlaysItsOwnMeasuredGuitar();
+    testTheNormalPolarisationIsTheHigherMemberByALength();
     testPerformance();
     if (failures == 0)
         std::cout << "All Acustra engine tests passed\n";

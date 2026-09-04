@@ -43,7 +43,7 @@ using acustra::dense::ZoneView;
 constexpr int modelSampleRate = 48000;
 constexpr int renderBlockSize = 127;
 constexpr double renderSeconds = 4.2;
-constexpr std::size_t calibrationValueCount = 28;
+constexpr std::size_t calibrationValueCount = 29;
 constexpr float int16Scale = 1.0f / 32768.0f;
 
 enum class Material
@@ -105,7 +105,7 @@ constexpr CalibrationValues calibrationMinimums {{
     0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
     0.25f, 0.4f, 0.35f, 0.35f, 0.0f, 0.7f, 0.0f,
     -1.0f, 0.25f, 0.0f, -0.06f, 0.5f, 0.0f, 100.0f, 0.00325f,
-    0.0f, 10.0f,
+    0.0f, 10.0f, 0.0f,
 }};
 
 constexpr CalibrationValues calibrationMaximums {{
@@ -113,7 +113,7 @@ constexpr CalibrationValues calibrationMaximums {{
     2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
     4.0f, 2.0f, 3.0f, 2.5f, 3.0f, 1.3f, 1.2f,
     1.0f, 32.0f, 0.04f, 0.05f, 4.0f, 0.02f, 8000.0f, 0.060f,
-    0.5f, 400.0f,
+    0.5f, 400.0f, 0.82e-3f,
 }};
 
 const char* materialName(Material material) noexcept
@@ -410,6 +410,7 @@ PhysicalCalibration makeCalibration(const CalibrationValues& values)
     calibration.bridgeTailLengthMetres = values[25];
     calibration.longitudinalGain = values[26];
     calibration.longitudinalQ = values[27];
+    calibration.polarisationEndCorrectionMetres = values[28];
     return calibration;
 }
 
@@ -530,12 +531,13 @@ void writeManifest(const std::filesystem::path& path,
            "\"steelDisplacementScaleMetres\", \"steelFretT60Slope\", "
            "\"highLossCutoffScale\", \"bridgeConductanceFloor\", "
            "\"bridgeConductanceCornerHz\", \"bridgeTailLengthMetres\", "
-           "\"longitudinalGain\", \"longitudinalQ\"],\n"
+           "\"longitudinalGain\", \"longitudinalQ\", "
+           "\"polarisationEndCorrectionMetres\"],\n"
         << "  \"provenance\": {\n"
         << "    \"target_timing\": \"source frame 0; recorded pre-roll/onset retained; cropped or zero-padded to 4.2 seconds\",\n"
         << "    \"target_gain\": \"dense::Sampler calibrated playback gain: layer/peak normalisation times (velocity/127)^0.82\",\n"
         << "    \"target_processing\": \"calibrated gain only; no age, tone, or pan processing\",\n"
-        << "    \"calibration_source\": \"28 positional CLI values in calibration_order\",\n"
+        << "    \"calibration_source\": \"29 positional CLI values in calibration_order\",\n"
         << "    \"model_render\": \""
         << (sampleBaseline
             ? "frozen version-1 dense::Sampler; exact captured MIDI, velocity and round robin; 48000 Hz; 127-sample blocks"

@@ -73,6 +73,27 @@ struct PhysicalCalibration
     // an exact no-op.
     float longitudinalGain { 0.0f };
     float longitudinalQ { 80.0f };
+    // The two transverse polarisations of a real string are not in tune with
+    // each other, and Woodhouse, "Plucked guitar transients: comparison of
+    // measurements and synthesis", Acta Acustica 90 (2004) 945-965, Sec. 4.3
+    // (https://euphonics.org/wp-content/uploads/2022/03/Guitar_II.pdf) shows
+    // where the split comes from: not from the body, whose measured 2x2
+    // admittance matrix splits the pair by only about 0.1 Hz, but from an end
+    // correction at the terminations, the string rolling on the fret crown
+    // and possibly the saddle. He measures the polarisation parallel to the
+    // soundboard as the longer one - so the normal polarisation is the higher
+    // member of the pair - by "about 0.8 mm in 650 mm" on the B string, and
+    // calls that "more significant ... than that coming from the body
+    // admittance matrix". This is that length, as a length: it is a total
+    // over both terminations for an open string, not a per-termination
+    // figure, and he publishes no law for how it varies from string to
+    // string, so the same length goes to every string. It is bounded and
+    // fittable rather than fixed because he calls the attribution tentative
+    // and says the exact amount "would require detailed computation"; the
+    // bound is one string diameter - his own remark that the correction is of
+    // the order of the string diameter - taken as the 0.82 mm B string the
+    // 0.8 mm was measured on (nylonDiameterMetres in AcustraEngine.cpp).
+    float polarisationEndCorrectionMetres { 0.0008f };
 };
 
 inline constexpr PhysicalCalibration fittedPhysicalCalibration {
@@ -87,7 +108,12 @@ inline constexpr PhysicalCalibration fittedPhysicalCalibration {
     // transient rather than part of the pluck. Keep the calibrated mechanism
     // available for measurement work, but do not add that synthetic ping to
     // the shipping voice.
-    0.011f, 2804.94773f, 0.00325f, 0.0f, 35.0f
+    0.011f, 2804.94773f, 0.00325f, 0.0f, 35.0f,
+    // Woodhouse's published 0.8 mm. The corpus carries no signal for it while
+    // the parallel polarisation does not radiate (its only outlet is the
+    // bridge-local direct path, whose gain the fit put at zero), so the fit
+    // does not move it and it ships at the measurement.
+    0.0008f
 };
 
 } // namespace acustra
