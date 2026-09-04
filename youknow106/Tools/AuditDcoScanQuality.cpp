@@ -34,6 +34,15 @@ struct YouKnow106TestAccess
 {
     enum class Waveform { Saw, Pulse, Sub };
 
+    // The sub divider's own rail, read from the engine rather than restated
+    // as a literal here, so re-voicing that coordinate cannot leave this
+    // audit's independent Fourier reference describing a waveform the engine
+    // no longer produces.
+    static constexpr double subMixVolts()
+    {
+        return youknow106::YouKnow106Engine::subMixVolts;
+    }
+
     struct ScanCursor
     {
         double phase {};
@@ -420,8 +429,11 @@ std::complex<double> analyticCoefficient(Access::Waveform waveform,
             if (harmonic % 2 == 0)
                 return {};
             // In sub-period coordinates, the divider is high from 0 to
-            // rise/2 and from (1+rise)/2 to 1.  Its two levels are +/-5 V.
-            return 10.0
+            // rise/2 and from (1+rise)/2 to 1.  Its two levels are
+            // +/-subMixVolts, read from the engine rather than restated here,
+            // so re-voicing that coordinate cannot leave this reference
+            // describing a waveform the engine no longer produces.
+            return 2.0 * Access::subMixVolts()
                  * (1.0 - std::polar(1.0, -omega * rise * 0.5)
                     + std::polar(1.0, -omega * (1.0 + rise) * 0.5)
                     - std::polar(1.0, -omega)) / jOmega;

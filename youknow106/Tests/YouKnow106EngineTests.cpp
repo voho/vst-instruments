@@ -28,6 +28,13 @@ namespace youknow106
 // suite has its own executable-local definition for circuit internals.
 struct YouKnow106TestAccess
 {
+    // The sub's mixer coordinate, read from the engine rather than restated,
+    // so re-voicing it moves the expectations that derive from it.
+    static constexpr double subMixVolts()
+    {
+        return YouKnow106Engine::subMixVolts;
+    }
+
     static std::uint64_t chorusSupportBuildCount(
         const YouKnow106Engine& engine) noexcept
     {
@@ -9326,8 +9333,15 @@ void testFixedOutputBoundaryCorpus()
         // and the Unison headroom probe moved from C2 to C1 to keep crossing
         // full scale. Fixtures, gain, window and guards are otherwise
         // unchanged.
-        Baseline { 0.088797, 0.182904, 0.18435, 0, 0 },
-        Baseline { 0.239833, 0.686837, 0.694453, 0, 0 },
+        // Re-pinned after the sub mixer coordinate was re-voiced 5.0 -> 7.57
+        // on the owner's decision (see YouKnow106Engine::subMixVolts). Only
+        // the sub-carrying rows move, and they move up: this fixture set runs
+        // SUB at full, so its rows gain the coordinate's own 3.6 dB less what
+        // the filter and the pair's compression take back. The waveform-free
+        // self-oscillation row is the negative control and is unchanged to
+        // six figures, because that fixture runs subLevel = 0.
+        Baseline { 0.0925013, 0.194228, 0.195779, 0, 0 },
+        Baseline { 0.234607, 0.70749, 0.715655, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
         // physical C54/comparator event walk. Only this six-card Unison
@@ -9337,13 +9351,13 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.466639, 1.03322, 1.03936, 132, 526 },
+        Baseline { 0.473655, 1.05995, 1.06431, 268, 1074 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.0449632, 0.0635818, 0.0635818, 0, 0 },
-        Baseline { 0.156117, 0.350031, 0.354098, 0, 0 },
-        Baseline { 0.107449, 0.239127, 0.240848, 0, 0 },
+        Baseline { 0.0452256, 0.0635756, 0.0635756, 0, 0 },
+        Baseline { 0.155818, 0.352486, 0.355873, 0, 0 },
+        Baseline { 0.116854, 0.268294, 0.269308, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -10274,8 +10288,12 @@ void testStartupPrimesC56WithTheSubMean()
     engine.setParameters(subHalfWavePatch(true));
     const double subTarget = YouKnow106TestAccess::subTarget(engine);
     expectNear(subTarget, 1.0, 1.0e-6, "full-scale SUB is not a unit DAC fraction");
+    // The pinned-high pulse level plus the sub's own half-wave mean. Both
+    // are read from the engine's coordinates rather than restated, so
+    // re-voicing either cannot leave this expectation describing a node the
+    // engine no longer produces.
     expectNear(YouKnow106TestAccess::moduleCouplingState(engine, 0),
-               6.0 + 5.0 * subTarget, 1.0e-6,
+               6.0 + YouKnow106TestAccess::subMixVolts() * subTarget, 1.0e-6,
                "startup did not pre-charge C56 with the sub's half-wave mean");
 
     YouKnow106Engine legacy;
@@ -10303,9 +10321,11 @@ void testSubLevelJumpCouplesThroughC56AndC59()
 {
     // A SUB level step moves the node's mean; C56 passes the step, the open
     // filter passes DC, and C59 (tau 33 ms) differentiates it at the VCA
-    // input. subMixVolts * 0.40 = 2.0 V arriving through the 10 ms R11/C1
-    // hold peaks near 1.15 V about 20 ms in (1.19 V at 17 ms before C56's
-    // own decay and the filter's residual gain) and is gone within a few tau.
+    // input. subMixVolts * 0.40 arriving through the 10 ms R11/C1 hold peaks
+    // at about 57 % of that step some 20 ms in, before C56's own decay and
+    // the filter's residual gain, and is gone within a few tau. The bound
+    // below is stated as that fraction of the coordinate rather than as a
+    // volt figure, so re-voicing the sub moves the expectation with it.
     constexpr double sampleRate = 48000.0;
     const auto probe = [&](bool coupled) {
         YouKnow106Engine engine;
@@ -10342,15 +10362,18 @@ void testSubLevelJumpCouplesThroughC56AndC59()
         if (index >= static_cast<std::size_t>(sampleRate * 0.25))
             settled = std::max(settled, std::abs(difference));
     }
-    expect(peak > 0.8 && peak < 1.5,
+    const double stepVolts = YouKnow106TestAccess::subMixVolts() * 0.40;
+    expect(peak > 0.40 * stepVolts && peak < 0.75 * stepVolts,
            "the SUB level jump's C56/C59 bump peaked at "
                + std::to_string(peak) + " V");
     expect(peakAt < static_cast<std::size_t>(sampleRate * 0.06),
            "the SUB level jump's bump peaked "
                + std::to_string(peakAt / sampleRate * 1000.0) + " ms after the jump");
     // What remains after the bump is C56's own 0.33 s tail seen through C59:
-    // about -(33 ms / 330 ms) * 2 V * exp(-t / 0.33 s), -0.09 V at 250 ms.
-    expect(settled < 0.15,
+    // about -(33 ms / 330 ms) * stepVolts * exp(-t / 0.33 s), which is 4.4 %
+    // of the step at 250 ms. Stated against the step rather than in volts so
+    // it follows the coordinate.
+    expect(settled < 0.075 * stepVolts,
            "the SUB level jump's bump was still "
                + std::to_string(settled) + " V after 250 ms");
 }

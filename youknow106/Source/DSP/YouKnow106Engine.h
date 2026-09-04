@@ -1442,6 +1442,29 @@ private:
     // its finite slope.
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
+    // The sub's mixer coordinate, here rather than beside its two siblings in
+    // the .cpp because the DCO-scan audit's analytic Fourier reference states
+    // the divider's own +/-V levels independently of the engine and must move
+    // with it. It used to restate the number as a literal, which made this
+    // constant silently unpinnable; the audit now reads it.
+    //
+    // Re-voiced 5.0 -> 7.57 on 2026-09-04, on the owner's decision, against
+    // two independent third-party models. Frequency-matched at 261.63 Hz, so
+    // any response difference cancels exactly, sub against saw reads +8.49 dB
+    // on Ultramaster KR-106 and +6.87 on Arturia's Jun-6 V against this
+    // model's former +4.89; on the same measurement pulse against saw has
+    // this model and Arturia within 0.3 dB, so it is the sub leg alone that
+    // sat low. 7.57 follows KR-106, the one of the two that models the 106
+    // rather than the JUNO-6.
+    //
+    // It remains VOICED and is not promoted by this. Two models cannot close
+    // an open question, they disagree by 1.6 dB about the size of the
+    // correction, and KR-106's own pulse reading is an outlier against both
+    // other models, so its internal balance is not a reference either. What
+    // changed is that the former value was the outlier on the one source
+    // coordinate this project has never had an end-to-end anchor for. OQ-15's
+    // take 03, recorded from an identified unit, is still what settles it.
+    static constexpr float subMixVolts = 7.57f;
     // C54 ".001G" on module board p. 13: the G tolerance code is +/-2 %,
     // and no per-card trimmer touches the ramp. See rampCurrentScaleFor.
     static constexpr float rampCapacitorToleranceClass = 0.02f;

@@ -5,6 +5,44 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — The sub coordinate moves to KR-106's reading, on the owner's decision
+
+`subMixVolts` 5.0 -> 7.57. **Chosen by the owner** from four options after the
+sanity check below put this project's sub-against-saw at +4.89 dB where
+KR-106 reads +8.49 and Arturia's Jun-6 V reads +6.87, frequency-matched at
+261.63 Hz so any response difference cancels exactly. The owner chose to follow
+KR-106, the one of the two that models the 106 rather than the JUNO-6.
+
+**It stays voiced, and the reasons it cannot be promoted are worth writing
+down, because the temptation later will be to forget them.** Two models cannot
+close an open question. The two disagree by 1.6 dB about the size of the
+correction. KR-106's own pulse reading is the outlier against both other
+models, so its internal balance is not a reference either. And this project
+already consumes KR-106's measurements elsewhere, so **citing KR-106 as
+independent corroboration of a number copied from KR-106 would be circular** —
+the value is now shared, and a shared value cannot later be presented as
+agreement. What actually changed is that the former value was the outlier on
+the one source coordinate this project has never had an end-to-end anchor for.
+OQ-15's take 03, recorded from an identified unit, is still what settles it.
+
+**Three places restated the coordinate as a literal and would have gone
+silently wrong.** The DCO-scan audit's analytic Fourier reference stated the
+divider's rails as `10.0`; the startup C56 pre-charge test expected
+`6.0 + 5.0 * subTarget`; the SUB-jump test expected a volt figure and a volt
+settling bound. All three now read the constant, so re-voicing it moves the
+expectations with it instead of leaving them describing a waveform the engine
+no longer produces. The audit's own strict cell confirms the repair:
+`strict_waveform=sub` agrees with the independent reference to 0.0004 dB.
+
+**What it cost the bank.** Eleven presets crossed the -31 dBFS gated loudness
+ceiling, worst A66 Timpani at -27.56, because the bank had been trimmed to sit
+just under it at -31.01. Their VR1 shaft trims were lowered by the minimum
+each needed, from -0.09 dB on A48 to -3.52 dB on A66; the trims remain
+attenuation-only and no entry exceeds the 0.80 panel default. The full audit
+then passed for all 128 presets. The six-row output corpus was re-pinned, with
+the waveform-free self-oscillation row unchanged to six figures as the negative
+control because that fixture runs the sub at zero.
+
 ## 2026-09-04 — Sanity check against KR-106, driven directly
 
 The calibration takes were rendered a third time, through **Ultramaster

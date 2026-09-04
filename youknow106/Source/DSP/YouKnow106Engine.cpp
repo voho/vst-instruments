@@ -44,7 +44,10 @@ constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 // measured mixer voltages.
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
-constexpr float subMixVolts = 5.0f;
+// subMixVolts lives on the class (YouKnow106Engine::subMixVolts) so the
+// DCO-scan audit's independent Fourier reference can read it instead of
+// restating it as a literal. Its history and evidence class are recorded
+// there.
 // The noise coordinate names the SHAPED rail, not the raw generator, and that
 // distinction is the whole of it. The service procedure adjusts VR32 for 4 Vpp
 // at TP8 -- the CH1 voice VCA output -- and a +/-2 V figure written onto the

@@ -623,6 +623,62 @@ std::vector<Take> buildTakes()
     return takes;
 }
 
+// Long takes, for a reference whose output is corrupted at random.
+//
+// A demo build that injects distortion at random times cannot be cleaned by
+// filtering, but it can be outvoted. Every measurement these takes carry is
+// either a RATE, recovered from tens of cycles so a corrupted second perturbs
+// it negligibly, or a level read as the MEDIAN of many independent windows,
+// which a minority of corrupted windows cannot move. Nothing here is measured
+// from a single moment.
+//
+// The subject is the chorus, because it is the one P0 mechanism whose primary
+// measurand is a frequency: the modulation rates this project derives from the
+// instrument's own T-network as 0.5533 and 0.8983 Hz, and the 1.6235 ratio
+// between them, which no recording chain and no injected distortion can shift.
+// The silences at either end read the idle floor for OQ-03 in the same file,
+// and the ratio between the two chorus states' floors is the mode-II delta.
+//
+// One note, held. The panel is otherwise the plainest the instrument has, so
+// the only thing modulating is the effect under test.
+std::vector<Take> buildLongTakes()
+{
+    struct LongTake { const char* id; ChorusMode chorus; const char* label; };
+    std::vector<Take> takes;
+    for (const auto& entry : {
+             LongTake { "L1-chorus-off", ChorusMode::Off, "CHORUS off" },
+             LongTake { "L2-chorus-one", ChorusMode::One, "CHORUS I" },
+             LongTake { "L3-chorus-two", ChorusMode::Two, "CHORUS II" } })
+    {
+        Take take;
+        take.id = entry.id;
+        take.purpose =
+            std::string("Chorus rate, depth and idle floor with ") + entry.label
+            + ". The held note carries the modulation: its rate is recovered "
+              "from about fifty cycles, so neither the chain nor a randomly "
+              "corrupted second can move it, and it tests the derived "
+              "0.5533/0.8983 Hz pair and their 1.6235 ratio (OQ-01). The two "
+              "silences read the idle floor as the median of many independent "
+              "windows, which a minority of corrupted windows cannot move, and "
+              "the difference between this take's floor and the chorus-off "
+              "take's is the chorus hiss (OQ-03). Every figure is a rate or a "
+              "median ratio; none is an absolute level.";
+        take.panel =
+            std::string("SAW on, PULSE off, SUB 0, NOISE 0, RANGE 8', "
+                        "VCF FREQ max, RES 0, ENV 0, LFO 0, KYBD 0, HPF flat, "
+                        "VCA GATE, VCA LEVEL max, and ") + entry.label
+            + ". Set it once; nothing moves during the take.";
+        take.patch = openPanel();
+        take.patch.saw = true;
+        take.patch.chorus = entry.chorus;
+        // 15 s of silence, 100 s of held note, 20 s of silence.
+        take.notes = { { 60, 15000, 115000 } };
+        take.endMs = 135000;
+        takes.push_back(take);
+    }
+    return takes;
+}
+
 // The parameter-change steps a take asks for, as (timeMs, parameter, value).
 // The parameter numbers are this codec's own indices; see ToneParameter.
 struct ParameterStep { int timeMs; int parameter; int value; };
@@ -1081,8 +1137,41 @@ int main(int argc, char** argv)
         manifest << "\n";
     }
 
-    std::printf("\nWrote %zu takes to %s and %zu static-panel files to %s\n",
+    // The long takes, for a reference whose output is corrupted at random.
+    // They carry no SysEx and no steps, so one file is one static panel.
+    const std::filesystem::path longDirectory = root / "long";
+    std::filesystem::create_directories(longDirectory, error);
+    manifest << "\n== long takes (for a reference that corrupts at random) ==\n";
+    for (const auto& take : buildLongTakes())
+    {
+        std::vector<MidiEvent> longEvents;
+        for (const auto& note : take.notes)
+        {
+            longEvents.push_back(
+                { note.onMs, { 0x90u, static_cast<std::uint8_t>(note.note),
+                               100u }, false });
+            longEvents.push_back(
+                { note.offMs, { 0x80u, static_cast<std::uint8_t>(note.note),
+                                0u }, false });
+        }
+        writeMidiFile(longDirectory / (take.id + ".mid"), take.id, longEvents,
+                      take.endMs);
+        const auto product = renderTake(longEvents, take.patch, take.endMs, 1.0f);
+        writeFloatWav(longDirectory / (take.id + "-model.wav"),
+                      product.left, product.right);
+        manifest << "  long/" << take.id << ".mid  --  " << take.panel
+                 << " Length " << (take.endMs / 1000.0) << " s.\n"
+                 << "      " << take.purpose << "\n";
+        std::printf("%-28s %5.1f s  model peak %7.2f dBFS  (long)\n",
+                    take.id.c_str(), take.endMs / 1000.0,
+                    product.peak > 0.0 ? 20.0 * std::log10(product.peak)
+                                       : -144.0);
+    }
+
+    std::printf("\nWrote %zu takes to %s, %zu static-panel files to %s, "
+                "and 3 long takes to %s\n",
                 takes.size(), outputDirectory.string().c_str(), manualFiles,
-                manualDirectory.string().c_str());
+                manualDirectory.string().c_str(),
+                longDirectory.string().c_str());
     return 0;
 }
