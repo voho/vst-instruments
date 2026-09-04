@@ -5,6 +5,64 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-04 — First calibration takes rendered, and why nothing moved
+
+Nine of the calibration takes were rendered through an unidentified software
+Juno and compared against this engine's own renders of the same files. A
+software instrument is a model, not the instrument, so by the tool's own
+protocol this pass can corroborate or contradict and nothing more. **No
+constant moved.** What it produced is a comparison, recorded here so a later
+pass does not have to redo it or, worse, mistake it for a measurement.
+
+**Method note.** The renders came back at exactly 2x speed: the DAW applied its
+own tempo instead of the file's 60 BPM meta event, so every note is half as
+long and half as far apart. Pitch and spectrum are untouched by that, so the
+level and harmonic results stand; anything whose measurand is a time does not,
+and take 09 was not rendered anyway. Every figure below is frequency-matched —
+the same spectral line in both takes, so a chain EQ cancels exactly rather than
+approximately — and each is confirmed at two different frequencies.
+
+**Pulse against saw agrees.** At 261.63 Hz the reference reads +6.21 dB and
+this model +6.51; at 130.81 Hz, +6.13 against +5.98. Mean disagreement 0.1 dB.
+Two of the three source coordinates therefore stand in the same relation in an
+independent model of the same circuit.
+
+**Sub against saw does not.** At 261.63 Hz the reference reads +6.87 against
+this model's +4.89; at 130.81 Hz, +7.04 against +4.80. The reference's sub sits
+about 2.1 dB above ours relative to the saw, consistently. Take 03's isolation
+was verified rather than assumed: in the reference the played pitch sits 61 dB
+below the sub's own fundamental, so saw and pulse really were off.
+
+That finding is **not** adopted, and the reason is on record above. On
+2026-08-19 `subMixVolts` moved 5.0 -> 2.0 against a hardware recording of A64,
+and that move was then reverted because the recording could not be shown to
+reproduce the patch it was named after — the sliders are not motorised, so a
+recording witnesses the slider, not the stored byte. The withdrawn hardware
+finding said the sub was too LOUD; this software model says it is too QUIET, by
+a comparable margin in the opposite direction. Two weak and opposed readings
+leave OQ-15's sub coordinate exactly where it was: the one source level with no
+end-to-end anchor, waiting on take 03 recorded from an identified unit.
+
+**Three places the reference differs where this model has a derivation and it
+does not**, all recorded as confidence rather than as defects:
+
+- Self-oscillation pitch. At the same panel the reference's filter sits about
+  1.7 octaves above ours; ours lands on 247.9 Hz where the service manual
+  specifies 248 Hz at converter code 6272. The check point is Roland's own.
+- Noise spectrum. The reference's noise is flat to 8 kHz; ours falls away
+  above it, which is C41/R79's 4.82 kHz pole read off the module drawing.
+- Noise deadband. The reference produces noise at stored byte 4; ours is
+  silent below byte 6, from Tr22's drawn grounded-base onset. A model that
+  scales noise linearly from zero is the expected default, not a
+  counter-measurement.
+
+**One take returned nothing usable.** Take 06 sweeps the cutoff with the filter
+envelope, and in the reference the high-to-low band ratio stalls 39.8 dB below
+what that same instrument reaches with its filter wide open in take 04 — so its
+filter never opened, and the take measures its ENV-to-VCF path rather than the
+cutoff law. Whether the panel was mis-set or its envelope is slower than the
+halved note allowed cannot be told from the recording.
+
 ## 2026-09-04 — Chart geometry chosen by ear; the noise crest stays put
 
 Two bracketed constants went to a blind listening test, keys unread until
