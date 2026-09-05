@@ -39,12 +39,12 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def export_events(midi, output):
-    # This intentionally supports only the frozen public calibration sequence.
-    # Its hash fixes the container, tempo, bytes and event ordering together.
+def export_events(midi, output, expected_sha256=MIDI_SHA256, end_seconds=math.inf):
+    # Only frozen public sequences use this parser. Their hashes fix the
+    # supported container, tempo, bytes and event ordering together.
     data = Path(midi).read_bytes()
-    if hashlib.sha256(data).hexdigest() != MIDI_SHA256:
-        raise ValueError("MIDI differs from the April 3 calibration sequence")
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("MIDI differs from the expected calibration sequence")
     ppq = struct.unpack_from(">H", data, 12)[0]
     pos, tempo, seconds = 22, 500000, 0.0
     rows = []
@@ -76,7 +76,8 @@ def export_events(midi, output):
             length = vlq() if status == 0xf0 else 2
             payload = bytes([status]) + data[pos:pos + length]
             pos += length
-            rows.append(f"{seconds:.9f}\t{payload.hex()}\n")
+            if seconds <= end_seconds:
+                rows.append(f"{seconds:.9f}\t{payload.hex()}\n")
     Path(output).write_text("".join(rows))
 
 
