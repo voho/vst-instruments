@@ -44,6 +44,9 @@ using acustra::dense::Library;
 using acustra::dense::Sampler;
 using acustra::dense::ZoneView;
 
+// One model per invocation; the selected bridge is also written to manifests.
+acustra::BridgeModel renderBridgeModel { acustra::BridgeModel::Original };
+
 constexpr int modelSampleRate = 48000;
 constexpr int renderBlockSize = 127;
 constexpr double renderSeconds = 4.2;
@@ -424,6 +427,7 @@ std::vector<float> renderModel(Material material, int midi, int velocity,
     AcustraEngine engine;
     EngineParameters parameters;
     parameters.stringMaterial = engineMaterial(material);
+    parameters.bridgeModel = renderBridgeModel;
     engine.setParameters(parameters);
     engine.setPhysicalCalibration(calibration);
     engine.prepare(modelSampleRate, renderBlockSize);
@@ -524,8 +528,7 @@ std::string calibrationJson(const CalibrationValues& values)
 
 std::string modelControlsJson()
 {
-    // The same defaults drive renderModel; report them even on models-only
-    // renders so comparisons across engine versions cannot hide a default change.
+    // The same controls drive renderModel, including models-only renders.
     const EngineParameters parameters;
     std::ostringstream text;
     text.imbue(std::locale::classic());
@@ -533,6 +536,9 @@ std::string modelControlsJson()
     text << "{\"shape\": " << static_cast<int>(parameters.shape)
          << ", \"body_material\": " << static_cast<int>(parameters.bodyMaterial)
          << ", \"string_material\": \"per example: nylon or steel\""
+         << ", \"bridge_model\": \""
+         << (renderBridgeModel == acustra::BridgeModel::FyldeSteel ? "fylde" : "original")
+         << "\""
          << ", \"capture\": \""
          << std::array { "stereo_mic", "treble_mic", "bass_mic",
                                "saddle_piezo", "magnetic" }[
@@ -656,7 +662,7 @@ void writeManifest(const std::filesystem::path& path,
         << "    \"model_render\": \""
         << (sampleBaseline
             ? "frozen version-1 dense::Sampler; exact captured MIDI, velocity and round robin; 48000 Hz; 127-sample blocks"
-            : "fresh AcustraEngine per material/MIDI/velocity; 48000 Hz; 127-sample blocks; default controls; outputGain excluded from calibration")
+            : "fresh AcustraEngine per material/MIDI/velocity; 48000 Hz; 127-sample blocks; selected bridge, otherwise default controls; outputGain excluded from calibration")
         << "\"\n"
         << "  },\n"
         << "  \"calibration_values\": " << calibrationJson(calibrationValues) << ",\n"
@@ -1157,7 +1163,8 @@ bool parseFloat(const char* text, float& value)
 void printUsage()
 {
     std::printf(
-        "usage: AcustraPhysicalFitRenderer [--smoke|--models-only|--test] OUTPUT "
+        "usage: AcustraPhysicalFitRenderer [--smoke|--models-only|--test] "
+        "[--bridge-model original|fylde] OUTPUT "
         "BODY_FREQUENCY BODY_Q BRIDGE_MOBILITY RESIDUE_TILT DIRECT_GAIN "
         "NYLON_T60 NYLON_FREQUENCY_LOSS NYLON_APERTURE "
         "NYLON_TRANSIENT NYLON_PLUCK_DISTANCE NYLON_VELOCITY_BRIGHTNESS "
@@ -1199,6 +1206,19 @@ int main(int argc, char** argv)
     {
         test = true;
         ++first;
+    }
+    if (argc > first && std::string(argv[first]) == "--bridge-model")
+    {
+        if (argc <= first + 1
+            || (std::string(argv[first + 1]) != "original"
+                && std::string(argv[first + 1]) != "fylde"))
+        {
+            printUsage();
+            return 2;
+        }
+        renderBridgeModel = std::string(argv[first + 1]) == "fylde"
+            ? acustra::BridgeModel::FyldeSteel : acustra::BridgeModel::Original;
+        first += 2;
     }
     if (argc - first != static_cast<int>(calibrationValueCount + 1))
     {

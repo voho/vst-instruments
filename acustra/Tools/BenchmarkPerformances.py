@@ -23,6 +23,8 @@ hammer-on; explicit capture/picking choices are reported. Previously measured
 GuitarSet strum statistics informed the engine, so this is a different-instrument
 performance evaluation, not a completely untouched holdout. The renderer
 replays annotated timing, so this does not evaluate automatic MIDI strumming.
+The optional --bridge-model fylde uses the measured steel bridge alternative;
+all other controls and the microphone radiation remain as in the baseline.
 
 Score at 48 kHz after one whole-clip RMS match. Reuse the dry-note scorer's six
 prime STFT lengths for mean log-magnitude error (dB) and spectral convergence;
@@ -192,7 +194,8 @@ def archive_entry(archive: zipfile.ZipFile, filename: str) -> bytes:
     return archive.read(names[0])
 
 
-def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking: str) -> dict:
+def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking: str,
+              bridge: str = "original") -> dict:
     for filename, expected in ARCHIVES.items():
         if digest(dataset / filename, "md5") != expected:
             raise ValueError(f"{filename}: does not match the published GuitarSet v1.1.0 archive")
@@ -206,7 +209,7 @@ def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking
             event_path = output / (track + ".events")
             write_events(event_path, events)
             model_path = output / (track + ".f32")
-            subprocess.run([str(renderer), str(event_path), str(model_path), capture, picking], check=True)
+            subprocess.run([str(renderer), str(event_path), str(model_path), capture, picking, bridge], check=True)
             source_rate, target = wavfile.read(io.BytesIO(recording_bytes))
             if target.ndim != 1 or len(target) < source_rate * SECONDS:
                 raise ValueError(f"{track}: expected at least 12 seconds of microphone mono audio")
@@ -235,7 +238,7 @@ def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking
         "scorer_sha256": digest(Path(__file__)),
         "numpy_version": np.__version__, "scipy_version": scipy.__version__,
         "analysis_rate": RATE, "start_seconds": 0, "duration_seconds": SECONDS,
-        "velocity": VELOCITY, "capture": capture, "picking": picking,
+        "velocity": VELOCITY, "capture": capture, "picking": picking, "bridge_model": bridge,
         "render_protocol": "shipping calibration/default controls; string-per-channel; 127-frame blocks; annotated mean pitch; zero release velocity",
         "limitations": "One phrase, six players; timing/strum statistics previously informed engine. No measured note velocities, gesture labels, matched guitar body or matched microphone. Descriptor distances include those differences and do not establish perceptual equivalence or market rank.",
         "mean": {name: float(np.mean([row["metrics"][name] for row in rows]))
@@ -297,6 +300,13 @@ def self_test(renderer: Path | None) -> None:
             assert (root / "a.f32").read_bytes() == (root / "b.f32").read_bytes()
             rendered = np.fromfile(root / "a.f32", dtype="<f4")
             assert len(rendered) == RATE * 2 and np.isfinite(rendered).all() and np.max(np.abs(rendered)) > 0
+            alternative = root / "fylde.f32"
+            subprocess.run([str(renderer), str(event_path), str(alternative),
+                            "stereo_mic", "finger", "fylde"], check=True)
+            assert alternative.read_bytes() != (root / "a.f32").read_bytes()
+            rejected = subprocess.run([str(renderer), str(event_path), str(root / "invalid.f32"),
+                                       "stereo_mic", "finger", "unknown"], capture_output=True)
+            assert rejected.returncode != 0 and not (root / "invalid.f32").exists()
             rejected = subprocess.run([str(renderer), str(event_path), str(root / "a.f32")],
                                       capture_output=True)
             assert rejected.returncode != 0 and (root / "a.f32").read_bytes() == (root / "b.f32").read_bytes()
@@ -316,6 +326,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--capture", default="stereo_mic", choices=("stereo_mic", "treble_mic", "bass_mic", "saddle_piezo", "magnetic"))
     parser.add_argument("--picking", default="finger", choices=("finger", "pick", "thumb"))
+    parser.add_argument("--bridge-model", default="original", choices=("original", "fylde"))
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -323,7 +334,8 @@ def main() -> None:
     else:
         if args.dataset is None or args.renderer is None or args.output is None:
             parser.error("--dataset, --renderer and --output are required")
-        report = benchmark(args.dataset, args.renderer.resolve(), args.output, args.capture, args.picking)
+        report = benchmark(args.dataset, args.renderer.resolve(), args.output,
+                           args.capture, args.picking, args.bridge_model)
         (args.output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 

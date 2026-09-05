@@ -110,11 +110,11 @@ void testParameterContract()
     constexpr std::array<const char*, ids::parameterCount> expectedIds {
         ids::shape, ids::bodyMaterial, ids::stringMaterial, ids::tuning,
         ids::stringAge, ids::pluckPosition, ids::touch, ids::bodyAmount,
-        ids::stereoWidth, ids::output, ids::capture, ids::picking
+        ids::stereoWidth, ids::output, ids::capture, ids::picking, ids::bridgeModel
     };
     constexpr std::array<float, ids::parameterCount> expectedDefaults {
         2.0f, 0.0f, 1.0f, 0.0f, 15.0f, 28.0f, 58.0f, 82.0f, 62.0f, -7.5f,
-        0.0f, 0.0f
+        0.0f, 0.0f, 0.0f
     };
 
     const auto& hostParameters = processor.getParameters();
@@ -180,13 +180,15 @@ void testParameterContract()
     setValue (processor, ids::output, -3.0f);
     setValue (processor, ids::capture, 3.0f);
     setValue (processor, ids::picking, 2.0f);
+    setValue (processor, ids::bridgeModel, 1.0f);
     const auto engine = processor.snapshotEngineParameters();
     expect (engine.shape == acustra::BodyShape::Jumbo
                 && engine.bodyMaterial == acustra::BodyMaterial::Mahogany
                 && engine.stringMaterial == acustra::StringMaterial::Nylon
                 && engine.tuning == acustra::Tuning::Dadgad
                 && engine.capture == acustra::CaptureType::SaddlePiezo
-                && engine.picking == acustra::PickingTechnique::Thumb,
+                && engine.picking == acustra::PickingTechnique::Thumb
+                && engine.bridgeModel == acustra::BridgeModel::FyldeSteel,
             "choice parameters did not reach the engine snapshot");
     expect (std::abs (engine.stringAge - 0.73f) < 0.002f
                 && std::abs (engine.pluckPosition - 0.41f) < 0.002f
@@ -1181,6 +1183,7 @@ void testStateRoundTripAndMigration()
     setValue (source, ids::output, -2.4f);
     setValue (source, ids::capture, 4.0f);
     setValue (source, ids::picking, 1.0f);
+    setValue (source, ids::bridgeModel, 1.0f);
 
     juce::MemoryBlock stored;
     source.getStateInformation (stored);
@@ -1191,7 +1194,7 @@ void testStateRoundTripAndMigration()
                                   static_cast<int> (stored.getSize()));
     for (const char* id : { ids::shape, ids::bodyMaterial, ids::stringMaterial,
                             ids::tuning, ids::stringAge, ids::pluckPosition,
-                            ids::output, ids::capture, ids::picking })
+                            ids::output, ids::capture, ids::picking, ids::bridgeModel })
         expect (std::abs (valueOf (restored, id) - valueOf (source, id)) < 0.011f,
                 std::string { "state round trip lost " } + id);
 
@@ -1201,6 +1204,7 @@ void testStateRoundTripAndMigration()
     setValue (restored, ids::output, 5.0f);
     setValue (restored, ids::capture, 3.0f);
     setValue (restored, ids::picking, 2.0f);
+    setValue (restored, ids::bridgeModel, 1.0f);
     juce::ValueTree oldState { restored.parameters.state.getType() };
     juce::ValueTree shape { "PARAM" };
     shape.setProperty ("id", ids::shape, nullptr);
@@ -1216,7 +1220,8 @@ void testStateRoundTripAndMigration()
     expect (std::abs (valueOf (restored, ids::stringAge) - 15.0f) < 0.011f
                 && std::abs (valueOf (restored, ids::output) + 7.5f) < 0.011f
                 && valueOf (restored, ids::capture) == 0.0f
-                && valueOf (restored, ids::picking) == 0.0f,
+                && valueOf (restored, ids::picking) == 0.0f
+                && valueOf (restored, ids::bridgeModel) == 0.0f,
             "parameters absent from an old state did not receive defaults");
 
     const char garbage[] = "not an Acustra state";
@@ -1357,6 +1362,18 @@ void testEditorRendering()
                         && state.bodyMaterial == acustra::BodyMaterial::Spruce
                         && state.stringMaterial == acustra::StringMaterial::Steel,
                     "the dreadnought preset did not restore steel construction");
+            menu->setSelectedId (6, juce::sendNotificationSync);
+            state = processor.snapshotEngineParameters();
+            expect (state.bridgeModel == acustra::BridgeModel::FyldeSteel
+                        && state.stringMaterial == acustra::StringMaterial::Steel,
+                    "the Fylde preset did not select the measured steel bridge");
+            juce::Timer::callPendingTimersSynchronously();
+            expect (menu->getSelectedId() == 6,
+                    "the measured bridge preset caption was lost");
+            menu->setSelectedId (2, juce::sendNotificationSync);
+            expect (processor.snapshotEngineParameters().bridgeModel
+                        == acustra::BridgeModel::Original,
+                    "the original preset retained the alternative bridge");
             expect (valueOf (processor, ids::tuning) == 2.0f
                         && std::abs (valueOf (processor, ids::output) + 4.0f) < 0.011f,
                     "a guitar construction preset changed tuning or output");

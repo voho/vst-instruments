@@ -71,6 +71,12 @@ enum class PickingTechnique
     Thumb
 };
 
+enum class BridgeModel
+{
+    Original,
+    FyldeSteel
+};
+
 struct EngineParameters
 {
     BodyShape shape { BodyShape::Dreadnought };
@@ -79,6 +85,7 @@ struct EngineParameters
     CaptureType capture { CaptureType::StereoMic };
     Tuning tuning { Tuning::Standard };
     PickingTechnique picking { PickingTechnique::Finger };
+    BridgeModel bridgeModel { BridgeModel::Original };
     float stringAge { 0.15f };       // 0 fresh, 1 worn/dead
     float pluckPosition { 0.28f };   // 0 bridgeward, 1 neckward
     float touch { 0.58f };           // 0 soft/dark, 1 hard/bright
@@ -211,12 +218,25 @@ private:
     struct OnePole
     {
         float state { 0.0f };
+        float previousInput { 0.0f };
+        float delayedInputGain { 0.0f };
+        float ratePole { 0.0f };
+        bool remapped { false };
+
+        void configureRate(float referencePole, double sampleRate) noexcept;
         float process(float input, float coefficient) noexcept
         {
+            if (remapped)
+            {
+                state = input + ratePole * (state - input)
+                      + delayedInputGain * (previousInput - input);
+                previousInput = input;
+                return state;
+            }
             state = input + coefficient * (state - input);
             return state;
         }
-        void reset() noexcept { state = 0.0f; }
+        void reset() noexcept { state = previousInput = 0.0f; }
     };
 
     struct SecondOrderAllpass

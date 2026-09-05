@@ -213,6 +213,11 @@ if(BUILD_TESTING)
     add_test(NAME Acustra.Capture COMMAND AcustraCaptureTests)
     set_tests_properties(Acustra.Capture PROPERTIES TIMEOUT 90)
 
+    add_executable(AcustraMeasuredSteelBridgeTests Tests/MeasuredSteelBridgeTests.cpp)
+    target_link_libraries(AcustraMeasuredSteelBridgeTests PRIVATE AcustraDSP)
+    add_test(NAME Acustra.MeasuredSteelBridge COMMAND AcustraMeasuredSteelBridgeTests)
+    set_tests_properties(Acustra.MeasuredSteelBridge PROPERTIES TIMEOUT 90)
+
     if(ACUSTRA_BUILD_TOOLS)
         add_test(NAME Acustra.RenderDemos
                  COMMAND AcustraRenderDemos --smoke
@@ -258,6 +263,11 @@ if(BUILD_TESTING)
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkPerformances.py"
                                  --self-test --renderer "$<TARGET_FILE:AcustraPerformanceRenderer>")
                 set_tests_properties(Acustra.PerformanceBenchmark PROPERTIES TIMEOUT 180)
+                add_test(NAME Acustra.MeasuredSteelFit
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/GenerateMeasuredSteelBridge.py"
+                                 --self-test)
+                set_tests_properties(Acustra.MeasuredSteelFit PROPERTIES TIMEOUT 180)
                 add_test(NAME Acustra.ExtractExcitation
                          COMMAND "${Python3_EXECUTABLE}"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/ExtractExcitation.py"

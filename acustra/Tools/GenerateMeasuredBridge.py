@@ -34,8 +34,11 @@ measured here in third octaves and used as the corner: below it the target
 is the measured 2x2, above it every string is given the mean of the two
 ends, and no mode above it carries a cross or rocking residue.
 
-Two guitars are emitted, one per string material, because a steel-string and
-a classical are different instruments and neither bridge describes the other.
+Two measured nylon-string guitars are emitted for the original material
+settings. The g21 DeVoe flamenco is adapted for steel; it was not steel-strung.
+The archive's physical-measures table lists Savarez Tomatito strings for g21:
+https://www.savarez.com/tomatito-normal-tension-t50r (nylon/KF trebles).
+GenerateMeasuredSteelBridge.py supplies a separate measured steel alternative.
 Both fits must meet the same relative-complex and median-magnitude limits;
 those limits were pinned on the g21 scalar fit and are not relaxed here.
 
@@ -260,7 +263,8 @@ def crossing(
 
 
 def candidate_modes(
-    frequency: np.ndarray, mobility: np.ndarray
+    frequency: np.ndarray, mobility: np.ndarray,
+    candidate_count: int = CANDIDATE_COUNT,
 ) -> list[tuple[float, float, float]]:
     useful = np.flatnonzero(
         (frequency >= MINIMUM_FREQUENCY) & (frequency <= MAXIMUM_FREQUENCY)
@@ -284,11 +288,11 @@ def candidate_modes(
         modes.append((float(frequency[peak]), float(q), float(prominence)))
 
     modes.sort(key=lambda item: (-item[2], item[0]))
-    if len(modes) < CANDIDATE_COUNT:
+    if len(modes) < candidate_count:
         raise ValueError(
-            f"only {len(modes)} modal candidates, expected {CANDIDATE_COUNT}"
+            f"only {len(modes)} modal candidates, expected {candidate_count}"
         )
-    return sorted(modes[:CANDIDATE_COUNT], key=lambda item: item[0])
+    return sorted(modes[:candidate_count], key=lambda item: item[0])
 
 
 def positive_semidefinite_fit(
@@ -509,8 +513,9 @@ def render_header(steel: dict, nylon: dict) -> str:
 // which is the measured treble driving point at u = +1 and the measured bass
 // one at u = -1. Each mode's residue matrix [[heave, cross], [cross, rock]]
 // is positive semidefinite, so every string's Y(u) is a positive real sum.
-// One bank per string material: a steel-string and a classical are different
-// instruments, and the engine selects by StringMaterial.
+// The original material settings select two measured nylon-string guitars:
+// g21 flamenco is adapted for steel, g34 classical for nylon. The separate
+// MeasuredSteelBridgeData.h contains actual steel-string bridge measurements.
 // Adapted from Robert Mores, "Archive for the acoustical documentation of
 // classical Spanish guitars, flamenco guitars and romantic guitars from
 // private and public collections -- bridge mobility" (2021),

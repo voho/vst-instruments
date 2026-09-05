@@ -21,10 +21,11 @@ struct ConstructionPreset
     acustra::BodyShape shape;
     acustra::BodyMaterial wood;
     acustra::StringMaterial strings;
+    acustra::BridgeModel bridge { acustra::BridgeModel::Original };
 };
 
 // Construction directions, not measured replicas of manufacturer models.
-constexpr std::array<ConstructionPreset, 4> constructionPresets {{
+constexpr std::array<ConstructionPreset, 5> constructionPresets {{
     { "Dreadnought / Martin style", acustra::BodyShape::Dreadnought,
       acustra::BodyMaterial::Spruce, acustra::StringMaterial::Steel },
     { "Auditorium / Taylor style", acustra::BodyShape::Auditorium,
@@ -32,7 +33,10 @@ constexpr std::array<ConstructionPreset, 4> constructionPresets {{
     { "Parlor / Fender style", acustra::BodyShape::Parlor,
       acustra::BodyMaterial::Spruce, acustra::StringMaterial::Steel },
     { "Classical nylon", acustra::BodyShape::Auditorium,
-      acustra::BodyMaterial::Cedar, acustra::StringMaterial::Nylon }
+      acustra::BodyMaterial::Cedar, acustra::StringMaterial::Nylon },
+    { "Fylde bridge / steel", acustra::BodyShape::Dreadnought,
+      acustra::BodyMaterial::Spruce, acustra::StringMaterial::Steel,
+      acustra::BridgeModel::FyldeSteel }
 }};
 
 // Palette drawn from the classical-guitar reference: pale soundboard, ebony
@@ -349,6 +353,7 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     configureSetupMenu (
         0, "GUITAR", "Set body shape, wood and string construction together. "
         "Manufacturer styles are generic directions, not measured replicas. "
+        "Fylde uses measured steel-string bridge mobility with the existing microphones. "
         "Adjust any construction control below to make your own guitar.");
     auto& guitarMenu = setupControls[0];
     guitarMenu.addItem ("Custom construction", 1);
@@ -375,6 +380,7 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
         setChoice (acustra::parameters::shape, preset.shape);
         setChoice (acustra::parameters::bodyMaterial, preset.wood);
         setChoice (acustra::parameters::stringMaterial, preset.strings);
+        setChoice (acustra::parameters::bridgeModel, preset.bridge);
         timerCallback();
     };
     configureSetupMenu (
@@ -488,7 +494,9 @@ void AcustraAudioProcessorEditor::updateConstructionControls()
     {
         const auto& preset = constructionPresets[index];
         if (state.shape == preset.shape && state.bodyMaterial == preset.wood
-            && state.stringMaterial == preset.strings)
+            && state.stringMaterial == preset.strings
+            && (state.stringMaterial == acustra::StringMaterial::Nylon
+                || state.bridgeModel == preset.bridge))
         {
             presetId = static_cast<int> (index) + 2;
             break;

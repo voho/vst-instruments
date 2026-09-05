@@ -24,6 +24,7 @@ enum ParameterSlot
     slotOutput,
     slotCapture,
     slotPicking,
+    slotBridgeModel,
     slotCount
 };
 
@@ -41,7 +42,8 @@ constexpr std::array<const char*, slotCount> parameterIds {
     ids::stereoWidth,
     ids::output,
     ids::capture,
-    ids::picking
+    ids::picking,
+    ids::bridgeModel
 };
 
 std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
@@ -203,6 +205,9 @@ AcustraAudioProcessor::createParameterLayout()
     result.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { ids::picking, 2 }, "Picking",
         juce::StringArray { "Finger", "Pick", "Thumb" }, 0));
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { ids::bridgeModel, 3 }, "Bridge Model",
+        juce::StringArray { "Original", "Measured Fylde (steel)" }, 0));
 
     return { result.begin(), result.end() };
 }
@@ -231,6 +236,7 @@ AcustraAudioProcessor::snapshotEngineParameters() const noexcept
     result.outputGain = juce::Decibels::decibelsToGain (value (slotOutput));
     result.capture = choiceValue<acustra::CaptureType> (value (slotCapture), 4);
     result.picking = choiceValue<acustra::PickingTechnique> (value (slotPicking), 2);
+    result.bridgeModel = choiceValue<acustra::BridgeModel> (value (slotBridgeModel), 1);
     return result;
 }
 

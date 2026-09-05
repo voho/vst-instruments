@@ -5,6 +5,7 @@
 #else
 #include "MeasuredBridgeData.h"
 #endif
+#include "MeasuredSteelBridgeData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -32,6 +33,8 @@ static_assert(detail::measuredNylonBodyModes.size() <= ACUSTRA_BODY_MODE_COUNT);
 static_assert(detail::measuredSteelBridgeModes.size()
               <= ACUSTRA_BRIDGE_MODE_COUNT);
 static_assert(detail::measuredNylonBridgeModes.size()
+              <= ACUSTRA_BRIDGE_MODE_COUNT);
+static_assert(detail::measuredFyldeBridgeModes.size()
               <= ACUSTRA_BRIDGE_MODE_COUNT);
 
 struct ShapeSpec
@@ -219,15 +222,18 @@ float bentStringTension(float tension, float axialRigidity,
     return std::max(tension + added, 0.05f * tension);
 }
 
-// A steel-string and a classical are different instruments, and neither
-// archive record describes the other, so each material plays the guitar its
-// own banks were measured on. The two banks need not be the same length; the
-// arrays are sized to the larger and the surplus slots are silenced.
+// The original steel voice adapts Mores g21, a nylon-strung flamenco guitar.
+// The optional Fylde bank supplies measured steel-string bridge mobility;
+// radiation still uses the existing bank. Nylon retains its own g34 bank.
 std::span<const detail::MeasuredBridgeMode> measuredBridgeBank(
-    StringMaterial material) noexcept
+    StringMaterial material, BridgeModel model) noexcept
 {
     if (material == StringMaterial::Steel)
+    {
+        if (model == BridgeModel::FyldeSteel)
+            return detail::measuredFyldeBridgeModes;
         return detail::measuredSteelBridgeModes;
+    }
     return detail::measuredNylonBridgeModes;
 }
 
@@ -312,6 +318,8 @@ bool sameDiscreteConstruction(const EngineParameters& a,
     return a.shape == b.shape
         && a.bodyMaterial == b.bodyMaterial
         && a.stringMaterial == b.stringMaterial
+        && (a.stringMaterial != StringMaterial::Steel
+            || a.bridgeModel == b.bridgeModel)
         && a.tuning == b.tuning;
 }
 
@@ -323,6 +331,13 @@ struct DispersionCalibration
     double a1 { 0.0 };
     double a2 { 0.0 };
 };
+
+double referenceLossOmega(double omega, double sampleRate) noexcept
+{
+    if (sampleRate == 48000.0)
+        return omega;
+    return 2.0 * std::atan((sampleRate / 48000.0) * std::tan(0.5 * omega));
+}
 
 double mixedOnePolePhase(double coefficient, double mix,
                          double omega) noexcept
@@ -433,9 +448,10 @@ double tunedLoopDelay(double fundamental, double sampleRate,
 {
     constexpr double twoPiDouble = 2.0 * 3.14159265358979323846;
     const double omega = twoPiDouble * fundamental / sampleRate;
+    const double lossOmega = referenceLossOmega(omega, sampleRate);
     const double fixedPhase = mixedOnePolePhase(
-        broadCoefficient, broadMix, omega)
-        + mixedOnePolePhase(highCoefficient, highMix, omega)
+        broadCoefficient, broadMix, lossOmega)
+        + mixedOnePolePhase(highCoefficient, highMix, lossOmega)
         + secondOrderAllpassPhase(a1, a2, omega);
     double delay = std::clamp(sampleRate / fundamental - fixedPhase / omega,
                               3.0,
@@ -564,8 +580,10 @@ DispersionCalibration calibrateDispersion(
             const double partial = anchors[index];
             const double omega = stretchedOmega(partial);
             residuals[index] = thiranDelayPhase(values[0], splitAnchor, omega)
-                + mixedOnePolePhase(broadCoefficient, broadMix, omega)
-                + mixedOnePolePhase(highCoefficient, highMix, omega)
+                + mixedOnePolePhase(broadCoefficient, broadMix,
+                                    referenceLossOmega(omega, sampleRate))
+                + mixedOnePolePhase(highCoefficient, highMix,
+                                    referenceLossOmega(omega, sampleRate))
                 + secondOrderAllpassPhase(a1, a2, omega)
                 - twoPiDouble * partial;
         }
@@ -778,6 +796,9 @@ EngineParameters AcustraEngine::sanitise(const EngineParameters& source) noexcep
     result.picking = static_cast<PickingTechnique>(enumOr(
         static_cast<int>(source.picking), 2,
         static_cast<int>(EngineParameters {}.picking)));
+    result.bridgeModel = static_cast<BridgeModel>(enumOr(
+        static_cast<int>(source.bridgeModel), 1,
+        static_cast<int>(EngineParameters {}.bridgeModel)));
     result.stringAge = clamp(source.stringAge, 0.0f, 1.0f);
     result.pluckPosition = clamp(source.pluckPosition, 0.0f, 1.0f);
     result.touch = clamp(source.touch, 0.0f, 1.0f);
@@ -925,6 +946,29 @@ float AcustraEngine::registeredPluckAperture(
     const float boundedLength = std::max(currentReferenceLength, 8.0f);
     return apertureSamples * apertureScale / referenceDelay
         * std::pow(referenceDelay / boundedLength, exponent);
+}
+
+void AcustraEngine::OnePole::configureRate(float referencePole,
+                                           double sampleRate) noexcept
+{
+    remapped = sampleRate != 48000.0;
+    if (!remapped)
+        return;
+    // Preserve the calibrated 48 kHz transfer (1-c)/(1-c*z^-1), rather than
+    // moving its cutoff to each host's Nyquist clamp. Inverse bilinear at
+    // 48 kHz and bilinear at Fs substitutes z_ref^-1=(w+z^-1)/(1+w*z^-1),
+    // w=(48000-Fs)/(48000+Fs). This retains its continuous shelf prototype;
+    // it does not remove the bilinear transform's frequency warping.
+    // https://www.mathworks.com/help/signal/ref/bilinear.html
+    // The numerator is essential: discarding its delayed-input term creates
+    // a different loss curve. The recurrence uses b0=1-p-b1 implicitly,
+    // keeping DC gain exactly one instead of rounding three coefficients
+    // independently. 1-c*w stays positive at every supported rate;
+    // unlike solving for a new mix, this never divides by a vanishing pole.
+    const double warp = (48000.0 - sampleRate) / (48000.0 + sampleRate);
+    const double denominator = 1.0 - referencePole * warp;
+    delayedInputGain = static_cast<float>(warp * (1.0 - referencePole) / denominator);
+    ratePole = static_cast<float>((referencePole - warp) / denominator);
 }
 
 void AcustraEngine::StringLoop::reset() noexcept
@@ -1354,6 +1398,9 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
         || std::abs(next.stringAge - parameters_.stringAge) > 1.0e-5f;
     const bool stringChanged = force
         || next.stringMaterial != parameters_.stringMaterial;
+    const bool bridgeChanged = stringChanged
+        || (next.stringMaterial == StringMaterial::Steel
+            && next.bridgeModel != parameters_.bridgeModel);
     const bool tuningChanged = force || next.tuning != parameters_.tuning;
     parameters_ = next;
 
@@ -1363,7 +1410,7 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
     // junction's cross-release below already covers.
     if (bodyChanged || stringChanged)
         configureBody();
-    if (stringChanged)
+    if (bridgeChanged)
         configureBridge();
 
     const auto notes = openNotes(parameters_.tuning);
@@ -1389,7 +1436,7 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
     // with the port. That is the strings being exchanged, not the bridge
     // moving, and differencing it made a click 26 times the chord it landed
     // on. Shape, material and age move smoothly and are left alone.
-    if (stringChanged || tuningChanged)
+    if (bridgeChanged || tuningChanged)
         bridgeDerivativesCrossRelease_ = true;
 
     // A tail belongs to the construction it was taken from, and its loop is
@@ -1602,7 +1649,8 @@ void AcustraEngine::configureBridge() noexcept
         bridgeLoad_.immediateRock += rock * immediate;
     };
 
-    const auto bank = measuredBridgeBank(parameters_.stringMaterial);
+    const auto bank = measuredBridgeBank(parameters_.stringMaterial,
+                                         parameters_.bridgeModel);
     const float scale = physicalCalibration_.bridgeMobilityScale;
     for (std::size_t index = 0;
          index < static_cast<std::size_t>(bridgeModeCount); ++index)
@@ -1649,7 +1697,7 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     std::complex<float> mobilityCross {};
     std::complex<float> mobilityRock {};
     for (const auto& measured
-         : measuredBridgeBank(parameters_.stringMaterial))
+         : measuredBridgeBank(parameters_.stringMaterial, parameters_.bridgeModel))
     {
         if (measured.frequency >= 0.45f * rate
             || !includeMeasuredBridgeMode(measured))
@@ -1714,8 +1762,8 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
         // with it the whole adjugate above, exactly zero.  The rocking
         // coordinate is then immovable, every string sees the same heave port
         // with the anchor springs in parallel, and the load is the scalar
-        // (1/Yhh + k0/s)^-1 the one-point junction used.  Neither committed
-        // bank reaches this, but AuditBridgeFits.py emits heave-only banks.
+        // (1/Yhh + k0/s)^-1. The measured Fylde alternative uses this scalar
+        // case; no unmeasured rocking response is added to it.
         const std::complex<float> denominator
             = s + stiffness0 * mobilityHeave;
         if (!(std::abs(denominator) > 0.0f))
@@ -1865,8 +1913,8 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         * physicalCalibration_.highLossCutoffScale;
     const float lowpassCoefficient = std::exp(
         -twoPi * clamp(cutoff, 1200.0f,
-                       0.44f * static_cast<float>(sampleRate_))
-        * inverseSampleRate_);
+                       0.44f * 48000.0f)
+        * (1.0f / 48000.0f));
     const float highLoss = clamp(((steel ? 0.035f : 0.095f)
         + 0.42f * age
         + 0.018f * static_cast<float>(stringCount - 1 - stringIndex))
@@ -1905,12 +1953,12 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     const float broadLossCutoff = 14.3f * frequency;
     const float broadLossCoefficient = std::exp(-twoPi
         * clamp(broadLossCutoff, 500.0f,
-                0.44f * static_cast<float>(sampleRate_))
-        * inverseSampleRate_);
+                0.44f * 48000.0f)
+        * (1.0f / 48000.0f));
     const float designBroadLossCoefficient = std::exp(-twoPi
         * clamp(14.3f * unbentFrequency, 500.0f,
-                0.44f * static_cast<float>(sampleRate_))
-        * inverseSampleRate_);
+                0.44f * 48000.0f)
+        * (1.0f / 48000.0f));
     // The dispersion allpass is designed for the open string. Its cached
     // design is invalidated by frequency, inharmonicity, age and loss scale,
     // and deliberately not by bridge-hand pressure: tracking a gliding hand
@@ -2023,9 +2071,10 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     const float measuredBridgeDelay = bridgePhaseDelay(frequency, stringIndex);
     const float desiredPeriodGain = std::pow(0.001f,
         1.0f / std::max(fundamentalT60 * frequency, 1.0f));
+    const float lossOmega = static_cast<float>(referenceLossOmega(omega, sampleRate_));
     const float filterGain = magnitudeForOnePoleMix(
-        broadLossCoefficient, broadLoss, omega)
-        * magnitudeForOnePoleMix(lowpassCoefficient, mutedHighLoss, omega);
+        broadLossCoefficient, broadLoss, lossOmega)
+        * magnitudeForOnePoleMix(lowpassCoefficient, mutedHighLoss, lossOmega);
     const float loopGain = desiredPeriodGain / std::max(filterGain, 0.50f);
 
     // Conventional/manager pitch bend slides the stopping point; a member
@@ -2064,6 +2113,8 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
             * (polarisation == 0 ? 1.0f : 1.08f), 0.0f, 1.0f);
         loop.broadLossCoefficient = broadLossCoefficient;
         loop.lowpassCoefficient = lowpassCoefficient;
+        loop.broadLossFilter.configureRate(broadLossCoefficient, sampleRate_);
+        loop.lossFilter.configureRate(lowpassCoefficient, sampleRate_);
         loop.dispersionA1 = static_cast<float>(dispersionA1);
         loop.dispersionA2 = static_cast<float>(dispersionA2);
         if (clearDelay)

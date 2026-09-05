@@ -11,8 +11,9 @@
 // which is the measured treble driving point at u = +1 and the measured bass
 // one at u = -1. Each mode's residue matrix [[heave, cross], [cross, rock]]
 // is positive semidefinite, so every string's Y(u) is a positive real sum.
-// One bank per string material: a steel-string and a classical are different
-// instruments, and the engine selects by StringMaterial.
+// The original material settings select two measured nylon-string guitars:
+// g21 flamenco is adapted for steel, g34 classical for nylon. The separate
+// MeasuredSteelBridgeData.h contains actual steel-string bridge measurements.
 // Adapted from Robert Mores, "Archive for the acoustical documentation of
 // classical Spanish guitars, flamenco guitars and romantic guitars from
 // private and public collections -- bridge mobility" (2021),

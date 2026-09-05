@@ -30,17 +30,17 @@ struct Event
 
 int main(int argc, char** argv)
 {
-    if (argc != 3 && argc != 5)
+    if (argc != 3 && argc != 5 && argc != 6)
     {
         std::cerr << "usage: AcustraPerformanceRenderer EVENTS OUTPUT.f32 "
                      "[stereo_mic|treble_mic|bass_mic|saddle_piezo|magnetic "
-                     "finger|pick|thumb]\n";
+                     "finger|pick|thumb [original|fylde]]\n";
         return 2;
     }
     try
     {
         acustra::EngineParameters parameters;
-        if (argc == 5)
+        if (argc >= 5)
         {
             const std::array captures { "stereo_mic", "treble_mic", "bass_mic",
                                         "saddle_piezo", "magnetic" };
@@ -51,6 +51,13 @@ int main(int argc, char** argv)
                 throw std::runtime_error("unknown capture or picking technique");
             parameters.capture = static_cast<acustra::CaptureType>(capture - captures.begin());
             parameters.picking = static_cast<acustra::PickingTechnique>(technique - techniques.begin());
+        }
+        if (argc == 6)
+        {
+            if (std::string(argv[5]) != "original" && std::string(argv[5]) != "fylde")
+                throw std::runtime_error("unknown bridge model");
+            parameters.bridgeModel = std::string(argv[5]) == "fylde"
+                ? acustra::BridgeModel::FyldeSteel : acustra::BridgeModel::Original;
         }
         std::ifstream input(argv[1]);
         input.imbue(std::locale::classic());

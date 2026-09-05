@@ -14,10 +14,9 @@ import GenerateMeasuredBridge as bridge
 
 def fit(frequency: np.ndarray, mobility: np.ndarray, candidate_count: int,
         maximum_frequency: float):
-    bridge.CANDIDATE_COUNT = candidate_count
     bridge.MAXIMUM_FREQUENCY = maximum_frequency
     bridge.PEAK_PROMINENCE_DB = 0.25 if candidate_count >= 96 else 0.5
-    candidates = bridge.candidate_modes(frequency, mobility)
+    candidates = bridge.candidate_modes(frequency, mobility, candidate_count)
     indices = np.flatnonzero(
         (frequency >= bridge.MINIMUM_FREQUENCY)
         & (frequency <= maximum_frequency))[::3]

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -30,6 +31,7 @@ struct AcustraEngineTestAccess
         double dispersionA1;
         double dispersionA2;
         double inharmonicity;
+        double sampleRate { 48000.0 };
     };
 
     struct BodyModeSnapshot
@@ -122,7 +124,27 @@ struct AcustraEngineTestAccess
         return { loop.targetDelay, loop.loopGain, loop.broadLossCoefficient,
                  loop.broadLossMix, loop.lowpassCoefficient,
                  loop.highLossMix, loop.dispersionA1, loop.dispersionA2,
-                 voice.dispersionDesignInharmonicity };
+                 voice.dispersionDesignInharmonicity, rate };
+    }
+
+    static std::array<double, 3> lossFilterCoefficients(float pole, double rate)
+    {
+        AcustraEngine::OnePole filter;
+        filter.configureRate(pole, rate);
+        if (!filter.remapped)
+            return { 1.0 - pole, 0.0, pole };
+        return { 1.0 - filter.ratePole - filter.delayedInputGain,
+                 filter.delayedInputGain, filter.ratePole };
+    }
+
+    static std::vector<float> lossFilterImpulse(float pole, double rate)
+    {
+        AcustraEngine::OnePole filter;
+        filter.configureRate(pole, rate);
+        std::vector<float> impulse(4096);
+        for (std::size_t index = 0; index < impulse.size(); ++index)
+            impulse[index] = filter.process(index == 0 ? 1.0f : 0.0f, pole);
+        return impulse;
     }
 
     // Both polarisations' loop lengths, with the bridge coupling off so that
@@ -252,7 +274,7 @@ struct AcustraEngineTestAccess
         return { { loop.targetDelay, loop.loopGain, loop.broadLossCoefficient,
                    loop.broadLossMix, loop.lowpassCoefficient,
                    loop.highLossMix, loop.dispersionA1, loop.dispersionA2,
-                   selected->dispersionDesignInharmonicity },
+                   selected->dispersionDesignInharmonicity, rate },
                  unbent, selected->tensionNewtons,
                  selected->bendImpedanceScale, selected->fret, stringIndex };
     }
@@ -292,7 +314,7 @@ struct AcustraEngineTestAccess
                               loop.broadLossCoefficient, loop.broadLossMix,
                               loop.lowpassCoefficient, loop.highLossMix,
                               loop.dispersionA1, loop.dispersionA2,
-                              selected->dispersionDesignInharmonicity });
+                              selected->dispersionDesignInharmonicity, rate });
         }
         return trace;
     }
@@ -1310,6 +1332,47 @@ double spectralAmplitudeAt(const Audio& audio, double frequency,
     return std::hypot(real, imaginary);
 }
 
+double spectralDecayRate(const Audio& audio, double expectedHz,
+                         double searchCents, double rate)
+{
+    // A tension glide moves the partial between these windows. Measuring
+    // both at the early frequency treats detuning as lost amplitude; locate
+    // the partial again in the late window before comparing equal-length
+    // Hann-window amplitudes, whose centres are 0.8 s apart.
+    const double earlyHz = spectralPeakFrequency(
+        audio, expectedHz, searchCents, 0.20, 0.60, rate);
+    const double lateHz = spectralPeakFrequency(
+        audio, expectedHz, searchCents, 1.00, 1.40, rate);
+    return 20.0 * std::log10(
+        spectralAmplitudeAt(audio, earlyHz, 0.20, 0.60, rate)
+        / spectralAmplitudeAt(audio, lateHz, 1.00, 1.40, rate)) / 0.8;
+}
+
+void testDecayEstimatorFollowsPitchGlides()
+{
+    constexpr double decayDbPerSecond = 8.0;
+    for (double rate : { 44100.0, 48000.0, 96000.0 })
+        for (double glideHzPerSecond : { -3.0, 0.0, 3.0 })
+        {
+            const int samples = static_cast<int>(1.6 * rate);
+            Audio audio { std::vector<float>(static_cast<std::size_t>(samples)),
+                          std::vector<float>(static_cast<std::size_t>(samples)) };
+            for (int sample = 0; sample < samples; ++sample)
+            {
+                const double t = sample / rate;
+                const float value = static_cast<float>(
+                    std::pow(10.0, -decayDbPerSecond * t / 20.0)
+                    * std::cos(2.0 * std::numbers::pi
+                        * (990.0 * t + 0.5 * glideHzPerSecond * t * t)));
+                audio.left[static_cast<std::size_t>(sample)] = value;
+                audio.right[static_cast<std::size_t>(sample)] = value;
+            }
+            const double measured = spectralDecayRate(audio, 990.0, 30.0, rate);
+            expect(std::abs(measured - decayDbPerSecond) < 0.001,
+                   "a pitch glide was mistaken for exponential amplitude loss");
+        }
+}
+
 void testSilenceAndFiniteOutput()
 {
     acustra::AcustraEngine engine;
@@ -2111,10 +2174,12 @@ void testSteelDispersionTracksTheStiffStringLaw()
 double loopPhase(const acustra::AcustraEngineTestAccess::StringLoopSnapshot& loop,
                  double omega)
 {
-    const auto mixedPolePhase = [omega] (double coefficient, double mix)
+    const double lossOmega = loop.sampleRate == 48000.0 ? omega
+        : 2.0 * std::atan((loop.sampleRate / 48000.0) * std::tan(0.5 * omega));
+    const auto mixedPolePhase = [lossOmega] (double coefficient, double mix)
     {
-        const double denominatorReal = 1.0 - coefficient * std::cos(omega);
-        const double denominatorImaginary = coefficient * std::sin(omega);
+        const double denominatorReal = 1.0 - coefficient * std::cos(lossOmega);
+        const double denominatorImaginary = coefficient * std::sin(lossOmega);
         const double norm = denominatorReal * denominatorReal
                           + denominatorImaginary * denominatorImaginary;
         const double lowReal = (1.0 - coefficient) * denominatorReal / norm;
@@ -2189,21 +2254,101 @@ double loopResonance(
     return 0.5 * (lower + upper);
 }
 
+void testLossFiltersPreserveTheReferenceTransfer()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    // Every material/age/mute/calibration combination is a subset of these
+    // reference cutoffs (500..21120 Hz) and convex loss mixes (0..1). Sweep
+    // the full supported rate range, including the rate where the mapped
+    // pole crosses zero: a coefficient/mix rewrite is singular there.
+    std::vector<double> rates { 8000, 44100, 48000, 96000, 192000, 384000 };
+    for (int index = 0; index <= 80; ++index)
+        rates.push_back(8000.0 * std::pow(48.0, index / 80.0));
+    double maximumMagnitude = 0.0;
+    double maximumError = 0.0;
+    for (int cutoffIndex = 0; cutoffIndex <= 32; ++cutoffIndex)
+    {
+        const double cutoff = 500.0 * std::pow(21120.0 / 500.0, cutoffIndex / 32.0);
+        const float pole = static_cast<float>(
+            std::exp(-2.0 * std::numbers::pi * cutoff / 48000.0));
+        const double zeroPoleRate = 48000.0 * (1.0 - pole) / (1.0 + pole);
+        auto testedRates = rates;
+        if (zeroPoleRate >= 8000.0)
+            testedRates.push_back(zeroPoleRate);
+        for (double rate : testedRates)
+        {
+            const auto coefficients = Access::lossFilterCoefficients(pole, rate);
+            expect(std::abs(coefficients[2]) < 1.0,
+                   "a remapped loss pole left the stable unit circle");
+            for (int bin = 0; bin <= 128; ++bin)
+            {
+                const double omega = std::numbers::pi * bin / 128.0;
+                const std::complex<double> z = std::polar(1.0, -omega);
+                const auto actual = (coefficients[0] + coefficients[1] * z)
+                                  / (1.0 - coefficients[2] * z);
+                const double referenceOmega = rate == 48000.0 ? omega
+                    : 2.0 * std::atan((rate / 48000.0) * std::tan(0.5 * omega));
+                const auto expected = (1.0 - pole)
+                    / (1.0 - static_cast<double>(pole)
+                        * std::polar(1.0, -referenceOmega));
+                maximumError = std::max(maximumError, std::abs(actual - expected));
+                for (double mix : { 0.0, 0.1, 0.5, 0.95, 1.0 })
+                    maximumMagnitude = std::max(maximumMagnitude,
+                        std::abs(1.0 - mix + mix * actual));
+            }
+        }
+    }
+    expect(maximumMagnitude < 1.0 + 1.0e-12,
+           "a remapped loss shelf became active instead of passive");
+    expect(maximumError < 0.00001,
+           "a remapped loss shelf no longer represents its 48 kHz transfer");
+
+    // Check the production recurrence, including its delayed-input state,
+    // against the transfer above; inspecting coefficients alone misses a
+    // misplaced numerator tap. At 48 kHz also require the exact legacy path.
+    for (double rate : { 8000.0, 42300.0, 44100.0, 48000.0, 96000.0, 384000.0 })
+        for (double cutoff : { 500.0, 1200.0, 21120.0 })
+        {
+            const float pole = static_cast<float>(
+                std::exp(-2.0 * std::numbers::pi * cutoff / 48000.0));
+            const auto impulse = Access::lossFilterImpulse(pole, rate);
+            const auto coefficients = Access::lossFilterCoefficients(pole, rate);
+            if (rate == 48000.0)
+            {
+                float state = 0.0f;
+                for (std::size_t index = 0; index < impulse.size(); ++index)
+                {
+                    const float input = index == 0 ? 1.0f : 0.0f;
+                    state = input + pole * (state - input);
+                    expect(impulse[index] == state,
+                           "48 kHz loss filtering changed its legacy samples");
+                }
+            }
+            for (int bin : { 0, 1, 17, 64, 128 })
+            {
+                const double omega = std::numbers::pi * bin / 128.0;
+                std::complex<double> actual {};
+                for (std::size_t index = 0; index < impulse.size(); ++index)
+                    actual += static_cast<double>(impulse[index])
+                            * std::polar(1.0, -omega * index);
+                const std::complex<double> z = std::polar(1.0, -omega);
+                const auto expected = (coefficients[0] + coefficients[1] * z)
+                                    / (1.0 - coefficients[2] * z);
+                expect(std::abs(actual - expected) < 0.00001,
+                       "the loss-filter recurrence changed its mapped transfer");
+            }
+        }
+}
+
 void testTheFractionalDelayReadIsLossless()
 {
-    // Reading a fractional delay by interpolation is not lossless. The
-    // four-point Catmull-Rom read this replaces lost 0.23 and 0.53 dB per
-    // pass at 8 and 10 kHz at a half-sample fraction and nothing at an
-    // integer one, so H8 on steel MIDI 76 to 84 decayed at 3.0 to 96.5 dB/s
-    // at 44.1 kHz - a factor of 47 in loss per round trip - set by nothing
-    // but the accidental fraction of each note's loop length, and MIDI 84's
-    // H8 decayed at 3.0, 89.8 and 93.6 dB/s at 44.1, 48 and 96 kHz. A Thiran
-    // allpass has magnitude exactly one at every frequency, so what is left
-    // is the string's own loss: it rises smoothly with the partial's
-    // frequency and it barely moves with the host rate. What rate dependence
-    // remains is the high-loss corner, which is clamped to 0.44 of the
-    // sample rate at 44.1 and 48 kHz and not at 96 kHz; it leaves H8 within
-    // 13% across the three rates and the fundamental within 1.1%.
+    // A fractional read must not add interpolation-dependent loss: the
+    // second-order Thiran allpass has unit magnitude at every frequency.
+    // Isolate the string loop from bridge loading and sympathetic strings.
+    // The loss shelves now retain the same calibrated 48 kHz transfer across
+    // hosts, but bilinear warping leaves H8 decay spread at 4.1..12.8% over
+    // these rates and notes. The H1 spread is below 0.21%; neither tolerance
+    // is a claim of perfect sample-rate independence.
     struct Reading { double perSecond; double perPass; };
     const auto decay = [] (int midiNote, double rate, int partial)
     {
@@ -2224,16 +2369,10 @@ void testTheFractionalDelayReadIsLossless()
                            std::min(blockSize, samples - offset));
         const double fundamental = 440.0
             * std::exp2((static_cast<double>(midiNote) - 69.0) / 12.0);
-        // Stiffness puts H8 above 8*f0; find it before measuring it.
-        const double frequency = spectralPeakFrequency(
-            audio, partial * fundamental, 60.0, 0.20, 0.60, rate);
-        const double early = spectralAmplitudeAt(
-            audio, frequency, 0.20, 0.60, rate);
-        const double late = spectralAmplitudeAt(
-            audio, frequency, 1.00, 1.40, rate);
-        // The two windows are equal length and 0.8 s apart start to start,
-        // so 0.8 s is what the drop in level is spread over.
-        const double perSecond = 20.0 * std::log10(early / late) / 0.8;
+        // Stiffness stretches H8 and the tension glide moves every partial
+        // during the note. Follow its frequency separately in each window.
+        const double perSecond = spectralDecayRate(
+            audio, partial * fundamental, 60.0, rate);
         return Reading { perSecond, perSecond / fundamental };
     };
 
@@ -2257,19 +2396,12 @@ void testTheFractionalDelayReadIsLossless()
                 lowestPass = std::min(lowestPass, reading.perPass);
                 highestPass = std::max(highestPass, reading.perPass);
             }
-            // H1's bound was 0.015 before the 2026-09-04 refit. The refit
-            // roughly halves bodyQScale (0.0980 to 0.0534) and lowers the
-            // bridge conductance corner (2804.9 to 2187.8 Hz), so the top
-            // steel notes' fundamental is loaded differently and what rate
-            // dependence the junction has shows up as a larger fraction of
-            // it: MIDI 82, 83 and 84 read 1.87%, 2.78% and 1.77% across
-            // 44.1, 48 and 96 kHz. It is not the bridge mobility - that is
-            // restored to its measured value here and the spread remains -
-            // and which of the two loading values owns it was not isolated,
-            // so the weakened bound is recorded in the README's Known gaps
-            // rather than presented as understood.
+            // Restore the original 1.5% fundamental bound. The apparent
+            // 1.87/2.78/1.77% spread at MIDI 82/83/84 was detuning in the
+            // fixed-frequency estimator. Tracking alone puts all three below
+            // 0.2%; with the reference loss mapping they remain below 0.21%.
             const double spread = 2.0 * (highest - lowest) / (highest + lowest);
-            expect(spread < (partial == 1 ? 0.032 : 0.15),
+            expect(spread < (partial == 1 ? 0.015 : 0.15),
                    "steel MIDI " + std::to_string(midiNote) + " H"
                        + std::to_string(partial)
                        + " decayed at rates that differ by "
@@ -5690,6 +5822,8 @@ void testPerformance()
 
 int main()
 {
+    testDecayEstimatorFollowsPitchGlides();
+    testLossFiltersPreserveTheReferenceTransfer();
     testSilenceAndFiniteOutput();
     testPlayableRangeFollowsTuning();
     testSteelRetuningPreservesStringMass();

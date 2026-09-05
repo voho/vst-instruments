@@ -144,7 +144,16 @@ applies the archive's full-record half-cosine taper and calibration scales,
 then forms separate H1 force-to-pressure responses from the hammer channel to
 the 10 cm treble-side and bass-side microphone channels.
 
-For each path, Acustra inverse-transforms the H1 response, retains 3000 samples,
+The archive's physical-measures table identifies g21's strings as Savarez
+Tomatito, with nylon/KF trebles and wound multifilament basses. Acustra adapts
+this flamenco measurement for its original steel setting; it is not a measured
+steel-strung body. The nylon setting uses g34, a 1971 Manuel Contreras classical
+guitar with cedar top and Rio palisander back and sides, measured anechoically.
+Both `MeasuredBodyData.h` and `MeasuredBridgeData.h` derive from these records;
+the bridge adaptation fits positive-semidefinite heave/rocking residues to
+the calibrated bass/treble acceleration-to-force measurements.
+
+For each g21 path, Acustra inverse-transforms the H1 response, retains 3000 samples,
 leaves the first 2700 unchanged and applies an authored 300-sample raised-cosine
 fade. It independently reconstructs minimum phase from each path's magnitude,
 selects 96 shared frequencies and Q values over 80 Hz–10 kHz, and fits separate
@@ -154,10 +163,43 @@ spread is used. Minimum-phase reconstruction, the 300-sample fade, modal
 reduction, global gain and shape/material transformations are Acustra changes;
 no DAFx-26 coefficient is used.
 
+The g34 radiation uses the same minimum-phase/modal method with 12000 retained
+samples, a fade over the final tenth and 103 shared poles; its longer window
+is selected by the low-frequency Q-convergence check in the generator.
+
 Acustra ships only those transformed numerical coefficients. It does not ship
 the source MAT file, recorded impulses, photographs or documentation from the
 archive. The attribution, source link, licence link and description of changes
 above must accompany distributions containing the coefficient table.
+
+## Measured Fylde steel-string bridge
+
+Samuele Carcagno, Roger Bucknall, Jim Woodhouse, Claudia Fritz and Christopher
+J. Plack, *Effect of back wood choice on the perceived quality of steel-string
+acoustic guitars*, JASA 144(6), 3533–3547 (2018),
+<https://doi.org/10.1121/1.5084735>.
+
+Source data: <https://osf.io/f4pqa/>,
+`guitar_back_wood_code_data_v1.0.1.zip`,
+SHA-256 `1d35dd28ece660eadc165be34995255fae6f56c9cb3d8d6d96bd00fe2902e582`.
+
+Licence: [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/).
+The dataset's licence is supplied in its `LICENCE.txt` and OSF record.
+
+`Source/DSP/MeasuredSteelBridgeData.h` contains Acustra's transformed modal
+coefficients from the first `specSet` column in `bridge_admittance_all.mat`:
+the commissioned Fylde Falstaff with Sitka spruce top, Brazilian rosewood back
+and sides, ebony bridge and Elixir Nanoweb Light 80/20 Bronze steel strings.
+The manufacture year is unspecified. The measurement is normal bridge
+velocity/force between the fifth and sixth strings, with strings damped.
+
+Acustra selects measured peaks, pins the three lowest body frequencies and
+Q values to Table I, infers a polarity and phase alignment from a constrained fit,
+and fits nonnegative scalar residues while retaining measured SI magnitude.
+The bank supplies no measured rocking, cross-admittance or body radiation.
+The source MAT, recorded/synthesized audio and experimental participant data
+are not distributed. This attribution, licence link, source link and
+description of changes must accompany distributions of these coefficients.
 
 ## DAFx-26 EJ45 construction data
 

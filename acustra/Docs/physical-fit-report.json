@@ -2016,5 +2016,2070 @@
     ]
    }
   ]
+ },
+ "measured_steel_bridge_2026_09_05": {
+  "baseline_revision": "7e32fd6f",
+  "candidate_revision_context": "Uncommitted source snapshot at measurement; this entry is intended to accompany the implementation commit. Source and executable hashes identify the candidate without claiming a future commit hash.",
+  "candidate_source_sha256": {
+   "Source/DSP/AcustraEngine.cpp": "3b8fa8e5d58654ba27d36695c54c31d8f4324393969ad9a351f1c0fb9b59d81a",
+   "Source/DSP/AcustraEngine.h": "123c5b6eed13648821b05056db7029269a39b67ea29d701fa79f9a74efcf0f4a",
+   "Source/DSP/FittedPhysicalData.h": "803c40e4e0b1571b2567b96675e36357ab169cc166f2165437c9611fa2f8445c",
+   "Source/DSP/MeasuredBodyData.h": "6f2773c4689b9f731f95694b4041878b8997053571a3cd6e773a71676ed45cd8",
+   "Source/DSP/MeasuredBridgeData.h": "c976c70ce2e23bd32c7132502158cb5734b67dabdcf6cbaa7b1502fda9a59a07",
+   "Source/DSP/MeasuredSteelBridgeData.h": "f3bf2d8d9a65c8b09961da38c8217ecc4f31a763f802ca675dcbe9e6e8d52e2b",
+   "Tools/GenerateMeasuredSteelBridge.py": "f74ce71c0519751d27d53c45372d575a7e38738a0cde90eff0c9e5c1b117a2ae",
+   "Tools/GenerateMeasuredBridge.py": "a18b03431f28f0f1bb9e00b491774aab8610af1e4438b681d7d0cbfc426f9176",
+   "Tools/PhysicalFitRenderer.cpp": "681f590ca49bbfa688ccbfcebd41d7ac3d7630f86fec11462e0143b728d18500",
+   "Tools/PerformanceRenderer.cpp": "41ab1f95cb379c93710cd24dbf2592418d2cec768152e4481f28284c5181c394",
+   "Tools/BenchmarkPerformances.py": "9e43620cd629a003730155e12bca4903e676a88dc7b09fc9c89012b87da4f10f",
+   "Tools/FitPhysicalModel.py": "94ec199da74c3432801225829028abf25a100d73d66015e754d6dea8da80c7bd"
+  },
+  "physical_renderer_sha256": "a053c3c170877402dfca4331719d07d623b46e006db4ef7a1e08104c3cec90d2",
+  "performance_renderer_sha256": "91e59887c4d994fed5677f8075c377617cd70f2a034a8a7589281496ac92fc2d",
+  "source": {
+   "dataset": "https://osf.io/f4pqa/",
+   "paper": "https://doi.org/10.1121/1.5084735",
+   "authors": [
+    "Samuele Carcagno",
+    "Roger Bucknall",
+    "Jim Woodhouse",
+    "Claudia Fritz",
+    "Christopher J. Plack"
+   ],
+   "publication_year": 2018,
+   "license": "CC-BY-4.0",
+   "license_url": "https://creativecommons.org/licenses/by/4.0/",
+   "archive": "guitar_back_wood_code_data_v1.0.1.zip",
+   "archive_sha256": "1d35dd28ece660eadc165be34995255fae6f56c9cb3d8d6d96bd00fe2902e582",
+   "raw_file": "datasets/bridge_admittance_all.mat",
+   "raw_sha256": "c306e2c78e72e1526a931b16967dbc4f87c1bc7ecf2c928ff8d492a64e318288",
+   "column": "specSet[:, 0]",
+   "instrument_selection": "First archive instrument predeclared before any candidate guitar-audio comparison. No instrument selection against the audio corpus.",
+   "instrument": "Custom Fylde Falstaff; Sitka spruce top, Brazilian rosewood back/sides, Cameroon ebony bridge; Elixir Nanoweb Light 80/20 Bronze steel strings.",
+   "manufacture_year": null,
+   "measurement": "Normal bridge velocity/force in m/s/N between strings 5 and 6; strings damped; foam at end button and foam-lined neck clamp."
+  },
+  "identification": {
+   "method": "47 strongest measured peaks; lowest three body frequency/Q pairs fixed to paper Table I; 44 retained positive scalar residues. Complex least-squares with SI magnitude retained. 81-point delay scan per polarity over +/-1 ms followed by local refinement of best neighbouring interval.",
+   "phase_interpretation": "Polarity and delay are inferred constrained-fit alignment, not independently measured instrumentation delay.",
+   "phase_polarity": -1,
+   "phase_advance_seconds": 3.587240842266437e-05,
+   "mode_count": 44,
+   "fit_60_200": {
+    "complex_relative": 0.21790014809362163,
+    "median_magnitude_db": 1.5732595566246481,
+    "p90_magnitude_db": 5.324964796317202
+   },
+   "fit_60_500": {
+    "complex_relative": 0.22648088637239175,
+    "median_magnitude_db": 1.1695302616126333,
+    "p90_magnitude_db": 3.027208449264002
+   },
+   "fit_60_10000": {
+    "complex_relative": 0.22956269635370857,
+    "median_magnitude_db": 0.9784623327076493,
+    "p90_magnitude_db": 2.679886981968742
+   },
+   "fit_1000_10000": {
+    "complex_relative": 0.2242903616442993,
+    "median_magnitude_db": 0.9637285900952273,
+    "p90_magnitude_db": 2.657710055014757
+   }
+  },
+  "calibration_order": [
+   "bodyFrequencyScale",
+   "bodyQScale",
+   "bridgeMobilityScale",
+   "residueTiltDbPerOctave",
+   "directGain",
+   "nylon.fundamentalT60Scale",
+   "nylon.frequencyLossScale",
+   "nylon.apertureScale",
+   "nylon.transientScale",
+   "nylon.pluckDistanceScale",
+   "nylon.velocityBrightnessDepth",
+   "steel.stiffnessScale",
+   "steel.fundamentalT60Scale",
+   "steel.frequencyLossScale",
+   "steel.apertureScale",
+   "steel.transientScale",
+   "steel.pluckDistanceScale",
+   "steel.velocityBrightnessDepth",
+   "apertureRegisterExponent",
+   "lowBodyModeGain",
+   "steelDisplacementScaleMetres",
+   "steelFretT60Slope",
+   "highLossCutoffScale",
+   "bridgeConductanceFloor",
+   "bridgeConductanceCornerHz",
+   "bridgeTailLengthMetres",
+   "longitudinalGain",
+   "longitudinalQ",
+   "polarisationEndCorrectionMetres"
+  ],
+  "calibration_values": [
+   1.03999996,
+   0.0534179695,
+   0.754677176,
+   -1,
+   0,
+   0.864847183,
+   1.40369761,
+   1.76889396,
+   0,
+   1.12667143,
+   0.0375000015,
+   0.749355435,
+   1.52999997,
+   0.519999981,
+   0.643124342,
+   0.494086444,
+   0.888195097,
+   1.18593752,
+   -0.0706290081,
+   7.5,
+   0.00773577858,
+   -0.0597851574,
+   2.2858603,
+   0.0109999999,
+   2187.76025,
+   0.00325000007,
+   0,
+   35,
+   0.00079999998
+  ],
+  "candidate_controls": {
+   "shape": 2,
+   "body_material": 0,
+   "string_material": "per example: nylon or steel",
+   "bridge_model": "fylde",
+   "capture": "stereo_mic",
+   "picking": "finger",
+   "tuning": 0,
+   "string_age": 0.150000006,
+   "pluck_position": 0.280000001,
+   "touch": 0.579999983,
+   "body_amount": 0.819999993,
+   "stereo_width": 0.620000005,
+   "output_gain": 0.419999987
+  },
+  "baseline_controls": {
+   "shape": 2,
+   "body_material": 0,
+   "string_material": "per example: nylon or steel",
+   "bridge_model": "original",
+   "capture": "stereo_mic",
+   "picking": "finger",
+   "tuning": 0,
+   "string_age": 0.150000006,
+   "pluck_position": 0.280000001,
+   "touch": 0.579999983,
+   "body_amount": 0.819999993,
+   "stereo_width": 0.620000005,
+   "output_gain": 0.419999987
+  },
+  "comparison_scope": {
+   "runtime_status": "Optional measured steel bridge alternative; Original remains default.",
+   "default_preservation": "All 79 unique dry model renders and all six performance renders are byte-identical to shipping at 48 kHz.",
+   "nylon_preservation": "All 39 unique nylon dry renders are byte-identical; selecting Fylde affects steel only.",
+   "changed_unique_models": 40,
+   "matched_target_examples": 115,
+   "reserved_test_split_used": false,
+   "limitations": [
+    "One measured normal driving point: extending the scalar port across six strings supplies no measured cross-admittance or rocking response.",
+    "Radiation remains the adapted g21 flamenco bank; this is not a measured full Fylde guitar body or microphone capture.",
+    "The 65.9-Hz mode may include support motion; the dataset does not identify it separately.",
+    "Original 3.25 mm anchor and all 29 calibration values retained. No new acoustic-corpus fit.",
+    "Aggregate dry metrics improve, but pitch-trajectory error worsens; performance log magnitude is nearly unchanged, while spectral convergence and chroma improve.",
+    "The single-note corpus and GuitarSet protocol limitations remain; these metrics do not establish market leadership or perceptual superiority."
+   ]
+  },
+  "paired_dry_comparisons": {
+   "train": {
+    "aggregate": {
+     "example_count": 83,
+     "score": {
+      "baseline": 6.113884186471812,
+      "candidate": 5.958959830423854,
+      "change_percent": -2.5339759688408625,
+      "delta": -0.15492435604795762
+     },
+     "terms": {
+      "attack": {
+       "baseline": 6.760963939436504,
+       "baseline_count": 13529,
+       "candidate": 6.78134645439108,
+       "candidate_count": 13529,
+       "change_percent": 0.3014735049197137,
+       "delta": 0.020382514954576436
+      },
+      "body": {
+       "baseline": 11.036902923038106,
+       "baseline_count": 3320,
+       "candidate": 10.717577447984743,
+       "candidate_count": 3320,
+       "change_percent": -2.893252548111236,
+       "delta": -0.31932547505336295
+      },
+      "decay": {
+       "baseline": 5.209704912839776,
+       "baseline_count": 1468,
+       "candidate": 4.800390486631876,
+       "candidate_count": 1468,
+       "change_percent": -7.856767956263855,
+       "delta": -0.4093144262078994
+      },
+      "dynamics": {
+       "baseline": 0.059306419624114565,
+       "baseline_count": 54,
+       "candidate": 0.04249039492363496,
+       "candidate_count": 54,
+       "change_percent": -28.354476306376185,
+       "delta": -0.016816024700479604
+      },
+      "harmonics": {
+       "baseline": 7.876991496561699,
+       "baseline_count": 1981,
+       "candidate": 7.815259003790404,
+       "candidate_count": 1981,
+       "change_percent": -0.7837064797929671,
+       "delta": -0.061732492771295
+      },
+      "pitch_trajectory": {
+       "baseline": 0.44523219559114546,
+       "baseline_count": 249,
+       "candidate": 0.635968101421819,
+       "candidate_count": 249,
+       "change_percent": 42.839648102588114,
+       "delta": 0.19073590583067357
+      },
+      "tuning": {
+       "baseline": 2.9863403539482216,
+       "baseline_count": 988,
+       "candidate": 2.9796631056692235,
+       "candidate_count": 988,
+       "change_percent": -0.22359300975758334,
+       "delta": -0.006677248278998071
+      }
+     }
+    },
+    "by_material": {
+     "nylon": {
+      "example_count": 29,
+      "score": {
+       "baseline": 7.501170760283605,
+       "candidate": 7.501170760283605,
+       "change_percent": 0.0,
+       "delta": 0.0
+      },
+      "terms": {
+       "attack": {
+        "baseline": 6.781799006556819,
+        "baseline_count": 4727,
+        "candidate": 6.781799006556819,
+        "candidate_count": 4727,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "body": {
+        "baseline": 11.867776044988549,
+        "baseline_count": 1160,
+        "candidate": 11.867776044988549,
+        "candidate_count": 1160,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "decay": {
+        "baseline": 7.41341015192566,
+        "baseline_count": 514,
+        "candidate": 7.41341015192566,
+        "candidate_count": 514,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "dynamics": {
+        "baseline": null,
+        "baseline_count": 0,
+        "candidate": null,
+        "candidate_count": 0,
+        "change_percent": null,
+        "delta": null
+       },
+       "harmonics": {
+        "baseline": 7.46692987628385,
+        "baseline_count": 685,
+        "candidate": 7.46692987628385,
+        "candidate_count": 685,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "pitch_trajectory": {
+        "baseline": 0.08622403515092521,
+        "baseline_count": 87,
+        "candidate": 0.08622403515092521,
+        "candidate_count": 87,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "tuning": {
+        "baseline": 3.7886034557554034,
+        "baseline_count": 340,
+        "candidate": 3.7886034557554034,
+        "candidate_count": 340,
+        "change_percent": 0.0,
+        "delta": 0.0
+       }
+      }
+     },
+     "steel": {
+      "example_count": 54,
+      "score": {
+       "baseline": 5.767550329621743,
+       "candidate": 5.530260731367633,
+       "change_percent": -4.11421807687411,
+       "delta": -0.2372895982541099
+      },
+      "terms": {
+       "attack": {
+        "baseline": 6.749774736723741,
+        "baseline_count": 8802,
+        "candidate": 6.781103417116888,
+        "candidate_count": 8802,
+        "change_percent": 0.46414408799000384,
+        "delta": 0.03132868039314651
+       },
+       "body": {
+        "baseline": 10.590693283472124,
+        "baseline_count": 2160,
+        "candidate": 10.099878201445662,
+        "candidate_count": 2160,
+        "change_percent": -4.6343999291569515,
+        "delta": -0.4908150820264616
+       },
+       "decay": {
+        "baseline": 4.022383641466458,
+        "baseline_count": 954,
+        "candidate": 3.392537123989314,
+        "candidate_count": 954,
+        "change_percent": -15.658539155343188,
+        "delta": -0.6298465174771444
+       },
+       "dynamics": {
+        "baseline": 0.059306419624114565,
+        "baseline_count": 54,
+        "candidate": 0.04249039492363496,
+        "candidate_count": 54,
+        "change_percent": -28.354476306376185,
+        "delta": -0.016816024700479604
+       },
+       "harmonics": {
+        "baseline": 8.093729312835098,
+        "baseline_count": 1296,
+        "candidate": 7.999368149116012,
+        "candidate_count": 1296,
+        "change_percent": -1.1658551956938767,
+        "delta": -0.09436116371908643
+       },
+       "pitch_trajectory": {
+        "baseline": 0.6380328743460785,
+        "baseline_count": 162,
+        "candidate": 0.9312010259006325,
+        "candidate_count": 162,
+        "change_percent": 45.94875332325514,
+        "delta": 0.293168151554554
+       },
+       "tuning": {
+        "baseline": 2.56539983756791,
+        "baseline_count": 648,
+        "candidate": 2.5552190948215365,
+        "candidate_count": 648,
+        "change_percent": -0.39684818706564595,
+        "delta": -0.010180742746373372
+       }
+      }
+     }
+    },
+    "analysis_sample_rate": 48000,
+    "target_verification": "identical SHA-256 content, format and example metadata",
+    "interpretation": "negative changes mean closer descriptors on these same recordings; no listening preference or market ranking is inferred",
+    "baseline_manifest_sha256": "1b52bc3c5726e035eeecf3df842dd71256ca7aedb0f66a46c27bb8fac9a8b123",
+    "candidate_manifest_sha256": "4fdaaacce2c6e8f03bd0f73cf713713100371c900542bb9eff310ea44a570756"
+   },
+   "validation": {
+    "aggregate": {
+     "example_count": 24,
+     "score": {
+      "baseline": 6.074617956165557,
+      "candidate": 5.741120948032349,
+      "change_percent": -5.49000794024781,
+      "delta": -0.33349700813320826
+     },
+     "terms": {
+      "attack": {
+       "baseline": 7.134032074307243,
+       "baseline_count": 3912,
+       "candidate": 6.802436314717068,
+       "candidate_count": 3912,
+       "change_percent": -4.648083385893321,
+       "delta": -0.33159575959017573
+      },
+      "body": {
+       "baseline": 10.977984668807093,
+       "baseline_count": 960,
+       "candidate": 10.461383747418877,
+       "candidate_count": 960,
+       "change_percent": -4.705790151593936,
+       "delta": -0.5166009213882159
+      },
+      "decay": {
+       "baseline": 4.508876156058934,
+       "baseline_count": 430,
+       "candidate": 4.185078548463861,
+       "candidate_count": 430,
+       "change_percent": -7.181337352988959,
+       "delta": -0.3237976075950728
+      },
+      "dynamics": {
+       "baseline": 0.002740179197190927,
+       "baseline_count": 14,
+       "candidate": 0.008274951913645185,
+       "candidate_count": 14,
+       "change_percent": 201.98579429141662,
+       "delta": 0.005534772716454257
+      },
+      "harmonics": {
+       "baseline": 8.319933211378633,
+       "baseline_count": 574,
+       "candidate": 7.822456058168337,
+       "candidate_count": 574,
+       "change_percent": -5.979340705883662,
+       "delta": -0.49747715321029595
+      },
+      "pitch_trajectory": {
+       "baseline": 0.15186834692264772,
+       "baseline_count": 72,
+       "candidate": 0.17006459830777101,
+       "candidate_count": 72,
+       "change_percent": 11.981595739888661,
+       "delta": 0.01819625138512329
+      },
+      "tuning": {
+       "baseline": 2.9296870195027185,
+       "baseline_count": 286,
+       "candidate": 2.78194058694101,
+       "candidate_count": 286,
+       "change_percent": -5.043079058553723,
+       "delta": -0.14774643256170839
+      }
+     }
+    },
+    "by_material": {
+     "nylon": {
+      "example_count": 10,
+      "score": {
+       "baseline": 7.010626765474613,
+       "candidate": 7.010626765474613,
+       "change_percent": 0.0,
+       "delta": 0.0
+      },
+      "terms": {
+       "attack": {
+        "baseline": 6.464987444580515,
+        "baseline_count": 1630,
+        "candidate": 6.464987444580515,
+        "candidate_count": 1630,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "body": {
+        "baseline": 11.716906586787388,
+        "baseline_count": 400,
+        "candidate": 11.716906586787388,
+        "candidate_count": 400,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "decay": {
+        "baseline": 5.4879494579385275,
+        "baseline_count": 178,
+        "candidate": 5.4879494579385275,
+        "candidate_count": 178,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "dynamics": {
+        "baseline": null,
+        "baseline_count": 0,
+        "candidate": null,
+        "candidate_count": 0,
+        "change_percent": null,
+        "delta": null
+       },
+       "harmonics": {
+        "baseline": 7.880115585532333,
+        "baseline_count": 238,
+        "candidate": 7.880115585532333,
+        "candidate_count": 238,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "pitch_trajectory": {
+        "baseline": 0.10669181186445251,
+        "baseline_count": 30,
+        "candidate": 0.10669181186445251,
+        "candidate_count": 30,
+        "change_percent": 0.0,
+        "delta": 0.0
+       },
+       "tuning": {
+        "baseline": 4.397419657798681,
+        "baseline_count": 118,
+        "candidate": 4.397419657798681,
+        "candidate_count": 118,
+        "change_percent": 0.0,
+        "delta": 0.0
+       }
+      }
+     },
+     "steel": {
+      "example_count": 14,
+      "score": {
+       "baseline": 5.909245686699659,
+       "candidate": 5.338499001295498,
+       "change_percent": -9.658537073332052,
+       "delta": -0.5707466854041616
+      },
+      "terms": {
+       "attack": {
+        "baseline": 7.61192109554062,
+        "baseline_count": 2282,
+        "candidate": 7.0434712219574624,
+        "candidate_count": 2282,
+        "change_percent": -7.4678897278136365,
+        "delta": -0.5684498735831571
+       },
+       "body": {
+        "baseline": 10.450183298821168,
+        "baseline_count": 560,
+        "candidate": 9.564581719298515,
+        "candidate_count": 560,
+        "change_percent": -8.474507615790372,
+        "delta": -0.8856015795226533
+       },
+       "decay": {
+        "baseline": 3.8173085063185868,
+        "baseline_count": 252,
+        "candidate": 3.264796715580961,
+        "candidate_count": 252,
+        "change_percent": -14.473857426589499,
+        "delta": -0.5525117907376256
+       },
+       "dynamics": {
+        "baseline": 0.002740179197190927,
+        "baseline_count": 14,
+        "candidate": 0.008274951913645185,
+        "candidate_count": 14,
+        "change_percent": 201.98579429141662,
+        "delta": 0.005534772716454257
+       },
+       "harmonics": {
+        "baseline": 8.631470696353094,
+        "baseline_count": 336,
+        "candidate": 7.7816138929521745,
+        "candidate_count": 336,
+        "change_percent": -9.846025472345,
+        "delta": -0.84985680340092
+       },
+       "pitch_trajectory": {
+        "baseline": 0.18413730053564425,
+        "baseline_count": 42,
+        "candidate": 0.21533087433871273,
+        "candidate_count": 42,
+        "change_percent": 16.94038834735181,
+        "delta": 0.031193573803068475
+       },
+       "tuning": {
+        "baseline": 1.8987795711757933,
+        "baseline_count": 168,
+        "candidate": 1.6472588586005041,
+        "candidate_count": 168,
+        "change_percent": -13.24644083986739,
+        "delta": -0.2515207125752892
+       }
+      }
+     }
+    },
+    "analysis_sample_rate": 48000,
+    "target_verification": "identical SHA-256 content, format and example metadata",
+    "interpretation": "negative changes mean closer descriptors on these same recordings; no listening preference or market ranking is inferred",
+    "baseline_manifest_sha256": "022762e03b494b7c7d1fafc92b292cb541b59e7ef5d5854c72b6505dae4ca7e4",
+    "candidate_manifest_sha256": "6b7ced9d982bf1042820beaa968d4f02a480aab53147626aa79538b3c36fd7fe"
+   },
+   "flattop": {
+    "aggregate": {
+     "example_count": 8,
+     "score": {
+      "baseline": 8.07684466387557,
+      "candidate": 7.434876875248182,
+      "change_percent": -7.948249784951889,
+      "delta": -0.6419677886273885
+     },
+     "terms": {
+      "attack": {
+       "baseline": 7.404680808113602,
+       "baseline_count": 1304,
+       "candidate": 6.783528073032161,
+       "candidate_count": 1304,
+       "change_percent": -8.388649709259832,
+       "delta": -0.6211527350814405
+      },
+      "body": {
+       "baseline": 15.901517635891576,
+       "baseline_count": 320,
+       "candidate": 15.428261476538827,
+       "candidate_count": 320,
+       "change_percent": -2.976169760580305,
+       "delta": -0.4732561593527489
+      },
+      "decay": {
+       "baseline": 6.621211646423282,
+       "baseline_count": 143,
+       "candidate": 5.1995021897137645,
+       "candidate_count": 143,
+       "change_percent": -21.47204367764791,
+       "delta": -1.4217094567095172
+      },
+      "dynamics": {
+       "baseline": null,
+       "baseline_count": 0,
+       "candidate": null,
+       "candidate_count": 0,
+       "change_percent": null,
+       "delta": null
+      },
+      "harmonics": {
+       "baseline": 7.743551843209751,
+       "baseline_count": 192,
+       "candidate": 7.658093850393404,
+       "candidate_count": 192,
+       "change_percent": -1.1036019974643096,
+       "delta": -0.08545799281634725
+      },
+      "pitch_trajectory": {
+       "baseline": 0.5526888195564189,
+       "baseline_count": 24,
+       "candidate": 0.8732350639744494,
+       "candidate_count": 24,
+       "change_percent": 57.99759884328706,
+       "delta": 0.3205462444180305
+      },
+      "tuning": {
+       "baseline": 2.6057492235299455,
+       "baseline_count": 96,
+       "candidate": 2.3250426029965086,
+       "candidate_count": 96,
+       "change_percent": -10.772587707161263,
+       "delta": -0.280706620533437
+      }
+     }
+    },
+    "by_material": {
+     "flattop": {
+      "example_count": 8,
+      "score": {
+       "baseline": 8.07684466387557,
+       "candidate": 7.434876875248182,
+       "change_percent": -7.948249784951889,
+       "delta": -0.6419677886273885
+      },
+      "terms": {
+       "attack": {
+        "baseline": 7.404680808113602,
+        "baseline_count": 1304,
+        "candidate": 6.783528073032161,
+        "candidate_count": 1304,
+        "change_percent": -8.388649709259832,
+        "delta": -0.6211527350814405
+       },
+       "body": {
+        "baseline": 15.901517635891576,
+        "baseline_count": 320,
+        "candidate": 15.428261476538827,
+        "candidate_count": 320,
+        "change_percent": -2.976169760580305,
+        "delta": -0.4732561593527489
+       },
+       "decay": {
+        "baseline": 6.621211646423282,
+        "baseline_count": 143,
+        "candidate": 5.1995021897137645,
+        "candidate_count": 143,
+        "change_percent": -21.47204367764791,
+        "delta": -1.4217094567095172
+       },
+       "dynamics": {
+        "baseline": null,
+        "baseline_count": 0,
+        "candidate": null,
+        "candidate_count": 0,
+        "change_percent": null,
+        "delta": null
+       },
+       "harmonics": {
+        "baseline": 7.743551843209751,
+        "baseline_count": 192,
+        "candidate": 7.658093850393404,
+        "candidate_count": 192,
+        "change_percent": -1.1036019974643096,
+        "delta": -0.08545799281634725
+       },
+       "pitch_trajectory": {
+        "baseline": 0.5526888195564189,
+        "baseline_count": 24,
+        "candidate": 0.8732350639744494,
+        "candidate_count": 24,
+        "change_percent": 57.99759884328706,
+        "delta": 0.3205462444180305
+       },
+       "tuning": {
+        "baseline": 2.6057492235299455,
+        "baseline_count": 96,
+        "candidate": 2.3250426029965086,
+        "candidate_count": 96,
+        "change_percent": -10.772587707161263,
+        "delta": -0.280706620533437
+       }
+      }
+     }
+    },
+    "analysis_sample_rate": 48000,
+    "target_verification": "identical SHA-256 content, format and example metadata",
+    "interpretation": "negative changes mean closer descriptors on these same recordings; no listening preference or market ranking is inferred",
+    "baseline_manifest_sha256": "7894191dc862daf1512ba835fbd00f23b145112e94ba96e010a7a3394322e5a5",
+    "candidate_manifest_sha256": "e44648c95e0c95aff8155bbcd025ebc405099b07173fb45678887038c68aae29"
+   }
+  },
+  "performances": {
+   "original": {
+    "dataset": "GuitarSet v1.1.0",
+    "source": "https://zenodo.org/records/3371780",
+    "attribution": "Qingyang Xi, Rachel M. Bittner, Johan Pauwels, Xuzhou Ye, Juan P. Bello, ISMIR 2018; CC BY 4.0",
+    "archive_md5": {
+     "annotation.zip": "b39b78e63d3446f2e54ddb7a54df9b10",
+     "audio_mono-mic.zip": "275966d6610ac34999b58426beb119c3"
+    },
+    "renderer_sha256": "91e59887c4d994fed5677f8075c377617cd70f2a034a8a7589281496ac92fc2d",
+    "physical_scorer_sha256": "94ec199da74c3432801225829028abf25a100d73d66015e754d6dea8da80c7bd",
+    "scorer_sha256": "9e43620cd629a003730155e12bca4903e676a88dc7b09fc9c89012b87da4f10f",
+    "numpy_version": "1.26.4",
+    "scipy_version": "1.14.1",
+    "analysis_rate": 48000,
+    "start_seconds": 0,
+    "duration_seconds": 12,
+    "velocity": 91,
+    "capture": "stereo_mic",
+    "picking": "finger",
+    "bridge_model": "original",
+    "render_protocol": "shipping calibration/default controls; string-per-channel; 127-frame blocks; annotated mean pitch; zero release velocity",
+    "limitations": "One phrase, six players; timing/strum statistics previously informed engine. No measured note velocities, gesture labels, matched guitar body or matched microphone. Descriptor distances include those differences and do not establish perceptual equivalence or market rank.",
+    "mean": {
+     "log_magnitude_mae_db": 14.875728857784772,
+     "spectral_convergence": 0.9031206948660145,
+     "chroma_cosine_distance": 0.3119508057014604
+    },
+    "performances": [
+     {
+      "track": "00_BN1-129-Eb_comp",
+      "notes": 74,
+      "source_rate": 44100,
+      "source_audio_sha256": "59e1e3c9bebdabd48afe28050a2c031e6cf36e5697268301cdf2e74bc66b71f1",
+      "annotation_sha256": "cd79564c51d0dec7d04e010d31525e9f7d2b9d41cf6116118a66ac5a8c181007",
+      "events_sha256": "25c82f2c666ecbe8ca704d1e5303a990c3c08c6feca2746b5ba7644582a343a2",
+      "model_sha256": "3551941628e0115bc55ea319c1d87aecb402dc5c306d76f4451be970ce278df3",
+      "reference_audition_trim_db": 9.73014703683393,
+      "model_audition_trim_db": 1.913140773012782,
+      "metrics": {
+       "log_magnitude_mae_db": 12.884053887667982,
+       "spectral_convergence": 0.9131027910585751,
+       "chroma_cosine_distance": 0.4009926937351305,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -15.244857054582466
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.5195899022349194
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 1.9626965634359577
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 6.102627240653904
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -3.998102747489983
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -5.156532396226448
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -7.605621456205876
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 12.29313466544855,
+         "spectral_convergence": 0.8671433071374228
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 12.59474135036565,
+         "spectral_convergence": 0.8357710070449562
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 12.95982671780098,
+         "spectral_convergence": 0.8363965021096069
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.182804779989318,
+         "spectral_convergence": 0.8967408124946901
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 13.107558933410433,
+         "spectral_convergence": 0.9897169610333927
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.166256878992952,
+         "spectral_convergence": 1.052848156531382
+        }
+       ]
+      }
+     },
+     {
+      "track": "01_BN1-129-Eb_solo",
+      "notes": 34,
+      "source_rate": 44100,
+      "source_audio_sha256": "76330537c6a88df56c7e338da9dd81d84cbf7f3a5ae7cd1b32a663bded6b76b4",
+      "annotation_sha256": "ecdd877eaf6208cfefa47b74c1a6a5211146e12dfa0f5132345a4c456cd67fc8",
+      "events_sha256": "b7aaedbfc5b3cc1454f300bc4974a537cca2e08ce5c81331f3a54d27757549ab",
+      "model_sha256": "d868718b80ffeab68210dcb63231dee0d8893632644f9909c52721b410aa3f0e",
+      "reference_audition_trim_db": 14.000153752705415,
+      "model_audition_trim_db": 5.047289767027379,
+      "metrics": {
+       "log_magnitude_mae_db": 13.85083669540166,
+       "spectral_convergence": 0.768097657994249,
+       "chroma_cosine_distance": 0.1947479297301597,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -11.72648850847138
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 1.6892748538111766
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": -1.1296948924032475
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 1.3881034275933417
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -9.022348368694836
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -11.737091034803779
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -7.883876005250537
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 13.855099364955274,
+         "spectral_convergence": 0.8520510437628904
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 13.90021944912035,
+         "spectral_convergence": 0.8004447279712227
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 13.832280793431856,
+         "spectral_convergence": 0.7314667782117846
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.654919355668884,
+         "spectral_convergence": 0.726324133341395
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.121054121091891,
+         "spectral_convergence": 0.7399236015132489
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.741447088141712,
+         "spectral_convergence": 0.7583756631649525
+        }
+       ]
+      }
+     },
+     {
+      "track": "02_BN1-129-Eb_comp",
+      "notes": 78,
+      "source_rate": 44100,
+      "source_audio_sha256": "54d0b5d30a727ddbf3f9dbe18663063d6c55c979627ab6993fdede63f0a54cc0",
+      "annotation_sha256": "38208980f05c69d1560306553651f687a3c6260f47d98b64e33eb74c33e14931",
+      "events_sha256": "e015bc9727f1a5ecd9dd20e837b02bfbd3d488d36e7c5fd0f22c1f2a42001d48",
+      "model_sha256": "adabec60e8e2344eaf56e30373dc2b51970ec4b5b6af3c089c5891981ec676eb",
+      "reference_audition_trim_db": -3.2082305572645136,
+      "model_audition_trim_db": 3.061885774077928,
+      "metrics": {
+       "log_magnitude_mae_db": 19.756101789859947,
+       "spectral_convergence": 0.9560702900005363,
+       "chroma_cosine_distance": 0.3886311767085264,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -15.10448339487093
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.7774414796927769
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 9.403479969073219
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 2.351104433574979
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -0.26465121521072726
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -0.8110670827533675
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": 0.08859308452405858
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 19.684670839608646,
+         "spectral_convergence": 0.8466330210474613
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 20.399047241784878,
+         "spectral_convergence": 0.8226308607310426
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 20.793767391806263,
+         "spectral_convergence": 0.8608499191402154
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 20.895259735282256,
+         "spectral_convergence": 0.9861493245667636
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 19.89154532720739,
+         "spectral_convergence": 1.0951062603372215
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 16.87232020347024,
+         "spectral_convergence": 1.1250523541805137
+        }
+       ]
+      }
+     },
+     {
+      "track": "03_BN1-129-Eb_solo",
+      "notes": 35,
+      "source_rate": 44100,
+      "source_audio_sha256": "51ec6f1d43b4866a02ca5ff43bb5cfcb7f2b8069fe12b078385e091a8f8d78f4",
+      "annotation_sha256": "44dd4061b27bb3320d1e42180f5602e71932be8c388945f8b06a46d2df6d7aef",
+      "events_sha256": "00e4e78f6b33523eb5e516fd7d97dec783cc6b4620e2ce90314e6b4996ff4913",
+      "model_sha256": "655df3dc76f0118fdbdd17630e0f70d2f5566601234dc472b8e2d2e0f80ed960",
+      "reference_audition_trim_db": -0.3362882949392624,
+      "model_audition_trim_db": 7.9679425200240726,
+      "metrics": {
+       "log_magnitude_mae_db": 14.879656907734978,
+       "spectral_convergence": 0.9807031463301414,
+       "chroma_cosine_distance": 0.24303066229626086,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -13.51962531408237
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.7098705047506858
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 1.0509879671157778
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -1.4624693423002775
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -7.768683665186308
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -14.190770882288428
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -9.22090582158334
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 14.983048470468697,
+         "spectral_convergence": 0.9978819835455865
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 15.144066316652804,
+         "spectral_convergence": 0.9723657088115022
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 15.251152031324871,
+         "spectral_convergence": 0.9488092766373885
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 15.010274737839739,
+         "spectral_convergence": 0.9694969753093143
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.71740240919175,
+         "spectral_convergence": 0.9886846087052437
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 14.171997480932003,
+         "spectral_convergence": 1.0069803249718132
+        }
+       ]
+      }
+     },
+     {
+      "track": "04_BN1-129-Eb_comp",
+      "notes": 70,
+      "source_rate": 44100,
+      "source_audio_sha256": "ca4b487760400edabb87ed478a523ad0587c020b8463f97429af4009789f4ebd",
+      "annotation_sha256": "81c4818b93f86a45a582d1b958837b5579c599a2b0a214e9025c63981c87538a",
+      "events_sha256": "658234f20ec10b3ac526eba900e66fb38cb0aa4fb1d0b4df89d656008e57b1d9",
+      "model_sha256": "5eb1fdb223663915af770f75a4fd70712b555c3845c122b9ac7ca2654eaf6be6",
+      "reference_audition_trim_db": 7.501653209529044,
+      "model_audition_trim_db": 1.7763217973709353,
+      "metrics": {
+       "log_magnitude_mae_db": 13.623076035639976,
+       "spectral_convergence": 0.8539534406234118,
+       "chroma_cosine_distance": 0.4769611169789534,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -15.40676719503134
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 1.396935749280589
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 3.449634758436675
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 6.291338659668141
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -1.3789983841976452
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -11.852850174513405
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -8.796934421793846
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 13.037736848937975,
+         "spectral_convergence": 0.8358225519347086
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 13.348019272230745,
+         "spectral_convergence": 0.7946470103547825
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 13.69789252397366,
+         "spectral_convergence": 0.7882367858553746
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.981089706082974,
+         "spectral_convergence": 0.8405069131930243
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 13.93986147087404,
+         "spectral_convergence": 0.9019963482746426
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.73385639174046,
+         "spectral_convergence": 0.9625110341279387
+        }
+       ]
+      }
+     },
+     {
+      "track": "05_BN1-129-Eb_solo",
+      "notes": 24,
+      "source_rate": 44100,
+      "source_audio_sha256": "ccf801f3a6e7b1ab38dd9bf1ae917d13c51ef93c977af41cdabcb0548f55a261",
+      "annotation_sha256": "8b9c47dae61790596142ffc898995a82d066229fa5b2947facc4a83750a921e1",
+      "events_sha256": "767d5e6af9b502ae8132e2068d1ea7b8b0126d02874e7fe349d2d3df80fff29b",
+      "model_sha256": "21b350fa203ec5d5e4ad107cc7069311b9624436787d6f9270a9c7a65bcdddd5",
+      "reference_audition_trim_db": 0.7758792886505601,
+      "model_audition_trim_db": 4.430366970522454,
+      "metrics": {
+       "log_magnitude_mae_db": 14.260647830404102,
+       "spectral_convergence": 0.9467968431891735,
+       "chroma_cosine_distance": 0.16734125475973138,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -26.14564824040857
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 4.900354782344457
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": -1.168768738363807
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -5.870512741554813
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -6.865263660079202
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -13.446853732502145
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -13.914896045084204
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 15.30813977676188,
+         "spectral_convergence": 0.9946792942723834
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 15.650284254814283,
+         "spectral_convergence": 0.96216873282356
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 15.819907674785727,
+         "spectral_convergence": 0.9256658776571275
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 14.631584501695539,
+         "spectral_convergence": 0.931629081307389
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 12.900204799565138,
+         "spectral_convergence": 0.9327608606536986
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 11.25376597480203,
+         "spectral_convergence": 0.9338772124208822
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "fylde": {
+    "dataset": "GuitarSet v1.1.0",
+    "source": "https://zenodo.org/records/3371780",
+    "attribution": "Qingyang Xi, Rachel M. Bittner, Johan Pauwels, Xuzhou Ye, Juan P. Bello, ISMIR 2018; CC BY 4.0",
+    "archive_md5": {
+     "annotation.zip": "b39b78e63d3446f2e54ddb7a54df9b10",
+     "audio_mono-mic.zip": "275966d6610ac34999b58426beb119c3"
+    },
+    "renderer_sha256": "91e59887c4d994fed5677f8075c377617cd70f2a034a8a7589281496ac92fc2d",
+    "physical_scorer_sha256": "94ec199da74c3432801225829028abf25a100d73d66015e754d6dea8da80c7bd",
+    "scorer_sha256": "9e43620cd629a003730155e12bca4903e676a88dc7b09fc9c89012b87da4f10f",
+    "numpy_version": "1.26.4",
+    "scipy_version": "1.14.1",
+    "analysis_rate": 48000,
+    "start_seconds": 0,
+    "duration_seconds": 12,
+    "velocity": 91,
+    "capture": "stereo_mic",
+    "picking": "finger",
+    "bridge_model": "fylde",
+    "render_protocol": "shipping calibration/default controls; string-per-channel; 127-frame blocks; annotated mean pitch; zero release velocity",
+    "limitations": "One phrase, six players; timing/strum statistics previously informed engine. No measured note velocities, gesture labels, matched guitar body or matched microphone. Descriptor distances include those differences and do not establish perceptual equivalence or market rank.",
+    "mean": {
+     "log_magnitude_mae_db": 14.903526126661772,
+     "spectral_convergence": 0.8485857628359099,
+     "chroma_cosine_distance": 0.24476550298133684
+    },
+    "performances": [
+     {
+      "track": "00_BN1-129-Eb_comp",
+      "notes": 74,
+      "source_rate": 44100,
+      "source_audio_sha256": "59e1e3c9bebdabd48afe28050a2c031e6cf36e5697268301cdf2e74bc66b71f1",
+      "annotation_sha256": "cd79564c51d0dec7d04e010d31525e9f7d2b9d41cf6116118a66ac5a8c181007",
+      "events_sha256": "25c82f2c666ecbe8ca704d1e5303a990c3c08c6feca2746b5ba7644582a343a2",
+      "model_sha256": "2c9016598f6b634586de217ee71d7fe8f47f1f5aaddeee8997f5295c89c1ec27",
+      "reference_audition_trim_db": 9.73014703683393,
+      "model_audition_trim_db": -0.05859458551951237,
+      "metrics": {
+       "log_magnitude_mae_db": 12.068023927918253,
+       "spectral_convergence": 0.825715416805036,
+       "chroma_cosine_distance": 0.21872306537649014,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -6.362237363564813
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.3896218953241555
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 2.007693769917302
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 4.379125899843636
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -5.1750935203210435
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -7.039596715052276
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -9.205815979472492
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 11.521387264635658,
+         "spectral_convergence": 0.8609951679616596
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 11.753082211444072,
+         "spectral_convergence": 0.8323476330465733
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 11.998798235503859,
+         "spectral_convergence": 0.7942809045287029
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 12.157104904839702,
+         "spectral_convergence": 0.8035683901849286
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 12.297301290934692,
+         "spectral_convergence": 0.8241192634377588
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 12.680469660151534,
+         "spectral_convergence": 0.8389811416705931
+        }
+       ]
+      }
+     },
+     {
+      "track": "01_BN1-129-Eb_solo",
+      "notes": 34,
+      "source_rate": 44100,
+      "source_audio_sha256": "76330537c6a88df56c7e338da9dd81d84cbf7f3a5ae7cd1b32a663bded6b76b4",
+      "annotation_sha256": "ecdd877eaf6208cfefa47b74c1a6a5211146e12dfa0f5132345a4c456cd67fc8",
+      "events_sha256": "b7aaedbfc5b3cc1454f300bc4974a537cca2e08ce5c81331f3a54d27757549ab",
+      "model_sha256": "c087f46d2a139825f6938268a7ef0de4af74845397422a3eab0a376165ec8914",
+      "reference_audition_trim_db": 14.000153752705415,
+      "model_audition_trim_db": 5.00913409434386,
+      "metrics": {
+       "log_magnitude_mae_db": 13.848136924562729,
+       "spectral_convergence": 0.7730306885964335,
+       "chroma_cosine_distance": 0.1672821968070043,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -7.275258767626385
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.06931601344208937
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 0.7790874587795861
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 1.6267204033153422
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -8.96743056022028
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -11.68991600199546
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -7.561693160111673
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 13.874768982939827,
+         "spectral_convergence": 0.8691067475680191
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 13.935060518377824,
+         "spectral_convergence": 0.8117752984018095
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 13.863938919275872,
+         "spectral_convergence": 0.735648531322102
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.632055589978828,
+         "spectral_convergence": 0.7283681049294766
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.076886785768593,
+         "spectral_convergence": 0.7388894728300921
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.706110751035427,
+         "spectral_convergence": 0.7543959765271023
+        }
+       ]
+      }
+     },
+     {
+      "track": "02_BN1-129-Eb_comp",
+      "notes": 78,
+      "source_rate": 44100,
+      "source_audio_sha256": "54d0b5d30a727ddbf3f9dbe18663063d6c55c979627ab6993fdede63f0a54cc0",
+      "annotation_sha256": "38208980f05c69d1560306553651f687a3c6260f47d98b64e33eb74c33e14931",
+      "events_sha256": "e015bc9727f1a5ecd9dd20e837b02bfbd3d488d36e7c5fd0f22c1f2a42001d48",
+      "model_sha256": "2b92a2c70f5b62b75324b3cb3b3351b8f1b8baf220f03754801c7e973a375f38",
+      "reference_audition_trim_db": -3.2082305572645136,
+      "model_audition_trim_db": 3.2238041695044766,
+      "metrics": {
+       "log_magnitude_mae_db": 19.864383093327174,
+       "spectral_convergence": 0.8536203487825511,
+       "chroma_cosine_distance": 0.34043001433567477,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -5.113330546742182
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": -0.880859858388036
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 11.45444333373524
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 3.6721419182426107
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": 0.40197271452037414
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -0.7225799526039295
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": 0.5206997857152003
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 19.809485514448294,
+         "spectral_convergence": 0.8370841660306583
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 20.53684548821701,
+         "spectral_convergence": 0.8133238484565986
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 20.927545121357724,
+         "spectral_convergence": 0.8129450661235255
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 21.013346811011633,
+         "spectral_convergence": 0.8456193810595719
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 20.0023344732807,
+         "spectral_convergence": 0.8860809274087171
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 16.896741151647678,
+         "spectral_convergence": 0.926668703616236
+        }
+       ]
+      }
+     },
+     {
+      "track": "03_BN1-129-Eb_solo",
+      "notes": 35,
+      "source_rate": 44100,
+      "source_audio_sha256": "51ec6f1d43b4866a02ca5ff43bb5cfcb7f2b8069fe12b078385e091a8f8d78f4",
+      "annotation_sha256": "44dd4061b27bb3320d1e42180f5602e71932be8c388945f8b06a46d2df6d7aef",
+      "events_sha256": "00e4e78f6b33523eb5e516fd7d97dec783cc6b4620e2ce90314e6b4996ff4913",
+      "model_sha256": "c728100ae49f31f5c0d0d60dceab288bbb503cc690c68a7a20754f77bb74a9c4",
+      "reference_audition_trim_db": -0.3362882949392624,
+      "model_audition_trim_db": 6.600507545884792,
+      "metrics": {
+       "log_magnitude_mae_db": 14.74908206208724,
+       "spectral_convergence": 0.9220886901003812,
+       "chroma_cosine_distance": 0.22006026615341964,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -12.711144178268983
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.7117953778255813
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 1.2862973511086926
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -2.62864176501839
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -8.313255275680048
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -15.547138612702895
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -10.229358041063675
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 14.8548999598523,
+         "spectral_convergence": 0.9612080558413244
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 14.924943390926076,
+         "spectral_convergence": 0.9348873814399913
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 14.970388316126927,
+         "spectral_convergence": 0.900043992386809
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 14.784135687837521,
+         "spectral_convergence": 0.9026751874724652
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.69867952281394,
+         "spectral_convergence": 0.9123085033433848
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 14.261445494966663,
+         "spectral_convergence": 0.9214090201183117
+        }
+       ]
+      }
+     },
+     {
+      "track": "04_BN1-129-Eb_comp",
+      "notes": 70,
+      "source_rate": 44100,
+      "source_audio_sha256": "ca4b487760400edabb87ed478a523ad0587c020b8463f97429af4009789f4ebd",
+      "annotation_sha256": "81c4818b93f86a45a582d1b958837b5579c599a2b0a214e9025c63981c87538a",
+      "events_sha256": "658234f20ec10b3ac526eba900e66fb38cb0aa4fb1d0b4df89d656008e57b1d9",
+      "model_sha256": "09938d06556b2096f9c1ec564b35313af75b6d95fadb4de3246288e947edb80d",
+      "reference_audition_trim_db": 7.501653209529044,
+      "model_audition_trim_db": 2.6980728003870795,
+      "metrics": {
+       "log_magnitude_mae_db": 14.102883594508015,
+       "spectral_convergence": 0.8219837944502819,
+       "chroma_cosine_distance": 0.3545281367295052,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -2.3694285345024615
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": -0.5135066841262533
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 5.97948061963308
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 7.77654439110361
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -0.16107113636762982
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -10.826894404148
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -7.366136826316464
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 13.475515195844054,
+         "spectral_convergence": 0.8598466557065585
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 13.866196767443737,
+         "spectral_convergence": 0.8316985036053225
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 14.290510724358183,
+         "spectral_convergence": 0.8080807417752401
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 14.583478974570642,
+         "spectral_convergence": 0.8117188555969937
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.41009802846622,
+         "spectral_convergence": 0.806879020844471
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.991501876365243,
+         "spectral_convergence": 0.8136789891731054
+        }
+       ]
+      }
+     },
+     {
+      "track": "05_BN1-129-Eb_solo",
+      "notes": 24,
+      "source_rate": 44100,
+      "source_audio_sha256": "ccf801f3a6e7b1ab38dd9bf1ae917d13c51ef93c977af41cdabcb0548f55a261",
+      "annotation_sha256": "8b9c47dae61790596142ffc898995a82d066229fa5b2947facc4a83750a921e1",
+      "events_sha256": "767d5e6af9b502ae8132e2068d1ea7b8b0126d02874e7fe349d2d3df80fff29b",
+      "model_sha256": "13b61791bbe117bdcc4fe447a230febafb36daa2f90486d3825733e66f5de64b",
+      "reference_audition_trim_db": 0.7758792886505601,
+      "model_audition_trim_db": 5.6252688205637895,
+      "metrics": {
+       "log_magnitude_mae_db": 14.788647157567214,
+       "spectral_convergence": 0.8950756382807762,
+       "chroma_cosine_distance": 0.1675693384859272,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -22.36892995704716
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": -0.09093686331591071
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 2.1434794565172433
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -4.409872738701218
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -5.084023409179568
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -12.162175533043204
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -12.354515914581054
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 15.995851158113917,
+         "spectral_convergence": 0.9426140909611261
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 16.420191937759625,
+         "spectral_convergence": 0.8984569650764012
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 16.645950408476352,
+         "spectral_convergence": 0.8801172776862438
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 15.219077454514403,
+         "spectral_convergence": 0.8844371435937315
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 13.161367941652395,
+         "spectral_convergence": 0.884841859904339
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 11.289444044886588,
+         "spectral_convergence": 0.8799864924628159
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "no_anchor_research": {
+   "included_in_runtime": false,
+   "modification": "Fylde scalar candidate with steel voice.bridgeTailStiffness=0; all other parameters unchanged.",
+   "conclusion": "Not adopted: mixed outcome, including worse development tuning and roughly 8-cent G2 chord pull despite stronger low-band energy.",
+   "scores": {
+    "train": {
+     "example_count": 83,
+     "score": {
+      "baseline": 6.113884186471812,
+      "candidate": 5.903957727332981,
+      "change_percent": -3.43360215431191,
+      "delta": -0.20992645913883123
+     },
+     "terms": {
+      "attack": {
+       "baseline": 6.760963939436504,
+       "baseline_count": 13529,
+       "candidate": 6.417052554838599,
+       "candidate_count": 13529,
+       "change_percent": -5.086721178793452,
+       "delta": -0.34391138459790493
+      },
+      "body": {
+       "baseline": 11.036902923038106,
+       "baseline_count": 3320,
+       "candidate": 10.966453669842137,
+       "candidate_count": 3320,
+       "change_percent": -0.6383063590141291,
+       "delta": -0.07044925319596906
+      },
+      "decay": {
+       "baseline": 5.209704912839776,
+       "baseline_count": 1468,
+       "candidate": 4.749594300669476,
+       "candidate_count": 1468,
+       "change_percent": -8.831797959157273,
+       "delta": -0.4601106121702996
+      },
+      "dynamics": {
+       "baseline": 0.059306419624114565,
+       "baseline_count": 54,
+       "candidate": 0.04181493541130215,
+       "candidate_count": 54,
+       "change_percent": -29.493407836240728,
+       "delta": -0.017491484212812415
+      },
+      "harmonics": {
+       "baseline": 7.876991496561699,
+       "baseline_count": 1981,
+       "candidate": 7.795769114976781,
+       "candidate_count": 1981,
+       "change_percent": -1.0311345596903498,
+       "delta": -0.08122238158491779
+      },
+      "pitch_trajectory": {
+       "baseline": 0.44523219559114546,
+       "baseline_count": 249,
+       "candidate": 0.6247781003002985,
+       "candidate_count": 249,
+       "change_percent": 40.32635251607661,
+       "delta": 0.179545904709153
+      },
+      "tuning": {
+       "baseline": 2.9863403539482216,
+       "baseline_count": 988,
+       "candidate": 2.9443133025156163,
+       "candidate_count": 988,
+       "change_percent": -1.4073094976278067,
+       "delta": -0.04202705143260532
+      }
+     }
+    },
+    "validation": {
+     "example_count": 24,
+     "score": {
+      "baseline": 6.074617956165557,
+      "candidate": 5.904799717970047,
+      "change_percent": -2.7955377510309187,
+      "delta": -0.16981823819551067
+     },
+     "terms": {
+      "attack": {
+       "baseline": 7.134032074307243,
+       "baseline_count": 3912,
+       "candidate": 6.703132253364474,
+       "candidate_count": 3912,
+       "change_percent": -6.04006004535117,
+       "delta": -0.430899820942769
+      },
+      "body": {
+       "baseline": 10.977984668807093,
+       "baseline_count": 960,
+       "candidate": 10.882759636599415,
+       "candidate_count": 960,
+       "change_percent": -0.8674181562509431,
+       "delta": -0.09522503220767753
+      },
+      "decay": {
+       "baseline": 4.508876156058934,
+       "baseline_count": 430,
+       "candidate": 4.227147854998638,
+       "candidate_count": 430,
+       "change_percent": -6.248304262731086,
+       "delta": -0.281728301060296
+      },
+      "dynamics": {
+       "baseline": 0.002740179197190927,
+       "baseline_count": 14,
+       "candidate": 0.0043610490937801855,
+       "candidate_count": 14,
+       "change_percent": 59.15196707758676,
+       "delta": 0.0016208698965892586
+      },
+      "harmonics": {
+       "baseline": 8.319933211378633,
+       "baseline_count": 574,
+       "candidate": 8.074059680028473,
+       "candidate_count": 574,
+       "change_percent": -2.955234436424259,
+       "delta": -0.24587353135015988
+      },
+      "pitch_trajectory": {
+       "baseline": 0.15186834692264772,
+       "baseline_count": 72,
+       "candidate": 0.1577677918511763,
+       "candidate_count": 72,
+       "change_percent": 3.884578352283885,
+       "delta": 0.005899444928528563
+      },
+      "tuning": {
+       "baseline": 2.9296870195027185,
+       "baseline_count": 286,
+       "candidate": 3.6427326198139562,
+       "candidate_count": 286,
+       "change_percent": 24.33862714906212,
+       "delta": 0.7130456003112378
+      }
+     }
+    },
+    "flattop": {
+     "example_count": 8,
+     "score": {
+      "baseline": 8.07684466387557,
+      "candidate": 7.16009538225506,
+      "change_percent": -11.350339393312304,
+      "delta": -0.9167492816205112
+     },
+     "terms": {
+      "attack": {
+       "baseline": 7.404680808113602,
+       "baseline_count": 1304,
+       "candidate": 7.137384481634017,
+       "candidate_count": 1304,
+       "change_percent": -3.609829152752908,
+       "delta": -0.2672963264795847
+      },
+      "body": {
+       "baseline": 15.901517635891576,
+       "baseline_count": 320,
+       "candidate": 13.738099229174239,
+       "candidate_count": 320,
+       "change_percent": -13.605106482630624,
+       "delta": -2.163418406717337
+      },
+      "decay": {
+       "baseline": 6.621211646423282,
+       "baseline_count": 143,
+       "candidate": 5.423326132484954,
+       "candidate_count": 143,
+       "change_percent": -18.091636061587224,
+       "delta": -1.1978855139383278
+      },
+      "dynamics": {
+       "baseline": null,
+       "baseline_count": 0,
+       "candidate": null,
+       "candidate_count": 0,
+       "change_percent": null,
+       "delta": null
+      },
+      "harmonics": {
+       "baseline": 7.743551843209751,
+       "baseline_count": 192,
+       "candidate": 7.199328683038485,
+       "candidate_count": 192,
+       "change_percent": -7.0280818310590965,
+       "delta": -0.5442231601712662
+      },
+      "pitch_trajectory": {
+       "baseline": 0.5526888195564189,
+       "baseline_count": 24,
+       "candidate": 0.8487843725202255,
+       "candidate_count": 24,
+       "change_percent": 53.57364623396022,
+       "delta": 0.29609555296380663
+      },
+      "tuning": {
+       "baseline": 2.6057492235299455,
+       "baseline_count": 96,
+       "candidate": 1.9247608917439323,
+       "candidate_count": 96,
+       "change_percent": -26.13407021814228,
+       "delta": -0.6809883317860133
+      }
+     }
+    }
+   },
+   "performance_mean": {
+    "log_magnitude_mae_db": 15.141746809016489,
+    "spectral_convergence": 0.8093664295707644,
+    "chroma_cosine_distance": 0.21989992688618298
+   }
+  },
+  "listening": {
+   "status": "Unheard by user at generation; no preference or approval claimed.",
+   "directory": "/tmp/acustra-final-fylde-listening",
+   "letters": [
+    "A.wav",
+    "B.wav"
+   ],
+   "key": "Separate key.md, unread by design.",
+   "protocol": "Identical 15.8-second string-specific event sequence, seed/default controls, velocity 91, 48 kHz, 127-sample blocks. Original versus Fylde bridge only; same 3.25 mm anchor. Whole-file stereo RMS matched; no EQ/gating/compression.",
+   "rms_dbfs": {
+    "A": -24.141420430290307,
+    "B": -24.14142067103417
+   },
+   "trim_db": {
+    "A": 6.603008912748638,
+    "B": 3.351074193263962
+   },
+   "peak": {
+    "A": 0.9000000357627869,
+    "B": 0.8757456541061401
+   },
+   "events_sha256": "13976e48e617dc35e8f174244ab882ec63cd9466a93f49a6c5c1721adf300643",
+   "wav_sha256": {
+    "A": "7e8ead009626f411390491591aa64142371d8504006bf7cb0d181687749ba29a",
+    "B": "a37d30b295e2279106994fdac47360d5e9e6c06f1318a8f88dc245fab758544a"
+   }
+  }
  }
 }

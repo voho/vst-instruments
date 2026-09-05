@@ -140,6 +140,24 @@ entry retains this baseline without distributing the source recordings.
 The adjacent `performance_spectral_diagnostic_2026_09_05` entry uses exactly
 the same audio bytes and leaves all three baseline distances unchanged.
 
+The optional measured Fylde bridge gives the following paired results with
+identical recordings, calibration and macOS arm64 build. Lower descriptor
+distances mean closer to these recordings; they are not perceptual ratings.
+All nylon renders remain byte-identical.
+
+| Comparison | Original bridge | Fylde bridge |
+| --- | ---: | ---: |
+| Dry training loss, 83 notes | 6.113884 | 5.958960 |
+| Dry development loss, 24 notes | 6.074618 | 5.741121 |
+| Dry flat-top loss, 8 notes | 8.076845 | 7.434877 |
+| Performance log spectral error, dB | 14.875729 | 14.903526 |
+| Performance spectral convergence | 0.903121 | 0.848586 |
+| Performance chroma distance | 0.311951 | 0.244766 |
+
+The performance log error rises slightly while the other descriptors improve.
+The report's `measured_steel_bridge_2026_09_05` entry retains the individual
+results, provenance and exact input/model hashes.
+
 ## How it works
 
 ### Six-string performance model
@@ -388,7 +406,7 @@ decay faster, and a second-order allpass follows the stiff-string
 inharmonicity law, collocated at H1, H7 and H11.5 and re-solved at the tap the
 delay currently occupies so a bend or vibrato's slewing fractional part does
 not stall the solve. String Age lowers the high-frequency cutoff and
-increases loss. A shared fitted cutoff scale of 1.869 reduces excess
+increases loss. A shared fitted cutoff scale of 2.286 reduces excess
 upper-partial damping found across both materials; a regression proves that it
 does not move the requested fundamental T60 or compensated pitch. A second,
 orthogonal polarisation loop is detuned from the first by an end correction
@@ -407,7 +425,7 @@ Steel attack pitch uses a bounded Kirchhoff--Carrier energy surrogate. The
 released waveguide displacement supplies its slope energy; string axial
 rigidity converts that energy into extra tension, and the existing loss makes
 the resulting sharpened pitch fall monotonically toward the settled pitch. The
-single displacement calibration is 0.0061 m and the excursion is bounded to
+single displacement calibration is 0.007736 m and the excursion is bounded to
 20 cents. The last mechanism-specific interaction sweep selected it on
 training total and improved early-pitch trajectory on both splits; at that fit
 stage, the development-validation aggregate was 0.0215 lower when it was
@@ -415,12 +433,12 @@ disabled, and that tradeoff is retained explicitly in the fit report. The same
 mechanism failed the nylon training gate, so nylon keeps the exact earlier 3-cent,
 velocity-squared and Touch-scaled cue with a 75 ms
 decay. It is an authored cue, not a nonlinear-string claim. A separate fitted
-steel fret-decay slope of -0.030 lengthens T60 with fret number; nylon retains
+steel fret-decay slope of -0.0598 lengthens T60 with fret number; nylon retains
 its prior +0.018 fret law.
 
 ### Bridge, sympathetic strings and body
 
-The played strings drive a two-point positive-real bridge model, fitted
+The original model's played strings drive a two-point positive-real bridge, fitted
 through 10 kHz from both of the archive's bridge ends (Method.pdf's hammer
 positions between B3/E4 and between E2/A2, each with its own accelerometer).
 Each string terminates at its own point along the saddle, at a lever arm
@@ -437,10 +455,26 @@ reciprocal 2x2 left to fit, so every string above that corner reads the mean
 of the two ends and no mode there carries a cross or rocking residue. Steel's
 bank keeps 47 modes (30 of them rocking), nylon's 46 (40 rocking). A bank with
 no rocking mode at all falls back to the single-point port every string
-shared before; the engine suite asserts both shipped banks carry at least one.
+shared before; the engine suite asserts both original banks carry at least one.
 
-Behind the saddle each string runs on to its anchor, and that short segment is
-a spring between the bridge and ground. All six are there whether or not
+**Fylde bridge / steel**, in the Guitar menu, selects a separate 44-mode passive
+bridge fitted to the first instrument in [Carcagno et al.'s steel-guitar
+measurements](https://doi.org/10.1121/1.5084735): a custom Fylde Falstaff with
+Sitka spruce top and Brazilian rosewood back and sides. Its normal bridge
+velocity/force was measured with the strings damped, between strings 5 and 6.
+The fit retains measured SI gain and has 0.230 relative complex error and
+0.98 dB median magnitude error over 60 Hz–10 kHz. The
+[generator](Tools/GenerateMeasuredSteelBridge.py) verifies the source hash,
+fits only the measured response, and records the inferred phase alignment.
+There is no measured rocking or microphone response in this dataset: all six
+strings share its scalar bridge, and microphone radiation still comes from the
+existing body bank. This is a measured bridge alternative, not a complete Fylde
+replica. It retains the current string calibration and anchor model; nylon and
+the default sound are unchanged. The host's appended `bridgeModel` parameter
+preserves this choice in sessions, with Original as the missing-state default.
+
+The model represents each short segment behind the saddle as a spring between
+the bridge and ground. All six are there whether or not
 anyone is playing them, and springs in parallel add, so the anchor the
 junction sees is one constant of the instrument rather than a function of how
 many notes are held — but because each stub now stands at its own string's
@@ -880,14 +914,17 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   Closing this wants a detector that does not sit on a band two other strings
   reach first — a per-string probe, or the wrapper reporting the delays it
   computed — not a looser bound on the same measurement.
-- The top three steel notes' fundamentals no longer decay at the same rate
-  across host rates. The bound was 1.5%; since the 2026-09-04 refit MIDI 82,
-  83 and 84 read 1.87%, 2.78% and 1.77% over 44.1, 48 and 96 kHz, and the
-  test's bound moved to 3.2% to say so. It is not the bridge mobility, which
-  is restored to its measured value and leaves the spread in place; the two
-  candidates are the halved body Q scale and the lowered bridge conductance
-  corner, and neither was isolated. A note should sound the same at every
-  host rate, so this is a defect to close, not a tolerance to keep widening.
+- The highest steel partials still vary with host rate. The loop-loss filters
+  now map the calibrated 48 kHz transfer to the host rate, preserving the
+  existing 48 kHz sound; bilinear frequency warping leaves H8 decay spread of
+  4.1–12.8% across MIDI 76–84 at 44.1, 48 and 96 kHz. This is improved from
+  18.8–32.9% with the former host-dependent cutoff, but is not rate invariance.
+  The previously reported 1.87–2.78% fundamental spread was a measurement
+  error: the estimator mistook tension-glide detuning for amplitude loss.
+  Following each window's partial peak puts H1 below 0.21% and restores its
+  original 1.5% test bound. The test disables bridge coupling, so body Q and
+  bridge conductance were not the cause. Closing the remaining high-partial
+  gap requires less warping while retaining the calibrated 48 kHz loss curve.
 
 - The bridge mobility the corpus wants is not the mobility that was measured.
   The 2026-09-04 pattern search drove `bridgeMobilityScale` to its 0.25 floor,
@@ -1119,8 +1156,10 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
 - Shape and Body Material morph whichever measured body the string material
   selects — the g21 flamenca on steel, a 1971 Manuel Contreras classical
   (g34) on nylon — and are not separate measurements of four guitar sizes or
-  four woods. Steel still plays a flamenca blanca because g21 is the only
-  measured steel-strung guitar in the archive.
+  four woods. The original steel bank adapts a nylon-strung flamenca blanca;
+  the archive lists Savarez Tomatito strings for g21. The optional Fylde bridge
+  adds actual steel-guitar mobility, but a matched steel microphone-radiation
+  measurement remains missing.
 - The band audits now measure a distance the build chose rather than an error
   it is trying to close. With the body moved by ear toward the flat-top rows,
   the model over the first 350 ms carries 4.0 dB more energy than the archtop
@@ -1365,6 +1404,12 @@ git history rather than here.
 - Added picking and capture audio demonstrations.
 - Added a six-player, 315-note real-performance benchmark with fixed excerpts,
   descriptor scores and reproducible, level-matched listening exports.
+- Added an optional measured Fylde steel bridge in the Guitar menu. Paired dry
+  descriptor losses improve 2.5% on training, 5.5% on development and 7.9% on
+  flat-top recordings; original sessions and nylon remain unchanged.
+- Corrected string-loss filter conversion between sample rates, retaining the
+  exact 48 kHz sound. Pitch-tracked upper-partial decay spreads fall from
+  19–33% to 4–13% across 44.1/48/96 kHz; residual frequency warping remains.
 
 ### 2026-09-04
 
@@ -1391,8 +1436,8 @@ git history rather than here.
   of his published values on every string.
 - **Nylon plays a measured classical guitar, not the flamenca blanca.** A
   1971 Manuel Contreras (measured anechoic) supplies nylon's bridge and body;
-  steel keeps the flamenca (g21), the only measured steel-strung guitar
-  available.
+  steel keeps the flamenca (g21), adapted to steel strings. The earlier claim
+  that g21 itself was steel-strung was incorrect.
 - **Strums draw one shared pick-speed per stroke** rather than independent
   per-string release jitter, so a strum's strings can no longer cross order
   mid-stroke; the level jitter is retuned to the corpus's own measured
@@ -1627,10 +1672,14 @@ python3 Tools/BenchmarkPerformances.py \
   --output /tmp/acustra-performances
 ```
 
-The output directory must be new. `--capture` and `--picking` can evaluate
+The output directory must be new. `--bridge-model fylde`, `--capture` and `--picking` can evaluate
 explicit alternatives; scores against a microphone recording cannot validate
 a pickup's response. `--self-test --renderer ./build-dsp/AcustraPerformanceRenderer`
 checks the scoring, string scheduling and renderer without downloading audio.
+For dry-note comparisons, add `--bridge-model fylde` after the optional
+`--models-only`/`--smoke` mode and before the output directory in
+`AcustraPhysicalFitRenderer`; the same 29 calibration arguments follow.
+The selected bridge is recorded in each model manifest.
 
 Two audits read a rendered fit corpus and compare the model with the recordings
 where the fitted score cannot say where a difference sits: one along the

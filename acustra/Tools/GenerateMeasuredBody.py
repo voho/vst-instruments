@@ -9,8 +9,10 @@ selects shared pole pairs, and fits one complex residue per output and pole.
 The generated model must also remain within fixed complex, magnitude and stereo
 balance regression limits; finiteness alone is not accepted.
 
-Two guitars are emitted, one per string material, because a steel-string and a
-classical are different instruments; the engine selects by StringMaterial.
+Two measured nylon-string guitars are emitted for the engine's two material
+settings. The g21 DeVoe flamenco is adapted for steel; it was not steel-strung.
+The archive's physical-measures table lists Savarez Tomatito strings for g21:
+https://www.savarez.com/tomatito-normal-tension-t50r (nylon/KF trebles).
 
 NumPy and SciPy are required. Regenerate or check the committed header with:
 
@@ -560,9 +562,9 @@ def render_header(steel: dict, nylon: dict) -> str:
 // retained length and raised-cosine taper, but not its inner length; Acustra
 // authors the final tenth as that fade. The shared frequency/Q pairs and
 // independent complex residues are an authored regularised fit, not
-// coefficients published by DAFx-26. One bank per string material: a
-// steel-string and a classical are different instruments, and the engine
-// selects by StringMaterial.
+// coefficients published by DAFx-26. The original material settings select
+// two measured nylon-string guitars: g21 flamenco is adapted for steel,
+// g34 classical for nylon. No steel-strung body radiation was measured here.
 // Adapted from Robert Mores, "Archive for the acoustical documentation of
 // classical Spanish guitars, flamenco guitars and romantic guitars from
 // private and public collections -- bridge mobility" (2021),

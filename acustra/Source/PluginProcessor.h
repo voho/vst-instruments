@@ -21,8 +21,9 @@ inline constexpr auto stereoWidth = "stereoWidth";
 inline constexpr auto output = "output";
 inline constexpr auto capture = "capture";
 inline constexpr auto picking = "picking";
+inline constexpr auto bridgeModel = "bridgeModel";
 
-inline constexpr int parameterCount = 12;
+inline constexpr int parameterCount = 13;
 } // namespace acustra::parameters
 
 class AcustraAudioProcessorEditor;
