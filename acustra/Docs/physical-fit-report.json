@@ -69040,5 +69040,412 @@
     ]
    }
   }
+ },
+ "commercial_listening_reference_2026_09_05": {
+  "scope": "Private matched-harmony/rhythm listening reference; no perceptual verdict or product ranking has been recorded.",
+  "artifact_directory": "/tmp/acustra-commercial-comparison",
+  "manifest_sha256": "77f1059d89170e989e06886be8ae469fa015848b62cc972eae2ebc1cbb336d55",
+  "manifest": {
+   "scope": "Matched chord/rhythm listening reference only; not a realism score or product ranking.",
+   "format": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "sample_format": "float32",
+    "host_block_frames": 128,
+    "bpm": 120,
+    "time_signature": [
+     4,
+     4
+    ],
+    "raw_frames": 672000,
+    "raw_seconds": 14,
+    "shared_crop_start_frame": 192000,
+    "shared_crop_end_frame": 672000,
+    "audition_frames": 480000,
+    "audition_seconds": 10,
+    "tail_seconds_after_note_off": 2,
+    "level_method": "One scalar per take, stereo whole-file RMS over the complete shared 10-second crop.",
+    "target_rms": 0.06309573444801933,
+    "target_rms_dBFS": -24,
+    "limiting_or_compression_added": false
+   },
+   "protocol": {
+    "musical_material": "Four bars of C major, eighth-note chord rhythm, starting at host bar 3 after two silent preroll bars.",
+    "kontakt_midi": "480 PPQ; t=0 CC1=0, CC64=0, pitchwheel=8192, note36 velocity100; note36 off at tick60. Notes60,64,67 velocity91 held from tick3840 to11520. No ending keyswitch.",
+    "acustra_midi": "480 PPQ; CC1=0, CC64=0, pitchwheel=8192 at t=0. Notes48,52,55,60,64 velocity91 together every240 ticks, from3840 to11280 inclusive (32 strums); each chord releases239 ticks after onset, except final release at11520. Wrapper applies its normal grouped-strum timing and alternating direction.",
+    "mismatch": "NI uses chord-recognition and pattern keyswitch MIDI, choosing recorded voicing, accents, stroke detail and microtiming. Acustra receives explicit note streams in conventional open C voicing. These are matched harmony and nominal rhythm, not identical performances or arbitrary-note comparisons.",
+    "midi_export": "No standard MIDI export documented in installed Strummed Acoustic 1.1 manual; no proprietary pattern/sample internals inspected to infer notes or timings."
+   },
+   "kontakt": {
+    "plugin": "Kontakt 7 VST3",
+    "version": "7.10.6",
+    "library": "Session Guitarist - Strummed Acoustic",
+    "content_version": "1.1.0",
+    "instrument": "Strummed Acoustic.nki",
+    "snapshot": "Straight 8ths.nksn",
+    "pattern": "C1 / MIDI36: 11 Straight 8ths A",
+    "auto_chords": false,
+    "voicing": "CC1=0 (low); top UI reads LOW",
+    "accent": "Pitchwheel8192 (center)",
+    "low_capture": "Stereo",
+    "high_capture": "Stereo (high voicing inactive under CC1=0)",
+    "low_doubling": false,
+    "high_doubling": false,
+    "eq": false,
+    "compressor": false,
+    "reverb": false,
+    "link_to_song": false,
+    "swing": "0%",
+    "humanize": "Snapshot default, midpoint visible between Quant. and Original; exact numeric value not asserted.",
+    "timing_offset_ms": 0,
+    "tempo_ratio": "1:1",
+    "pattern_sync": "Sync to host",
+    "latch": "Stop within 1/4",
+    "fret_noise": "Snapshot default; retained",
+    "state": "straight-dry.state",
+    "state_sha256": "d0a1b517cfadc270d1accaf8f405b650ad056232477ec49fe57f19254db61da6",
+    "screenshots": [
+     "straight-dry-controls.png",
+     "straight-reloaded-controls.png",
+     "straight-playback.png",
+     "straight-pattern.png"
+    ],
+    "reference_process": "Fresh plugin process, load complete state, 2-second GUI message pump for loading, then offline render with explicit host transport.",
+    "initial_interactive_render_excluded": "The prior interactive render followed other playback and differs materially from fresh-process output; it is not an audition source.",
+    "fresh_process_repeatability": {
+     "repeat_file": "ni-straight8ths-repeat.wav",
+     "max_absolute_sample_difference": 1.4901161193847656e-08,
+     "relative_rms_difference": 2.7755440228430837e-08,
+     "bit_identical": false
+    }
+   },
+   "acustra": {
+    "plugin": "Acustra VST3 shipping wrapper",
+    "repository_head": "a7f660cc733401a2955dad5f714f6f725a76fe85",
+    "parameters": {
+     "Shape": "Dreadnought",
+     "Body Material": "Spruce",
+     "String Material": "Steel",
+     "Tuning": "Standard",
+     "String Age": 15.0,
+     "Pluck Position": 28.0,
+     "Touch": 58.0,
+     "Body Amount": 82.0,
+     "Stereo Width": 62.0,
+     "Output_dB": -7.5,
+     "Capture": "Stereo mics",
+     "Picking": "Pick",
+     "Bypass": "Off"
+    },
+    "bridge_variants": {
+     "acustra-original": "Original",
+     "acustra-fylde": "Measured Fylde (steel)"
+    },
+    "parameter_evidence": [
+     "acustra-original.log",
+     "acustra-fylde.log"
+    ]
+   },
+   "official_sources": [
+    "https://www.native-instruments.com/fileadmin/ni_media/downloads/manuals/Session_Guitarist_-_Strummed_Acoustic_1.1_Manual_English.pdf",
+    "https://www.native-instruments.com/fileadmin/ni_media/downloads/manuals/kontakt/KONTAKT_610_KSP_Reference_Manual.pdf"
+   ],
+   "takes": [
+    {
+     "id": "ni-straight8ths",
+     "raw_file": "ni-straight8ths-raw.wav",
+     "audition_file": "ni-straight8ths-listen.wav",
+     "raw_stats": {
+      "peak": 0.18969109654426575,
+      "rms": 0.02209638623190502,
+      "first_nonzero_frame": 192000,
+      "first_at_minus60dBFS_frame": 192098
+     },
+     "removed_preroll_peak": 0,
+     "unmatched_crop_stats": {
+      "peak": 0.18969109654426575,
+      "rms": 0.026144796773226793,
+      "first_nonzero_frame": 0,
+      "first_at_minus60dBFS_frame": 98
+     },
+     "gain_linear": 2.413318986385529,
+     "gain_dB": 7.65229459292993,
+     "matched_stats": {
+      "peak": 0.45778512954711914,
+      "rms": 0.06309573445136937,
+      "first_nonzero_frame": 0,
+      "first_at_minus60dBFS_frame": 97
+     }
+    },
+    {
+     "id": "acustra-original",
+     "raw_file": "acustra-original-raw.wav",
+     "audition_file": "acustra-original-listen.wav",
+     "raw_stats": {
+      "peak": 0.8160548210144043,
+      "rms": 0.08508303325772745,
+      "first_nonzero_frame": 192008,
+      "first_at_minus60dBFS_frame": 192009
+     },
+     "removed_preroll_peak": 0,
+     "unmatched_crop_stats": {
+      "peak": 0.8160548210144043,
+      "rms": 0.10067160258816679,
+      "first_nonzero_frame": 8,
+      "first_at_minus60dBFS_frame": 9
+     },
+     "gain_linear": 0.626748088099233,
+     "gain_dB": -4.0581396437401756,
+     "matched_stats": {
+      "peak": 0.5114607810974121,
+      "rms": 0.06309573445096836,
+      "first_nonzero_frame": 8,
+      "first_at_minus60dBFS_frame": 13
+     }
+    },
+    {
+     "id": "acustra-fylde",
+     "raw_file": "acustra-fylde-raw.wav",
+     "audition_file": "acustra-fylde-listen.wav",
+     "raw_stats": {
+      "peak": 0.6165210008621216,
+      "rms": 0.07433740378645695,
+      "first_nonzero_frame": 192009,
+      "first_at_minus60dBFS_frame": 192010
+     },
+     "removed_preroll_peak": 0,
+     "unmatched_crop_stats": {
+      "peak": 0.6165210008621216,
+      "rms": 0.08795720233383417,
+      "first_nonzero_frame": 9,
+      "first_at_minus60dBFS_frame": 10
+     },
+     "gain_linear": 0.7173458542774561,
+     "gain_dB": -2.8854281449481265,
+     "matched_stats": {
+      "peak": 0.4422587752342224,
+      "rms": 0.06309573444527514,
+      "first_nonzero_frame": 9,
+      "first_at_minus60dBFS_frame": 10
+     }
+    }
+   ],
+   "files": {
+    "CMakeLists.txt": {
+     "bytes": 579,
+     "sha256": "f726cf0fb90232063404f3d142c741b065b6fc693b596d51292027e959d8f807"
+    },
+    "KontaktHost": {
+     "bytes": 10812808,
+     "sha256": "9f60faeb5fa71a4a6e8744cda02a137abbb38142c4ab093305422283d6f5daec"
+    },
+    "acustra-c-major.mid": {
+     "bytes": 1358,
+     "sha256": "5d0232abc4dde2cbb83c36612d39a712acbf59bb3c05fe994011a85dce85f938"
+    },
+    "acustra-fylde-listen.wav": {
+     "bytes": 3840058,
+     "sha256": "d9764fd641ab9fa6ca52db7b122e132cc9b5f2dc5913e7a5baed097aa545650b"
+    },
+    "acustra-fylde-raw.wav": {
+     "bytes": 5376104,
+     "sha256": "e90a9fd20424d6bd4c9294c7ba8e1abd3c443c58023d141a12a33ce1780f048f"
+    },
+    "acustra-fylde.log": {
+     "bytes": 504,
+     "sha256": "e4628330539bbdaf29a33dad124bc5f0aedd7be446c92840e1b4110267fdc977"
+    },
+    "acustra-fylde.state": {
+     "bytes": 947,
+     "sha256": "f56ad9677130371e0c45ff6c5247dfe03f2de6bca651c6304cf95c162195005a"
+    },
+    "acustra-original-listen.wav": {
+     "bytes": 3840058,
+     "sha256": "a2ed32ab4a8b621eaefbcdf0ac4fde29890dfaa8744fa1300fa9fe951e713310"
+    },
+    "acustra-original-raw.wav": {
+     "bytes": 5376104,
+     "sha256": "700af8fc00166751fb462ea09fd9954e4efb58806a11b6283c389029cb398711"
+    },
+    "acustra-original.log": {
+     "bytes": 489,
+     "sha256": "344e2560c08f3aef05cb3a623a40ca234e23357fec337bee89d9ca5a20a8e2d7"
+    },
+    "acustra-original.state": {
+     "bytes": 947,
+     "sha256": "e7a399dfb6465b0f50d84a48227597743b320bb42598da0964ec4c1f29f0aab4"
+    },
+    "main.cpp": {
+     "bytes": 11542,
+     "sha256": "5bed6c6729948ddf179e3b78a2cc03302fc1225b0822ffda8dd78abeb8f1acee"
+    },
+    "native.mm": {
+     "bytes": 4259,
+     "sha256": "771a647d2c9c5ae0082c99ea0b45c77050eca5b21cc4353294f057f2825558ef"
+    },
+    "ni-render.log": {
+     "bytes": 120,
+     "sha256": "ecdc24e8ce5b12d1e640fac18843feeaece77d5828510bab059e10dc9679687d"
+    },
+    "ni-repeat.log": {
+     "bytes": 120,
+     "sha256": "ecdc24e8ce5b12d1e640fac18843feeaece77d5828510bab059e10dc9679687d"
+    },
+    "ni-straight8ths-listen.wav": {
+     "bytes": 3840058,
+     "sha256": "95d3884a13519fcaa465e14335af3cef0460068fce07c3879ac1ce636c249cd4"
+    },
+    "ni-straight8ths-raw.wav": {
+     "bytes": 5376104,
+     "sha256": "7ea94dbd77e503bb0798a69aaa726645ef2d2f75f6143f74aaafff287d5240fb"
+    },
+    "ni-straight8ths-repeat.wav": {
+     "bytes": 5376104,
+     "sha256": "c9f689d9cc0dde78d79c882efc75c1fda74dc5dc1340bbd1bebf9297820f9b89"
+    },
+    "prepare_comparison.py": {
+     "bytes": 8516,
+     "sha256": "388847a67d9aa92b27885b8b044b75f68bb2355d3dbdb00e0bd1d134214ea702"
+    },
+    "straight-c-major.mid": {
+     "bytes": 72,
+     "sha256": "e9dc485b74d670fde405a510dd2e24b7f9388d60bcfd01c42557d348ef1345b9"
+    },
+    "straight-dry-controls.png": {
+     "bytes": 479200,
+     "sha256": "1f90266611d045eba591f8da474adf87d93559556528bbcebceeb88cdbcc6a8f"
+    },
+    "straight-dry.state": {
+     "bytes": 1349685,
+     "sha256": "d0a1b517cfadc270d1accaf8f405b650ad056232477ec49fe57f19254db61da6"
+    },
+    "straight-pattern.png": {
+     "bytes": 626976,
+     "sha256": "3dc083e0e0477d70de3cf650ba69cf912b6387b454f9246d848b044f54a06575"
+    },
+    "straight-playback.png": {
+     "bytes": 458117,
+     "sha256": "fc0e60dcd2e3ed40c1758e7fe45b14dd6a5047bfb8b6763b741015acb3eca3f9"
+    },
+    "straight-reloaded-controls.png": {
+     "bytes": 476423,
+     "sha256": "d4c9607caeff5327c4214450cbbf7a72e4fa83140f6cae59c3694273082bff2a"
+    }
+   },
+   "installed_source_files": {
+    "/Library/Audio/Plug-Ins/VST3/Kontakt 7.vst3/Contents/MacOS/Kontakt 7": {
+     "bytes": 353721696,
+     "sha256": "2ccc0f9d37cd656df7145047987004e659fd2c1239ef64af53968846e59f9621"
+    },
+    "/tmp/acustra-goal-build/Acustra_artefacts/Release/VST3/Acustra.vst3/Contents/MacOS/Acustra": {
+     "bytes": 6681328,
+     "sha256": "f56e3d13d79c2b2b24fcd331a33cb846c907e43b32a9832f7cf93a6a30e29b65"
+    },
+    "/Users/Shared/Session Guitarist - Strummed Acoustic Library/Instruments/Strummed Acoustic.nki": {
+     "bytes": 945155,
+     "sha256": "b458ac541068f464bab8033adc2f58b4385a626daf77d8a4e35cb9dd6e28540a"
+    },
+    "/Users/Shared/Session Guitarist - Strummed Acoustic Library/Snapshots/Strummed Acoustic/Straight 8ths.nksn": {
+     "bytes": 9056,
+     "sha256": "399aaaf174f18f9fb3a497b493bf4e7cfba50652a240e8d4fb6b2dc6fe2145ba"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/PluginProcessor.cpp": {
+     "bytes": 30188,
+     "sha256": "9657cfb7dde2dc69d73e9d84392bda7a170908b19b5c32e5371d5839c7ab8e5f"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/PluginProcessor.h": {
+     "bytes": 4699,
+     "sha256": "edcc3eec23236348f6de6f0a45b21631b98c11f99ca3c704d49d00c94efb068e"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/AcustraEngine.cpp": {
+     "bytes": 187883,
+     "sha256": "3b8fa8e5d58654ba27d36695c54c31d8f4324393969ad9a351f1c0fb9b59d81a"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/AcustraEngine.h": {
+     "bytes": 31550,
+     "sha256": "123c5b6eed13648821b05056db7029269a39b67ea29d701fa79f9a74efcf0f4a"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/FittedPhysicalData.h": {
+     "bytes": 9707,
+     "sha256": "803c40e4e0b1571b2567b96675e36357ab169cc166f2165437c9611fa2f8445c"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/MeasuredBodyData.h": {
+     "bytes": 22080,
+     "sha256": "6f2773c4689b9f731f95694b4041878b8997053571a3cd6e773a71676ed45cd8"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/MeasuredBridgeData.h": {
+     "bytes": 9720,
+     "sha256": "c976c70ce2e23bd32c7132502158cb5734b67dabdcf6cbaa7b1502fda9a59a07"
+    },
+    "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/MeasuredSteelBridgeData.h": {
+     "bytes": 4030,
+     "sha256": "f3bf2d8d9a65c8b09961da38c8217ecc4f31a763f802ca675dcbe9e6e8d52e2b"
+    }
+   },
+   "limits": [
+    "Commercial sample containers were neither extracted nor copied; their full contents are not archived or hashed here. Reproduction requires the licensed installed library.",
+    "No commercial source audio or opaque plugin state is intended for repository publication.",
+    "RMS matching controls gross level only; spectral and temporal differences are left intact. No realism conclusion follows from waveform differences."
+   ]
+  },
+  "repo_host_validation": {
+   "ni": {
+    "max_abs_error": 1.4901161193847656e-08,
+    "relative_rms_error": 2.7920328928147105e-08,
+    "sample_exact": false
+   },
+   "acustra": {
+    "max_abs_error": 0.0013555120676755905,
+    "relative_rms_error": 0.0015801169305108779,
+    "sample_exact": false
+   },
+   "acustra-repeat": {
+    "max_abs_error": 0.0,
+    "relative_rms_error": 0.0,
+    "sample_exact": true
+   },
+   "files": {
+    "/Users/vojta/Dev/vst-instruments/acustra/Tools/PluginReferenceHost.cpp": {
+     "sha256": "54d1259a3e5c74915fe88f82f98a09e8593c8e75fac8724c53ac512c2f958dd6",
+     "bytes": 13941
+    },
+    "/tmp/acustra-goal-build/AcustraPluginReferenceHost_artefacts/Release/AcustraPluginReferenceHost": {
+     "sha256": "e54dcf9cb7cf6e50a5de93d18ff8eabb81c4f20733b7381bf272a9728613c098",
+     "bytes": 10834344
+    },
+    "/tmp/acustra-commercial-comparison/repo-host-ni-final.wav": {
+     "sha256": "e1b0e87de7a79af36775aa5e7f6b800ec70fbefd899d66b9a85250e4754f9fef",
+     "bytes": 5376104
+    },
+    "/tmp/acustra-commercial-comparison/controller-only.mid": {
+     "sha256": "015424dc816231475fae8288086b2551ee174d24a1ced2326218a33eb684c3aa",
+     "bytes": 30
+    }
+   },
+   "ni_final_silence_guard": {
+    "max_abs_error": 1.4901161193847656e-08,
+    "relative_rms_error": 2.5687171534676368e-08,
+    "sample_exact": false
+   },
+   "silence_guard": {
+    "exit_code": 1,
+    "final_wav_exists": false,
+    "error": "plugin rendered only silence; no reference WAV saved"
+   }
+  },
+  "host_tool": "Tools/PluginReferenceHost.cpp",
+  "host_protocol": "Optional JUCE VST3 host; explicit 48 kHz/128 frames/4/4 and BPM; normal editor/private state; fresh plugin process for each render. Saves/publishes new output only, rejects silent/nonfinite renders. Two-second message-pump wait is not a universal sample-readiness guarantee.",
+  "reproduction_limit": "Initial Acustra auditions set parameters live after prepare, whereas the reusable host restores saved state and requests the wrapper reset. State-restored Acustra repeats sample-exactly but differs 0.158% relative RMS from those earlier direct-parameter takes with the same plugin binary. This lifecycle difference is retained explicitly; neither old take nor runtime was altered to force agreement. Kontakt final host render agrees with its frozen fresh-state take to 1.49e-8 peak / 2.57e-8 relative RMS.",
+  "verification": "Root independently verified every local manifest file hash, all exact 192000-frame silent crops, stereo shapes/finite samples, exact float32 scalar transforms and -24 dBFS whole-file RMS within 1e-7 dB. Native host selftest passed; controller-only MIDI failed with no published WAV.",
+  "distribution": "Only protocol, numerical checks and hashes are committed. No commercial source audio, proprietary sample containers, license information or opaque plugin state is committed.",
+  "final_host_acustra_confirmation": {
+   "sample_exact_fresh_repeats": true,
+   "versus_direct_parameter_take_max_abs_error": 0.0013555120676755905,
+   "versus_direct_parameter_take_relative_rms_error": 0.0015801169305108779,
+   "files": {
+    "/tmp/acustra-commercial-comparison/final-host-acustra-1.wav": "34e2bb6d3a8373d869de319d10909cccaa4cf277d4909d2f70ba9f3d01d564fd",
+    "/tmp/acustra-commercial-comparison/final-host-acustra-2.wav": "34e2bb6d3a8373d869de319d10909cccaa4cf277d4909d2f70ba9f3d01d564fd"
+   }
+  }
  }
 }

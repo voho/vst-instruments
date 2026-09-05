@@ -192,6 +192,17 @@ improvement or regression. All 86 nylon renders remain identical. The report's
 descriptors, availability counts and source/model hashes; these are descriptive
 results on another guitar, not controlled technique validation or a realism rank.
 
+A private listening reference compares both Acustra bridges with the installed
+NI Strummed Acoustic 1.1.0 library in Kontakt 7.10.6: four bars of C major at
+120 BPM, eighth-note strums, stereo capture, and EQ, compression, reverb and
+doubling disabled. Ten-second auditions share the same crop and match whole-file
+stereo RMS to −24 dBFS. NI chooses recorded voicings, accents and microtiming;
+Acustra receives explicit open-C note events. This matches harmony and nominal
+rhythm, not identical performances, and establishes no product ranking.
+The report's `commercial_listening_reference_2026_09_05` entry preserves the
+protocol, state/input/audio hashes and repeatability evidence. Commercial audio
+and opaque plugin states remain private; reproduction needs the installed library.
+
 ## How it works
 
 ### Six-string performance model
@@ -1739,6 +1750,24 @@ python3 Tools/BenchmarkTechniqueNotes.py \
 Add `--bridge-model fylde` for the alternative. The output must be new;
 `--self-test` checks selection, fingering and missing-feature accounting without
 the recordings. Keep the downloaded archive and emitted audio out of git.
+
+An optional host renders installed VST3 instruments from their normal saved
+states. Enable it in a JUCE/plugin build and build its target:
+
+```sh
+cmake -S . -B build-reference -DCMAKE_BUILD_TYPE=Release \
+  -DACUSTRA_BUILD_PLUGIN_REFERENCE_HOST=ON
+cmake --build build-reference --config Release --target AcustraPluginReferenceHost
+```
+
+The executable is under `build-reference/AcustraPluginReferenceHost_artefacts/Release/`.
+Its `editor PLUGIN OUTPUT.state [INPUT.state]` command opens the ordinary plugin
+editor; closing the window saves a new state file. Then use
+`render PLUGIN STATE MIDI OUTPUT.wav BPM SECONDS` for a fresh-process render.
+The host uses 48 kHz stereo float audio, 128-frame blocks and explicit 4/4
+tempo/PPQ transport. Existing outputs, silent renders and failed renders are
+rejected. Its bounded loading wait is not a general sample-readiness guarantee;
+verify repeated fresh-process renders for each reference instrument.
 
 Two audits read a rendered fit corpus and compare the model with the recordings
 where the fitted score cannot say where a difference sits: one along the

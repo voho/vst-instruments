@@ -31,6 +31,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ACUSTRA_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
 option(ACUSTRA_BUILD_TOOLS "Build offline Acustra tools" ON)
+option(ACUSTRA_BUILD_PLUGIN_REFERENCE_HOST
+    "Build the optional JUCE VST3 reference renderer/editor" OFF)
 set(ACUSTRA_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -143,6 +145,26 @@ if(ACUSTRA_BUILD_PLUGIN)
             JUCE_WEB_BROWSER=0
             JUCE_USE_CURL=0
             JUCE_VST3_CAN_REPLACE_VST2=0)
+
+    if(ACUSTRA_BUILD_PLUGIN_REFERENCE_HOST)
+        juce_add_console_app(AcustraPluginReferenceHost
+            PRODUCT_NAME "Acustra Plugin Reference Host")
+        target_sources(AcustraPluginReferenceHost
+            PRIVATE Tools/PluginReferenceHost.cpp)
+        target_compile_definitions(AcustraPluginReferenceHost PRIVATE
+            JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+            JUCE_MODAL_LOOPS_PERMITTED=1)
+        target_link_libraries(AcustraPluginReferenceHost PRIVATE
+            juce::juce_audio_processors juce::juce_audio_formats
+            juce::juce_recommended_config_flags)
+        if(BUILD_TESTING)
+            add_test(NAME Acustra.PluginReferenceHost
+                COMMAND AcustraPluginReferenceHost --self-test)
+        endif()
+    endif()
+elseif(ACUSTRA_BUILD_PLUGIN_REFERENCE_HOST)
+    message(FATAL_ERROR
+        "ACUSTRA_BUILD_PLUGIN_REFERENCE_HOST requires ACUSTRA_BUILD_PLUGIN=ON")
 endif()
 
 # The committed demonstrations are rendered by the same JUCE-free engine used
