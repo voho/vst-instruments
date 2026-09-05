@@ -175,6 +175,23 @@ retains both bridges, the four microphone/pickup pairings and source hashes;
 no parameters were fitted to these results. Coil position, field response,
 loaded electronics and per-string gains are undocumented in GuitarSet.
 
+An independent exploratory audit adds 344 recordings from Mohammed Alkooheji's
+[Acoustic Guitar Notes v3](https://www.kaggle.com/datasets/mohammedalkooheji/guitar-notes-dataset):
+a Walden G551E on steel and Yamaha CM-40 on nylon. Before inspecting audio,
+the tool selects two recordings at every pitch from D2 to G♯5 for each material
+and the pick/finger labels. The author warns that technique labels vary and
+combines finger with thumb; capture, velocity and fingering are undocumented.
+No parameters are fitted to this corpus. On steel, Original → Fylde changes
+attack-band MAE from 9.63 → 8.87 dB, harmonic-level MAE from 9.16 → 8.78 dB and
+tuning MAE from 7.88 → 7.69 cents, while pitch-trajectory MAE worsens from
+1.41 → 1.56 cents. These comparisons use identical available elements.
+Missing model decay measurements fall from 22 to 2 of 2662 target elements;
+the resulting decay MAEs have different coverage and cannot establish a paired
+improvement or regression. All 86 nylon renders remain identical. The report's
+`independent_technique_note_audit_2026_09_05` entry retains every recording's
+descriptors, availability counts and source/model hashes; these are descriptive
+results on another guitar, not controlled technique validation or a realism rank.
+
 ## How it works
 
 ### Six-string performance model
@@ -1708,6 +1725,20 @@ For an explicit performance event file, `AcustraPerformanceRenderer` also
 accepts trailing `--string-material steel|nylon` and `--tuning standard|drop_d`
 options. String/fret validation uses the selected tuning; omitting these
 options preserves the original steel/Standard render.
+
+The independent technique-note audit needs the published v3 archive
+(`4563a70d5dd9a14919171d103f10f6731fd78e63f1498dd11047bfea471f6a6d` SHA-256):
+
+```sh
+python3 Tools/BenchmarkTechniqueNotes.py \
+  --archive /path/to/guitar-notes-v3.zip \
+  --renderer ./build-dsp/AcustraPerformanceRenderer \
+  --output /tmp/acustra-technique-notes
+```
+
+Add `--bridge-model fylde` for the alternative. The output must be new;
+`--self-test` checks selection, fingering and missing-feature accounting without
+the recordings. Keep the downloaded archive and emitted audio out of git.
 
 Two audits read a rendered fit corpus and compare the model with the recordings
 where the fitted score cannot say where a difference sits: one along the

@@ -263,6 +263,11 @@ if(BUILD_TESTING)
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkPerformances.py"
                                  --self-test --renderer "$<TARGET_FILE:AcustraPerformanceRenderer>")
                 set_tests_properties(Acustra.PerformanceBenchmark PROPERTIES TIMEOUT 180)
+                add_test(NAME Acustra.TechniqueBenchmark
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkTechniqueNotes.py"
+                                 --self-test)
+                set_tests_properties(Acustra.TechniqueBenchmark PROPERTIES TIMEOUT 180)
                 add_test(NAME Acustra.MeasuredSteelFit
                          COMMAND "${Python3_EXECUTABLE}"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/GenerateMeasuredSteelBridge.py"
