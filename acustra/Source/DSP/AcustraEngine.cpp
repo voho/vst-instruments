@@ -1173,10 +1173,12 @@ void AcustraEngine::BridgeLoad::reset() noexcept
 void AcustraEngine::BridgeLoad::process(const BridgeDrive& drive,
                                         float samplePeriod) noexcept
 {
-    // The saddle has two degrees of freedom, heave and rock, because that is
-    // what the archive measures: two impacts and two accelerometers, "taken
-    // together allow to trace two of the degrees of freedom of the bridge"
-    // (Method.pdf 2b). A string at lever arm u ends on x_u = x + u*theta and
+    // The saddle is approximated by heave and normalized rock. The archive's
+    // accelerometers sit behind the saddle rather than at the hammer points;
+    // treating the two-end responses as collocated is a spatial assumption
+    // (Method.pdf 2b, Fig. 3; GenerateMeasuredBridge.py). Here theta is the
+    // legacy name for linear r=a*physical_angle, not an angle in radians.
+    // A string at lever arm u ends on x_u = x + u*theta and
     // pushes F_u = Z(2a_u - x_u) there, so the strings contribute the force
     // sum and its first moment, and the same for the anchor stubs, each of
     // which sits at its own string's u. Solving

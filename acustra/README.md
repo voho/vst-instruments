@@ -483,21 +483,25 @@ its prior +0.018 fret law.
 
 ### Bridge, sympathetic strings and body
 
-The original model's played strings drive a two-point positive-real bridge, fitted
-through 10 kHz from both of the archive's bridge ends (Method.pdf's hammer
-positions between B3/E4 and between E2/A2, each with its own accelerometer).
+The original model's played strings drive a passive spatial bridge approximation,
+fitted through 10 kHz from both sides of the archive's bridge. Method.pdf places
+the hammer impacts between B3/E4 and E2/A2; its Figure 3 places the accelerometers
+behind the saddle on the tie block, with their exact spacing unreported. Treating
+these sensor responses as collocated bridge-end mobilities is a model assumption.
 Each string terminates at its own point along the saddle, at a lever arm
 `u = (i - 2.5)/2` for string `i`; each mode keeps one pole pair and a residue
 matrix `[[heave, cross], [cross, rock]]`, so a string at `u` sees
-`heave + 2u*cross + u^2*rock`, matching the measured treble driving point at
-`u = +1` and the measured bass one at `u = -1` by construction. Holding every
+`heave + 2u*cross + u^2*rock`, fitting the treble-side response at
+`u = +1` and the bass-side response at `u = -1`. Holding every
 residue matrix positive semidefinite keeps each string's own combination
 positive real, so the junction stays passive: it can redistribute or
-dissipate string energy but cannot create it. Above the frequency where the
-archive's two records of the bass-to-treble transfer differ by as much as the
-transfer itself — 2245 Hz on steel's guitar, 5657 Hz on nylon's — there is no
-reciprocal 2x2 left to fit, so every string above that corner reads the mean
-of the two ends and no mode there carries a cross or rocking residue. Steel's
+dissipate string energy but cannot create it. This is a property of the constrained
+model, not proof that the measured responses form a collocated passive matrix.
+The disagreement between the two cross-side records sets a heuristic corner —
+2245 Hz on steel's guitar, 5657 Hz on nylon's. Sensor offsets and setup differences
+can contribute to that disagreement; it does not uniquely identify loss of bridge
+rigidity. Above that corner every string reads the mean of the two side responses,
+and no mode carries a cross or rocking residue. Steel's
 bank keeps 47 modes (30 of them rocking), nylon's 46 (40 rocking). A bank with
 no rocking mode at all falls back to the single-point port every string
 shared before; the engine suite asserts both original banks carry at least one.
@@ -1170,10 +1174,19 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   also costs the instrument its plucking angle: with one radiating axis, angle
   moves energy into the silent polarisation and scales a note instead of
   colouring it, which is why no excitation control can reach the take-to-take
-  attack variation measured below. Two substitutes for the measurement were
-  tried and rejected: terminating the silent polarisation on the two-point
-  bridge's own rocking mobility (h^2 times a measured moment admittance) renders
-  60 dB or more below the shipping engine at any plausible saddle height, and
+  attack variation measured below. A historical scratch trial reported levels
+  64.2, 60.2 and 47.7 dB below shipping at saddle heights of 3, 6 and 30 mm
+  ([commit 9bc0bf38](https://github.com/voho/vst-instruments/commit/9bc0bf385eb4af260c453d4f10fb1c1c8430fca6),
+  `Docs/physical-fit-report.json`, `polarisation_end_correction.rocking_only_second_axis_rejected`).
+  Its implementation and audio could not be recovered, so its unit conversions
+  and output comparison cannot be verified. The model uses normalized rocking
+  displacement `r = a*theta`, with `a` the assumed impact half-separation. A
+  horizontal force applied at height `h` therefore projects with `h/a`, and
+  its driving-point mobility is `(h/a)^2*Yrr`, not `h^2*Yrr`. Omitting `1/a^2`
+  at the model's 23.2/21.6 mm half-spacings would reduce mobility by 65.4/66.6 dB;
+  a pressure path with one projection has a 32.7/33.3 dB factor instead. Neither
+  factor predicts the old render's level without its missing routing code.
+  That trial supplies no verified inaudibility bound. Separately,
   a doublet-ratio extraction of the plucking angle from the reference
   recordings' round robins is noise-limited (a take-to-take spread the same
   size as the within-take scatter). Neither substitutes for the missing

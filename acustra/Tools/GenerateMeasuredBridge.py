@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Acustra's two passive two-point bridge mobilities.
+"""Generate Acustra's two passive spatial bridge approximations.
 
 The input is Robert Mores' ``qualified_selected_impulses.mat``.  Method.pdf
 section 2b describes three hammer positions on the bridge inlay and two
@@ -7,32 +7,35 @@ accelerometers, "the two signals at the bass and the treble side taken
 together allow to trace two of the degrees of freedom of the bridge".  This
 tool uses both of them: segment 1 with channel 3 is the bass impact read at
 the bass end, segment 3 with channel 2 the treble impact read at the treble
-end, and the two off-diagonal records (segment 1/channel 2 and segment
-3/channel 3) are averaged into the single reciprocal transfer a passive
-structure must have.  Acceleration/force is converted to velocity/force
+end. Figure 3 locates the accelerometers behind the saddle on the tie block,
+not at the hammer impacts; their exact spacing is unreported. The two
+cross-side records (segment 1/channel 2 and segment 3/channel 3) are averaged
+as a model constraint, not as an experimentally verified reciprocal pair.
+Acceleration/force is converted to velocity/force
 exactly as the archive's MATLAB script does, by differentiating the hammer.
 
-The two measured points are taken as the bridge's heave and rocking degrees
-of freedom.  Distance along the saddle is measured in units of the impacts'
+The model treats these responses as collocated heave/rock ports. This is a
+spatial approximation; a positive-semidefinite fit makes the model passive,
+but cannot establish collocation of the original measurements. Distance
+along the saddle is measured in units of the impacts'
 half-separation, so the impacts are at u = -1 (bass) and u = +1 (treble) and
 a string at u sees the driving-point mobility
 
     Y(u) = R_hh + 2 u R_hr + u^2 R_rr   summed over the modes,
 
-which is R_tt at u = +1 and R_bb at u = -1 by construction.  Each mode
+which fits the treble-side response at u = +1 and bass-side at u = -1. Each mode
 carries one pole pair and the residue matrix [[R_hh, R_hr], [R_hr, R_rr]];
 constraining that matrix to be positive semidefinite makes Y(u) a positive
 real sum for every u, so the waveguide termination can still use the passive
 reflectance construction in Bank and Karjalainen, DAFx-10, Eq. (17):
 https://www.dafx.de/paper-archive/2010/DAFx10/BankKarjalainen_DAFx10_P60.pdf
 
-Above the frequency where the two ends stop being one rigid body the
-rocking coordinate is not identifiable: the archive measures the same
-transfer twice, and where those two records differ by as much as the
-transfer itself there is no reciprocal 2x2 left to fit.  That crossing is
-measured here in third octaves and used as the corner: below it the target
-is the measured 2x2, above it every string is given the mean of the two
-ends, and no mode above it carries a cross or rocking residue.
+The cross-side records' disagreement sets a heuristic corner in third-octave
+bands. Sensor offsets and setup differences can contribute to it; this is
+not a unique measurement of the frequency where bridge rigidity is lost.
+Below the corner the target is the symmetrized spatial approximation;
+above it every string gets the mean of the two side responses, and no mode
+carries a cross or rocking residue.
 
 Two measured nylon-string guitars are emitted for the original material
 settings. The g21 DeVoe flamenco is adapted for steel; it was not steel-strung.
@@ -183,9 +186,9 @@ def extract_two_point(
     bass = transfer(
         values, guitar, BASS_IMPACT_INDEX, BASS_ACCELEROMETER_CHANNEL
     )
-    # A passive structure is reciprocal, so these two records measure one
-    # transfer; their average is that transfer and their difference is what
-    # the corner below is read from.
+    # The source's sensors are offset from its impacts (Method.pdf Fig. 3),
+    # so these are not a verified reciprocal pair. Symmetrization is a model
+    # constraint; their disagreement sets the heuristic corner below.
     cross_forward = transfer(
         values, guitar, BASS_IMPACT_INDEX, TREBLE_ACCELEROMETER_CHANNEL
     )
@@ -198,15 +201,15 @@ def extract_two_point(
 def coherence_corner(
     path: Path, guitar: int
 ) -> tuple[float, list[tuple[float, float]]]:
-    """Frequency above which the two ends stop being one rigid body.
+    """Heuristic corner from disagreement between the cross-side records.
 
-    The archive measures the bass-to-treble transfer twice, once from each
-    end.  In third-octave bands, the median disagreement between those two
+    In third-octave bands, the median disagreement between those two
     records is divided by the median of the transfer itself; the corner is
     the top edge of the last band below which that ratio stays under one,
     that is, the last band in which the cross term is larger than the spread
-    of its own two measurements.  Above it neither the cross nor the rocking
-    residue is identifiable, so the fit is given the mean of the two ends.
+    of the two records. Above it the model uses the mean of the two ends.
+    Sensor offsets/setup differences can contribute to this discrepancy;
+    the threshold does not uniquely diagnose loss of bridge rigidity.
     """
     frequency, _, _, _ = extract_two_point(path, guitar)
     values = load_matrix(path)
@@ -487,9 +490,9 @@ def bank_block(name: str, bank: dict) -> str:
         f' {CANDIDATE_COUNT} measured modal candidates after a'
         f' {bank["phase_advance"]}-sample instrumentation alignment;'
         f' {bank["rocking"]} of them carry a rocking residue, the rest sitting'
-        f' above the {bank["corner"]:.0f} Hz corner where the archive\'s two'
-        f' records of the bass-to-treble transfer differ by as much as the'
-        f' transfer itself. Over the six string positions and 60--10000 Hz,'
+        f' above the {bank["corner"]:.0f} Hz heuristic corner from the two'
+        f' cross-side records\' disagreement. Over the six model string'
+        f' positions and 60--10000 Hz,'
         f' relative complex error {bank["relative_error"]:.6f} and worst median'
         f' magnitude error {bank["magnitude_error"]:.6f} dB.',
         width=76, initial_indent="// ", subsequent_indent="// ")
@@ -501,18 +504,22 @@ inline constexpr std::array<MeasuredBridgeMode, {len(bank["modes"])}> {name} {{{
 
 def render_header(steel: dict, nylon: dict) -> str:
     return f'''// Generated by Tools/GenerateMeasuredBridge.py; do not hand-edit.
-// Passive two-point bridge mobilities fitted to each guitar's bass and treble
-// bridge impacts and the accelerometer at each of those ends. Acceleration/
+// Passive spatial approximations fitted to each guitar's bass and treble
+// impacts and two accelerometers behind the saddle (Method.pdf Fig. 3).
+// Sensor spacing is unreported; treating the responses as collocated ports
+// is a model assumption. The cross-record corner is heuristic, not a unique
+// measurement of lost rigidity. Acceleration/
 // force is converted to velocity/force by differentiating the hammer,
-// following the archive script. The two measured points are the bridge's
-// heaving and rocking degrees of freedom; distance along the saddle is in
-// units of their half-separation, so the impacts are at u = -1 (bass) and
+// following the archive script. The model uses heaving and normalized
+// rocking displacement r=a*theta; distance along the saddle is in
+// units of the impact half-separation a, so impacts are at u = -1 (bass) and
 // u = +1 (treble) and a string at u sees
 //     Y(u) = sum over modes of (heave + 2 u cross + u^2 rock)
 //                              * s/(s^2 + 2 damping s + omega^2),
-// which is the measured treble driving point at u = +1 and the measured bass
-// one at u = -1. Each mode's residue matrix [[heave, cross], [cross, rock]]
-// is positive semidefinite, so every string's Y(u) is a positive real sum.
+// which fits the treble-side response at u = +1 and bass-side at u = -1.
+// Each mode's residue matrix [[heave, cross], [cross, rock]] is positive
+// semidefinite, so the model's Y(u) is positive real. This constraint does
+// not establish passivity or collocation of the measured response matrix.
 // The original material settings select two measured nylon-string guitars:
 // g21 flamenco is adapted for steel, g34 classical for nylon. The separate
 // MeasuredSteelBridgeData.h contains actual steel-string bridge measurements.

@@ -360,6 +360,11 @@ private:
 
     struct BridgeLoad
     {
+        // The legacy names rotation/moment use normalized coordinates:
+        // r = (x_treble - x_bass)/2 = a*theta and its conjugate load M/a,
+        // where a is the assumed impact half-spacing. Rotation is therefore
+        // a displacement, not radians; a height h transforms a horizontal
+        // string port by h/a on both force and motion, not by h alone.
         // One slot past the measured modes carries the plate
         // conductance floor described in FittedPhysicalData.h. Every mode is
         // one pole pair carrying the residue matrix [[heave, cross],
