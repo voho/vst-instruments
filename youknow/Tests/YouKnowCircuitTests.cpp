@@ -689,6 +689,14 @@ struct YouKnowTestAccess
         return output;
     }
 
+    static float processVoiceVcaInputCoupling(
+        YouKnowEngine& engine, float input) noexcept
+    {
+        auto& voice = engine.voices_[0];
+        (void) engine.finishVoiceFilter(voice, input);
+        return voice.vcaInputVolts;
+    }
+
     static void setChorusWetGain(Chorus& chorus, float gain) noexcept
     {
         chorus.wetGain_ = gain;
@@ -2578,6 +2586,77 @@ void testPulseWidthAndHighPassLaws()
            "the live-HQ output rebuild clears the C14 state");
     expect(stateContract.afterHardReset == 0.0,
            "a hard output reset does not clear the C14 state");
+}
+
+void testVoiceVcaCouplingRespectsR108Minimum()
+{
+    // Roland module board p. 13: C59 1 uF -> VR27 0..50 kOhm -> R108
+    // 82 kOhm -> pin 9. The as-yet unresolved input and source impedances
+    // can only increase this nominal RC time constant. The shipped endpoint
+    // deliberately uses R108 alone, not an asserted trimmer position.
+    constexpr double minimumTau = 1.0e-6 * 82000.0;
+    const double maximumCorner = 1.0 / (2.0 * pi * minimumTau);
+    expectNear(YouKnowEngine::vcaInputCouplingCornerHz(), maximumCorner,
+               1.0e-6, "C59's conservative corner does not follow R108");
+
+    for (const double hostRate : { 44100.0, 48000.0 })
+    {
+        for (const int factor : { 1, 4 })
+        {
+            YouKnowEngine engine;
+            engine.prepare(hostRate, 64, factor);
+            const double rate = YouKnowTestAccess::engineProcessingRate(engine);
+            double worstStepError = 0.0;
+            for (int sample = 0; sample < static_cast<int>(rate * 0.5); ++sample)
+            {
+                const double actual =
+                    YouKnowTestAccess::processVoiceVcaInputCoupling(engine, 1.0f);
+                // Continuous RC step response, sampled at interval midpoints.
+                // At these sub-audio corners the discretisation error is tiny;
+                // no production coefficient or recurrence enters this oracle.
+                const double expected = std::exp(
+                    -(sample + 0.5) / (rate * minimumTau));
+                worstStepError = std::max(worstStepError,
+                                         std::abs(actual - expected));
+            }
+            expect(worstStepError < 2.0e-7,
+                   "C59 step misses its independent 82 ms RC response");
+
+            // Low C at 16' and the service trim frequencies. Feed the actual
+            // voice coupling path and compare with the continuous complex
+            // transfer, after the capacitor's startup tail has settled.
+            for (const double frequency : { 16.3516, 32.7032, 248.0, 992.0 })
+            {
+                engine.reset();
+                constexpr int cycles = 8;
+                const int settle = static_cast<int>(rate * 2.0);
+                const int window = static_cast<int>(
+                    std::ceil(rate * cycles / frequency));
+                double measuredPower = 0.0;
+                double expectedPower = 0.0;
+                const std::complex<double> s { 0.0, 2.0 * pi * frequency };
+                const auto transfer = s * minimumTau / (1.0 + s * minimumTau);
+                for (int sample = 0; sample < settle + window; ++sample)
+                {
+                    const double angle = 2.0 * pi * frequency * sample / rate;
+                    const double actual =
+                        YouKnowTestAccess::processVoiceVcaInputCoupling(
+                            engine, static_cast<float>(std::sin(angle)));
+                    if (sample >= settle)
+                    {
+                        const double expected = transfer.real() * std::sin(angle)
+                                              + transfer.imag() * std::cos(angle);
+                        measuredPower += actual * actual;
+                        expectedPower += expected * expected;
+                    }
+                }
+                const double errorDb = 10.0 * std::log10(
+                    measuredPower / expectedPower);
+                expect(std::abs(errorDb) < 0.0001,
+                       "C59 changes low-note/service-trim gain beyond its RC law");
+            }
+        }
+    }
 }
 
 void testPwmDutyCycleDefensiveGuard()
@@ -7016,6 +7095,7 @@ int main()
     testCircuitDerivedNoiseLevelProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
+    testVoiceVcaCouplingRespectsR108Minimum();
     testPwmDutyCycleDefensiveGuard();
     testSharedHighPassAgainstNominalNetwork();
     testServiceSpecificationEndpointReconciliation();

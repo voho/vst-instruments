@@ -10388,9 +10388,9 @@ std::vector<float> probeVcaInput(YouKnowEngine& engine, int hostSamples)
 void testSubLevelJumpCouplesThroughC56AndC59()
 {
     // A SUB level step moves the node's mean; C56 passes the step, the open
-    // filter passes DC, and C59 (tau 33 ms) differentiates it at the VCA
+    // filter passes DC, and C59 (tau >=82 ms) differentiates it at the VCA
     // input. subMixVolts * 0.40 arriving through the 10 ms R11/C1 hold peaks
-    // at about 57 % of that step some 20 ms in, before C56's own decay and
+    // at about 71 % of that step some 22 ms in, before C56's own decay and
     // the filter's residual gain, and is gone within a few tau. The bound
     // below is stated as that fraction of the coordinate rather than as a
     // volt figure, so re-voicing the sub moves the expectation with it.
@@ -10437,13 +10437,29 @@ void testSubLevelJumpCouplesThroughC56AndC59()
     expect(peakAt < static_cast<std::size_t>(sampleRate * 0.06),
            "the SUB level jump's bump peaked "
                + std::to_string(peakAt / sampleRate * 1000.0) + " ms after the jump");
-    // What remains after the bump is C56's own 0.33 s tail seen through C59:
-    // about -(33 ms / 330 ms) * stepVolts * exp(-t / 0.33 s), which is 4.4 %
-    // of the step at 250 ms. Stated against the step rather than in volts so
-    // it follows the coordinate.
-    expect(settled < 0.075 * stepVolts,
-           "the SUB level jump's bump was still "
-               + std::to_string(settled) + " V after 250 ms");
+    // Independent continuous response of the SUB hold followed by C56/C59:
+    // H(s)/s = s*A*B / ((1+s*H)*(1+s*A)*(1+s*B)). The old 33 ms C59
+    // assumption understated this tail. Scan timing and the nonlinear open
+    // filter are allowed 1% of the original step around the nominal RC solve.
+    constexpr double holdTau = 0.010;
+    constexpr double moduleTau = 0.330; // existing voiced C56 load
+    constexpr double vcaTau = 1.0e-6 * 82000.0; // conservative R108 limit
+    double expectedTail = 0.0;
+    for (std::size_t index = static_cast<std::size_t>(sampleRate * 0.25);
+         index < on.size(); ++index)
+    {
+        const double time = index / sampleRate;
+        const auto heldExponential = [time](double tau) {
+            return tau / (tau - holdTau)
+                 * (std::exp(-time / tau) - std::exp(-time / holdTau));
+        };
+        const double response =
+            (moduleTau * heldExponential(vcaTau)
+             - vcaTau * heldExponential(moduleTau)) / (moduleTau - vcaTau);
+        expectedTail = std::max(expectedTail, std::abs(response));
+    }
+    expectNear(settled / stepVolts, expectedTail, 0.01,
+               "the SUB level jump's tail misses the C56/C59 RC response");
 }
 
 void testNoteOnDoesNotBumpC56WithTheSubOn()
@@ -11332,15 +11348,14 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     // without the capacitor the envelope multiplies a standing offset and
     // leaves a sub-audio bump whose size walks with PWM duty.
     //
-    // The capacitor is anchored; the load is not (R108 and VR27's setting are
-    // not in tree), so what is fenced here is the declared bracket rather than
-    // a value: 100 kOhm gives 1.59 Hz and 33 kOhm gives 4.82 Hz, both far
-    // enough below the lowest note that the audible consequence is the DC
-    // block itself and not the corner.
+    // Page 13 prints R108 82 kOhm in series after C59 and VR27 50 kOhm.
+    // The nominal 1 uF pole cannot exceed the R108-only corner; unresolved
+    // trimmer, input and source impedances can lower it further. The circuit
+    // suite separately tests the shipped conservative bound's RC response.
     const double corner = YouKnowEngine::vcaInputCouplingCornerHz();
-    expect(corner >= 1.59 && corner <= 4.83,
-           "the filter-to-VCA coupling corner left its declared 33-100 kOhm "
-           "bracket (got " + std::to_string(corner) + " Hz)");
+    expect(corner > 0.0 && corner <= 1.9410,
+           "the filter-to-VCA coupling corner exceeds the R108-only bound "
+           "(got " + std::to_string(corner) + " Hz)");
 
     constexpr double sampleRate = 48000.0;
     constexpr int probeBlock = 64;

@@ -163,17 +163,20 @@ constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
 // R112 2.2 MOhm at this same node for minimum thump, which is the factory
 // saying in a procedure that pin 9 is meant to sit at zero.
 //
-// As with C56/C50 above, the capacitor is the read part and the resistance it
-// works against is not: neither R108 nor VR27's setting is in tree, so the
-// load is voiced and bracketed rather than claimed. 33 kOhm gives 4.82 Hz and
-// 100 kOhm gives 1.59 Hz; both are far below the lowest note the instrument
-// plays, so what this pole does -- block the DC the pulse comparator's duty
-// asymmetry leaves on the filter output, before the envelope multiplies it --
-// is insensitive to the choice inside the bracket. 33 kOhm is taken by the
-// same analogy the module input uses, with the settled 33 kOhm loads
-// downstream (C14/R39, C12/R36).
+// Page 13 prints R108 82 kOhm in series with VR27 50 kOhm, wired as a
+// rheostat. Both sit AFTER C59 and BEFORE pin 9; the R112 2.2 MOhm offset
+// injection joins at pin 9. R108 alone therefore supplies the minimum load
+// resistance for this nominal RC model. The old 33 kOhm analogy to C14/R39
+// was below that physical minimum and rejected too much bass.
+//
+// Use the conservative 82 kOhm limit, hence an 82 ms minimum time constant
+// and 1.941 Hz maximum corner for the nominal 1 uF part. VR27's setting,
+// the module input resistance and the VCF buffer's source impedance remain
+// unresolved (OQ-19); their nonnegative series contributions lower the corner
+// further. This is a circuit-derived bound, not an exact installed pole or a
+// new gain trim. Capacitor tolerance is not inferred from the nominal value.
 constexpr float vcaInputCouplingCapacitanceF = 1.0e-6f;     // C59
-constexpr float vcaInputCouplingResistanceOhms = 33000.0f;  // voiced, OQ-19
+constexpr float vcaInputCouplingResistanceOhms = 82000.0f;  // R108 minimum, OQ-19
 
 // Manufacturer application input for IC5/uPC1252H2, populated by Roland as
 // C12 10 uF NP followed by R36 33 kOhm.

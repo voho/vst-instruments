@@ -1415,9 +1415,9 @@ public:
     // corner itself is voiced -- see the constant's note in the .cpp.
     [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
     // C59 1 uF/50 V NP, the per-voice coupling from pin 3 VCF OUT into the
-    // VR27/R108 network and pin 9 VCA IN (module board pp. 18-19). The
-    // capacitor is anchored; the load it works against is not, so the corner
-    // is voiced and bracketed -- see the constant's note in the .cpp.
+    // VR27/R108 network and pin 9 VCA IN (module board p. 13). R108 82 kOhm
+    // fixes a conservative maximum corner for the nominal capacitor. VR27,
+    // module input and source impedances remain unresolved; see the .cpp.
     [[nodiscard]] static float vcaInputCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
     // Tr21's emitter-junction avalanche noise crosses C42 1 uF into the
