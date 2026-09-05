@@ -81537,5 +81537,143 @@
    ]
   },
   "decision": "Keep B selected for stereo presentation; do not change default or relax release gates. A same-time held reference does not resolve the nine remaining original lift assertions. These waveform comparisons do not establish a new click or validate the overall acoustic model. No source/DSP/calibration/audio changes."
+ },
+ "fretting_action_coordinates_2026_09_05": {
+  "change": "Anchor first-fret clearance at L*(1-2^(-1/12)), retain all setup values, and subtract pressed-fret lowering only for an actual held fret. Open nut supports the open line. Both hammer and lift share frettingClearance.",
+  "setup_provenance": {
+   "steel_twelfth_mm": [
+    2.4,
+    1.6
+   ],
+   "classical_twelfth_mm_authored": [
+    4,
+    3
+   ],
+   "first_fret_mm_authored_steel_nylon": [
+    0.5,
+    0.7
+   ],
+   "sources": [
+    "https://www.martinguitar.com/gear-accessories/18TOOL27.html",
+    "https://taylorguitars.zendesk.com/hc/en-us/articles/4403711312013-Assessing-a-Taylor-Guitar-Set-Up"
+   ],
+   "limits": "Straight-neck authored setup is not measured geometry of either radiation reference."
+  },
+  "geometry": {
+   "evidence": {
+    "path": "/tmp/acustra-action-geometry-review/report.json",
+    "sha256": "6a92f4a16101c648decb1d9add707e972d764d06f1dd92d2f5f0b83626b3b12c"
+   },
+   "cartesian_endpoint_identity_max_error_m": 1.73e-18,
+   "new_native_grid": "Both materials, all six strings, frets1/3/7/12/20 and every lower held fret including open. First/twelfth anchors, same-fret zero.",
+   "mutation_failures": {
+    "old_nut_anchor": 924,
+    "subtract_open_nut_height": 60
+   }
+  },
+  "initial_pluck_audit": {
+   "evidence": {
+    "path": "/tmp/acustra-initial-pluck-state-audit/report.json",
+    "sha256": "7a8b7f157fb18831ef411074f5de7f1d0221e47e87a467aff50888aa0579abdf"
+   },
+   "conclusion": "No factor-of-two correction. Ideal full-period triangle has rest-pluck modal magnitudes after a common time shift; symmetric smoothing preserves that phase. Actual contact smoothing reduces reference energy; clipping slightly breaks exact rest equivalence. pluckEnergy names an unsmoothed Finger-reference convention, not exact randomized pluck energy or equal microphone loudness. No DSP amplitude changes."
+  },
+  "native_lift_regression": {
+   "cases": 18,
+   "rates": [
+    44100,
+    48000,
+    96000
+   ],
+   "materials": [
+    "steel",
+    "nylon"
+   ],
+   "velocities": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "event": "Public noteOff43 to open40 after isolating prior vibration, preserving real ownership/current delay",
+   "observer": "Cyclic first-difference wave norm D*sum(diff(C)^2), in ideal fixed-span units T*s^2/(2L). Independently constructed open line and Finger-reference target; tolerance derived from grid spacing, not microphone output.",
+   "worst_relative_error": 0.00652616,
+   "mutations": {
+    "incorrect_open_nut_failures": 12,
+    "double_released_displacement_failures": 9
+   },
+   "test_source": {
+    "path": "Tests/AcustraEngineTests.cpp",
+    "sha256": "2bf4475e83419940bd8eb9aa977612fa24cc19dcd9608000b6a552ad3b51c747"
+   },
+   "limits": "Initial increment only; excludes subsequent fractional-delay slew, losses and bridge work."
+  },
+  "test_scope_change": {
+   "old": "First1ms peak <=1.2*preceding50ms peak, mislabeled as a first-sample click",
+   "new": "Retained printed ratio as articulation-balance diagnostic. Enforce unchanged active/fading body and derivative history at public noteOff, and independently verify capped injected energy, zero bridge endpoint and untouched parallel wave.",
+   "reason": "An intentional energy-adding lift can exceed prior sustain. The future peak ratio is not a continuity condition; no measured recording establishes its1.2 bound.",
+   "preserved": "All existing pitch, one-second microphone level, monotonicity, ownership, plugin, finite-output and CPU gates. No threshold increases."
+  },
+  "agpt_comparison": {
+   "summary": {
+    "path": "/tmp/acustra-agpt-fretting-clearance/summary.json",
+    "sha256": "305280bbf6ab6390f79eda3a54ad70fcea9d1a6aec65084f249e20ba2dee670e"
+   },
+   "full_report": {
+    "path": "/tmp/acustra-agpt-fretting-clearance/report.json",
+    "sha256": "24d88a73ceae89cbea8b4344f9c5ecfd7f9a95821b8c391ae5f51079108be86e"
+   },
+   "protocol": "Same25 inferred real pairs,18 timing/velocity assumptions,two captures;900 renders per engine,zero exclusions/fits. All900 pre-hammer prefixes byte-identical.",
+   "microphone_median_error_increases": 17,
+   "piezo_median_error_increases": 18,
+   "assumptions": 18,
+   "microphone_change_db_range": [
+    -0.00432,
+    0.82791
+   ],
+   "piezo_change_db_range": [
+    0.02576,
+    0.27429
+   ],
+   "interpretation": "Analytically correct coordinates worsen most conditional recorded level comparisons. No overall realism improvement or calibrated MIDI-to-finger-speed claim."
+  },
+  "qualification": {
+   "initial_shipping_three_nylon_relative_peak_failures": {
+    "path": "/tmp/acustra-action-geometry-shipping/tests.log",
+    "sha256": "16b28350ef96d47bc58ede6830195a54724f127c86a7da3eeaeb0846a6783fe6"
+   },
+   "original_B_plus_geometry": {
+    "path": "/tmp/acustra-b-geometry-qualification/qualification-report.json",
+    "sha256": "e914ad5e79c7457eaa64d83ed98a2c8c75ac12f82e886803df2fd07cfe7dceb8"
+   },
+   "final_shipping_tests": {
+    "path": "/tmp/acustra-action-geometry-shipping/tests-final.log",
+    "sha256": "13175e606442e58760577d76512a5b9650eaac6640e9abd159b3b89271dce762"
+   },
+   "result": "Engine and PluginProcessor pass",
+   "engine_seconds": 157.61,
+   "plugin_seconds": 10.42,
+   "six_string_realtime_ratio": 0.0463604
+  },
+  "canonical_demo": {
+   "before_after_manifest": {
+    "path": "/tmp/acustra-action-geometry-demos/manifest.json",
+    "sha256": "7264a4018555fb03116f61b348265b50caffe3824ad600fc6b2bf9119236f6ef"
+   },
+   "native_change": "Only07 changes; other11 before/after render streams byte-identical using the same compiler.",
+   "committed_audio": {
+    "path": "Docs/audio/07-fretting-hand.wav",
+    "sha256": "c0268341e9a26e3e7ecefc9783774a1f74adc696b9989b95e2b1b0e79c1e2c8b"
+   },
+   "raw_peak_before_after": [
+    0.1592867,
+    0.1755244
+   ],
+   "normalization_db_before_after": [
+    12.9564,
+    12.1133
+   ],
+   "refresh": "Renderer regenerated the marked peak table. Only07 refreshed in git; other11 restored to their previously clean canonical bytes, avoiding unrelated compiler/render churn. Historical previews untouched."
+  },
+  "decision": "Ship the independently checked coordinate correction with explicit unfavorable AGPT result and physically scoped release tests. Selected stereo B is integrated separately; no calibration fitting or excitation gain compensation."
  }
 }

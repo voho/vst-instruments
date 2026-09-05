@@ -2584,12 +2584,15 @@ float AcustraEngine::handContactGain(float frequency) const noexcept
     return std::pow(0.001f, 1.0f / std::max(0.16f * frequency, 1.0f));
 }
 
-// Factory set-up heights of the string over the fret crown: 3/32" bass and
-// 1/16" treble at the twelfth fret for a steel-string (Martin's and Taylor's
-// published specifications), 4 and 3 mm for a classical, with 0.5 and 0.7 mm
-// of clearance over the first fret. A straight neck puts the height at any
-// distance from the nut on the line between those two points, so this is a
-// dimension of the instrument, not a fitted value.
+// Open-string clearance over the fret-crown plane of a straight neck.
+// The steel twelfth-fret heights follow Martin's suggested 2.4/1.6 mm:
+// https://www.martinguitar.com/gear-accessories/18TOOL27.html
+// The existing classical 4/3 mm and first-fret 0.5/0.7 mm remain authored
+// setup dimensions, not measurements of either body reference. Taylor's
+// setup guide likewise measures nut-slot clearance AT THE FIRST FRET:
+// https://taylorguitars.zendesk.com/hc/en-us/articles/4403711312013
+// Interpolate at that fret's actual position, not at the nut. Neck relief
+// and individual nut-slot/neck geometry are not represented by this line.
 float AcustraEngine::actionHeight(int stringIndex,
                                   float nutDistance) const noexcept
 {
@@ -2599,14 +2602,31 @@ float AcustraEngine::actionHeight(int stringIndex,
                     / static_cast<float>(stringCount - 1);
     const float twelfth = steel ? 2.4e-3f + (1.6e-3f - 2.4e-3f) * mix
                                 : 4.0e-3f + (3.0e-3f - 4.0e-3f) * mix;
-    const float nut = steel ? 0.5e-3f : 0.7e-3f;
-    return nut + (twelfth - nut) * nutDistance / (0.5f * scaleLength);
+    const float first = steel ? 0.5e-3f : 0.7e-3f;
+    const float firstDistance = scaleLength * (1.0f - std::exp2(-1.0f / 12.0f));
+    return first + (twelfth - first) * (nutDistance - firstDistance)
+        / (0.5f * scaleLength - firstDistance);
 }
 
-// The pluck's own velocity law, as the string energy it injects, so that
-// velocity means the same thing to the fretting hand as to the picking hand:
-// a hammer-on or a lift at a MIDI velocity carries the energy a pluck at that
-// velocity would, bounded by what the mechanism can physically release.
+float AcustraEngine::frettingClearance(int stringIndex, float fretDistance,
+                                      float heldDistance) const noexcept
+{
+    const float scaleLength = parameters_.stringMaterial == StringMaterial::Steel
+        ? 0.648f : 0.650f;
+    // A held fret lowers the open line to the crown there, with zero change
+    // at the saddle. The OPEN nut already supports the open line: it is not
+    // a finger pressing the string onto an imaginary zero-fret crown.
+    const float lowering = heldDistance > 0.0f
+        ? actionHeight(stringIndex, heldDistance) : 0.0f;
+    return actionHeight(stringIndex, fretDistance) - lowering
+        * (scaleLength - fretDistance) / std::max(scaleLength - heldDistance, 1.0e-3f);
+}
+
+// Energy of the unsmoothed Finger-reference triangle at this velocity,
+// bounded by what the fretting mechanism can release. Actual picking-hand
+// plucks also have contact smoothing, position jitter and tool-dependent
+// touch, so this is a shared velocity convention, not their exact energy
+// and not a promise of equal radiated loudness.
 float AcustraEngine::pluckEnergy(float velocity, float soundingLength,
                                  float tension) const noexcept
 {
@@ -2741,9 +2761,8 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
     const float targetLength = std::max(scaleLength - targetDistance, 1.0e-3f);
     // Height of the string over the lifted fret while stopped at the target:
     // the stopped string runs from that fret crown to the saddle.
-    const float height = std::max(actionHeight(stringIndex, liftedDistance)
-        - actionHeight(stringIndex, targetDistance)
-            * (scaleLength - liftedDistance) / targetLength, 0.0f);
+    const float height = std::max(frettingClearance(
+        stringIndex, liftedDistance, targetDistance), 0.0f);
     const float apex = clamp((liftedDistance - targetDistance) / targetLength,
                              0.002f, 0.98f);
     const float displacementScale = std::max(
@@ -2821,9 +2840,9 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
 // its apex at w and height h(1 - w/L), plus the uniform velocity over [0, w].
 // A finger slower than c*h/L has the dent's front reach the saddle first,
 // and then the whole segment moves down with it. The speed comes from the
-// energy the pluck's velocity law assigns to the same MIDI velocity, so a
-// hammer-on at a velocity is as loud as a pluck at it and gets brighter as
-// it gets faster, the way a real one does.
+// unsmoothed Finger-reference energy assigned to that MIDI velocity. Faster
+// motion narrows the dent and raises its high-frequency content; radiated
+// loudness also depends on this excitation shape and the body response.
 //
 // The finger driving that point is rigid, and the published finger says a
 // rigid one is right here. Bilbao and Torin, "Numerical Simulation of
@@ -2875,9 +2894,8 @@ void AcustraEngine::hammerString(Voice& voice, int stringIndex,
     const float newDistance = scaleLength
         * (1.0f - std::exp2(-static_cast<float>(newFret) / 12.0f));
     const float soundingLength = std::max(scaleLength - newDistance, 1.0e-3f);
-    const float height = std::max(actionHeight(stringIndex, newDistance)
-        - actionHeight(stringIndex, previousDistance) * soundingLength
-            / std::max(scaleLength - previousDistance, 1.0e-3f), 1.0e-5f);
+    const float height = std::max(frettingClearance(
+        stringIndex, newDistance, previousDistance), 1.0e-5f);
     const float displacementScale = std::max(
         physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
     const float waveSpeed = 2.0f * scaleLength * midiFrequency(voice.openMidi);

@@ -75,7 +75,7 @@ reverb, room effect or recorded-note layer.
 | `04-string-age.wav` | The same steel phrase with fresh strings, then fully aged strings | 6.5 s | −7.6 dBFS | +4.6 dB |
 | `05-alternate-tunings.wav` | Drop D, DADGAD and Open G chords | 12.3 s | −10.7 dBFS | +7.7 dB |
 | `06-playing-behaviours.wav` | A chord change over a ringing chord, CC2 bridge-hand damping, then two natural harmonics above the fretted range | 10.7 s | −11.2 dBFS | +8.2 dB |
-| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −16.0 dBFS | +13.0 dB |
+| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −15.1 dBFS | +12.1 dB |
 | `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −4.2 dBFS | +1.2 dB |
 | `09-recuerdos-de-la-alhambra.wav` | Tarrega, Recuerdos de la Alhambra, bars 1-12: a nylon tremolo over a thumb arpeggio | 31.6 s | −14.4 dBFS | +11.4 dB |
 | `10-lagrima.wav` | Tarrega, Lagrima, bars 1-8: a sung nylon melody over held bass | 26.0 s | −19.8 dBFS | +16.8 dB |
@@ -215,6 +215,14 @@ and event times are unknown. No best setting is selected or fitted. The
 `agpt_hammer_plateau_audit_2026_09_05` report entry retains the protocol,
 per-setting results and source hashes.
 
+Repeating the unchanged protocol for the subsequent action-geometry correction
+increases median absolute level-ratio error in 17 of 18 microphone assumptions
+and all 18 piezo assumptions. Across assumptions the change ranges from
+−0.004 to +0.828 dB for microphone and +0.026 to +0.274 dB for piezo. All
+900 pre-hammer prefixes remain identical. Correct fret coordinates therefore
+do not establish better agreement with these recorded hammer-on levels; the
+unmeasured velocity map remains a separate problem.
+
 A private listening reference compares both Acustra bridges with the installed
 NI Strummed Acoustic 1.1.0 library in Kontakt 7.10.6: four bars of C major at
 120 BPM, eighth-note strums, stereo capture, and EQ, compression, reverb and
@@ -316,22 +324,26 @@ the rest line carrying the finger's velocity, the vibration the stopped segment
 held goes on over the new length, and the finger, still touching until it has
 risen clear, damps it for h/v with the hand's own 160 ms contact. If the lift
 carries at least the pressed triangle's elastic energy the finger is gone
-before the string moves and the shape is released whole. The action heights
-are the published set-up dimensions - 3/32" bass and 1/16" treble over the
-twelfth fret for a steel-string, 4 and 3 mm for a classical, with 0.5 and
-0.7 mm over the first fret, on the line a straight neck puts between them - and
-the lift's speed comes from the same velocity law as the pluck's, so the only
-convention is where the finger stops staying: at MIDI's own unsensed value.
-Because a pressed treble string at a low fret stores little elastic energy,
-release velocity is a two-region control: on a steel high E at the second
-fret the finger follows the string only from release velocity 65 to about 77
-and every faster release lets the whole shape go identically, while the
-switch sits near 92 on the low E at the third fret and near 90 on a nylon
-high E. A gentle sensed release at about 70 leaves the open string ringing
-12.5 dB (steel) or 16.5 dB (nylon) under the note's own first second, and
-above the switch on steel about 6 dB under it, so a keyboard that senses
-release will ghost open strings unless the player holds the key to the end
-or damps with CC2. A string lifted to open is nobody's: it rings on in the junction with no key and
+before the string moves and the shape is released whole. The straight-neck
+action line passes through the actual first and twelfth fret positions.
+Steel's twelfth-fret heights, 2.4 mm bass and 1.6 mm treble, follow
+[Martin's suggested setup](https://www.martinguitar.com/gear-accessories/18TOOL27.html).
+The classical 4/3 mm and first-fret 0.5/0.7 mm heights remain authored setup
+dimensions, not measurements of the modeled bodies. The first-fret reference
+follows the measurement convention in
+[Taylor's setup guide](https://taylorguitars.zendesk.com/hc/en-us/articles/4403711312013-Assessing-a-Taylor-Guitar-Set-Up).
+A held fret lowers the string to its crown; an open nut already supports the
+open line and is not treated as a finger pressing a zero fret. Previously
+both distinctions were lost, understating the released shape at low frets.
+
+The fretting velocity map uses the energy of an unsmoothed Finger-reference
+triangle. Actual picking-hand plucks have contact smoothing, position jitter
+and tool-dependent touch, so equal MIDI velocity does not imply equal
+mechanical energy or microphone loudness. Release velocity has two regions:
+the string follows a slower finger, while a finger that outruns it releases
+the whole pressed shape; faster motion then adds no energy. A keyboard that
+senses release can leave open strings ringing unless the player holds the key
+to the end or damps with CC2. A string lifted to open is nobody's: it rings on in the junction with no key and
 no hand on it until it has died away, and the next note on it lands the hand
 on it first.
 
@@ -983,11 +995,17 @@ The JUCE-free suites cover:
   eighteen cases; the peak gates are not physical-energy measurements;
 - the fretting hand: reconstructed ideal-string displacement and velocity
   have the intended location, direction and additive mechanical energy.
+  Public note-off injection also matches its independently calculated,
+  geometry-capped energy within the sampled-wave error bound, leaves the
+  bridge endpoint unchanged and preserves existing body/filter history.
   Separate audio checks compare one-second microphone energy with a pluck
   at the same velocity, allowing 10 dB for lifts and 8 dB for hammers and
   pull-offs; these are broad regression gates, not measured realism targets.
+  The first-millisecond peak relative to preceding sustain is reported as
+  articulation balance; its former 1.2 ceiling did not test continuity and
+  rejected valid energy-adding lifts after the action-coordinate correction.
   A lift leaves the open pitch sounding and a pull-off the held one,
-  neither steps on its first sample, lift zero is bit-identical to the plain
+  lift zero is bit-identical to the plain
   note-off, and the wrapper maps release velocity 64, an unsensed release and
   a Note On at velocity zero to that plain note-off while 127 lifts;
 - replucks: a held note replucked six times at 250 ms neither climbs above
@@ -1036,8 +1054,9 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   The previously reported 1.87–2.78% fundamental spread was a measurement
   error: the estimator mistook tension-glide detuning for amplitude loss.
   Following each window's partial peak puts H1 below 0.21% and restores its
-  original 1.5% test bound. The test disables bridge coupling, so body Q and
-  bridge conductance were not the cause. Closing the remaining high-partial
+  original 1.5% test bound. The test now disables bridge coupling and observes
+  saddle force, so the microphone filter cannot contaminate the loss estimate.
+  Closing the remaining high-partial
   gap requires less warping while retaining the calibrated 48 kHz loss curve.
 
 - The bridge mobility the corpus wants is not the mobility that was measured.
@@ -1620,6 +1639,9 @@ git history rather than here.
   fretting end with the intended direction, and released displacement starts
   at rest. This removes an unwanted cross term between the hammer's shape
   and velocity, without changing its energy budget or finger-speed map.
+- Corrected first-fret action coordinates and the open nut in hammer-on and
+  release geometry. Low-fret releases now use the full supported-string
+  clearance; setup heights and the velocity map retain their existing values.
 
 ### 2026-09-04
 

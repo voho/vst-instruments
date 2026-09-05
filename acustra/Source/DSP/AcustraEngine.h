@@ -585,6 +585,8 @@ private:
     void captureTail(Voice& voice) noexcept;
     [[nodiscard]] float actionHeight(int stringIndex,
                                      float nutDistance) const noexcept;
+    [[nodiscard]] float frettingClearance(int stringIndex, float fretDistance,
+                                          float heldDistance) const noexcept;
     [[nodiscard]] float handContactGain(float frequency) const noexcept;
     [[nodiscard]] float pluckEnergy(float velocity, float soundingLength,
                                     float tension) const noexcept;
