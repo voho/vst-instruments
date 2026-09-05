@@ -1267,6 +1267,13 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   not proof that its tuning or radiation is correct: the independent per-axis
   phase estimate omits the other axis's returning wave, and even the shipping
   tuning estimate omits neighbouring strings' frequency-dependent loop loads.
+  A discrete coupled-pole reference reproduces the native string and bridge
+  recurrences, but selecting a pole remains an audible-mode problem: in the
+  prototype's 96 kHz open B, the tracked vertical mode is 19.6 cents flat while
+  the recorded tail is dominated by a different mode about 3.1 cents sharp.
+  In its fretted nylon C4, the early vertical mode gives way to a longer-lived
+  horizontal mode about 6.8 cents flat. Neither the nearest root nor continuity
+  from the vertical mode is therefore sufficient for an automatic tuner.
   Rotation-axis geometry and lateral translation remain unmeasured. The raw
   normal-impact microphone records do support a conditional force-pair
   radiation map; they do not measure arbitrary horizontal excitation.
@@ -1277,6 +1284,10 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   string position assumes spatial interpolation. The center impact tests only
   the common component. Separate minimum-phase conversion destroys the relative
   phase needed for this map, so it requires a new radiation model.
+  Refitting the existing poles to the raw complex pair passes the current
+  filter-error limits on only two of six generalized-force paths per guitar.
+  A common 16-sample onset offset does not resolve that failure and is not an
+  identified acoustic delay; it must not become an automatic runtime latency.
   Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference

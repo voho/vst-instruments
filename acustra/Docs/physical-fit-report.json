@@ -79684,5 +79684,487 @@
    "sha256": "a07d36368342c919587575461f1c49318d8ca1b10ed992b7797e47ee3cd9d076"
   },
   "next_action": "Evaluate a separate raw-complex two-input/three-output radiation fit. Independently minimum-phasing inputs can erase differential pressure even when each magnitude is correct; current treble-only bank cannot supply this map. No unmeasured h/a or horizontaltranslation is inferred."
+ },
+ "raw_complex_fixed_pole_feasibility_2026_09_05": {
+  "status": "Offline feasibility only; existing poles do not pass every generalized-force path gate. No runtime coefficient, phase or latency change.",
+  "source": "https://zenodo.org/records/4604577",
+  "raw_md5": "733cb10baf5ce36d8bf333610ffbb260",
+  "source_guitars": {
+   "21": "Lester DeVoe nylon flamenco, adapted for steel in shipping model",
+   "34": "Manuel Contreras nylon classical"
+  },
+  "protocol": "Use calibrated raw-complex bass/treble normal impacts and three microphones; Hh=(Ht+Hb)/2, Hr=(Ht-Hb)/2, F=Fb+Ft, T=Ft-Fb=M/a. Keep common 3000/12000-sample causal tapers; fit existing float32 frequency/Q pairs and existing weighted residue solver without minimum-phase conversion or individual delay/gain alignment. Compare zero explicit delay with earliest 5%-peak force-to-microphone onset crossing across all six paths (16 samples). No delay optimization.",
+  "existing_poles": {
+   "g21": 109,
+   "g34": 103
+  },
+  "existing_gates": {
+   "complex_relative_l2": 0.3,
+   "magnitude_abs_median_db": 1.25,
+   "magnitude_abs_p90_db": 3.75,
+   "erb_5k_to_10k_level_abs_db": 1.0
+  },
+  "summary": [
+   {
+    "guitar": 21,
+    "delay_samples": 0,
+    "heave_rock_targets": {
+     "complex_relative_l2": [
+      0.18559651439742778,
+      0.30873112795508906
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.8161193783956864,
+      1.3677429629897757
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      3.211366159227711,
+      4.1506431071308025
+     ],
+     "erb_level_abs_max_db": [
+      0.2601409267883811,
+      0.7732453190941211
+     ],
+     "global_path_gates_passing_of_six": 2
+    },
+    "reconstructed_endpoints": {
+     "complex_relative_l2": [
+      0.21161427667615945,
+      0.27203860998275675
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.9156759297075352,
+      1.255598326774001
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      3.165639838217112,
+      4.903586360294982
+     ],
+     "erb_level_abs_max_db": [
+      0.24187321395170755,
+      1.143549549986911
+     ],
+     "global_path_gates_passing_of_six": 3
+    },
+    "relative_input_phase_p90_degrees": {
+     "upper": {
+      "rock_over_heave": 44.86731808363952,
+      "treble_over_bass_impact": 40.716354389527886
+     },
+     "treble": {
+      "rock_over_heave": 36.890107195913345,
+      "treble_over_bass_impact": 36.2348013805309
+     },
+     "bass": {
+      "rock_over_heave": 31.82180444600456,
+      "treble_over_bass_impact": 33.5222090380689
+     }
+    }
+   },
+   {
+    "guitar": 21,
+    "delay_samples": 16,
+    "heave_rock_targets": {
+     "complex_relative_l2": [
+      0.17805335826841687,
+      0.300306814168101
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.8144176540575256,
+      1.236258616413366
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      3.0307999017496448,
+      4.005254004618612
+     ],
+     "erb_level_abs_max_db": [
+      0.2286730352530306,
+      0.8731012794185293
+     ],
+     "global_path_gates_passing_of_six": 2
+    },
+    "reconstructed_endpoints": {
+     "complex_relative_l2": [
+      0.1878985464227889,
+      0.25876466292153416
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.8423639354241015,
+      1.1965001507701731
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      2.8698105974813117,
+      4.409597084359423
+     ],
+     "erb_level_abs_max_db": [
+      0.19189947845998617,
+      0.990967412565889
+     ],
+     "global_path_gates_passing_of_six": 3
+    },
+    "relative_input_phase_p90_degrees": {
+     "upper": {
+      "rock_over_heave": 41.401249324663155,
+      "treble_over_bass_impact": 38.57220075217197
+     },
+     "treble": {
+      "rock_over_heave": 34.08875605827689,
+      "treble_over_bass_impact": 33.67321865462703
+     },
+     "bass": {
+      "rock_over_heave": 31.57811799778289,
+      "treble_over_bass_impact": 30.717277436647898
+     }
+    }
+   },
+   {
+    "guitar": 34,
+    "delay_samples": 0,
+    "heave_rock_targets": {
+     "complex_relative_l2": [
+      0.20724759756569294,
+      0.2973946035782957
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.9291459634555201,
+      1.632009667428017
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      3.4336736184896783,
+      5.03028533549964
+     ],
+     "erb_level_abs_max_db": [
+      0.4136848862162068,
+      1.0168186177197553
+     ],
+     "global_path_gates_passing_of_six": 2
+    },
+    "reconstructed_endpoints": {
+     "complex_relative_l2": [
+      0.18151272522553855,
+      0.3028917389050312
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.8376554006684329,
+      1.5284909058396448
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      2.710003479935039,
+      5.117950763082048
+     ],
+     "erb_level_abs_max_db": [
+      0.23997824378920524,
+      1.2508950037792217
+     ],
+     "global_path_gates_passing_of_six": 1
+    },
+    "relative_input_phase_p90_degrees": {
+     "upper": {
+      "rock_over_heave": 45.7565961180191,
+      "treble_over_bass_impact": 41.199915341805514
+     },
+     "treble": {
+      "rock_over_heave": 43.80266094706382,
+      "treble_over_bass_impact": 42.18892793247083
+     },
+     "bass": {
+      "rock_over_heave": 34.068576214819274,
+      "treble_over_bass_impact": 30.95495230873479
+     }
+    }
+   },
+   {
+    "guitar": 34,
+    "delay_samples": 16,
+    "heave_rock_targets": {
+     "complex_relative_l2": [
+      0.20845467062863726,
+      0.2912063046334113
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.9561373194503674,
+      1.5807295997711528
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      3.451347397738985,
+      4.952811912016467
+     ],
+     "erb_level_abs_max_db": [
+      0.572191148145012,
+      1.2118264739201092
+     ],
+     "global_path_gates_passing_of_six": 2
+    },
+    "reconstructed_endpoints": {
+     "complex_relative_l2": [
+      0.18096121741872442,
+      0.2826026605339994
+     ],
+     "unmasked_magnitude_abs_median_db": [
+      0.8153427422278925,
+      1.4582716118193628
+     ],
+     "unmasked_magnitude_abs_p90_db": [
+      2.791543691044566,
+      4.89079129245073
+     ],
+     "erb_level_abs_max_db": [
+      0.3211692823796183,
+      1.1923006366091742
+     ],
+     "global_path_gates_passing_of_six": 1
+    },
+    "relative_input_phase_p90_degrees": {
+     "upper": {
+      "rock_over_heave": 42.58828696695425,
+      "treble_over_bass_impact": 39.45155849028331
+     },
+     "treble": {
+      "rock_over_heave": 42.78658923620662,
+      "treble_over_bass_impact": 42.750290943796976
+     },
+     "bass": {
+      "rock_over_heave": 34.04139563287857,
+      "treble_over_bass_impact": 31.19316305883274
+     }
+    }
+   }
+  ],
+  "validation": {
+   "existing_generator_checked_target_paths": 24,
+   "maximum_generator_error_metric_difference": 1.3766765505351941e-14,
+   "maximum_direct_residue_endpoint_reconstruction_relative_l2": 6.562605193465885e-16,
+   "maximum_windowed_raw_endpoint_target_relative_l2": 0.0
+  },
+  "artifacts": {
+   "/tmp/acustra-force-pair-modal-prototype/fit.py": "e4fdfd48eeaf4f56bf9b56109d344d0532c5284e31d3a80333caac0aa97086c9",
+   "/tmp/acustra-force-pair-modal-prototype/fixed-poles-final/report.json": "430b8fbd34bc99b27c322aa85ce96d9f4194df87f4376e2105aa26e6c55bec58",
+   "/tmp/acustra-force-pair-modal-prototype/fixed-poles-final/complex-fits.npz": "70b8d168e2e39ea5cdce0f6590abc1dbdbe061746aa811a148719ecae73056f3",
+   "/tmp/acustra-force-pair-modal-prototype/validation.json": "03185709893f84e509e0471da3509e8db5ff3bfe5ce6d8dda563c1681fcea48a"
+  },
+  "rerun_commands": [
+   "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3 /tmp/acustra-force-pair-modal-prototype/extract.py --raw-mat /tmp/acustra-bridge-rigid-audit/qualified_selected_impulses.mat",
+   "OPENBLAS_NUM_THREADS=1 /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 /tmp/acustra-force-pair-modal-prototype/fit.py --output /tmp/acustra-force-pair-modal-replay"
+  ],
+  "limits": [
+   "Training-input approximation, not independent real-performance validation or a realism score.",
+   "Onset crossings vary by path and threshold. Material raw H1 circular-end energy and early positive-time energy prevent interpreting a common onset offset as an identified pure propagation delay.",
+   "The center impact tests only common-force spatial interpolation. Outer strings extrapolate beyond the measured normal input pair. Horizontal-force radiation and rotation-axis geometry remain unmeasured.",
+   "Runtime construction/calibration morphs and sample-rate remapping are not applied to this fit audit.",
+   "A subsequent joint measured-pole fit is a separate stage; this failed fixed-pole result remains frozen."
+  ]
+ },
+ "coupled_phase_and_observed_modes_2026_09_05": {
+  "status": "Validated off-tree mathematical reference and actual-note diagnostic; no automatic tuner or two-axis runtime change.",
+  "shipping_baseline": "46b8a22f, source-identical DSP to 59df0c2d",
+  "prototype": "b870c7ed plus retained two-axis saddle transform, with current fretting correction; geometry still provisional.",
+  "condition": "det(I-diag(Pv,Ph)*S)=0, S=(I+ZY)^-1*(I-ZY); idle closed loops add their actual Z*(1+P)/(1-P) loads through saddle coordinate transforms.",
+  "fixed_geometry": "Solve one common delay and pole radius while preserving Dh-Dv=2*Fs*endCorrectionMetres/c. Independent diagonal per-axis phase compensation assumes an anechoic other axis.",
+  "self_test": {
+   "passive_counterexample_uncancelled_eigenphase_degrees": [
+    -6.8386,
+    6.8386
+   ],
+   "coupled_determinant_residual": 3.2e-17
+  },
+  "reference_grid": "147 cases per engine: three sample rates, two materials, six strings, four frets plus three scalar Fylde controls. Includes isolated and closed-idle conditions; failed solves retained.",
+  "reference_summary": {
+   "frozen-report.json": {
+    "self_string_only": {
+     "valid_nearest": 147,
+     "exact_failures": 0,
+     "quantized_verified": 147,
+     "max_abs_quantized_cents": 8.762564991029491e-05,
+     "max_abs_tracked_old_cents": 6.452506964057922,
+     "max_abs_phase_corrected_pole_cents": 6.076935505597914
+    },
+    "closed_idle": {
+     "valid_nearest": 146,
+     "exact_failures": 17,
+     "quantized_verified": 129,
+     "max_abs_quantized_cents": 9.605364677336938e-05,
+     "max_abs_tracked_old_cents": 19.723412575374695,
+     "max_abs_phase_corrected_pole_cents": 7.28417692820195
+    }
+   },
+   "shipping/frozen-report.json": {
+    "self_string_only": {
+     "valid_nearest": 147,
+     "exact_failures": 0,
+     "quantized_verified": 147,
+     "max_abs_quantized_cents": 9.228249293042625e-05,
+     "max_abs_tracked_old_cents": 4.2039578474507335,
+     "max_abs_phase_corrected_pole_cents": 4.205085142990624
+    },
+    "closed_idle": {
+     "valid_nearest": 147,
+     "exact_failures": 16,
+     "quantized_verified": 131,
+     "max_abs_quantized_cents": 8.954351680428428e-05,
+     "max_abs_tracked_old_cents": 5.867383554330746,
+     "max_abs_phase_corrected_pole_cents": 6.97639941504228
+    }
+   }
+  },
+  "recurrence_validation": {
+   "native_loop_maximum_relative_error": 8.26e-09,
+   "native_body_maximum_relative_error": 2.06e-05,
+   "python_vs_independent_cpp_analytic_maximum_relative_error": 4.2e-13
+  },
+  "render_protocol": "Independent actual-engine render of four difficult stationary notes per engine. Production sources unchanged. Forced string via standard string-per-channel noteOn; ordinary initialisePluck at stationary delay and original deterministic random draws. Noise excitation, attack pitch/tension surrogate and longitudinal radiation disabled for linear modal diagnosis; all6 strings and native bridge, body, capture paths remain active. Initial/current and final/current all12 delays exactly match frozen coefficient dumps. Default remaining EngineParameters, velocity0.8, held3seconds, one-sample process blocks. Native little-endian float32 files have17 channels described in JSON; .wav files contain unnormalized stereo capture. Channel displacement observations are at x/L=.37 FROM BRIDGE, in engine displacement units, not calibrated metres.",
+  "render_controls": {
+   "shape": "Dreadnought",
+   "body_material": "Spruce",
+   "bridge_model": "Original",
+   "capture": "StereoMic",
+   "tuning": "Standard",
+   "picking": "Finger",
+   "age": 0.15,
+   "pluck_position": 0.28,
+   "touch": 0.58,
+   "body_amount": 0.82,
+   "stereo_width": 0.62,
+   "output_gain": 0.42,
+   "velocity": 0.8
+  },
+  "dominant_fitted_components": [
+   {
+    "model": "shipping",
+    "rate": 96000,
+    "steel": true,
+    "string": 4,
+    "note": 59,
+    "frequency": 246.10697226841432,
+    "cents": -5.861592182039698,
+    "t60_seconds": 4.399015546326944,
+    "target_vertical_fraction": 1.0,
+    "target_vertical_fraction_definition": "Fraction of the target string two-port eigenvector, not total instrument modal energy.",
+    "capture_spectral_fit_relative_l2": [
+     2.0734911958114248e-05,
+     2.0657183930718904e-05
+    ]
+   },
+   {
+    "model": "shipping",
+    "rate": 96000,
+    "steel": true,
+    "string": 5,
+    "note": 76,
+    "frequency": 661.2938032281883,
+    "cents": 5.345430627247022,
+    "t60_seconds": 2.7328451163968013,
+    "target_vertical_fraction": 1.0,
+    "target_vertical_fraction_definition": "Fraction of the target string two-port eigenvector, not total instrument modal energy.",
+    "capture_spectral_fit_relative_l2": [
+     3.17136804607752e-06,
+     3.166941210300549e-06
+    ]
+   },
+   {
+    "model": "two-axis",
+    "rate": 44100,
+    "steel": false,
+    "string": 0,
+    "note": 60,
+    "frequency": 260.6058710525331,
+    "cents": -6.760725312447296,
+    "t60_seconds": 1.990720867906359,
+    "target_vertical_fraction": 0.028721208779016627,
+    "target_vertical_fraction_definition": "Fraction of the target string two-port eigenvector, not total instrument modal energy.",
+    "capture_spectral_fit_relative_l2": [
+     0.04557764318517066,
+     0.056139845058565986
+    ]
+   },
+   {
+    "model": "two-axis",
+    "rate": 48000,
+    "steel": false,
+    "string": 0,
+    "note": 60,
+    "frequency": 260.6060418118844,
+    "cents": -6.75959093928401,
+    "t60_seconds": 1.9907975897387533,
+    "target_vertical_fraction": 0.028740038400774038,
+    "target_vertical_fraction_definition": "Fraction of the target string two-port eigenvector, not total instrument modal energy.",
+    "capture_spectral_fit_relative_l2": [
+     0.04602286391704381,
+     0.05669340419999172
+    ]
+   },
+   {
+    "model": "two-axis",
+    "rate": 96000,
+    "steel": true,
+    "string": 4,
+    "note": 59,
+    "frequency": 247.3794333847054,
+    "cents": 3.0664466358264173,
+    "t60_seconds": 4.488380247857739,
+    "target_vertical_fraction": 0.9530476060597579,
+    "target_vertical_fraction_definition": "Fraction of the target string two-port eigenvector, not total instrument modal energy.",
+    "capture_spectral_fit_relative_l2": [
+     0.026578476698994984,
+     0.026594898450939625
+    ]
+   },
+   {
+    "model": "two-axis",
+    "rate": 96000,
+    "steel": true,
+    "string": 5,
+    "note": 76,
+    "frequency": 661.3691476466361,
+    "cents": 5.542667304480279,
+    "t60_seconds": 3.0254566433301124,
+    "target_vertical_fraction": 0.9960976134195073,
+    "target_vertical_fraction_definition": "Fraction of the target string two-port eigenvector, not total instrument modal energy.",
+    "capture_spectral_fit_relative_l2": [
+     0.04459355461955959,
+     0.044590019260342194
+    ]
+   }
+  ],
+  "shipping_nylon_early": {
+   "note": 60,
+   "string": 0,
+   "rates": [
+    44100,
+    48000
+   ],
+   "observed_first_partial_peak_cents": [
+    4.246,
+    4.195
+   ],
+   "corresponding_pole_cents": [
+    4.286679137961518,
+    4.234982512653076
+   ],
+   "late_capture_limitation": "Late first-partial peak about103 dB below early: no stable late-pitch or reliable late-residue claim."
+  },
+  "independent_review": {
+   "full_12_port_vs_reduced_2_port_maximum_difference": 1.91e-13,
+   "verified_pole_candidates": 27,
+   "maximum_minimum_singular_value_at_candidate": 2.7e-12,
+   "all_twelve_runtime_delays_match_dumps": true,
+   "reporting_erratum": "The frozen runtime manifest quotes prototype spectral residual2.7-4.6% for left capture only; both capture channels span2.66-5.67%. Original manifest retained."
+  },
+  "artifacts": {
+   "/tmp/acustra-coupled-phase-review/reference-final-manifest.json": "84fd0b1573557bf3590ac04307f7731744b7272902de2771687ac0b0d79694b4",
+   "/tmp/acustra-coupled-phase-review/coupled_phase.py": "7c9b041723254aac469ebe9bd7bbce59d622f639b1a176d4c1a460ed4d8371de",
+   "/tmp/acustra-coupled-phase-review/frozen-report.json": "b4de70c5dd0bae2d21f2a246daf5e386ec20020a08de82dbf1fcfbc84361d2b7",
+   "/tmp/acustra-coupled-phase-review/shipping/frozen-report.json": "36bd02b90a2cc3537536997b48c4ddbbe1bbbef77184265bb6033c94b83caff5",
+   "/tmp/acustra-coupled-phase-review/recurrence-report.json": "651bc3676952d3fd680a9aa0cbe445aaa8c6a7fd726748d704b71829dc6b7192",
+   "/tmp/acustra-coupled-phase-review/runtime/manifest.json": "d58e834fb039ea8998f918f2e7bba7736a2f34b70b658a8aaf385417c78c5f6b",
+   "/tmp/acustra-coupled-phase-review/runtime/observed-report.json": "2210019e88b8dd6576057db05b0394488cf7a8c626bcca8cc6742a58ec1c3206",
+   "/tmp/acustra-coupled-phase-review/runtime/pole-residue-report.json": "480b3866f6e455d7db6823d87a6a1c66bdb200ef1570c4ffc5d69f0846d3040e"
+  },
+  "limits": [
+   "Mode continuation identifies mathematical ancestry, not acoustic dominance; the nearest root can belong to another string or polarization.",
+   "Closed-idle common-delay solves fail or change identity near hybrid resonances. Successful isolated correction does not establish a robust realtime tuner.",
+   "The bounded pole search is not an exhaustive pole count, and fitted component energies do not add because modes interfere.",
+   "The rendering controls remove noise, attack-tension modulation and longitudinal radiation for stationary linear analysis; this is not unchanged shipping audio or a real-guitar realism score.",
+   "No data here validates the assumed saddle rotation axis, arbitrary horizontal-force radiation, or steel body microphone response."
+  ]
  }
 }
