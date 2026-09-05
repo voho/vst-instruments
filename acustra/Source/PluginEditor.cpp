@@ -544,7 +544,11 @@ void AcustraAudioProcessorEditor::updateConstructionControls()
             != displayedConstructionPresetId;
         displayedConstructionPresetId = presetId;
         if (! selectionPending)
+        {
             setupControls[0].setSelectedId (presetId, juce::dontSendNotification);
+            if (auto* handler = setupControls[0].getAccessibilityHandler())
+                handler->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
+        }
     }
     setupControls[2].setItemEnabled (
         5, state.stringMaterial == acustra::StringMaterial::Steel);
