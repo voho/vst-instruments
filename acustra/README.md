@@ -1270,6 +1270,13 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   Rotation-axis geometry and lateral translation remain unmeasured. The raw
   normal-impact microphone records do support a conditional force-pair
   radiation map; they do not measure arbitrary horizontal excitation.
+  [`AuditBodyForcePair.py`](Tools/AuditBodyForcePair.py) preserves the complex
+  bass/treble responses and converts them to common force `Fb+Ft` and
+  differential force `Ft-Fb` (moment divided by impact half-spacing).
+  This exactly reconstructs those two measured inputs; extending it to every
+  string position assumes spatial interpolation. The center impact tests only
+  the common component. Separate minimum-phase conversion destroys the relative
+  phase needed for this map, so it requires a new radiation model.
   Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference
