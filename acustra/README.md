@@ -117,6 +117,23 @@ Render manifests record the actual calibration vector and controls; model-only
 re-renders update that vector. Microphone targets do not establish pickup
 realism, and this corpus does not identify pick and thumb technique separately.
 
+A separate [GuitarSet](https://zenodo.org/records/3371780) performance audit
+compares 72 seconds of real microphone audio with string-aware renders of
+315 annotated notes: six players, three comping and three solo takes of the
+same phrase. Velocity is fixed at MIDI 91 because the annotations contain no
+measured note dynamics. The first baseline averages 14.88 dB of multiscale log
+spectral error, 0.903 spectral convergence and 0.312 chroma cosine distance.
+These expose substantial remaining mismatch. The recording uses a different
+body, microphone and room, and GuitarSet timing statistics previously informed
+the engine, so this is not an untouched holdout or a perceptual ranking.
+
+[`BenchmarkPerformances.py`](Tools/BenchmarkPerformances.py) fixes the six
+excerpts before scoring, verifies the published archive checksums, preserves
+annotated timing and quiet frames, and exports paired WAVs matched by whole-clip
+RMS. Its report retains input, executable and scorer hashes, individual metrics
+and listening trims. The committed report's `performance_benchmark_2026_09_05`
+entry retains this baseline without distributing the source recordings.
+
 ## How it works
 
 ### Six-string performance model
@@ -1340,6 +1357,8 @@ git history rather than here.
 - Added paired recording comparisons that verify reference identity and
   report material-specific changes; render manifests retain calibration values.
 - Added picking and capture audio demonstrations.
+- Added a six-player, 315-note real-performance benchmark with fixed excerpts,
+  descriptor scores and reproducible, level-matched listening exports.
 
 ### 2026-09-04
 
@@ -1591,6 +1610,21 @@ python3 Tools/OptimizePhysicalModel.py \
 ```
 
 The output directory must not already exist. NumPy and SciPy are required.
+
+To reproduce the fixed performance benchmark with the published GuitarSet
+`annotation.zip` and `audio_mono-mic.zip` archives in one directory:
+
+```sh
+python3 Tools/BenchmarkPerformances.py \
+  --dataset /path/to/guitarset \
+  --renderer ./build-dsp/AcustraPerformanceRenderer \
+  --output /tmp/acustra-performances
+```
+
+The output directory must be new. `--capture` and `--picking` can evaluate
+explicit alternatives; scores against a microphone recording cannot validate
+a pickup's response. `--self-test --renderer ./build-dsp/AcustraPerformanceRenderer`
+checks the scoring, string scheduling and renderer without downloading audio.
 
 Two audits read a rendered fit corpus and compare the model with the recordings
 where the fitted score cannot say where a difference sits: one along the

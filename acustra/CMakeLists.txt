@@ -161,6 +161,9 @@ if(ACUSTRA_BUILD_TOOLS)
     target_link_libraries(AcustraBridgeProbe PRIVATE AcustraDSP)
     target_compile_features(AcustraBridgeProbe PRIVATE cxx_std_20)
 
+    add_executable(AcustraPerformanceRenderer Tools/PerformanceRenderer.cpp)
+    target_link_libraries(AcustraPerformanceRenderer PRIVATE AcustraDSP)
+
     if(MSVC)
         target_compile_options(AcustraRenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(AcustraPhysicalFitRenderer
@@ -250,6 +253,11 @@ if(BUILD_TESTING)
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/FitPhysicalModel.py"
                                  --self-test)
                 set_tests_properties(Acustra.PhysicalScorer PROPERTIES TIMEOUT 180)
+                add_test(NAME Acustra.PerformanceBenchmark
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkPerformances.py"
+                                 --self-test --renderer "$<TARGET_FILE:AcustraPerformanceRenderer>")
+                set_tests_properties(Acustra.PerformanceBenchmark PROPERTIES TIMEOUT 180)
                 add_test(NAME Acustra.ExtractExcitation
                          COMMAND "${Python3_EXECUTABLE}"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/ExtractExcitation.py"
