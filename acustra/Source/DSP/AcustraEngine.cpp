@@ -4006,10 +4006,11 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                 longitudinalForce);
         }
 
-        // DAFx-26 Eq. (45): only Fb participates in the measured body
-        // compliance, while unplayed open-string voices are summed one-way
-        // into radiation. This force-scaled waveguide analogue uses unity
-        // gain; neither term returns from the microphone radiation bank.
+        // The load entering the body compliance drives measured radiation.
+        // Idle-string reactions already enter that load through the shared
+        // junction; the legacy separate sympathetic sum remains zero.
+        // Axial radiation is still an additional one-way force surrogate.
+        // The microphone bank itself does not feed back into the junction.
         lastSympatheticRadiationForce_ = sympatheticForce;
         lastLongitudinalForce_ = longitudinalForce;
         const BodyOutput body = renderBody(lastBridgeBodyForce_

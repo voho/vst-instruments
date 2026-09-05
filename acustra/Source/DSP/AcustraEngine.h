@@ -186,8 +186,9 @@ public:
     void allNotesOff(int midiChannel = 1) noexcept;
     void allSoundOff(int midiChannel = 1) noexcept;
     void setBridgeCouplingEnabled(bool enabled) noexcept;
-    // Offline/test isolation only; this gates the one-way idle-string
-    // radiation sum without changing the bridge or string state.
+    // Offline/test isolation only; omits idle-string ports from the junction.
+    // Their delay lines still receive its return, and all six anchor springs
+    // remain present. This changes bridge loading and the resulting motion.
     void setSympatheticStringsEnabled(bool enabled) noexcept;
 
     void process(float* left, float* right, int numSamples) noexcept;
@@ -198,9 +199,11 @@ public:
     [[nodiscard]] float getLastBridgeReactionForce() const noexcept;
     [[nodiscard]] float getLastBridgeBodyForce() const noexcept;
     [[nodiscard]] float getLastBridgeTailForce() const noexcept;
+    // Legacy separate-sympathy observer, now zero: idle-string reactions enter
+    // the shared junction and are already included in the body force above.
     [[nodiscard]] float getLastSympatheticRadiationForce() const noexcept;
-    // The played strings' own axial wave, kept apart from the idle strings'
-    // radiation because it is a different mechanism on the same one-way path.
+    // The played strings' axial wave, observed separately from the two-way
+    // junction because its current radiation surrogate remains one-way.
     [[nodiscard]] float getLastLongitudinalForce() const noexcept;
     [[nodiscard]] float getLastBridgePower() const noexcept;
     [[nodiscard]] float getLastBridgeBodyPower() const noexcept;
