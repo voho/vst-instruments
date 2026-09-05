@@ -1309,6 +1309,15 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   comparison, not an automatic default change. On 2026-09-05 the user preferred
   this candidate because it sounded more stereo; that selects its spatial
   presentation for further integration work, subject to engine qualification.
+  Plugin, capture and bridge tests pass. A string-loss check incorrectly
+  observed the microphone filter; measuring saddle force gives identical
+  results for both models with every original tolerance intact. Separate
+  release checks remain unresolved: a full steel lift renders about 11.15 dB
+  below a matched-velocity pluck against the 10 dB limit, and nylon's first
+  millisecond exceeds the preceding-sustain peak ratio. At 48 kHz the nylon
+  absolute peak changes only 0.85%, while its preceding reference falls
+  1.13 dB; this is a relative-balance failure, not evidence of a new source
+  click. The candidate is retained for further work and is not the default.
   Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference

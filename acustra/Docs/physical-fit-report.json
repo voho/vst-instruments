@@ -81453,5 +81453,89 @@
    "seconds": 108.11
   },
   "scope": "Test observation correction only; no production DSP, calibration, parameter or audio changes. It resolves one diagnostic failure and does not waive the separate microphone release-level and transient gates."
+ },
+ "body_pair_selected_lift_counterfactual_2026_09_05": {
+  "summary": "/tmp/acustra-lift-counterfactual/summary.json",
+  "summary_sha256": "6ccfdd238bff5affd6f33d18cf3b5092ad71d64febd93949491ced8cc450d7c8",
+  "full_report": "/tmp/acustra-lift-counterfactual/report-44100-48000-96000.json",
+  "full_report_sha256": "5b20b942c6d8d9493737061f27a5674a6105519f6f415f92bed5b3f576f371d2",
+  "protocol": {
+   "source_test": "testFrettingHandFollowsThePluckLaw, first nonlegato 43 -> open40 lift",
+   "baseline_commit": "00fb2dafa3cc2a0808c7875bbfcdc1c1772875b1",
+   "B": "Exact two-input body plus four neutral fitted body defaults; source qualification manifest frozen separately",
+   "duration_s": 3,
+   "first_note_on_s": 0.2,
+   "first_note": 43,
+   "first_velocity": 0.8,
+   "release_s": 1,
+   "lift_values": [
+    0.3,
+    0.6,
+    1
+   ],
+   "counterfactual": "Same first note and schedule, omit noteOff",
+   "pluck_reference": "Silence until 1s then noteOn(40,lift), fresh engine",
+   "block": 127,
+   "legato": false,
+   "sympathetic_strings": false,
+   "parameters": "Default Dreadnought/Spruce, Finger, standard tuning, original bridge, stringAge .15, pluckPosition .28, touch .58, bodyAmount .82, stereoWidth .62, outputGain .06; material/capture varied as recorded",
+   "captures": [
+    "StereoMic",
+    "SaddlePiezo"
+   ],
+   "energy_units": "Sum of squared output samples; not Joules",
+   "peak_reference": "Original preceding50ms and diagnostic max(preceding50ms,same-time held1ms), unchanged 1.2 factor; no test changed",
+   "rates": [
+    44100,
+    48000,
+    96000
+   ]
+  },
+  "checks": {
+   "original_A_18_peak_and_energy_cases_pass": true,
+   "original_B_peak_failures_reproduced": 6,
+   "original_B_energy_failures_reproduced": 3,
+   "held_counterfactual_corrects_no_failures": true,
+   "piezo_AB_identical_full_streams": 48,
+   "nylon_point6_and_point1_lifts_identical": true,
+   "all_lift_prefixes_match_held": true
+  },
+  "interpretation": [
+   "The held same-time reference does not repair the nylon peak failures; held peaks remain below the prior50ms peaks at every rate.",
+   "The failed nylon ratio is a radiation-dependent articulation balance: B absolute peak is1.0085–1.0605 times A, while prior B peaks are lower. B adjacent sample steps and lift-minus-held first-ms differences are smaller than A. This does not establish a new source click or numerical instability; it also does not invalidate or pass the unchanged1.2 acoustic peak gate.",
+   "Steel full-lift is11.15–11.18dB below the equally strong pluck in stereo midpoint. Stereo-average and both individual channels are also more than10dB down, so mono cancellation is only part of the difference.",
+   "All48 complete piezo A/B phrase pairs are byte-identical. Combined with the body-only source diff, this locates the A/B change downstream in radiation/calibration, rather than an altered hand excitation. The original body model also produces a deliberate first-ms lift transient.",
+   "The assertion label clicked on its first sample is misleading: the test measures a first1ms peak relative to a preceding50ms peak, not the first sample and not an assessed audible click. No listening was performed.",
+   "These are waveform and output sample-sum comparisons. No mechanical Joules, physical conservation claim, listening preference, real-recording score, threshold change or DSP change is inferred."
+  ],
+  "report_key_erratum": "Summary key nylon_point6_and_point1_lifts_identical means velocities0.6 and1.0, not0.1; full raw filenames lift6/lift10 and rows retain the actual values.",
+  "key_numbers": {
+   "nylon_peak_over_prior_A": [
+    1.16431644,
+    1.1543338,
+    1.0916496
+   ],
+   "nylon_peak_over_prior_B": [
+    1.35527618,
+    1.32530413,
+    1.33932537
+   ],
+   "nylon_absolute_peak_B_over_A": [
+    1.02189342,
+    1.00853515,
+    1.06048466
+   ],
+   "steel_full_lift_to_pluck_midpoint_db_B": [
+    -11.15203934,
+    -11.1472659,
+    -11.17690975
+   ],
+   "rates": [
+    44100,
+    48000,
+    96000
+   ]
+  },
+  "decision": "Keep B selected for stereo presentation; do not change default or relax release gates. A same-time held reference does not resolve the nine remaining original lift assertions. These waveform comparisons do not establish a new click or validate the overall acoustic model. No source/DSP/calibration/audio changes."
  }
 }
