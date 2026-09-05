@@ -6,14 +6,34 @@
 namespace
 {
 constexpr int designWidth = 1120;
-constexpr int designHeight = 720;
+constexpr int designHeight = 800;
 constexpr int minimumWidth = 896;
-constexpr int minimumHeight = 576;
+constexpr int minimumHeight = 640;
 constexpr int maximumWidth = 1456;
-constexpr int maximumHeight = 936;
+constexpr int maximumHeight = 1040;
 constexpr int keyboardFirstNote = 38; // Drop-D low string
 constexpr int keyboardLastNote = 84;  // twentieth fret of the high E string
 constexpr int keyboardWhiteKeyCount = 28;
+
+struct ConstructionPreset
+{
+    const char* name;
+    acustra::BodyShape shape;
+    acustra::BodyMaterial wood;
+    acustra::StringMaterial strings;
+};
+
+// Construction directions, not measured replicas of manufacturer models.
+constexpr std::array<ConstructionPreset, 4> constructionPresets {{
+    { "Dreadnought / Martin style", acustra::BodyShape::Dreadnought,
+      acustra::BodyMaterial::Spruce, acustra::StringMaterial::Steel },
+    { "Auditorium / Taylor style", acustra::BodyShape::Auditorium,
+      acustra::BodyMaterial::Spruce, acustra::StringMaterial::Steel },
+    { "Parlor / Fender style", acustra::BodyShape::Parlor,
+      acustra::BodyMaterial::Spruce, acustra::StringMaterial::Steel },
+    { "Classical nylon", acustra::BodyShape::Auditorium,
+      acustra::BodyMaterial::Cedar, acustra::StringMaterial::Nylon }
+}};
 
 // Palette drawn from the classical-guitar reference: pale soundboard, ebony
 // fingerboard, rosewood furniture, ivory nut and muted gold machines.
@@ -71,6 +91,15 @@ AcustraLookAndFeel::AcustraLookAndFeel()
     setColour (juce::TextButton::buttonOnColourId, ebony.brighter (0.12f));
     setColour (juce::TextButton::textColourOffId, ivory.withAlpha (0.90f));
     setColour (juce::TextButton::textColourOnId, ivory);
+    setColour (juce::ComboBox::backgroundColourId, ebony);
+    setColour (juce::ComboBox::textColourId, ivory);
+    setColour (juce::ComboBox::outlineColourId, panelEdge);
+    setColour (juce::ComboBox::focusedOutlineColourId, brass);
+    setColour (juce::ComboBox::arrowColourId, brass);
+    setColour (juce::PopupMenu::backgroundColourId, panel);
+    setColour (juce::PopupMenu::textColourId, ivory);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, rosewood);
+    setColour (juce::PopupMenu::highlightedTextColourId, ivory);
 }
 
 void AcustraLookAndFeel::drawRotarySlider (
@@ -188,6 +217,11 @@ juce::Font AcustraLookAndFeel::getTextButtonFont (juce::TextButton&,
         juce::Font::bold);
 }
 
+juce::Font AcustraLookAndFeel::getComboBoxFont (juce::ComboBox&)
+{
+    return displayFont (16.0f, juce::Font::bold);
+}
+
 class AcustraAudioProcessorEditor::ChoiceButtonGroup final
     : public juce::Component
 {
@@ -286,13 +320,8 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     titleLabel.setAccessible (false);
     addAndMakeVisible (titleLabel);
 
-    // The bridge hand is a playing pressure rather than a panel control, so it
-    // arrives on CC2 and would otherwise be undiscoverable from the plug-in.
-    // Naming it here costs no control and keeps the surface as it was.
-    subtitleLabel.setText (
-        "PHYSICAL ACOUSTIC GUITAR  /  CC2 BRIDGE HAND  /  CC68 LEGATO  /  "
-        "NOTE-OFF VELOCITY LIFTS THE FINGER",
-        juce::dontSendNotification);
+    subtitleLabel.setText ("PHYSICALLY MODELLED ACOUSTIC GUITAR",
+                           juce::dontSendNotification);
     subtitleLabel.setFont (displayFont (15.5f, juce::Font::bold));
     subtitleLabel.setColour (juce::Label::textColourId, brass);
     subtitleLabel.setJustificationType (juce::Justification::centredLeft);
@@ -303,7 +332,7 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     statusLabel.setName ("Engine status");
     statusLabel.setTitle ("Engine status");
     statusLabel.setDescription (
-        "Current audio sample rate and number of sounding strings");
+        "Audio sample rate, sounding strings, or an incompatible capture selection");
     statusLabel.setFont (displayFont (15.5f));
     statusLabel.setColour (juce::Label::textColourId, mutedText);
     statusLabel.setJustificationType (juce::Justification::centredRight);
@@ -316,6 +345,62 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     panicButton.setWantsKeyboardFocus (true);
     panicButton.onClick = [this] { audioProcessor.requestPanic(); };
     addAndMakeVisible (panicButton);
+
+    configureSetupMenu (
+        0, "GUITAR", "Set body shape, wood and string construction together. "
+        "Manufacturer styles are generic directions, not measured replicas. "
+        "Adjust any construction control below to make your own guitar.");
+    auto& guitarMenu = setupControls[0];
+    guitarMenu.addItem ("Custom construction", 1);
+    guitarMenu.setItemEnabled (1, false);
+    for (std::size_t index = 0; index < constructionPresets.size(); ++index)
+        guitarMenu.addItem (constructionPresets[index].name,
+                            static_cast<int> (index) + 2);
+    guitarMenu.onChange = [this]
+    {
+        const auto index = setupControls[0].getSelectedId() - 2;
+        if (index < 0 || index >= static_cast<int> (constructionPresets.size()))
+            return;
+        const auto& preset = constructionPresets[static_cast<std::size_t> (index)];
+        const auto setChoice = [this] (const char* id, auto value)
+        {
+            if (auto* parameter = audioProcessor.parameters.getParameter (id))
+            {
+                parameter->beginChangeGesture();
+                parameter->setValueNotifyingHost (
+                    parameter->convertTo0to1 (static_cast<float> (value)));
+                parameter->endChangeGesture();
+            }
+        };
+        setChoice (acustra::parameters::shape, preset.shape);
+        setChoice (acustra::parameters::bodyMaterial, preset.wood);
+        setChoice (acustra::parameters::stringMaterial, preset.strings);
+        timerCallback();
+    };
+    configureSetupMenu (
+        1, "PICKING", "Finger, pick or thumb excitation. Touch adjusts the "
+        "contact within the selected technique. MIDI: CC2 bridge-hand damping; "
+        "CC68 legato; note-off velocity controls finger lift.");
+    configureSetupMenu (
+        2, "CAPTURE", "Listen through body microphones, bridge-force saddle "
+        "piezo or a magnetic string pickup. Magnetic pickups require steel "
+        "strings; a magnetic capture selected by automation is silent on nylon.");
+    constexpr std::array<const char*, 2> setupParameterIds {
+        acustra::parameters::picking, acustra::parameters::capture
+    };
+    for (std::size_t index = 0; index < setupParameterIds.size(); ++index)
+    {
+        auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
+            audioProcessor.parameters.getParameter (setupParameterIds[index]));
+        jassert (parameter != nullptr);
+        if (parameter == nullptr)
+            continue;
+        auto& control = setupControls[index + 1];
+        control.addItemList (parameter->choices, 1);
+        setupAttachments[index] = std::make_unique<
+            juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                audioProcessor.parameters, setupParameterIds[index], control);
+    }
 
     configureChoice (
         0, "BODY SHAPE", acustra::parameters::shape,
@@ -338,7 +423,7 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
         "Pluck near the bridge at zero or toward the neck at 100 percent");
     configureSlider (
         2, "TOUCH", acustra::parameters::touch,
-        "Continuously move from a softer, darker pick to a harder, brighter pick");
+        "Softer, darker contact at zero; harder, brighter contact at 100 percent");
     configureSlider (
         3, "BODY", acustra::parameters::bodyAmount,
         "Strength of the measurement-derived body radiation");
@@ -373,6 +458,45 @@ AcustraAudioProcessorEditor::~AcustraAudioProcessorEditor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+void AcustraAudioProcessorEditor::configureSetupMenu (
+    std::size_t index, const juce::String& name, const juce::String& description)
+{
+    auto& label = setupLabels[index];
+    label.setText (name, juce::dontSendNotification);
+    label.setFont (displayFont (15.0f, juce::Font::bold));
+    label.setColour (juce::Label::textColourId, brass);
+    label.setInterceptsMouseClicks (false, false);
+    label.setAccessible (false);
+    addAndMakeVisible (label);
+
+    auto& control = setupControls[index];
+    control.setName (name);
+    control.setTitle (name);
+    control.setDescription (description);
+    control.setTooltip (description);
+    control.setWantsKeyboardFocus (true);
+    addAndMakeVisible (control);
+}
+
+void AcustraAudioProcessorEditor::updateConstructionControls()
+{
+    const auto state = audioProcessor.snapshotEngineParameters();
+    int presetId = 1;
+    for (std::size_t index = 0; index < constructionPresets.size(); ++index)
+    {
+        const auto& preset = constructionPresets[index];
+        if (state.shape == preset.shape && state.bodyMaterial == preset.wood
+            && state.stringMaterial == preset.strings)
+        {
+            presetId = static_cast<int> (index) + 2;
+            break;
+        }
+    }
+    setupControls[0].setSelectedId (presetId, juce::dontSendNotification);
+    setupControls[2].setItemEnabled (
+        5, state.stringMaterial == acustra::StringMaterial::Steel);
 }
 
 void AcustraAudioProcessorEditor::configureChoice (
@@ -458,6 +582,7 @@ void AcustraAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawLine (24.0f, 80.0f, static_cast<float> (getWidth() - 24), 80.0f,
                 1.0f);
 
+    drawPanel (g, setupPanelBounds);
     drawPanel (g, choicePanelBounds);
     drawPanel (g, tonePanelBounds);
 
@@ -528,6 +653,20 @@ void AcustraAudioProcessorEditor::resized()
     statusLabel.setBounds (header.reduced (8, 0));
 
     bounds.removeFromTop (12);
+    setupPanelBounds = bounds.removeFromTop (80);
+    auto setupArea = setupPanelBounds.reduced (14, 10);
+    const auto setupWidth = setupArea.getWidth() - 24;
+    const std::array<int, 3> setupWidths {
+        setupWidth * 44 / 100, setupWidth * 23 / 100, setupWidth * 33 / 100
+    };
+    for (std::size_t index = 0; index < setupControls.size(); ++index)
+    {
+        auto cell = setupArea.removeFromLeft (setupWidths[index]);
+        setupLabels[index].setBounds (cell.removeFromTop (24));
+        setupControls[index].setBounds (cell);
+        setupArea.removeFromLeft (12);
+    }
+    bounds.removeFromTop (12);
     choicePanelBounds = bounds.removeFromTop (
         juce::jmax (154, bounds.getHeight() * 36 / 100));
     bounds.removeFromTop (12);
@@ -565,8 +704,15 @@ void AcustraAudioProcessorEditor::resized()
 
 void AcustraAudioProcessorEditor::timerCallback()
 {
+    updateConstructionControls();
     juce::String next;
-    if (! audioProcessor.isEngineReady())
+    const auto state = audioProcessor.snapshotEngineParameters();
+    if (state.capture == acustra::CaptureType::Magnetic
+        && state.stringMaterial == acustra::StringMaterial::Nylon)
+    {
+        next = "Magnetic needs steel";
+    }
+    else if (! audioProcessor.isEngineReady())
     {
         next = "WAITING FOR AUDIO";
     }

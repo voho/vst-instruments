@@ -22,6 +22,8 @@ enum ParameterSlot
     slotBodyAmount,
     slotStereoWidth,
     slotOutput,
+    slotCapture,
+    slotPicking,
     slotCount
 };
 
@@ -37,7 +39,9 @@ constexpr std::array<const char*, slotCount> parameterIds {
     ids::touch,
     ids::bodyAmount,
     ids::stereoWidth,
-    ids::output
+    ids::output,
+    ids::capture,
+    ids::picking
 };
 
 std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
@@ -190,6 +194,16 @@ AcustraAudioProcessor::createParameterLayout()
                 return text.retainCharacters ("0123456789.-").getFloatValue();
             })));
 
+    // Append new controls, including a later AU version hint, so existing host
+    // automation retains the original ten parameter indices.
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { ids::capture, 2 }, "Capture",
+        juce::StringArray { "Stereo mics", "Treble mic", "Bass mic",
+                            "Saddle piezo", "Magnetic (steel)" }, 0));
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { ids::picking, 2 }, "Picking",
+        juce::StringArray { "Finger", "Pick", "Thumb" }, 0));
+
     return { result.begin(), result.end() };
 }
 
@@ -215,6 +229,8 @@ AcustraAudioProcessor::snapshotEngineParameters() const noexcept
     result.bodyAmount = 0.01f * value (slotBodyAmount);
     result.stereoWidth = 0.01f * value (slotStereoWidth);
     result.outputGain = juce::Decibels::decibelsToGain (value (slotOutput));
+    result.capture = choiceValue<acustra::CaptureType> (value (slotCapture), 4);
+    result.picking = choiceValue<acustra::PickingTechnique> (value (slotPicking), 2);
     return result;
 }
 

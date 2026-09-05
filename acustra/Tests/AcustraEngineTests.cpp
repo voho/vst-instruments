@@ -494,12 +494,14 @@ struct AcustraEngineTestAccess
 
     static PluckSnapshot pluck(PhysicalCalibration calibration,
                                StringMaterial material, float velocity,
-                               int midiNote = 52)
+                               int midiNote = 52,
+                               PickingTechnique picking = PickingTechnique::Finger)
     {
         AcustraEngine engine;
         engine.setPhysicalCalibration(calibration);
         EngineParameters parameters;
         parameters.stringMaterial = material;
+        parameters.picking = picking;
         engine.setParameters(parameters);
         engine.prepare(48000.0, 64);
         engine.setBridgeCouplingEnabled(false);
@@ -539,7 +541,7 @@ struct AcustraEngineTestAccess
             }
         }
         return {
-            engine.effectiveTouch(voice),
+            engine.effectiveTouch(voice.velocity),
             static_cast<double>(peakSample) / length,
             peakValue,
             voice.excitationEnvelope,
@@ -3122,6 +3124,7 @@ void testSampleRatesAndAutomationStayBounded()
             parameters.shape = static_cast<acustra::BodyShape>((step / 17) % 4);
             parameters.bodyMaterial = static_cast<acustra::BodyMaterial>((step / 23) % 4);
             parameters.stringMaterial = static_cast<acustra::StringMaterial>((step / 41) % 2);
+            parameters.picking = static_cast<acustra::PickingTechnique>((step / 11) % 3);
             parameters.stringAge = static_cast<float>((step * 37) % 101) / 100.0f;
             parameters.bodyAmount = static_cast<float>((step * 19) % 101) / 100.0f;
             parameters.stereoWidth = static_cast<float>((step * 29) % 101) / 100.0f;
@@ -3160,6 +3163,7 @@ void testHostileParametersAreSanitised()
     parameters.bodyMaterial = static_cast<acustra::BodyMaterial>(-4);
     parameters.stringMaterial = static_cast<acustra::StringMaterial>(12);
     parameters.tuning = static_cast<acustra::Tuning>(88);
+    parameters.picking = static_cast<acustra::PickingTechnique>(-1);
     parameters.stringAge = std::numeric_limits<float>::quiet_NaN();
     parameters.pluckPosition = std::numeric_limits<float>::infinity();
     parameters.touch = -std::numeric_limits<float>::infinity();
@@ -3400,6 +3404,109 @@ void testBodyAndBridgeCalibrationChangePhysicalDescriptors()
     expect(std::abs(acustra::AcustraEngineTestAccess::playedDelay(high)
                   - acustra::AcustraEngineTestAccess::playedDelay(low)) > 0.05,
            "bridge mobility did not reach speaking-string phase delay");
+}
+
+void testPickingChangesTheContactWithoutRetuningOrReplucking()
+{
+    using acustra::PickingTechnique;
+    using acustra::AcustraEngineTestAccess;
+    for (const auto material : { acustra::StringMaterial::Steel,
+                                 acustra::StringMaterial::Nylon })
+    {
+        for (const float velocity : { 0.2f, 0.5f, 0.9f })
+        {
+            const auto finger = AcustraEngineTestAccess::pluck(
+                acustra::fittedPhysicalCalibration, material, velocity);
+            const auto pick = AcustraEngineTestAccess::pluck(
+                acustra::fittedPhysicalCalibration, material, velocity,
+                52, PickingTechnique::Pick);
+            const auto thumb = AcustraEngineTestAccess::pluck(
+                acustra::fittedPhysicalCalibration, material, velocity,
+                52, PickingTechnique::Thumb);
+            expect(pick.peakDisplacement > thumb.peakDisplacement
+                       // Nylon's calibrated release-noise gain is zero.
+                       && pick.noiseEnvelope >= thumb.noiseEnvelope,
+                   "pick/thumb did not reach the released shape and attack");
+            expect(pick.touch >= finger.touch && finger.touch >= thumb.touch,
+                   "the contact ranges crossed under MIDI velocity");
+            expect(pick.pluckPoint == thumb.pluckPoint
+                       && thumb.pluckPoint == finger.pluckPoint,
+                   "picking technique moved the player's pluck position");
+        }
+        for (const double rate : { 44100.0, 48000.0, 96000.0 })
+        {
+            acustra::EngineParameters parameters;
+            parameters.stringMaterial = material;
+            acustra::AcustraEngine reference;
+            acustra::AcustraEngine changed;
+            reference.setParameters(parameters);
+            changed.setParameters(parameters);
+            reference.prepare(rate, 64);
+            changed.prepare(rate, 64);
+            reference.noteOn(52, 0.6f);
+            changed.noteOn(52, 0.6f);
+            std::array<float, 64> a {}, b {}, ar {}, br {};
+            for (int block = 0; block < 200; ++block)
+            {
+                // Changing the picking tool cannot alter a released string.
+                parameters.picking = static_cast<PickingTechnique>(block % 3);
+                changed.setParameters(parameters);
+                reference.process(a.data(), ar.data(), 64);
+                changed.process(b.data(), br.data(), 64);
+                expect(a == b && ar == br,
+                       "picking automation changed an already ringing note");
+            }
+            parameters.picking = PickingTechnique::Pick;
+            const auto picked = renderAtRate(parameters, 52, 0.6f, 0.5, rate, 64);
+            parameters.picking = PickingTechnique::Thumb;
+            const auto thumbed = renderAtRate(parameters, 52, 0.6f, 0.5, rate, 64);
+            expect(normalisedDifference(picked, thumbed) > 0.01,
+                   "pick/thumb excitation did not reach audible output");
+
+            // A different picking tool cannot change the fretting finger's
+            // next hammer-on or lift after identical initial plucks.
+            for (const auto technique : { PickingTechnique::Pick,
+                                          PickingTechnique::Thumb })
+                for (const bool hammer : { false, true })
+                {
+                    parameters.picking = PickingTechnique::Finger;
+                    reference.setParameters(parameters);
+                    changed.setParameters(parameters);
+                    reference.reset();
+                    changed.reset();
+                    reference.setStringPerChannelMode(true);
+                    changed.setStringPerChannelMode(true);
+                    reference.setLegato(true);
+                    changed.setLegato(true);
+                    reference.noteOn(43, 0.5f);
+                    changed.noteOn(43, 0.5f);
+                    for (int block = 0; block < 100; ++block)
+                    {
+                        reference.process(a.data(), ar.data(), 64);
+                        changed.process(b.data(), br.data(), 64);
+                    }
+                    parameters.picking = technique;
+                    changed.setParameters(parameters);
+                    if (hammer)
+                    {
+                        reference.noteOn(47, 0.5f);
+                        changed.noteOn(47, 0.5f);
+                    }
+                    else
+                    {
+                        reference.noteOff(43, 1, 0.2f);
+                        changed.noteOff(43, 1, 0.2f);
+                    }
+                    for (int block = 0; block < 200; ++block)
+                    {
+                        reference.process(a.data(), ar.data(), 64);
+                        changed.process(b.data(), br.data(), 64);
+                        expect(a == b && ar == br,
+                               "the picking tool changed a fretting-hand gesture");
+                    }
+                }
+        }
+    }
 }
 
 void testMaterialCalibrationChangesStringAndPluckDescriptors()
@@ -5623,6 +5730,7 @@ int main()
     testHostilePhysicalCalibrationIsSanitised();
     testBodyAndBridgeCalibrationChangePhysicalDescriptors();
     testMaterialCalibrationChangesStringAndPluckDescriptors();
+    testPickingChangesTheContactWithoutRetuningOrReplucking();
     testHighLossCutoffScaleChangesOnlyUpperLoss();
     testPlateConductanceFloorDampsOnlyTheUpperBand();
     testStolenStringKeepsRingingUnderHandDamping();

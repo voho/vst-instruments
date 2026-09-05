@@ -524,6 +524,47 @@ Audio lagrima()
                      acustra::repertoire::lagrima.size(), 3.0);
 }
 
+Audio pickingTechniques()
+{
+    Audio result;
+    auto parameters = baseParameters();
+    for (auto strings : { StringMaterial::Steel, StringMaterial::Nylon })
+        for (auto picking : { acustra::PickingTechnique::Finger,
+                               acustra::PickingTechnique::Pick,
+                               acustra::PickingTechnique::Thumb })
+        {
+            parameters.stringMaterial = strings;
+            parameters.picking = picking;
+            Take take(parameters);
+            take.play(52, 0.70f, 0.45, 0.12);
+            take.play(59, 0.70f, 0.45, 0.50);
+            append(result, take.finish(), 0.25);
+        }
+    return result;
+}
+
+Audio captureTypes()
+{
+    Audio result;
+    auto parameters = baseParameters();
+    // Same steel instrument and performance through every observation. The
+    // pickup gains are unit sensitivities, so this demonstrates their native
+    // levels as well as their spectra; it is not a level-matched preference test.
+    for (auto capture : { acustra::CaptureType::StereoMic,
+                           acustra::CaptureType::TrebleMic,
+                           acustra::CaptureType::BassMic,
+                           acustra::CaptureType::SaddlePiezo,
+                           acustra::CaptureType::Magnetic })
+    {
+        parameters.capture = capture;
+        Take take(parameters);
+        take.play(40, 0.70f, 0.65, 0.15);
+        take.play(59, 0.70f, 0.65, 0.70);
+        append(result, take.finish(), 0.30);
+    }
+    return result;
+}
+
 struct Demo
 {
     const char* fileName;
@@ -531,7 +572,7 @@ struct Demo
     Audio (*render)();
 };
 
-constexpr std::array<Demo, 10> demos {{
+constexpr std::array<Demo, 12> demos {{
     { "01-steel-sustain-range.wav",
       "Steel sustain from open E2 to B5, one held pluck at a time",
       steelSustainRange },
@@ -566,6 +607,12 @@ constexpr std::array<Demo, 10> demos {{
     { "10-lagrima.wav",
       "Tarrega, Lagrima, bars 1-8: a sung nylon melody over held bass",
       lagrima },
+    { "11-picking-techniques.wav",
+      "Finger, pick and thumb on steel, then on nylon; same notes and velocity",
+      pickingTechniques },
+    { "12-capture-types.wav",
+      "Stereo, treble and bass microphones, saddle piezo, then steel magnetic",
+      captureTypes },
 }};
 
 double peak(const Audio& audio)

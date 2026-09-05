@@ -30,6 +30,7 @@ WAV metadata is read from the file. Headerless little-endian float32 files need
 Usage:
 
     python3 Tools/FitPhysicalModel.py fit-manifest.json
+    python3 Tools/FitPhysicalModel.py candidate.json --compare baseline.json
     python3 Tools/FitPhysicalModel.py --floor fit-manifest.json \
         [--control sample-manifest.json]
     python3 Tools/FitPhysicalModel.py --self-test
@@ -40,6 +41,14 @@ a term can honestly get: see ``floor_report``. It also rescores the model, and
 the ``--control`` manifest when one is given, against the same trim-corrected
 targets, so every column of that table is a distance to the same signal.
 
+``--compare`` reports paired aggregate, material and descriptor changes. It
+requires identical example identities, target bytes, target format and dynamics
+grouping; paths may differ. Both manifests' declared controls and provenance
+are retained in the report. Negative changes mean closer descriptors, not a
+listening preference; the mode neither fits parameters nor selects a winner.
+Manifests explicitly marked ``model_render_complete: false`` by an interrupted
+models-only render are rejected before any descriptors are read.
+
 NumPy and SciPy are required; both are already used by Acustra's measurement
 tools. The JSON report's ``weighted_residuals`` can be returned directly from a
 bounded least-squares objective. Its squared norm equals ``score``.
@@ -48,6 +57,7 @@ bounded least-squares objective. Its squared norm equals ``score``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import tempfile
@@ -625,6 +635,8 @@ class PreparedManifest:
             raise ValueError("manifest must contain an examples array")
         if not manifest["examples"]:
             raise ValueError("manifest examples array is empty")
+        if manifest.get("model_render_complete", True) is not True:
+            raise ValueError("model render is incomplete; rerun the renderer before scoring")
         analysis_rate = manifest.get("analysis_sample_rate", 48_000)
         if not isinstance(analysis_rate, int) or not 8_000 <= analysis_rate <= 192_000:
             raise ValueError(
@@ -746,6 +758,91 @@ class PreparedManifest:
 
 def score_manifest(path: Path) -> dict[str, Any]:
     return PreparedManifest(path).score()
+
+
+def compare_manifests(baseline_path: Path, candidate_path: Path) -> dict[str, Any]:
+    prepared = [PreparedManifest(path) for path in (baseline_path, candidate_path)]
+    baseline, candidate = prepared
+    if baseline.analysis_rate != candidate.analysis_rate:
+        raise ValueError("paired comparison requires identical analysis sample rates")
+    originals = [json.loads(path.read_text(encoding="utf-8"))
+                 for path in (baseline_path, candidate_path)]
+    rows = [{row["id"]: row for row in manifest.examples} for manifest in prepared]
+    if rows[0].keys() != rows[1].keys():
+        raise ValueError("paired comparison requires identical example IDs")
+
+    # Hash the actual targets, not the descriptor vectors: different audio can
+    # have the same lossy descriptors, and the same filename can be overwritten.
+    fingerprints: dict[Path, str] = {}
+    target_signatures = []
+    for manifest, original in zip(prepared, originals):
+        signatures = {}
+        for index, source in enumerate(original["examples"], 1):
+            spec = _as_file_spec(source["target"])
+            path = (manifest.path.parent / spec["path"]).resolve()
+            if path not in fingerprints:
+                fingerprints[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+            metadata = {key: value for key, value in spec.items() if key != "path"}
+            if path.suffix.lower() == ".f32":
+                metadata.setdefault("sample_rate", manifest.default_rate)
+                metadata.setdefault("channels", manifest.default_channels)
+            signatures[source.get("id", str(index))] = (
+                fingerprints[path], path.suffix.lower(), metadata)
+        target_signatures.append(signatures)
+
+    for identifier, source in rows[0].items():
+        other = rows[1][identifier]
+        for field in ("midi", "velocity", "material", "round_robin", "dynamic_group"):
+            if source[field] != other[field]:
+                raise ValueError(f"{identifier}: paired {field} differs")
+        if target_signatures[0][identifier] != target_signatures[1][identifier]:
+            raise ValueError(f"{identifier}: paired target content or metadata differs")
+    # Keep summation order identical even if a manifest lists its rows in a
+    # different order. Repeated takes retain the scorer's existing weighting.
+    candidate.examples = [rows[1][source["id"]] for source in baseline.examples]
+
+    def changes(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+        def delta(a: float | None, b: float | None) -> dict[str, Any]:
+            return {
+                "baseline": a, "candidate": b,
+                "delta": None if a is None or b is None else b - a,
+                "change_percent": (100.0 * (b / a - 1.0)
+                                   if a is not None and a > 0 and b is not None
+                                   else None),
+            }
+
+        return {
+            "example_count": first["example_count"],
+            "score": delta(first["score"], second["score"]),
+            "terms": {
+                name: {**delta(first["terms"][name]["score"],
+                               second["terms"][name]["score"]),
+                       "baseline_count": first["terms"][name]["count"],
+                       "candidate_count": second["terms"][name]["count"]}
+                for name in TERM_WEIGHTS
+            },
+        }
+
+    materials = [row["material"] for row in baseline.examples]
+    if any(material is not None and not isinstance(material, str)
+           for material in materials):
+        raise ValueError("paired material labels must be strings or null")
+    return {
+        "analysis_sample_rate": baseline.analysis_rate,
+        "target_verification": "identical SHA-256 content, format and example metadata",
+        "interpretation": "negative changes mean closer descriptors on these same "
+                          "recordings; no listening preference or market ranking is inferred",
+        "baseline": {"manifest": str(baseline_path), "metadata": {
+            key: value for key, value in originals[0].items() if key != "examples"}},
+        "candidate": {"manifest": str(candidate_path), "metadata": {
+            key: value for key, value in originals[1].items() if key != "examples"}},
+        "aggregate": changes(baseline.score(), candidate.score()),
+        "by_material": {
+            material: changes(baseline.score(material=material),
+                              candidate.score(material=material))
+            for material in sorted({value for value in materials if value is not None})
+        },
+    }
 
 
 def _trim_corrected(
@@ -979,6 +1076,7 @@ def self_test() -> None:
             far.astype("<f4").tofile(far_path)
             common = {
                 "id": f"A2-{suffix}",
+                "material": "synthetic",
                 "midi": 45,
                 "velocity": velocity,
                 "dynamic_group": "A2",
@@ -1004,6 +1102,48 @@ def self_test() -> None:
             )
         if close_report["terms"]["dynamics"]["count"] == 0:
             raise AssertionError("synthetic dynamics check produced no residual")
+
+        paired = compare_manifests(root / "far.json", root / "close.json")
+        assert paired["aggregate"]["score"]["delta"] < 0.0
+        assert paired["by_material"]["synthetic"] == paired["aggregate"]
+        reordered = write_manifest("reordered.json", list(reversed(close_examples)))
+        same = compare_manifests(root / "close.json", reordered)
+        assert same["aggregate"]["score"]["delta"] == 0.0
+        incomplete = json.loads((root / "close.json").read_text())
+        incomplete["model_render_complete"] = False
+        incomplete_path = root / "incomplete.json"
+        incomplete_path.write_text(json.dumps(incomplete), encoding="utf-8")
+        try:
+            compare_manifests(root / "close.json", incomplete_path)
+        except ValueError as error:
+            assert "incomplete" in str(error)
+        else:
+            raise AssertionError("paired comparison accepted a partial model render")
+        # A target can be copied elsewhere, but changed content, format, note
+        # identity or velocity grouping must never produce a paired score.
+        copied = root / "copied.wav"
+        copied.write_bytes((root / close_examples[0]["target"]).read_bytes())
+        alternate = [{**close_examples[0], "target": copied.name}, close_examples[1]]
+        alternate_path = write_manifest("alternate.json", alternate)
+        assert compare_manifests(root / "close.json", alternate_path)[
+            "aggregate"]["score"]["delta"] == 0.0
+        for field, value in (("id", "different"), ("midi", 46),
+                             ("dynamic_group", "different"),
+                             ("target", {"path": copied.name, "playback_trim": 2.0})):
+            invalid = [{**close_examples[0], field: value}, close_examples[1]]
+            try:
+                compare_manifests(root / "close.json", write_manifest("invalid.json", invalid))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"paired comparison accepted different {field}")
+        wavfile.write(copied, rate, np.ones(rate, dtype=np.float32))
+        try:
+            compare_manifests(root / "close.json", alternate_path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("paired comparison accepted changed target samples")
 
         # Isolate the new descriptor: these differ only in the attack glide.
         pitch_arguments = {
@@ -1132,6 +1272,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", nargs="?", type=Path)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--compare", type=Path, metavar="BASELINE",
+                        help="compare this candidate with a baseline on identical targets")
     parser.add_argument(
         "--floor", action="store_true",
         help="score each recorded take against another take of the same note",
@@ -1147,6 +1289,12 @@ def main() -> int:
         return 0
     if arguments.manifest is None:
         parser.error("manifest is required unless --self-test is used")
+    if arguments.compare is not None:
+        if arguments.floor or arguments.control is not None:
+            parser.error("--compare cannot be combined with --floor or --control")
+        print(json.dumps(compare_manifests(arguments.compare, arguments.manifest),
+                         indent=2, sort_keys=True))
+        return 0
     if arguments.floor:
         control = (PreparedManifest(arguments.control)
                    if arguments.control is not None else None)

@@ -19,8 +19,10 @@ inline constexpr auto touch = "touch";
 inline constexpr auto bodyAmount = "bodyAmount";
 inline constexpr auto stereoWidth = "stereoWidth";
 inline constexpr auto output = "output";
+inline constexpr auto capture = "capture";
+inline constexpr auto picking = "picking";
 
-inline constexpr int parameterCount = 10;
+inline constexpr int parameterCount = 12;
 } // namespace acustra::parameters
 
 class AcustraAudioProcessorEditor;

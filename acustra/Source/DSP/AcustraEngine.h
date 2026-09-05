@@ -46,6 +46,15 @@ enum class StringMaterial
     Steel
 };
 
+enum class CaptureType
+{
+    StereoMic,
+    TrebleMic,
+    BassMic,
+    SaddlePiezo,
+    Magnetic
+};
+
 enum class Tuning
 {
     Standard,
@@ -55,12 +64,21 @@ enum class Tuning
     HalfStepDown
 };
 
+enum class PickingTechnique
+{
+    Finger,
+    Pick,
+    Thumb
+};
+
 struct EngineParameters
 {
     BodyShape shape { BodyShape::Dreadnought };
     BodyMaterial bodyMaterial { BodyMaterial::Spruce };
     StringMaterial stringMaterial { StringMaterial::Steel };
+    CaptureType capture { CaptureType::StereoMic };
     Tuning tuning { Tuning::Standard };
+    PickingTechnique picking { PickingTechnique::Finger };
     float stringAge { 0.15f };       // 0 fresh, 1 worn/dead
     float pluckPosition { 0.28f };   // 0 bridgeward, 1 neckward
     float touch { 0.58f };           // 0 soft/dark, 1 hard/bright
@@ -245,6 +263,8 @@ private:
         int writeIndex { 0 };
         float currentDelay { 128.0f };
         float targetDelay { 128.0f };
+        float currentPickupFraction { 0.25f };
+        float targetPickupFraction { 0.25f };
         float loopGain { 0.995f };
         float broadLossMix { 0.02f };
         float highLossMix { 0.1f };
@@ -271,6 +291,9 @@ private:
 
         void reset() noexcept;
         [[nodiscard]] float readDelay(float samples) noexcept;
+        // Read-only point observation of both travelling waves; does not
+        // advance the feedback allpass or alter the vibrating string.
+        [[nodiscard]] float displacementAt(float fraction) const noexcept;
         float advance(float delaySmoothing, float releaseGain) noexcept;
         // A plucked string is released from rest, so the wave the bridge
         // reads was already standing there when the finger let go. Prime the
@@ -507,7 +530,7 @@ private:
     void configureVoice(Voice& voice, int stringIndex, int midiNote,
                         bool clearDelay) noexcept;
     void updateAttackPitch(Voice& voice, int stringIndex) noexcept;
-    float effectiveTouch(const Voice& voice) const noexcept;
+    float effectiveTouch(float velocity) const noexcept;
     // MPE channel pressure for this voice's own member channel, -1 with no
     // lower zone, no CC message received yet on that channel, or off a
     // member channel; 0 is a real received value (light grip), not the
@@ -561,6 +584,7 @@ private:
                      float& directRight, float& sympatheticForce,
                      float& longitudinalForce) noexcept;
     BodyOutput renderBody(float bridgeInput) noexcept;
+    float renderMagneticPickup(bool crossingRelease) noexcept;
     float nextNoise(Voice& voice) noexcept;
 
     EngineParameters targetParameters_ {};
@@ -571,6 +595,9 @@ private:
     std::array<BodyMode, bodyModeCount> fadingBodyModes_ {};
     BridgeLoad bridgeLoad_ {};
     FixedDerivative bridgeVelocityDerivative_ {};
+    FixedDerivative magneticDerivative_ {};
+    std::array<float, 5> captureMix_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    bool magneticNeedsPriming_ { true };
     FixedDerivative bridgeRotationDerivative_ {};
     // The junction's power is the sum over both coordinates, so the moments
     // are differenced alongside the forces; the passivity tests read it.

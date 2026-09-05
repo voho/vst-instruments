@@ -5,6 +5,8 @@
 // --test renders the frozen test split instead: the archtop layers and takes no
 // fit has ever rendered, scored once per release and never fitted. See
 // makeTestSchedule.
+// --models-only invalidates model_render_complete before overwriting audio;
+// only a completed render can be scored. Failed runs can be rerendered.
 
 #include "DSP/AcustraEngine.h"
 #include "DSP/SampleBank/EmbeddedGuitarBank.h"
@@ -21,6 +23,8 @@
 #include <iterator>
 #include <locale>
 #include <map>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -507,13 +511,124 @@ std::string formatTrim(float value)
     return text.str();
 }
 
+std::string calibrationJson(const CalibrationValues& values)
+{
+    std::ostringstream text;
+    text.imbue(std::locale::classic());
+    text << std::setprecision(9) << '[';
+    for (std::size_t index = 0; index < values.size(); ++index)
+        text << (index == 0 ? "" : ", ") << values[index];
+    text << ']';
+    return text.str();
+}
+
+std::string modelControlsJson()
+{
+    // The same defaults drive renderModel; report them even on models-only
+    // renders so comparisons across engine versions cannot hide a default change.
+    const EngineParameters parameters;
+    std::ostringstream text;
+    text.imbue(std::locale::classic());
+    text << std::setprecision(9);
+    text << "{\"shape\": " << static_cast<int>(parameters.shape)
+         << ", \"body_material\": " << static_cast<int>(parameters.bodyMaterial)
+         << ", \"string_material\": \"per example: nylon or steel\""
+         << ", \"capture\": \""
+         << std::array { "stereo_mic", "treble_mic", "bass_mic",
+                               "saddle_piezo", "magnetic" }[
+                      static_cast<std::size_t>(parameters.capture)]
+         << "\", \"picking\": \""
+         << std::array { "finger", "pick", "thumb" }[
+                      static_cast<std::size_t>(parameters.picking)]
+         << "\", \"tuning\": " << static_cast<int>(parameters.tuning)
+         << ", \"string_age\": " << parameters.stringAge
+         << ", \"pluck_position\": " << parameters.pluckPosition
+         << ", \"touch\": " << parameters.touch
+         << ", \"body_amount\": " << parameters.bodyAmount
+         << ", \"stereo_width\": " << parameters.stereoWidth
+         << ", \"output_gain\": " << parameters.outputGain << "}";
+    return text.str();
+}
+
+std::string replaceModelMetadata(std::string text, const char* key,
+                                 const std::string& json)
+{
+    const std::regex keyPattern("\"" + std::string(key) + "\"\\s*:");
+    const std::sregex_iterator matches(text.begin(), text.end(), keyPattern);
+    if (matches == std::sregex_iterator {})
+    {
+        const auto root = text.find_first_not_of(" \t\r\n");
+        if (root == std::string::npos || text[root] != '{')
+            throw std::runtime_error("model manifest must be a JSON object");
+        text.insert(root + 1, "\n  \"" + std::string(key) + "\": " + json + ',');
+        return text;
+    }
+    auto next = matches;
+    if (++next != std::sregex_iterator {})
+        throw std::runtime_error("duplicate model metadata: " + std::string(key));
+    const auto start = static_cast<std::size_t>(matches->position());
+    // Only this generated schema's root fields may be replaced. Count
+    // structure outside strings so a nested key or quoted path cannot mask
+    // the real provenance; this is not a general JSON parser.
+    int depth = 0;
+    bool quoted = false;
+    bool escaped = false;
+    for (std::size_t index = 0; index < start; ++index)
+    {
+        const char c = text[index];
+        if (escaped) { escaped = false; continue; }
+        if (quoted && c == '\\') { escaped = true; continue; }
+        if (c == '"') quoted = !quoted;
+        if (!quoted && (c == '{' || c == '[')) ++depth;
+        if (!quoted && (c == '}' || c == ']')) --depth;
+    }
+    if (quoted || depth != 1)
+        throw std::runtime_error("model metadata is not a root field: " + std::string(key));
+
+    const std::string number = R"(-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)";
+    const std::string string = R"("([^"\\]|\\.)*")";
+    const std::string scalar = "(" + string + "|" + number + "|true|false|null)";
+    const std::string member = string + "\\s*:\\s*" + scalar;
+    const std::string pattern = json.front() == '['
+        ? "\\[\\s*" + number + "(\\s*,\\s*" + number + "){"
+            + std::to_string(calibrationValueCount - 1) + "}\\s*\\]"
+        : json.front() == '{'
+            ? "\\{\\s*(" + member + "(\\s*,\\s*" + member + ")*)?\\s*\\}"
+            : "(true|false)";
+    const std::size_t value = text.find_first_not_of(" \t\r\n",
+        start + static_cast<std::size_t>(matches->length()));
+    std::smatch match;
+    if (value == std::string::npos
+        || !std::regex_search(text.cbegin() + static_cast<std::ptrdiff_t>(value),
+                              text.cend(), match, std::regex(pattern),
+                              std::regex_constants::match_continuous))
+        throw std::runtime_error("unsupported model metadata: " + std::string(key));
+    const auto after = text.find_first_not_of(" \t\r\n", value + match.length());
+    if (after == std::string::npos || (text[after] != ',' && text[after] != '}'))
+        throw std::runtime_error("malformed model metadata: " + std::string(key));
+    text.replace(value, match.length(), json);
+    return text;
+}
+
+void writeManifestText(const std::filesystem::path& path, const std::string& text)
+{
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << text;
+    output.close();
+    if (output.fail())
+        throw std::runtime_error("could not update model metadata: " + path.string());
+}
+
 void writeManifest(const std::filesystem::path& path,
                    const std::vector<ManifestRow>& rows,
+                   const CalibrationValues& calibrationValues,
                    bool sampleBaseline = false)
 {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output)
         throw std::runtime_error("could not create " + path.string());
+    output.imbue(std::locale::classic());
+    output << std::setprecision(9);
 
     output
         << "{\n"
@@ -537,14 +652,18 @@ void writeManifest(const std::filesystem::path& path,
         << "    \"target_timing\": \"source frame 0; recorded pre-roll/onset retained; cropped or zero-padded to 4.2 seconds\",\n"
         << "    \"target_gain\": \"dense::Sampler calibrated playback gain: layer/peak normalisation times (velocity/127)^0.82\",\n"
         << "    \"target_processing\": \"calibrated gain only; no age, tone, or pan processing\",\n"
-        << "    \"calibration_source\": \"29 positional CLI values in calibration_order\",\n"
+        << "    \"calibration_source\": \"calibration_values in calibration_order; physical model only\",\n"
         << "    \"model_render\": \""
         << (sampleBaseline
             ? "frozen version-1 dense::Sampler; exact captured MIDI, velocity and round robin; 48000 Hz; 127-sample blocks"
             : "fresh AcustraEngine per material/MIDI/velocity; 48000 Hz; 127-sample blocks; default controls; outputGain excluded from calibration")
         << "\"\n"
         << "  },\n"
-        << "  \"examples\": [\n";
+        << "  \"calibration_values\": " << calibrationJson(calibrationValues) << ",\n"
+        << "  \"model_render_complete\": true,\n";
+    output << "  \"model_controls\": "
+           << (sampleBaseline ? "null" : modelControlsJson()) << ",\n";
+    output << "  \"examples\": [\n";
 
     for (std::size_t index = 0; index < rows.size(); ++index)
     {
@@ -674,13 +793,17 @@ void validateModelsOnlySplit(const std::filesystem::path& directory,
         throw std::runtime_error("missing regular manifest: "
             + manifestPath.string());
     const auto manifest = readTextFile(manifestPath);
+    const std::regex pathPattern(R"path("path"\s*:\s*"([^"]*)")path");
+    std::set<std::string> references;
+    for (std::sregex_iterator match(manifest.begin(), manifest.end(), pathPattern);
+         match != std::sregex_iterator {}; ++match)
+        references.insert((*match)[1].str());
     for (const auto& example : examples)
     {
         for (const auto& name : {
                  targetFileName(example), modelFileName(example) })
         {
-            const std::string reference = "\"path\": \"" + name + "\"";
-            if (manifest.find(reference) == std::string::npos)
+            if (!references.contains(name))
                 throw std::runtime_error(std::string(manifestName)
                     + " does not reference " + name);
         }
@@ -701,9 +824,8 @@ void validateModelsOnlySplit(const std::filesystem::path& directory,
     }
 }
 
-std::size_t renderReferencedModels(
-    const std::filesystem::path& directory, const Schedule& schedule,
-    const PhysicalCalibration& calibration)
+void validateModelsOnlyInputs(const std::filesystem::path& directory,
+                              const Schedule& schedule)
 {
     std::error_code error;
     const auto status = std::filesystem::symlink_status(directory, error);
@@ -714,7 +836,13 @@ std::size_t renderReferencedModels(
     validateModelsOnlySplit(directory, "validation.json", schedule.validation);
     if (!schedule.flatTop.empty())
         validateModelsOnlySplit(directory, "flattop.json", schedule.flatTop);
+}
 
+std::size_t renderReferencedModels(
+    const std::filesystem::path& directory, const Schedule& schedule,
+    const PhysicalCalibration& calibration)
+{
+    validateModelsOnlyInputs(directory, schedule);
     std::map<ModelKey, Example> unique;
     for (const auto* examples : { &schedule.train, &schedule.validation,
                                   &schedule.flatTop })
@@ -813,7 +941,10 @@ void verifySmoke(const std::filesystem::path& directory,
             || text.find("\"highLossCutoffScale\"")
                 == std::string::npos
             || text.find("\"bridgeConductanceFloor\"")
-                == std::string::npos)
+                == std::string::npos
+            || text.find("\"calibration_values\": [") == std::string::npos
+            || text.find("\"capture\": \"stereo_mic\"") == std::string::npos
+            || text.find("\"picking\": \"finger\"") == std::string::npos)
             throw std::runtime_error(std::string(name) + " is malformed");
     }
 }
@@ -886,27 +1017,46 @@ void renderCorpus(const std::filesystem::path& directory,
         schedule.flatTop, library, calibration, directory, models, sampleModels,
         writtenFiles, determinismChecked);
 
-    writeManifest(directory / "train.json", train);
+    writeManifest(directory / "train.json", train, values);
     writtenFiles.push_back(directory / "train.json");
-    writeManifest(directory / "validation.json", validation);
+    writeManifest(directory / "validation.json", validation, values);
     writtenFiles.push_back(directory / "validation.json");
     if (!flatTop.empty())
     {
-        writeManifest(directory / "flattop.json", flatTop);
+        writeManifest(directory / "flattop.json", flatTop, values);
         writtenFiles.push_back(directory / "flattop.json");
     }
-    writeManifest(directory / "train-sample-v1.json", train, true);
+    writeManifest(directory / "train-sample-v1.json", train, values, true);
     writtenFiles.push_back(directory / "train-sample-v1.json");
-    writeManifest(directory / "validation-sample-v1.json", validation, true);
+    writeManifest(directory / "validation-sample-v1.json", validation, values, true);
     writtenFiles.push_back(directory / "validation-sample-v1.json");
     if (!flatTop.empty())
     {
-        writeManifest(directory / "flattop-sample-v1.json", flatTop, true);
+        writeManifest(directory / "flattop-sample-v1.json", flatTop, values, true);
         writtenFiles.push_back(directory / "flattop-sample-v1.json");
     }
 
     if (smoke)
     {
+        const std::string compact = "{\"calibration_values\":"
+            + calibrationJson(values) + ",\"model_controls\":"
+            + modelControlsJson() + ",\"model_render_complete\":true}";
+        auto replacement = replaceModelMetadata(compact, "model_controls", "{}");
+        replacement = replaceModelMetadata(replacement, "model_render_complete", "false");
+        if (replacement.find("\"model_controls\":{}") == std::string::npos
+            || replacement.find("\"model_render_complete\":false") == std::string::npos)
+            throw std::runtime_error("compact metadata replacement failed");
+        for (const auto& invalid : {
+                 "{\"model_controls\":{},\"model_controls\":{}}",
+                 "{\"nested\":{\"model_controls\":{}}}",
+                 "{\"model_controls\":{\"nested\":{}}}" })
+        {
+            bool rejected = false;
+            try { replaceModelMetadata(invalid, "model_controls", "{}"); }
+            catch (const std::runtime_error&) { rejected = true; }
+            if (!rejected)
+                throw std::runtime_error("ambiguous model metadata was accepted");
+        }
         verifySmoke(directory, train, validation);
         const auto before = protectedFingerprints(directory, train, validation);
         const auto modelPath = directory / train.front().model.path;
@@ -949,8 +1099,8 @@ void renderTestCorpus(const std::filesystem::path& directory,
     const auto rows = renderExamples(
         makeTestSchedule(), library, calibration, directory, models,
         sampleModels, writtenFiles, determinismChecked);
-    writeManifest(directory / "test.json", rows);
-    writeManifest(directory / "test-sample-v1.json", rows, true);
+    writeManifest(directory / "test.json", rows, values);
+    writeManifest(directory / "test-sample-v1.json", rows, values, true);
     std::printf("Wrote %zu frozen test examples (%zu unique model renders) "
                 "to %s\n",
                 rows.size(), models.size(), directory.string().c_str());
@@ -959,10 +1109,37 @@ void renderTestCorpus(const std::filesystem::path& directory,
 void renderModelsOnlyCorpus(const std::filesystem::path& directory,
                             const CalibrationValues& values)
 {
+    const auto schedule = makeSchedule(false);
+    validateModelsOnlyInputs(directory, schedule);
+    // The target rows stay fixed during fitting, but the calibration that
+    // produced the replaced model files must move with those files. Old
+    // manifests predate this field; add it without rewriting their target rows.
+    std::vector<std::pair<std::filesystem::path, std::string>> manifests;
+    for (const char* name : { "train.json", "validation.json", "flattop.json" })
+    {
+        const auto path = directory / name;
+        if (!isOwnedRegularFile(path))
+            throw std::runtime_error("missing regular manifest: " + path.string());
+        auto text = readTextFile(path);
+        for (const auto& [key, json] : std::array {
+                 std::pair { "calibration_values", calibrationJson(values) },
+                 std::pair { "model_controls", modelControlsJson() },
+                 std::pair { "model_render_complete", std::string("false") } })
+            text = replaceModelMetadata(std::move(text), key, json);
+        manifests.emplace_back(path, std::move(text));
+    }
+    // Preflight every metadata replacement before touching audio. Invalidate
+    // all physical manifests before the first model overwrite; a failed
+    // partial render then cannot be scored with stale calibration metadata.
+    for (const auto& [path, text] : manifests)
+        writeManifestText(path, text);
     const auto count = renderReferencedModels(
-        directory, makeSchedule(false), makeCalibration(values));
-    std::printf("Wrote %zu unique model renders to %s; targets and manifests "
-                "were left unchanged.\n",
+        directory, schedule, makeCalibration(values));
+    for (const auto& [path, text] : manifests)
+        writeManifestText(path, replaceModelMetadata(
+            text, "model_render_complete", "true"));
+    std::printf("Wrote %zu unique model renders and calibration metadata to %s; "
+                "targets were left unchanged.\n",
                 count, directory.string().c_str());
 }
 

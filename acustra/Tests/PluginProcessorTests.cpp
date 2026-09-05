@@ -16,11 +16,11 @@ namespace
 constexpr double sampleRate = 48000.0;
 constexpr int blockSize = 256;
 constexpr int editorWidth = 1120;
-constexpr int editorHeight = 720;
+constexpr int editorHeight = 800;
 constexpr int editorMinimumWidth = 896;
-constexpr int editorMinimumHeight = 576;
+constexpr int editorMinimumHeight = 640;
 constexpr int editorMaximumWidth = 1456;
-constexpr int editorMaximumHeight = 936;
+constexpr int editorMaximumHeight = 1040;
 
 int failureCount = 0;
 
@@ -110,10 +110,11 @@ void testParameterContract()
     constexpr std::array<const char*, ids::parameterCount> expectedIds {
         ids::shape, ids::bodyMaterial, ids::stringMaterial, ids::tuning,
         ids::stringAge, ids::pluckPosition, ids::touch, ids::bodyAmount,
-        ids::stereoWidth, ids::output
+        ids::stereoWidth, ids::output, ids::capture, ids::picking
     };
     constexpr std::array<float, ids::parameterCount> expectedDefaults {
-        2.0f, 0.0f, 1.0f, 0.0f, 15.0f, 28.0f, 58.0f, 82.0f, 62.0f, -7.5f
+        2.0f, 0.0f, 1.0f, 0.0f, 15.0f, 28.0f, 58.0f, 82.0f, 62.0f, -7.5f,
+        0.0f, 0.0f
     };
 
     const auto& hostParameters = processor.getParameters();
@@ -145,6 +146,10 @@ void testParameterContract()
         processor.parameters.getParameter (ids::stringMaterial));
     const auto* tuning = dynamic_cast<const juce::AudioParameterChoice*> (
         processor.parameters.getParameter (ids::tuning));
+    const auto* capture = dynamic_cast<const juce::AudioParameterChoice*> (
+        processor.parameters.getParameter (ids::capture));
+    const auto* picking = dynamic_cast<const juce::AudioParameterChoice*> (
+        processor.parameters.getParameter (ids::picking));
     expect (shape != nullptr && shape->choices.size() == 4,
             "Shape does not expose four bodies");
     expect (wood != nullptr && wood->choices.size() == 4,
@@ -154,6 +159,14 @@ void testParameterContract()
             "String Material no longer exposes Nylon and Steel");
     expect (tuning != nullptr && tuning->choices.size() == 5,
             "Tuning does not expose the five supported tunings");
+
+    expect (capture != nullptr && capture->choices == juce::StringArray {
+                "Stereo mics", "Treble mic", "Bass mic", "Saddle piezo",
+                "Magnetic (steel)" },
+            "Capture does not expose the five supported transducers");
+    expect (picking != nullptr && picking->choices
+                == juce::StringArray { "Finger", "Pick", "Thumb" },
+            "Picking does not expose finger, pick and thumb");
 
     setValue (processor, ids::shape, 3.0f);
     setValue (processor, ids::bodyMaterial, 2.0f);
@@ -165,11 +178,15 @@ void testParameterContract()
     setValue (processor, ids::bodyAmount, 66.0f);
     setValue (processor, ids::stereoWidth, 35.0f);
     setValue (processor, ids::output, -3.0f);
+    setValue (processor, ids::capture, 3.0f);
+    setValue (processor, ids::picking, 2.0f);
     const auto engine = processor.snapshotEngineParameters();
     expect (engine.shape == acustra::BodyShape::Jumbo
                 && engine.bodyMaterial == acustra::BodyMaterial::Mahogany
                 && engine.stringMaterial == acustra::StringMaterial::Nylon
-                && engine.tuning == acustra::Tuning::Dadgad,
+                && engine.tuning == acustra::Tuning::Dadgad
+                && engine.capture == acustra::CaptureType::SaddlePiezo
+                && engine.picking == acustra::PickingTechnique::Thumb,
             "choice parameters did not reach the engine snapshot");
     expect (std::abs (engine.stringAge - 0.73f) < 0.002f
                 && std::abs (engine.pluckPosition - 0.41f) < 0.002f
@@ -1162,6 +1179,8 @@ void testStateRoundTripAndMigration()
     setValue (source, ids::stringAge, 87.0f);
     setValue (source, ids::pluckPosition, 64.0f);
     setValue (source, ids::output, -2.4f);
+    setValue (source, ids::capture, 4.0f);
+    setValue (source, ids::picking, 1.0f);
 
     juce::MemoryBlock stored;
     source.getStateInformation (stored);
@@ -1172,7 +1191,7 @@ void testStateRoundTripAndMigration()
                                   static_cast<int> (stored.getSize()));
     for (const char* id : { ids::shape, ids::bodyMaterial, ids::stringMaterial,
                             ids::tuning, ids::stringAge, ids::pluckPosition,
-                            ids::output })
+                            ids::output, ids::capture, ids::picking })
         expect (std::abs (valueOf (restored, id) - valueOf (source, id)) < 0.011f,
                 std::string { "state round trip lost " } + id);
 
@@ -1180,6 +1199,8 @@ void testStateRoundTripAndMigration()
     // defaults, not whatever values happen to be live in the destination.
     setValue (restored, ids::stringAge, 99.0f);
     setValue (restored, ids::output, 5.0f);
+    setValue (restored, ids::capture, 3.0f);
+    setValue (restored, ids::picking, 2.0f);
     juce::ValueTree oldState { restored.parameters.state.getType() };
     juce::ValueTree shape { "PARAM" };
     shape.setProperty ("id", ids::shape, nullptr);
@@ -1193,7 +1214,9 @@ void testStateRoundTripAndMigration()
     expect (valueOf (restored, ids::shape) == 1.0f,
             "a retained parameter was not restored from an old state");
     expect (std::abs (valueOf (restored, ids::stringAge) - 15.0f) < 0.011f
-                && std::abs (valueOf (restored, ids::output) + 7.5f) < 0.011f,
+                && std::abs (valueOf (restored, ids::output) + 7.5f) < 0.011f
+                && valueOf (restored, ids::capture) == 0.0f
+                && valueOf (restored, ids::picking) == 0.0f,
             "parameters absent from an old state did not receive defaults");
 
     const char garbage[] = "not an Acustra state";
@@ -1220,7 +1243,8 @@ void testEditorRendering()
     std::vector<juce::Component*> pending { editor.get() };
     std::vector<juce::TextButton*> choiceButtons;
     juce::MidiKeyboardComponent* midiKeyboard = nullptr;
-    int comboBoxCount = 0;
+    juce::Label* engineStatus = nullptr;
+    std::vector<juce::ComboBox*> setupMenus;
     while (! pending.empty())
     {
         auto* parent = pending.back();
@@ -1228,8 +1252,11 @@ void testEditorRendering()
         for (auto* child : parent->getChildren())
         {
             pending.push_back (child);
-            if (dynamic_cast<juce::ComboBox*> (child) != nullptr)
-                ++comboBoxCount;
+            if (auto* menu = dynamic_cast<juce::ComboBox*> (child))
+                setupMenus.push_back (menu);
+            if (auto* label = dynamic_cast<juce::Label*> (child);
+                label != nullptr && label->getName() == "Engine status")
+                engineStatus = label;
             if (auto* button = dynamic_cast<juce::TextButton*> (child);
                 button != nullptr && button->getRadioGroupId() != 0)
                 choiceButtons.push_back (button);
@@ -1238,8 +1265,8 @@ void testEditorRendering()
         }
     }
 
-    expect (comboBoxCount == 0,
-            "a compact choice is still hidden in a combo box");
+    expect (setupMenus.size() == 3,
+            "the guitar, picking and capture setup menus are missing");
     expect (choiceButtons.size() == 15,
             "the four compact choices do not expose all 15 options");
     expect (std::all_of (choiceButtons.begin(), choiceButtons.end(),
@@ -1291,9 +1318,73 @@ void testEditorRendering()
                 "host automation did not update the visible choice selection");
     }
 
+    for (auto* menu : setupMenus)
+    {
+        namespace ids = acustra::parameters;
+        expect (menu->getWantsKeyboardFocus() && menu->getDescription().isNotEmpty(),
+                "a setup menu lacks keyboard focus or an accessible description");
+        if (menu->getName() == "GUITAR")
+        {
+            setValue (processor, ids::tuning, 2.0f);
+            setValue (processor, ids::output, -4.0f);
+            setValue (processor, ids::capture, 4.0f);
+            menu->setSelectedId (5, juce::sendNotificationSync);
+            expect (engineStatus != nullptr
+                        && engineStatus->getText() == "Magnetic needs steel",
+                    "the silent magnetic/nylon combination has no visible explanation");
+            auto state = processor.snapshotEngineParameters();
+            expect (state.shape == acustra::BodyShape::Auditorium
+                        && state.bodyMaterial == acustra::BodyMaterial::Cedar
+                        && state.stringMaterial == acustra::StringMaterial::Nylon,
+                    "the classical preset did not set the guitar construction");
+            for (auto* captureMenu : setupMenus)
+                if (captureMenu->getName() == "CAPTURE")
+                {
+                    expect (! captureMenu->isItemEnabled (5),
+                            "nylon still offers a magnetic pickup in the menu");
+                    setValue (processor, ids::capture, 4.0f);
+                    expect (captureMenu->getSelectedId() == 5
+                                && valueOf (processor, ids::capture) == 4.0f,
+                            "the UI silently replaced host-automated magnetic capture");
+                    setValue (processor, ids::capture, 0.0f);
+                }
+            menu->setSelectedId (2, juce::sendNotificationSync);
+            expect (engineStatus != nullptr
+                        && engineStatus->getText().contains ("kHz"),
+                    "the compatible guitar preset did not restore normal status");
+            state = processor.snapshotEngineParameters();
+            expect (state.shape == acustra::BodyShape::Dreadnought
+                        && state.bodyMaterial == acustra::BodyMaterial::Spruce
+                        && state.stringMaterial == acustra::StringMaterial::Steel,
+                    "the dreadnought preset did not restore steel construction");
+            expect (valueOf (processor, ids::tuning) == 2.0f
+                        && std::abs (valueOf (processor, ids::output) + 4.0f) < 0.011f,
+                    "a guitar construction preset changed tuning or output");
+            setValue (processor, ids::tuning, 0.0f);
+            setValue (processor, ids::output, -7.5f);
+        }
+        else
+        {
+            const bool captureMenu = menu->getName() == "CAPTURE";
+            const auto* id = captureMenu ? ids::capture : ids::picking;
+            menu->setSelectedItemIndex (captureMenu ? 3 : 2,
+                                        juce::sendNotificationSync);
+            expect (std::abs (valueOf (processor, id)
+                              - (captureMenu ? 3.0f : 2.0f)) < 0.011f,
+                    "a setup menu did not update its host parameter");
+            setValue (processor, id, 0.0f);
+            expect (menu->getSelectedItemIndex() == 0,
+                    "host automation did not update the setup menu");
+        }
+    }
+
     const auto renderAt = [&] (int width, int height)
     {
         editor->setSize (width, height);
+        for (auto* menu : setupMenus)
+            expect (menu->getWidth() >= 175 && menu->getHeight() >= 32
+                        && editor->getLocalBounds().contains (menu->getBounds()),
+                    "a setup menu is clipped or too small at a supported size");
         expect (midiKeyboard != nullptr && midiKeyboard->getBottom() == height,
                 "the MIDI keyboard is not anchored to the editor bottom edge");
         juce::Image image { juce::Image::ARGB, width, height, true };

@@ -769,9 +769,15 @@ EngineParameters AcustraEngine::sanitise(const EngineParameters& source) noexcep
     result.stringMaterial = static_cast<StringMaterial>(enumOr(
         static_cast<int>(source.stringMaterial), 1,
         static_cast<int>(EngineParameters {}.stringMaterial)));
+    result.capture = static_cast<CaptureType>(enumOr(
+        static_cast<int>(source.capture), 4,
+        static_cast<int>(EngineParameters {}.capture)));
     result.tuning = static_cast<Tuning>(enumOr(
         static_cast<int>(source.tuning), 4,
         static_cast<int>(EngineParameters {}.tuning)));
+    result.picking = static_cast<PickingTechnique>(enumOr(
+        static_cast<int>(source.picking), 2,
+        static_cast<int>(EngineParameters {}.picking)));
     result.stringAge = clamp(source.stringAge, 0.0f, 1.0f);
     result.pluckPosition = clamp(source.pluckPosition, 0.0f, 1.0f);
     result.touch = clamp(source.touch, 0.0f, 1.0f);
@@ -924,6 +930,7 @@ float AcustraEngine::registeredPluckAperture(
 void AcustraEngine::StringLoop::reset() noexcept
 {
     delay.fill(0.0f);
+    currentPickupFraction = targetPickupFraction;
     writeIndex = 0;
     allpassY1 = 0.0f;
     allpassY2 = 0.0f;
@@ -1028,10 +1035,36 @@ float AcustraEngine::StringLoop::readDelay(float samples) noexcept
     return output;
 }
 
+float AcustraEngine::StringLoop::displacementAt(float fraction) const noexcept
+{
+    const auto tap = [&] (float samplesAgo)
+    {
+        const int whole = static_cast<int>(samplesAgo);
+        const float part = samplesAgo - static_cast<float>(whole);
+        const float a = delay[static_cast<std::size_t>(
+            wrapDelayIndex(writeIndex - 1 - whole))];
+        const float b = delay[static_cast<std::size_t>(
+            wrapDelayIndex(writeIndex - 2 - whole))];
+        return a + part * (b - a);
+    };
+    // A full-round-trip line folds the nut's inversion into its stored wave.
+    // Unfold the outgoing and returning waves at x: y(x) = s(D-x/c)-s(x/c),
+    // with D=2L/c. This has sin(n*pi*x/L) nodes, unlike a bridge-force tap.
+    // Remaggi et al., DAFx-12, Sec. 3.1, Eq. (1): the pickup observes two
+    // oppositely signed travelling waves separated by twice the travel time.
+    // https://dafx.de/paper-archive/2012/papers/dafx12_submission_62.pdf
+    // Read after write(): zero delay is the newest sample at writeIndex-1.
+    // Linear interpolation affects observation only, never loop losses.
+    const float travel = 0.5f * currentDelay * fraction;
+    return tap(currentDelay - travel) - tap(travel);
+}
+
 float AcustraEngine::StringLoop::advance(float delaySmoothing,
                                          float releaseGain) noexcept
 {
     currentDelay += delaySmoothing * (targetDelay - currentDelay);
+    currentPickupFraction += delaySmoothing
+        * (targetPickupFraction - currentPickupFraction);
     const float delayed = readDelay(currentDelay);
     const float broad = broadLossFilter.process(
         delayed, broadLossCoefficient);
@@ -1227,6 +1260,8 @@ void AcustraEngine::reset() noexcept
     bodyAmount_ = parameters_.bodyAmount;
     width_ = parameters_.stereoWidth;
     outputGain_ = parameters_.outputGain;
+    captureMix_.fill(0.0f);
+    captureMix_[static_cast<std::size_t>(parameters_.capture)] = 1.0f;
     bodyConfigured_ = false;
     // Both banks follow the string material, which is only known here: prepare
     // runs before the pending parameters are adopted.
@@ -1261,6 +1296,8 @@ void AcustraEngine::reset() noexcept
 
 void AcustraEngine::resetSoundState() noexcept
 {
+    magneticDerivative_.reset();
+    magneticNeedsPriming_ = true;
     bridgeLoad_.reset();
     bridgeVelocityDerivative_.reset();
     bridgeRotationDerivative_.reset();
@@ -1991,9 +2028,17 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
         * magnitudeForOnePoleMix(lowpassCoefficient, mutedHighLoss, omega);
     const float loopGain = desiredPeriodGain / std::max(filterGain, 0.50f);
 
+    // Conventional/manager pitch bend slides the stopping point; a member
+    // bend and vibrato change tension at fixed length. Keep observation
+    // geometry apart from delay (which also carries dispersion and tension),
+    // and in the loop so a stolen string's tail retains its own length.
+    const float slide = performedBend - memberBendSemitones;
+    const float pickupFraction = clamp(0.25f * std::exp2(
+        (static_cast<float>(fret) + slide) / 12.0f), 0.0f, 1.0f);
     for (int polarisation = 0; polarisation < 2; ++polarisation)
     {
         auto& loop = voice.loops[static_cast<std::size_t>(polarisation)];
+        loop.targetPickupFraction = pickupFraction;
         // The pair is split by an end correction, not by the body: see
         // polarisationEndCorrectionMetres in FittedPhysicalData.h for the
         // measurement and its bound. The whole difference lengthens the
@@ -2128,12 +2173,27 @@ float AcustraEngine::vibratoSemitones(const Voice& voice,
         * 0.5f * (1.0f - std::cos(vibratoPhase_));
 }
 
-float AcustraEngine::effectiveTouch(const Voice& voice) const noexcept
+float AcustraEngine::effectiveTouch(float velocity) const noexcept
 {
     const auto& physical = parameters_.stringMaterial == StringMaterial::Steel
         ? physicalCalibration_.steel : physicalCalibration_.nylon;
-    return clamp(parameters_.touch + physical.velocityBrightnessDepth
-        * (voice.velocity - 0.5f), 0.0f, 1.0f);
+    const float touch = clamp(parameters_.touch + physical.velocityBrightnessDepth
+        * (velocity - 0.5f), 0.0f, 1.0f);
+    // A finite contact rounds a released string and suppresses high modes:
+    // https://webhome.phy.duke.edu/~dtl/136126/136m3_gui.html
+    // Pick/Thumb select the narrow/broad halves of the existing calibrated
+    // contact control, after its velocity response. These are playable ranges,
+    // not measured thumb dimensions or a new plectrum solver. In particular,
+    // pick material and attack depth do not imply a universal brightness law:
+    // https://doi.org/10.21008/j.0860-6897.2025.2.05
+    // Finger retains the original full range, including its exact arithmetic.
+    // ponytail: reuse the fitted aperture; replace with contact measurements
+    // when matching pick/finger/thumb recordings become available.
+    if (parameters_.picking == PickingTechnique::Pick)
+        return 0.5f + 0.5f * touch;
+    if (parameters_.picking == PickingTechnique::Thumb)
+        return 0.5f * touch;
+    return touch;
 }
 
 // -1: no lower zone, off a member channel, or no channel-pressure message
@@ -2184,7 +2244,7 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     const bool steel = parameters_.stringMaterial == StringMaterial::Steel;
     const auto& physical = steel ? physicalCalibration_.steel
                                  : physicalCalibration_.nylon;
-    const float touch = effectiveTouch(voice);
+    const float touch = effectiveTouch(voice.velocity);
     const float scaleLength = steel ? 0.648f : 0.650f;
     const float soundingLength = scaleLength
         * std::exp2(-static_cast<float>(voice.fret) / 12.0f);
@@ -2367,6 +2427,10 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
 void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
                                        bool clearDelay) noexcept
 {
+    // Scoped sound-off and zone removal delete a wave, not move the string.
+    // Surviving channels keep ringing without a false pickup-velocity impulse.
+    if (clearDelay)
+        magneticNeedsPriming_ = true;
     voice.played = false;
     voice.keyDown = false;
     voice.pedalHeld = false;
@@ -2487,6 +2551,8 @@ float AcustraEngine::pluckEnergy(float velocity, float soundingLength,
     const auto& physical = steel ? physicalCalibration_.steel
                                  : physicalCalibration_.nylon;
     const float v = clamp(velocity, 0.0f, 1.0f);
+    // Hammer-ons and lifts belong to the fretting hand. Keep their reference
+    // Finger energy map independent of the selected picking-hand tool.
     const float touch = clamp(parameters_.touch
         + physical.velocityBrightnessDepth * (v - 0.5f), 0.0f, 1.0f);
     const float velocityExponent = 1.32f
@@ -2931,7 +2997,7 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
             else
             {
                 voice.attackPitchCents = 3.0f * v * v
-                    * (0.72f + 0.28f * effectiveTouch(voice));
+                    * (0.72f + 0.28f * effectiveTouch(voice.velocity));
                 voice.attackPitchDecay = std::exp(
                     -static_cast<float>(controlPeriod)
                     / (0.075f * static_cast<float>(sampleRate_)));
@@ -3037,7 +3103,7 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
     else
     {
         voice.attackPitchCents = 3.0f * v * v
-            * (0.72f + 0.28f * effectiveTouch(voice));
+            * (0.72f + 0.28f * effectiveTouch(voice.velocity));
         voice.attackPitchDecay = std::exp(
             -static_cast<float>(controlPeriod)
             / (0.075f * static_cast<float>(sampleRate_)));
@@ -3590,6 +3656,39 @@ AcustraEngine::BodyOutput AcustraEngine::renderBody(float bridgeInput) noexcept
     return result;
 }
 
+float AcustraEngine::renderMagneticPickup(bool crossingRelease) noexcept
+{
+    // Linear, vertically sensitive point pickup at L_open/4 (162 mm from
+    // the bridge on the steel scale). This is a chosen sensor geometry, not
+    // a measured soundhole position or a named pickup's transfer function.
+    // A fret changes L but does not move a pickup mounted on the guitar.
+    // Faraday's law gives voltage proportional to local string velocity in
+    // the small-excursion limit; use the engine's 48 kHz-normalised derivative.
+    // ponytail: no measured magnetic field or loaded coil response; add
+    // string-specific flux gradients and electrical impedance when captured.
+    float displacement = 0.0f;
+    if (parameters_.stringMaterial == StringMaterial::Steel)
+        for (const auto& voice : voices_)
+        {
+            displacement += voice.loops[0].displacementAt(
+                voice.loops[0].currentPickupFraction);
+            if (voice.tailActive)
+                displacement += voice.tailLoop.displacementAt(
+                    voice.tailLoop.currentPickupFraction);
+        }
+    if (magneticNeedsPriming_)
+    {
+        magneticDerivative_.reset(displacement);
+        magneticNeedsPriming_ = false;
+    }
+    const float rate = static_cast<float>(sampleRate_) / 48000.0f;
+    const float velocity = crossingRelease
+        ? magneticDerivative_.processAcrossRelease(displacement, rate)
+        : magneticDerivative_.process(displacement, rate);
+    // Nylon and its nonferromagnetic winding cannot induce this signal.
+    return parameters_.stringMaterial == StringMaterial::Steel ? velocity : 0.0f;
+}
+
 void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
 {
     if (!prepared_ || left == nullptr || right == nullptr || numSamples <= 0)
@@ -3829,6 +3928,44 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             * (bodyScale * spreadLeft + directScale * spreadDirectLeft);
         float outputRight = radiationReferenceGain * outputGain_
             * (bodyScale * spreadRight + directScale * spreadDirectRight);
+
+        // Capture is an observation: every route shares the unchanged
+        // vibrating instrument, so switching sensors never resets a note.
+        // Keep the default stereo path bit-for-bit, including its width law.
+        if (parameters_.capture != CaptureType::StereoMic
+            || captureMix_[0] != 1.0f)
+        {
+            for (std::size_t index = 0; index < captureMix_.size(); ++index)
+            {
+                const float target = index == static_cast<std::size_t>(
+                    parameters_.capture) ? 1.0f : 0.0f;
+                float& mix = captureMix_[index];
+                mix += parameterSmoothing_ * (target - mix);
+                if (std::abs(target - mix) < 1.0e-4f)
+                    mix = target;
+            }
+            float magnetic = 0.0f;
+            if (captureMix_[4] > 0.0f)
+                magnetic = renderMagneticPickup(crossingRelease);
+            else
+                magneticNeedsPriming_ = true;
+            // Ideal piezo charge is proportional to the net saddle force;
+            // no microphone radiation filter belongs on this observation.
+            // https://www.pcb.com/resources/technical-information/introduction-to-force-sensors
+            // Pickup sensitivities are unit-normalised, not volts or SPL.
+            // No unmeasured piezo capacitance, preamp load or tonal EQ is added.
+            const float mono = radiationReferenceGain * outputGain_
+                * (captureMix_[1]
+                       * (bodyScale * body.left + directScale * directLeft)
+                   + captureMix_[2]
+                       * (bodyScale * body.right + directScale * directRight)
+                   + captureMix_[3] * lastBridgeReactionForce_
+                   + captureMix_[4] * magnetic);
+            outputLeft = captureMix_[0] * outputLeft + mono;
+            outputRight = captureMix_[0] * outputRight + mono;
+        }
+        else
+            magneticNeedsPriming_ = true;
 
         // Preserve ordinary notes exactly; only the final 1 dB of headroom is
         // compressed for pathological automation and dense repicks.

@@ -19,6 +19,7 @@ public:
                                const juce::Colour&, bool isHighlighted,
                                bool isDown) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+    juce::Font getComboBoxFont (juce::ComboBox&) override;
 };
 
 class AcustraAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -38,6 +39,9 @@ private:
         juce::AudioProcessorValueTreeState::SliderAttachment;
 
     void timerCallback() override;
+    void updateConstructionControls();
+    void configureSetupMenu (std::size_t index, const juce::String& name,
+                             const juce::String& description);
     void configureChoice (std::size_t index, const juce::String& name,
                           const char* parameterId,
                           const juce::String& description);
@@ -55,6 +59,11 @@ private:
     juce::Label statusLabel;
     juce::TextButton panicButton { "PANIC" };
 
+    std::array<juce::Label, 3> setupLabels;
+    std::array<juce::ComboBox, 3> setupControls;
+    std::array<std::unique_ptr<
+        juce::AudioProcessorValueTreeState::ComboBoxAttachment>, 2> setupAttachments;
+
     std::array<juce::Label, 4> choiceLabels;
     std::array<std::unique_ptr<ChoiceButtonGroup>, 4> choiceControls;
     std::array<juce::Label, 6> sliderLabels;
@@ -67,6 +76,7 @@ private:
 
     std::array<std::unique_ptr<SliderAttachment>, 6> sliderAttachments;
 
+    juce::Rectangle<int> setupPanelBounds;
     juce::Rectangle<int> choicePanelBounds;
     juce::Rectangle<int> tonePanelBounds;
     juce::Rectangle<int> keyboardPanelBounds;

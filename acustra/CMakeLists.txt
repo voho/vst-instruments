@@ -205,6 +205,11 @@ if(BUILD_TESTING)
     add_test(NAME Acustra.Engine COMMAND AcustraEngineTests)
     set_tests_properties(Acustra.Engine PROPERTIES TIMEOUT 300)
 
+    add_executable(AcustraCaptureTests Tests/CaptureTests.cpp)
+    target_link_libraries(AcustraCaptureTests PRIVATE AcustraDSP)
+    add_test(NAME Acustra.Capture COMMAND AcustraCaptureTests)
+    set_tests_properties(Acustra.Capture PROPERTIES TIMEOUT 90)
+
     if(ACUSTRA_BUILD_TOOLS)
         add_test(NAME Acustra.RenderDemos
                  COMMAND AcustraRenderDemos --smoke
@@ -240,6 +245,11 @@ if(BUILD_TESTING)
                             RESULT_VARIABLE ACUSTRA_EXCITATION_PY_DEPS
                             OUTPUT_QUIET ERROR_QUIET)
             if(ACUSTRA_EXCITATION_PY_DEPS EQUAL 0)
+                add_test(NAME Acustra.PhysicalScorer
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/FitPhysicalModel.py"
+                                 --self-test)
+                set_tests_properties(Acustra.PhysicalScorer PROPERTIES TIMEOUT 180)
                 add_test(NAME Acustra.ExtractExcitation
                          COMMAND "${Python3_EXECUTABLE}"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/ExtractExcitation.py"
