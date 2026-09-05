@@ -1,0 +1,153 @@
+Research-only saddle-height coupling; not applied to the shipping engine.
+Base: 37246566 (Acustra directory). Apply to a clean copy of that revision.
+The 58 mm string spread and rotation-reference height are assumptions.
+The candidate fails release/pull-off gates; see the saddle_height_audit_2026_09_05
+entry in Docs/physical-fit-report.json for protocol, hashes and recorded-note scores.
+
+--- a/Source/DSP/AcustraEngine.h
++++ b/Source/DSP/AcustraEngine.h
+@@ -542,7 +542,8 @@
+     void updateControlState() noexcept;
+     void configureBody() noexcept;
+     void configureBridge() noexcept;
+-    float bridgePhaseDelay(float frequency, int stringIndex) const noexcept;
++    float saddleHeightRatio() const noexcept;
++    float bridgePhaseDelay(float frequency, int stringIndex, bool horizontal = false) const noexcept;
+     // The six anchor stubs as the three moments of one stiffness matrix in
+     // the saddle's two coordinates: sum K, sum uK, sum u^2 K.
+     void bridgeAnchorMoments(float& stiffness0, float& stiffness1,
+@@ -600,7 +601,8 @@
+     void finishVoice(Voice& voice, int stringIndex, float verticalIncident,
+                      float horizontalIncident, float excitation,
+                      float tailIncident, float bridgeDisplacement,
+-                     float bridgeVelocity, float& directLeft,
++                     float bridgeVelocity, float horizontalBridgeDisplacement,
++                     float& directLeft,
+                      float& directRight, float& sympatheticForce,
+                      float& longitudinalForce) noexcept;
+     BodyOutput renderBody(float bridgeInput) noexcept;
+--- a/Source/DSP/AcustraEngine.cpp
++++ b/Source/DSP/AcustraEngine.cpp
+@@ -1678,8 +1678,19 @@
+     bridgeLoad_.pastRock = 0.0f;
+ }
+ 
++float AcustraEngine::saddleHeightRatio() const noexcept
++{
++    // Scratch only: measured lower-string-boundary height / assumed impact
++    // half-spacing. No horizontal translation or rotation-axis height data.
++    if (parameters_.bridgeModel == BridgeModel::FyldeSteel
++        && parameters_.stringMaterial == StringMaterial::Steel)
++        return 0.0f;
++    return (parameters_.stringMaterial == StringMaterial::Steel
++        ? 0.0081f : 0.0102f) / 0.0232f;
++}
++
+ float AcustraEngine::bridgePhaseDelay(float frequency,
+-                                      int stringIndex) const noexcept
++                                      int stringIndex, bool horizontal) const noexcept
+ {
+     if (!bridgeCouplingEnabled_ || !(frequency > 0.0f))
+         return 0.0f;
+@@ -1753,8 +1764,16 @@
+     std::complex<float> effectiveMobility {};
+     if (std::abs(inner) > 0.0f)
+     {
+-        effectiveMobility = determinant
+-            * (a11 - 2.0f * arm * a01 + arm * arm * a00) / inner;
++        const auto hh = determinant * a11 / inner;
++        const auto hr = -determinant * a01 / inner;
++        const auto rr = determinant * a00 / inner;
++        const float eta = saddleHeightRatio();
++        const auto vv = hh + 2.0f * arm * hr + arm * arm * rr;
++        const auto vh = -eta * (hr + arm * rr);
++        const auto yy = eta * eta * rr;
++        effectiveMobility = horizontal
++            ? yy - impedance * vh * vh / (1.0f + impedance * vv)
++            : vv - impedance * vh * vh / (1.0f + impedance * yy);
+     }
+     else
+     {
+@@ -1768,7 +1787,8 @@
+             = s + stiffness0 * mobilityHeave;
+         if (!(std::abs(denominator) > 0.0f))
+             return 0.0f;
+-        effectiveMobility = mobilityHeave * s / denominator;
++        effectiveMobility = horizontal ? std::complex<float>{}
++            : mobilityHeave * s / denominator;
+     }
+     // This is the folded full-round-trip multiplier -b/a.  Its phase is the
+     // phase contributed by both measured body motion and the saddle anchor; the
+@@ -1794,7 +1814,8 @@
+             = voices_[static_cast<std::size_t>(string)].bridgeTailStiffness;
+         stiffness0 += stiffness;
+         stiffness1 += arm * stiffness;
+-        stiffness2 += arm * arm * stiffness;
++        const float eta = saddleHeightRatio();
++        stiffness2 += (arm * arm + eta * eta) * stiffness;
+     }
+ }
+ 
+@@ -2099,7 +2120,8 @@
+         const float endCorrection = polarisation == 0 ? 0.0f
+             : physicalCalibration_.polarisationEndCorrectionMetres;
+         const float polarisationDelay = rawDelay
+-            - (polarisation == 0 ? measuredBridgeDelay : 0.0f);
++            - (polarisation == 0 ? measuredBridgeDelay
++               : bridgePhaseDelay(frequency, stringIndex, true));
+         loop.targetDelay = clamp(
+             polarisationDelay * (1.0f + endCorrection / soundingLength),
+             3.0f, static_cast<float>(maximumDelaySamples - 3));
+@@ -3560,7 +3582,9 @@
+                                 float verticalIncident,
+                                 float horizontalIncident, float excitation,
+                                 float tailIncident, float bridgeDisplacement,
+-                                float bridgeVelocity, float& directLeft,
++                                float bridgeVelocity,
++                                float horizontalBridgeDisplacement,
++                                float& directLeft,
+                                 float& directRight,
+                                 float& sympatheticForce,
+                                 float& longitudinalForce) noexcept
+@@ -3570,7 +3594,8 @@
+     // wave b=x-a; folding in the nut inversion therefore writes a-x.
+     voice.loops[0].write(verticalIncident - bridgeDisplacement
+                          + 0.76f * excitation);
+-    voice.loops[1].write(horizontalIncident + 0.51f * excitation);
++    voice.loops[1].write(horizontalIncident - horizontalBridgeDisplacement
++                         + 0.51f * excitation);
+ 
+     const float sampleRateRatio = static_cast<float>(sampleRate_) / 48000.0f;
+     const float verticalVelocity = voice.loops[0].bridgeVelocity(
+@@ -3806,7 +3831,8 @@
+             const float arm = saddleLeverArm(string);
+             drive.stiffness0 += voice.bridgeTailStiffness;
+             drive.stiffness1 += arm * voice.bridgeTailStiffness;
+-            drive.stiffness2 += arm * arm * voice.bridgeTailStiffness;
++            const float eta = saddleHeightRatio();
++            drive.stiffness2 += (arm * arm + eta * eta) * voice.bridgeTailStiffness;
+             // Every string on the bridge is a member of the junction, played
+             // or not: an idle string on a moving bridge carries a wave, and
+             // at its resonance it presents thousands of times its
+@@ -3825,9 +3851,11 @@
+                        + tailIncident[static_cast<std::size_t>(string)]);
+                 drive.impedance0 += port;
+                 drive.impedance1 += arm * port;
+-                drive.impedance2 += arm * arm * port;
++                drive.impedance2 += (arm * arm + eta * eta) * port;
+                 drive.incidentHeave += incident;
+-                drive.incidentRock += arm * incident;
++                drive.incidentRock += arm * incident
++                    - eta * 2.0f * port
++                        * horizontalIncident[static_cast<std::size_t>(string)];
+             }
+         }
+ 
+@@ -3948,6 +3976,7 @@
+                 tailIncident[static_cast<std::size_t>(string)],
+                 bridgeDisplacement + arm * bridgeRotation,
+                 lastBridgeVelocity_ + arm * bridgeRotationRate,
++                -saddleHeightRatio() * bridgeRotation,
+                 directLeft, directRight, sympatheticForce,
+                 longitudinalForce);
+         }

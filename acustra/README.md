@@ -506,6 +506,14 @@ bank keeps 47 modes (30 of them rocking), nylon's 46 (40 rocking). A bank with
 no rocking mode at all falls back to the single-point port every string
 shared before; the engine suite asserts both original banks carry at least one.
 
+An independent [center-impact audit](Tools/AuditBridgeSpatialMap.py) checks the
+unused third hammer position against the mean of the two end responses, without
+fitting gain or phase. Broad 120–500 Hz complex errors are 1.6–10.4%; at 2–4 kHz
+they reach 32–76%. Narrow-band microphone errors near 794 and 891 Hz reach
+74% and 73% on g21, so the smaller broadband error does not establish rigidity
+at every mode. Shorter common windows leave the high-frequency discrepancy.
+The full frequency and sensor results are retained in the fit report.
+
 **Fylde bridge / steel**, in the Guitar menu, selects a separate 44-mode passive
 bridge fitted to the first instrument in [Carcagno et al.'s steel-guitar
 measurements](https://doi.org/10.1121/1.5084735): a custom Fylde Falstaff with
@@ -1186,7 +1194,16 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   at the model's 23.2/21.6 mm half-spacings would reduce mobility by 65.4/66.6 dB;
   a pressure path with one projection has a 32.7/33.3 dB factor instead. Neither
   factor predicts the old render's level without its missing routing code.
-  That trial supplies no verified inaudibility bound. Separately,
+  That trial supplies no verified inaudibility bound. A new
+  [retained prototype](Tools/SaddleHeightExperiment.patch) uses the correct
+  ratio with published lower-string heights and an explicitly assumed 58 mm
+  string spread. Equal-initial-energy, isolated held notes produce horizontal
+  output up to 5.3 dB below the vertical output through cross-to-heave coupling;
+  every tested note decays. The existing training loss improves 1.0%, but attack
+  and pitch-trajectory losses worsen and three release/pull-off gates fail.
+  It remains a research candidate: rotation-axis geometry, lateral translation
+  and moment radiation are unmeasured. Development scores were not opened.
+  Separately,
   a doublet-ratio extraction of the plucking angle from the reference
   recordings' round robins is noise-limited (a take-to-take spread the same
   size as the within-take scatter). Neither substitutes for the missing
