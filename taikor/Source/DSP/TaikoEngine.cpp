@@ -88,6 +88,11 @@ constexpr float restitution = 0.42f;
 // the radial and tangential directions so an edge stroke does not jump round
 // most of the circumference while its radius moves only a fingertip.
 constexpr float humanisePositionScatter = 0.055f;
+// A performance-control floor, not a measured material tolerance: even the
+// tightest playing varies incoming speed by up to 0.5% and contact time by
+// 0.4%. Reuse the existing gesture model without moving the authored strike
+// point at Humanise 0 or adding a random tuning/output-gain offset.
+constexpr float minimumContactVariation = 0.05f;
 // Exact Gonthier damping factor for restitution 0.42, obtained from
 //   (1 + d/e) / (1 - d) = exp (d (1 + 1/e)).
 // Sun's closed-form approximation gave 2.20952 and an actual restitution of
@@ -105,7 +110,7 @@ constexpr double hertzImpulseIntegral = 1.7480383695280799;
 // in legacy residual-exposure units after admittance, not mechanical energy.
 constexpr double huntCrossleySquaredForceIntegral = 1.0659627329925722;
 
-// A muted Tsu is made with the free hand resting on the hide. The palm remains
+// The legacy Tsu slot models a stroke with the free hand resting on the hide. The palm remains
 // for a short articulation rather than only for the millisecond in which the
 // bachi touches, and removes energy locally from the head that was already
 // ringing. These are the only fitted parts of that contact; the per-mode share
@@ -123,8 +128,8 @@ constexpr float handPatchRadiusMetres = 0.055f;
 // wide enough that neighbouring bands overlap into a continuous region rather
 // than reading as five separate whistles. The density law says how the number
 // of modes grows through that region, and the calibration is its overall weight
-// against the resolved bank - the one number here set against recordings of
-// real drums rather than derived.
+// against the resolved bank is a voicing choice. Its previously cited real-
+// drum recordings were not identified, so this is not an auditable calibration.
 constexpr float continuumBandRatio = 2.0f;
 constexpr float continuumBandwidth = 1.35f;
 // A two-dimensional membrane has nearly constant modal density per hertz, so
@@ -164,9 +169,9 @@ constexpr float edgeBoostSlope = 1.80f;
 // and the level it produces is not: this constant carries the sample period the
 // calibration used to inherit from mode.drive. It is re-anchored after the
 // orthogonal-band rewrite so the factory five-shaku centre stroke carries about
-// nine per cent of its analysed body from 250 Hz to 4 kHz. That deliberately
-// sits below the twelve and nineteen per cent in the two reference recordings:
-// the factory drum is larger and its resolved bank reaches less of that range.
+// nine per cent of its analysed body from 250 Hz to 4 kHz. The earlier
+// comparison to two unnamed recordings has no recoverable provenance in this
+// repository; preserve the voicing without claiming validated real-drum fitting.
 constexpr float continuumCalibration = 34.0f / 48000.0f;
 
 // Impact speed in m/s at the softest and hardest MIDI velocity. The bottom is a
@@ -340,91 +345,48 @@ constexpr float directCalibration = 0.00478f;
     return a * std::pow (b / a, t);
 }
 
+// Kuchi-shoga varies by tradition. In common teaching, ka is a rim stroke and
+// tsu a soft head stroke, not the mechanisms in these legacy MIDI slots:
+// https://www.uzume.com/sites/default/files/2021-11/Uzume%20Taiko%20Vocabulary%20and%20Resources.pdf
+// Keep enums/slugs stable; label the modeled gestures by what they actually do.
 const std::array<ArticulationMetadata, articulationCount> articulationTable {{
     { Articulation::Don, "Don", "don", "don",
       "Full open stroke, a hand's width in from the middle", 0 },
-    { Articulation::Ka, "Ka", "ka", "ka",
-      "Out near the rim, thin and cutting", 1 },
-    { Articulation::Tsu, "Tsu", "tsu", "tsu",
-      "Damped centre, the free hand resting on the head", 2 },
-    { Articulation::DonRim, "Don Rim", "donrim", "don",
-      "Head and hoop struck together, the loud accent", 3 },
+    { Articulation::Ka, "Edge", "ka", "",
+      "Near-edge head stroke; not the wooden rim stroke commonly called ka", 1 },
+    { Articulation::Tsu, "Muted", "tsu", "",
+      "Palm-damped head stroke; distinct from a soft open stroke (tsu)", 2 },
+    { Articulation::DonRim, "Rimshot", "donrim", "",
+      "Modeled head-and-hoop accent; an English mechanism label", 3 },
 }};
 
-// The four drums, one per octave. Nothing here is a scaling of anything else:
-// each row is a real instrument of the taiko family, and every number in it is
-// that instrument's own.
-//
-// Where the numbers come from, column by column.
-//
-// *Diameter* is the head as the drum is actually built - a 5-shaku o-daiko is
-// about 1.50 m, a 2.5-shaku nagado about 78 cm, a standing okedo about 40, and a
-// tsuke-shime about 30.
-//
-// The two large drums are the size they are because of what the family has to
-// span. Three octaves of sounding pitch is a factor of eight, and the drums at
-// the two ends of it are not heard at the same mode of their own heads: a shime
-// is heard at its fundamental and an o-daiko is heard at the (1,1) mode a fifth
-// and a half above its own, because the mounting empties a fundamental that low
-// before anyone has taken a pitch from it (see soundingMode). So the family has
-// to span a factor of fourteen in the fundamental to span eight in what is
-// heard, and there is no 95 cm drum with a tacked cowhide head whose
-// fundamental is low enough to be the bottom of that. A 5-shaku o-daiko's is,
-// at an ordinary tacked tension, and 5-shaku o-daiko are what the bottom of a
-// kumi-daiko set actually is.
-//
-// *Body depth* is in control units, where the engine reads depth / diameter =
-// 0.40 + 0.90 * value. The four ratios are the instruments' own proportions: an
-// o-daiko is a barrel roughly as deep as it is wide (0.85); a nagado-daiko is
-// named for its long body and runs about 1.2 diameters; an okedo is a stave-
-// built tub, longer again at about 1.25; and a shime is a shallow ring of wood
-// at about 0.70. That single column is most of why the four drums split their
-// axisymmetric pair so differently: the enclosed air is a column of that
-// length, so a shallow shime is a far stiffer spring against its own head than
-// a deep okedo is.
-//
-// *Head material* is in control units too, and what it really sets is the
-// hide's areal density and therefore its thickness: 0.30 + geometric to 1.60
-// kg/m^2, over a hide at about 1000 kg/m^3. The four rows are 1.05, 0.85, 0.55
-// and 0.40 kg/m^2, which is roughly 1.05, 0.85, 0.55 and 0.40 mm of skin - the
-// heavy cowhide an o-daiko carries, the lighter cowhide of a nagado, and the
-// thin horse or calf hide an okedo and a shime are headed with. Because the
-// head's bending stiffness goes as the cube of that thickness, this column is
-// most of why the modal ratios of the four drums differ.
-//
-// *Tension* is in control units over 1.2-22 kN/m, and it is the one column a
-// player sets rather than a maker: a drum's tension is whatever brings it to
-// the pitch it is wanted at. These four are the tensions that put each drum on
-// its own key of the keyboard, and they come out at 7.3 / 5.8 / 11.5 / 19.1
-// kN/m - the tacked drums at much the same tension as each other, and the
-// rope-laced ones far above them, with the shime at two and a half times the
-// o-daiko on a head less than half as thick. That is exactly the difference
-// between byo-uchi and shirabe-laced construction, and it is why a shime cracks
-// where an o-daiko booms.
-//
-// *Shell* is in control units from light laminated stave work to dense carved
-// zelkova, and it sets the body's ring modes, their Q, the wall's thickness and
-// how much the rim absorbs from the head. The o-daiko and the chu-daiko are
-// both carved keyaki, the chu-daiko a little below the o-daiko because a
-// smaller log is not the same timber as the heart of a large one. The okedo is
-// the outlier and has to be: it is not carved at all, it is thin cedar staves
-// bound with hoops, so it is light, it rings, and it takes far more out of the
-// head at the rim than a solid log does. The shime is carved keyaki again but
-// small and proportionally thick-walled, which is the stiffest, deadest body of
-// the four.
+// A designed modern kumi-daiko-inspired family, not a measured historical set.
+// O-daiko is a size category; the second voice is a nagado in the chu-daiko
+// role. Makers offer 78 cm nagado (2-shaku 6-sun), not 2.5 shaku:
+// https://www.asano.jp/product/3
+// Asano lists tsuke-shime outer heads at 34.5-39 cm, which does not establish
+// the active membrane span. Our 30 cm model remains unverified against a
+// measured drum; do not equate it with a maker's full leather-head diameter:
+// https://www.asano.jp/product/145
+// Diameters, depth ratios, effective hide density and shell controls below are
+// model design values. The four tensions produce the keyboard's octave spacing;
+// that spacing and a five-shaku bass drum are not cultural requirements.
+// Tacked nagado tension is normally set during making/reheading, whereas rope
+// or bolt tension on okedo and shime can be adjusted by the player. Continuous
+// Tension and material controls intentionally extend beyond ordinary practice.
 const std::array<DrumDescription, static_cast<std::size_t> (drumCount)>
     drumDescriptionTable {{
         { "O-daiko", "odaiko",
           "5-shaku carved zelkova barrel, thick tacked cowhide", 1.50f, 0.5000f,
           0.6200f, 0.7500f, 0.80f, true },
-        { "Chu-daiko", "chudaiko",
-          "2.5-shaku nagado-daiko: long carved body, tacked cowhide", 0.78f,
+        { "Nagado-daiko", "chudaiko",
+          "78 cm (about 2-shaku 6-sun) long carved drum; the chu-daiko role", 0.78f,
           0.8889f, 0.5437f, 0.6200f, 0.74f, true },
         { "Okedo-daiko", "okedo",
           "Stave-built tub, rope-laced thin hide, light ringing shell", 0.40f,
           0.9444f, 0.7760f, 0.3621f, 0.20f, false },
         { "Shime-daiko", "shime",
-          "Shallow carved ring, thin hide laced to enormous tension", 0.30f,
+          "Tsuke-shime-inspired voice: shallow carved body and tensioned heads", 0.30f,
           0.3333f, 0.9516f, 0.1800f, 0.92f, false },
     }};
 } // namespace
@@ -1510,10 +1472,9 @@ float TaikoEngine::signedUnitFromHash (std::uint32_t value) noexcept
     return static_cast<float> (static_cast<double> (hash32 (value)) / 2147483647.5 - 1.0);
 }
 
-std::uint32_t TaikoEngine::performerRandomSalt (int performer,
-                                                float humanise) noexcept
+std::uint32_t TaikoEngine::performerRandomSalt (int performer) noexcept
 {
-    if (humanise <= 0.0f || performer <= 0)
+    if (performer <= 0)
         return 0u;
 
     return hash32 (static_cast<std::uint32_t> (performer) * 0x9e3779b9u);
@@ -1583,7 +1544,17 @@ EngineParameters TaikoEngine::sanitise (const EngineParameters& parameters) noex
     result.drive = clampFloat (parameters.drive, 0.0f, 1.0f);
     result.outputGain = clampFloat (parameters.outputGain, 0.0f, 2.0f);
     result.performer = std::clamp (parameters.performer, 0, 3);
+    result.outputHighPassHz = clampFloat (parameters.outputHighPassHz, 0.0f, 500.0f);
+    result.ensembleSize = std::clamp (parameters.ensembleSize, 1, maximumEnsembleSize);
+    result.ensembleVariation = clampFloat (parameters.ensembleVariation, 0.0f, 1.0f);
     return result;
+}
+
+void TaikoEngine::setEnsembleMember (int member) noexcept
+{
+    member = std::clamp (member, 0, maximumEnsembleSize - 1);
+    ensembleMemberSalt_ = member == 0 ? 0u
+        : hash32 (static_cast<std::uint32_t> (member) * 0x85ebca6bu);
 }
 
 void TaikoEngine::prepare (double sampleRate, int maxBlockSize) noexcept
@@ -1623,6 +1594,9 @@ void TaikoEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     dcCoefficient_ = std::exp (-2.0f * piFloat * 12.0f / rate);
     meterReleaseMultiplier_ = std::exp (-1.0f / (0.30f * rate));
     visualDecayMultiplier_ = std::exp (-1.0f / (0.35f * rate));
+    outputLimiter_.prepare (sampleRate_);
+    outputHighPass_.setCutoff (applied_.outputHighPassHz);
+    outputHighPass_.prepare (sampleRate_);
 
     prepared_ = true;
     drumCacheValid_ = false;
@@ -1680,6 +1654,14 @@ void TaikoEngine::setParameters (const EngineParameters& parameters) noexcept
     const bool drumCacheChanged = physicalConfigurationChanged
                                || next.pitch != applied_.pitch
                                || next.shellResonance != applied_.shellResonance;
+
+    if (next.outputHighPassHz != applied_.outputHighPassHz)
+    {
+        outputHighPass_.setCutoff (next.outputHighPassHz);
+        // No audible transition is needed while the entire output is silent.
+        if (idleFrozen_)
+            outputHighPass_.reset();
+    }
 
     applied_ = next;
 
@@ -1805,6 +1787,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.solvedContactExposureStep = 0.0;
     voice.solvedContactForce = 0.0f;
     voice.appliedTensionShift = 1.0f;
+    voice.appliedTensionRise = 0.0f;
     // Belongs to the stroke, not to the slot. The attack glide runs before the
     // new contact schedule is known - Tension Mod is on by default, so that is
     // every ordinary stroke - and it rebuilds the lifetimes; leaving the last
@@ -1833,6 +1816,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
         mode.contactShape = 0.0f;
         mode.batterParticipation = 0.0f;
         mode.resonantParticipation = 0.0f;
+        mode.batterTensionFraction = 0.0f;
         mode.micLeft = 0.0f;
         mode.micRight = 0.0f;
         mode.micLeftQuadrature = 0.0f;
@@ -1864,6 +1848,8 @@ void TaikoEngine::resetOutputStagePath() noexcept
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     driveAdaaLeft_ = driveAdaaRight_ = 0.0f;
+    outputLimiter_.reset();
+    outputHighPass_.reset();
 }
 
 void TaikoEngine::updateActiveVoiceCount() noexcept
@@ -2505,25 +2491,11 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 // being wrong above it, and the reason it looked wrong was an artefact of how
 // the comparison was checked rather than anything in the weights.
 //
-// What was measured is this. Rendering a take and reading the level at each
-// mode's frequency with a 0.9 s window, the weights below appeared to drift
-// several decibels high by the fourth radial order. They do not. The attack
-// glide leaves the head stretched for a good part of that window, so every
-// membrane partial sits sharp of where it settles - by the same *ratio*,
-// because a tension shift scales the whole head at once. Nine cents is a
-// quarter of a hertz at 68 Hz and well inside the window's 1.1 Hz resolution;
-// the same nine cents is 1.2 Hz at 230 Hz and a whole bin away from it, so a
-// probe parked on the settled frequency reads a high mode ten decibels down
-// while a low one loses half a decibel. Measured where each partial actually
-// sounds, over the strike position, both microphone controls, Pitch and Head
-// Tension on all four drums, the weights are flat to about 1.5 dB across the
-// whole resolved bank out to the ninth radial order. There is nothing up there
-// to guard against, and a bound cost real answers: the o-daiko struck at its
-// middle is heard at its (0,3) lower branch and the chu-daiko with the pair
-// backed off is heard at its (1,3), and both were excluded.
-//
-// The glide is why nothing in this function accounts for the glide. It moves
-// every mode by the same ratio, so it cannot change which of them is loudest.
+// Measure the settled linear modes: an attack glide moves their frequencies
+// during a measurement window, so a spectral probe fixed at the resting pitch
+// underestimates their energy. The strain response now depends on each mode's
+// batter tensile share; the readout still intentionally names the drum after
+// that transient stretching has decayed, rather than predicting attack pitch.
 //
 // On the o-daiko struck at the very centre three partials land within a decibel
 // of one another and the ranking is inside the weights' own accuracy; that drum
@@ -3211,9 +3183,9 @@ float TaikoEngine::contactCollisionMass (const DrumState& drum,
 void TaikoEngine::solveContact (float collisionMass, float targetImpedance,
                                 const StrikeProfile& profile, float bachiHardness,
                                 float impactSpeed, float& contactSeconds,
-                                float& peakForce) noexcept
+                                float& peakForce, float stiffnessScale) noexcept
 {
-    const float stiffness = contactStiffnessFor (profile, bachiHardness);
+    const float stiffness = contactStiffnessFor (profile, bachiHardness) * stiffnessScale;
 
     // Hertz impact of a rounded tip against a stiff surface. The contact time
     // falls as the fifth root of the impact speed, which is the whole reason a
@@ -3570,6 +3542,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                                                 static_cast<float> (order));
         const float omegaBatter = omegas.batter;
         const float omegaResonant = omegas.resonant;
+        // omega^2 = (T k^2 + D k^4) / mass. Keep the static reference
+        // normalization of stiffnessStretch fixed during an attack, then only
+        // this tensile share responds to the batter's additional strain.
+        const float batterTensileShare =
+            1.0f / (1.0f + drum.stiffnessBatter * lambda * lambda);
 
         const auto besselAtZero = static_cast<float> (besselJ (order + 1, entry.besselZero));
         const float besselSquared = std::max (besselAtZero * besselAtZero, 1.0e-9f);
@@ -3721,6 +3698,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.batterParticipation = batterShare;
                 mode.resonantParticipation = resonantShare;
                 mode.stretchNorm = lambda * lambda * besselSquared;
+                mode.batterTensionFraction = clampFloat (
+                    vectorB * vectorB * omegaBatter * omegaBatter
+                        * batterTensileShare / eigenvalue, 0.0f, 1.0f);
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
                 // head, so they are the part of the image that stays centred.
@@ -3863,6 +3843,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                                   * profile.membraneGain * profile.levelScale;
                 mode.batterParticipation = 1.0f;
                 mode.resonantParticipation = 0.0f;
+                mode.batterTensionFraction = batterTensileShare;
                 mode.stretchNorm = 0.5f * lambda * lambda * besselSquared;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 if (buildComplexObservation)
@@ -3964,6 +3945,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         mode.batterParticipation = 0.0f;
         mode.resonantParticipation = 0.0f;
         mode.stretchNorm = 0.0f;
+        mode.batterTensionFraction = 0.0f;
         mode.drive = level * modelScale;
         mode.micLeft = shellL;
         mode.micRight = shellR;
@@ -4338,7 +4320,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
         const auto seed =
             0x6d2b79f5u + static_cast<std::uint32_t> (drumIndex) * 0x9e3779b9u;
         physical.noiseState = hash32 (
-            seed ^ performerRandomSalt (applied_.performer, applied_.humanise)) | 1u;
+            seed ^ performerRandomSalt (applied_.performer) ^ ensembleMemberSalt_) | 1u;
     }
 
     // Eigenfrequencies, losses and observation belong to the instrument, not
@@ -4370,6 +4352,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     physical.contactRemaining = 0u;
     physical.tuningAtStrike = applied_.pitch + 2.0f * pitchBend_;
     physical.appliedTensionShift = 1.0f;
+    physical.appliedTensionRise = 0.0f;
 
     // Map a physical coordinate and velocity into one newly built pole. The
     // pending input is stored as its actual additive displacement increment,
@@ -4794,7 +4777,8 @@ void TaikoEngine::scheduleContacts (Voice& voice, const StrikeProfile& profile,
     const int requested = std::clamp (profile.contactCount, 1, maxContactEvents);
     const auto seed =
         static_cast<std::uint32_t> (voice.startOrder * 22695477u + 5u)
-        ^ performerRandomSalt (applied_.performer, applied_.humanise);
+        ^ hash32 (static_cast<std::uint32_t> (voice.startOrder >> 32))
+        ^ performerRandomSalt (applied_.performer) ^ ensembleMemberSalt_;
 
     if (requested == 1)
     {
@@ -4812,7 +4796,7 @@ void TaikoEngine::scheduleContacts (Voice& voice, const StrikeProfile& profile,
     for (int index = 0; index < requested; ++index)
     {
         const float jitter =
-            1.0f + 0.30f * applied_.humanise
+            1.0f + 0.30f * std::max (applied_.humanise, minimumContactVariation)
                  * signedUnitFromHash (seed + static_cast<std::uint32_t> (index));
         voice.contacts[static_cast<std::size_t> (index)] = {
             static_cast<std::uint32_t> (offsetSeconds * rate),
@@ -4883,7 +4867,8 @@ int TaikoEngine::findVoiceSlot() noexcept
 }
 
 void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
-                           float velocity) noexcept
+                           float velocity, float radialOffset,
+                           float tangentialOffset) noexcept
 {
     if (! prepared_)
         return;
@@ -4925,8 +4910,12 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     voice.physicalBank = false;
 
     const auto order = ++noteSequence_;
+    // Include the high half so long performances do not restart the same
+    // gestures when the low 32-bit counter wraps. Reset deliberately replays
+    // the sequence; natural silence and Panic leave it running.
     const auto seed = static_cast<std::uint32_t> (order * 2654435761u + 11u)
-                    ^ performerRandomSalt (applied_.performer, applied_.humanise);
+                    ^ hash32 (static_cast<std::uint32_t> (order >> 32))
+                    ^ performerRandomSalt (applied_.performer) ^ ensembleMemberSalt_;
 
     voice.startOrder = order;
     voice.articulation = articulation;
@@ -4935,15 +4924,12 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     voice.physicalDrumIndex = static_cast<std::uint8_t> (cacheIndex);
     voice.velocity = clampFloat (velocity, 0.0f, 1.0f);
 
-    // No two strokes drag across the hide the same way, so the contact noise
-    // is reseeded per stroke - unless Humanise is off, which asks for a machine
-    // and must therefore repeat exactly.
+    // Every stroke gets fresh contact texture, even at Humanise 0. The LCG
+    // accepts all 32-bit states, including zero; forcing an odd seed would
+    // needlessly collapse pairs of distinct noise sequences.
     const float humanise = applied_.humanise;
-    voice.noiseState = hash32 (humanise > 0.0f
-                                   ? seed
-                                   : static_cast<std::uint32_t> (articulation) * 131u
-                                         + static_cast<std::uint32_t> (octave + 8) * 17u)
-                     | 1u;
+    const float contactVariation = std::max (humanise, minimumContactVariation);
+    voice.noiseState = hash32 (seed);
 
     // Where the stick lands. The articulation sets the radius, the position
     // control offsets it, and humanising scatters both the radius and the
@@ -4952,8 +4938,14 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
         ? strikePositionOverride_ : applied_.strikePosition;
     const float authoredAzimuth = strikeAzimuthOverrideActive_
         ? strikeAzimuthOverride_ : applied_.strikeAzimuth;
+    radialOffset = std::isfinite (radialOffset)
+        ? clampFloat (radialOffset, -1.0f, 1.0f) : 0.0f;
+    tangentialOffset = std::isfinite (tangentialOffset)
+        ? clampFloat (tangentialOffset, -1.0f, 1.0f) : 0.0f;
     const float spatialScatter = humanisePositionScatter * humanise;
-    const float radiusJitter = spatialScatter * signedUnitFromHash (seed + 1u);
+    float radiusJitter = spatialScatter * signedUnitFromHash (seed + 1u);
+    if (radialOffset != 0.0f)
+        radiusJitter += radialOffset;
     voice.strikeRadius = clampFloat (
         strikeRadiusFor (profile, authoredPosition) + radiusJitter,
         0.0f, 0.985f);
@@ -4961,10 +4953,14 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // Near the centre, cap the angle by using the scatter itself as the lever
     // arm: azimuth is undefined at the centre and an enormous angle would add
     // numerical motion without moving the contact point.
-    const float tangentialJitter =
+    float tangentialJitter =
         spatialScatter * signedUnitFromHash (seed + 2u);
-    const float angleJitter = spatialScatter > 0.0f
-        ? tangentialJitter / std::max (voice.strikeRadius, spatialScatter)
+    if (tangentialOffset != 0.0f)
+        tangentialJitter += tangentialOffset;
+    const float totalScatter = spatialScatter + std::hypot (radialOffset,
+                                                           tangentialOffset);
+    const float angleJitter = totalScatter > 0.0f
+        ? tangentialJitter / std::max (voice.strikeRadius, totalScatter)
         : 0.0f;
     // Non-zero authored positions wrap only at trigger time; no trigonometry
     // or modulo work enters the sample loop.
@@ -4991,7 +4987,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
                                                 applied_.velocityCurve);
     const float shaped = lerp (0.72f, curvedVelocity, applied_.velocityDepth);
     const float speedJitter =
-        1.0f + 0.10f * humanise * signedUnitFromHash (seed + 3u);
+        1.0f + 0.10f * contactVariation * signedUnitFromHash (seed + 3u);
     const float impactSpeed = clampFloat (
         geometricLerp (minimumImpactSpeed, maximumImpactSpeed, shaped) * speedJitter,
         0.05f, 12.0f);
@@ -5056,9 +5052,16 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
         0.05f);
     float contactSeconds = 0.0f;
     float peakForce = 0.0f;
+    // Hertz duration follows K^(-2/5). Varying its factor therefore means
+    // scaling K by factor^(-5/2), representing small differences in how the
+    // rounded tip meets the hide. Use that SAME stiffness in the live solve:
+    // changing only the duration prior would leave mechanically identical
+    // hits whenever two incoming float speeds coincide.
+    const float contactTimeFactor =
+        1.0f + 0.08f * contactVariation * signedUnitFromHash (seed + 4u);
+    const float stiffnessScale = std::pow (contactTimeFactor, -2.5f);
     solveContact (collisionMass, targetImpedance, profile, applied_.bachiHardness,
-                  relativeImpactSpeed, contactSeconds, peakForce);
-    contactSeconds *= 1.0f + 0.08f * humanise * signedUnitFromHash (seed + 4u);
+                  relativeImpactSpeed, contactSeconds, peakForce, stiffnessScale);
     const float noiseLevel = applied_.strikeNoise * profile.noiseGain * 0.35f;
     const float excitationScale = peakForce * profile.levelScale;
     scheduleContacts (voice, profile, contactSeconds, excitationScale, noiseLevel);
@@ -5069,7 +5072,8 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // leaves only a handful of samples in the collision. Softening K to force a
     // six-sample pulse instead made the stick follow the returning fundamental
     // for seventeen milliseconds at 8 kHz; preserve the physical stiffness.
-    voice.contactStiffness = contactStiffnessFor (profile, applied_.bachiHardness);
+    voice.contactStiffness = contactStiffnessFor (profile, applied_.bachiHardness)
+                          * stiffnessScale;
     voice.contactDamping = contactDampingFactor
                          / static_cast<double> (relativeImpactSpeed);
     voice.residualImpedance = std::max (static_cast<double> (targetImpedance), 1.0);
@@ -5324,18 +5328,20 @@ bool TaikoEngine::triggerMidi (int midiNote, float velocity) noexcept
     return true;
 }
 
-// Every membrane mode is moved by the same factor, which is exact for an ideal
-// membrane and a first-order approximation once the head has bending stiffness
-// and a cavity behind it: neither the stiff term nor the air spring scales with
-// the head's tension, so a mode that owes part of its frequency to them should
-// move slightly less than the fundamental does. The residue is small over the
-// gestures that use this - the attack glide is under a tenth of a semitone of
-// tension and the wheel is two - and correcting it exactly would mean carrying
-// the tension, stiffness and cavity shares of every mode separately through a
-// path that already has to keep the retirement sort, the deadline and the fade
-// consistent with each other.
-void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
+// Project the Berger tension increment onto each mode's batter tensile
+// energy: delta(omega^2) = v' delta(K) v. Unlike uniform pitch scaling, this
+// leaves bending rigidity, the rear head and the cavity spring unchanged.
+// Avanzini, Bank & Borin, JASA 131 (2012), Eqs. 12/16:
+// https://home.mit.bme.hu/~bank/publist/jasa12.pdf
+// ponytail: fixed modal eigenvectors give a first-order cavity projection;
+// a full nonlinear two-head solve is needed for large-deflection energy transfer.
+// `shift` includes the ideal batter stretch; dividing that part out preserves
+// the existing musical Pitch/wheel transposition independently of the physics.
+void TaikoEngine::applyTensionShift (Voice& voice, float shift,
+                                    float tensionRise) noexcept
 {
+    const float musicalShift = shift / std::sqrt (1.0f + tensionRise);
+    voice.appliedTensionRise = tensionRise;
     const auto rate = static_cast<float> (sampleRate_);
     const float nyquist = 0.5f * rate;
 
@@ -5348,7 +5354,9 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         if (! mode.membrane)
             continue;
 
-        const float frequency = mode.omega * shift / (2.0f * piFloat);
+        const float modalShift = musicalShift * std::sqrt (
+            1.0f + tensionRise * mode.batterTensionFraction);
+        const float frequency = mode.omega * modalShift / (2.0f * piFloat);
         if (frequency >= nyquist * 0.98f || ! (frequency > 0.0f))
         {
             mode.resonator.a1 = 0.0;
@@ -5654,8 +5662,9 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     const float stretch = std::sqrt (1.0f + rise);
     const float shift = stretch * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
 
-    if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f)
-        applyTensionShift (voice, shift);
+    if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f
+        || std::abs (rise - voice.appliedTensionRise) > 1.0e-5f)
+        applyTensionShift (voice, shift, rise);
 }
 
 void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
@@ -6450,6 +6459,28 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 
 void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
 {
+    processInternal (left, right, numSamples, nullptr, nullptr, nullptr, false, false, nullptr);
+}
+
+void TaikoEngine::processRaw (float* left, float* right, int numSamples) noexcept
+{
+    processInternal (left, right, numSamples, nullptr, nullptr, nullptr, false, true, nullptr);
+}
+
+void TaikoEngine::processWithEnsemble (float* left, float* right, int numSamples,
+                                     const float* extraLeft, const float* extraRight,
+                                     const float* gain, bool extraActive,
+                                     const StereoPan* leadPan) noexcept
+{
+    processInternal (left, right, numSamples, extraLeft, extraRight, gain,
+                     extraActive, false, leadPan);
+}
+
+void TaikoEngine::processInternal (float* left, float* right, int numSamples,
+                                  const float* extraLeft, const float* extraRight,
+                                  const float* gain, bool extraActive, bool raw,
+                                  const StereoPan* leadPan) noexcept
+{
     if (left == nullptr || right == nullptr || numSamples <= 0)
         return;
 
@@ -6477,6 +6508,8 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
     const float targetGain = applied_.outputGain;
     const float targetDrive = applied_.drive;
     const float targetWidth = applied_.stereoWidth;
+    if (extraActive)
+        idleFrozen_ = false;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -6493,7 +6526,7 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
 
         float mixLeft = 0.0f;
         float mixRight = 0.0f;
-        bool anyVoiceActive = false;
+        bool anyVoiceActive = extraActive;
 
         // Retune/control the canonical poles before forming the matched contact
         // compliance. Changing a1/a2 between the solve and the recurrence would
@@ -6582,6 +6615,24 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             mixRight += drumRight;
         }
 
+        if (leadPan != nullptr)
+            leadPan[sample].apply (mixLeft, mixRight);
+
+        if (extraLeft != nullptr && extraRight != nullptr)
+        {
+            const float auxiliaryLeft = extraLeft[sample];
+            const float auxiliaryRight = extraRight[sample];
+            mixLeft += auxiliaryLeft;
+            mixRight += auxiliaryRight;
+            // A member may retire within this block. Its earlier samples must
+            // still wake the lead and leave the shared output tail running.
+            if (auxiliaryLeft != 0.0f || auxiliaryRight != 0.0f)
+            {
+                anyVoiceActive = true;
+                idleFrozen_ = false;
+            }
+        }
+
         if (idleFrozen_ && ! anyVoiceActive)
         {
             left[sample] = 0.0f;
@@ -6590,6 +6641,25 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             meterRight_ *= meterReleaseMultiplier_;
             visualLevel_ *= visualDecayMultiplier_;
             continue;
+        }
+
+        if (raw)
+        {
+            left[sample] = mixLeft;
+            right[sample] = mixRight;
+            visualLevel_ *= visualDecayMultiplier_;
+            if (! anyVoiceActive)
+            {
+                idleFrozen_ = true;
+                silentSamples_ = idleFreezeSamples;
+            }
+            continue;
+        }
+
+        if (gain != nullptr)
+        {
+            mixLeft *= gain[sample];
+            mixRight *= gain[sample];
         }
 
         // Width trim on the finished pair. At 0 the two close microphones are
@@ -6658,14 +6728,13 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             driveAdaaRight_ = outRight;
         }
 
+        outputHighPass_.process (outLeft, outRight);
         outLeft *= smoothedOutputGain_ * referenceOutputCalibration;
         outRight *= smoothedOutputGain_ * referenceOutputCalibration;
 
-        // Final safety. The model is bounded by its own damping, but a fully
-        // wound drive on sixteen simultaneous odaiko strokes should still
-        // never leave the buffer.
-        outLeft = clampFloat (outLeft, -1.0f, 1.0f);
-        outRight = clampFloat (outRight, -1.0f, 1.0f);
+        // Always protect the finished output, including Drive, width and gain.
+        // Both microphones share attenuation so limiting preserves their image.
+        outputLimiter_.process (outLeft, outRight);
 
         left[sample] = outLeft;
         right[sample] = outRight;
@@ -6753,14 +6822,18 @@ TaikoEngine::SoundingMode TaikoEngine::dynamicSoundingMode (
 {
     auto parameters = sanitise (rawParameters);
     // The panel names the settled drum under a neutral open stroke. Noise has
-    // no stable pitch, humanising deliberately moves the contact, and the
-    // nonlinear tension glide shifts every mode by the same ratio rather than
-    // changing which one wins.
+    // no stable pitch, humanising deliberately moves the contact, and attack
+    // strain temporarily changes modal frequencies. Disable those transients
+    // to report the drum's resting tuning.
     parameters.humanise = 0.0f;
+    parameters.performer = 0;
     parameters.strikeNoise = 0.0f;
     parameters.tensionModulation = 0.0f;
     parameters.drive = 0.0f;
     parameters.outputGain = 0.0f;
+    parameters.outputHighPassHz = 0.0f;
+    parameters.ensembleSize = 1;
+    parameters.ensembleVariation = 0.0f;
 
     struct ReadoutCache
     {

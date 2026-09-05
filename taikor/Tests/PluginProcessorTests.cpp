@@ -224,7 +224,7 @@ void testParameterLayoutAndDefaults()
     expect (ids.size() == static_cast<std::size_t> (taikor::parameters::parameterCount),
             "parameter IDs are not unique");
 
-    const std::array<const char*, 25> expectedParameterIds {{
+    const std::array<const char*, 28> expectedParameterIds {{
         pids::headDiameter, pids::bodyDepth, pids::tension, pids::headMaterial,
         pids::shellMaterial, pids::resonantTension, pids::cavityCoupling,
         pids::headDamping, pids::shellResonance, pids::pitch,
@@ -232,7 +232,8 @@ void testParameterLayoutAndDefaults()
         pids::tensionModulation, pids::strikeNoise, pids::humanise,
         pids::octaveBody, pids::micDistance, pids::micSpread,
         pids::stereoWidth, pids::drive, pids::output, pids::strikeAzimuth,
-        pids::performer, pids::velocityCurve,
+        pids::performer, pids::velocityCurve, pids::outputHighPass,
+        pids::ensembleSize, pids::ensembleVariation,
     }};
     for (std::size_t index = 0; index < expectedParameterIds.size(); ++index)
     {
@@ -240,6 +241,9 @@ void testParameterLayoutAndDefaults()
             hostParameters[static_cast<int> (index)]);
         expect (ranged != nullptr && ranged->paramID == expectedParameterIds[index],
                 "host parameter order changed at slot " + std::to_string (index));
+        expect (ranged != nullptr
+                    && ranged->getVersionHint() == (index >= 26u ? 3 : index == 25u ? 2 : 1),
+                "AU parameter ordering changed at slot " + std::to_string (index));
     }
 
     // The former continuous Octave Body morph is now a two-position product
@@ -306,7 +310,7 @@ void testParameterLayoutAndDefaults()
         expect (false, "Velocity Curve is not a continuous float parameter");
     }
 
-    const std::array<std::pair<const char*, float>, 25> expectedDefaults {{
+    const std::array<std::pair<const char*, float>, 28> expectedDefaults {{
         { pids::headDiameter, 150.0f },  { pids::bodyDepth, 0.5f },
         { pids::tension, 0.62f },        { pids::headMaterial, 0.75f },
         { pids::shellMaterial, 0.8f },   { pids::resonantTension, 0.5f },
@@ -320,11 +324,71 @@ void testParameterLayoutAndDefaults()
         { pids::drive, 0.0f },           { pids::output, -22.5f },
         { pids::strikeAzimuth, 0.0f },   { pids::performer, 0.0f },
         { pids::velocityCurve, 0.0f },
+        { pids::outputHighPass, 0.0f },
+        { pids::ensembleSize, 1.0f },    { pids::ensembleVariation, 0.4f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
         expect (std::abs (parameterValue (processor, id) - expected) < 1.0e-4f,
                 std::string ("unexpected default for ") + id);
+
+    const auto* highPass = processor.parameters.getParameter (pids::outputHighPass);
+    expect (highPass != nullptr, "missing Output High Pass parameter");
+    if (highPass != nullptr)
+    {
+        expect (dynamic_cast<const juce::AudioParameterFloat*> (highPass) != nullptr
+                    && highPass->convertFrom0to1 (0.0f) == 0.0f
+                    && highPass->convertFrom0to1 (1.0f) == 500.0f
+                    && highPass->getNormalisableRange().interval == 1.0f,
+                "Output High Pass must span Off to 500 Hz in 1 Hz steps");
+        expect (highPass->getText (0.0f, 64) == "Off"
+                    && highPass->getText (1.0f, 64) == "500 Hz"
+                    && highPass->getValueForText ("Off") == 0.0f
+                    && std::abs (highPass->convertFrom0to1 (
+                                     highPass->getValueForText ("137 Hz")) - 137.0f) < 1.0e-3f,
+                "Output High Pass text does not round-trip Off and Hertz");
+        expect (std::abs (highPass->convertFrom0to1 (0.5f) - 100.0f) < 1.0e-3f,
+                "Output High Pass must give the low-frequency range enough knob travel");
+    }
+
+    const auto* ensembleSize = processor.parameters.getParameter (pids::ensembleSize);
+    expect (ensembleSize != nullptr, "missing Ensemble Size parameter");
+    if (ensembleSize != nullptr)
+    {
+        expect (dynamic_cast<const juce::AudioParameterInt*> (ensembleSize) != nullptr
+                    && ensembleSize->getNumSteps() == 8
+                    && ensembleSize->convertFrom0to1 (0.0f) == 1.0f
+                    && ensembleSize->convertFrom0to1 (1.0f) == 8.0f,
+                "Ensemble Size must select one to eight whole players");
+        // AudioParameterInt reports its step count but does not override
+        // isDiscrete(). Check the actual host conversion, including values
+        // between positions, rather than assuming that JUCE flag is true.
+        for (const float normalised : { 0.14f, 0.42f, 0.76f })
+        {
+            const float players = ensembleSize->convertFrom0to1 (normalised);
+            expect (std::abs (players - std::round (players)) < 1.0e-7f,
+                    "Ensemble Size accepted a fractional player count");
+        }
+        expect (ensembleSize->getText (0.0f, 64) == "1 player"
+                    && ensembleSize->getText (1.0f, 64) == "8 players"
+                    && ensembleSize->convertFrom0to1 (
+                           ensembleSize->getValueForText ("5 players")) == 5.0f,
+                "Ensemble Size text does not round-trip player counts");
+    }
+    const auto* ensembleVariation = processor.parameters.getParameter (
+        pids::ensembleVariation);
+    expect (ensembleVariation != nullptr, "missing Ensemble Variation parameter");
+    if (ensembleVariation != nullptr)
+        expect (dynamic_cast<const juce::AudioParameterFloat*> (ensembleVariation) != nullptr
+                    && ensembleVariation->convertFrom0to1 (0.0f) == 0.0f
+                    && ensembleVariation->convertFrom0to1 (1.0f) == 1.0f
+                    && ensembleVariation->getLabel() == "%"
+                    && ensembleVariation->getText (0.0f, 64) == "0"
+                    && ensembleVariation->getText (1.0f, 64) == "100"
+                    && std::abs (ensembleVariation->convertFrom0to1 (
+                                     ensembleVariation->getValueForText ("73 %")) - 0.73f)
+                           < 1.0e-4f,
+                "Ensemble Variation must round-trip zero to 100 percent");
 
     // Output headroom is calibrated inside the model, not by changing this
     // established host curve. Recorded normalised automation must therefore
@@ -351,6 +415,24 @@ void testParameterLayoutAndDefaults()
     expect (std::abs (engineParameters.outputGain
                       - juce::Decibels::decibelsToGain (-22.5f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
+    expect (engineParameters.outputHighPassHz == 0.0f,
+            "the output high-pass filter must be bypassed by default");
+    expect (engineParameters.ensembleSize == 1
+                && std::abs (engineParameters.ensembleVariation - 0.4f) < 1.0e-4f,
+            "the ensemble must default to one player with 40 percent variation ready");
+    setParameterValue (processor, pids::ensembleSize, 5.0f);
+    setParameterValue (processor, pids::ensembleVariation, 0.73f);
+    const auto ensembleParameters = processor.snapshotEngineParameters();
+    expect (ensembleParameters.ensembleSize == 5
+                && std::abs (ensembleParameters.ensembleVariation - 0.73f) < 1.0e-4f,
+            "ensemble controls do not reach the engine as player count and variation");
+    setParameterValue (processor, pids::ensembleSize, 1.0f);
+    setParameterValue (processor, pids::ensembleVariation, 0.4f);
+    setParameterValue (processor, pids::outputHighPass, 137.0f);
+    expect (std::abs (processor.snapshotEngineParameters().outputHighPassHz - 137.0f)
+                < 1.0e-3f,
+            "Output High Pass must reach the engine in Hertz");
+    setParameterValue (processor, pids::outputHighPass, 0.0f);
     setParameterValue (processor, pids::strikeAzimuth, 90.0f);
     expect (std::abs (processor.snapshotEngineParameters().strikeAzimuth
                       - juce::MathConstants<float>::halfPi) < 1.0e-5f,
@@ -901,6 +983,53 @@ void testParametersReachTheEngine()
     processor.releaseResources();
 }
 
+void testOutputLimiterAtMaximumLevel()
+{
+    // Exercise both the clean and driven paths through the actual plug-in,
+    // including overlapping strikes on every playable articulation and drum.
+    for (const float drive : { 0.0f, 1.0f })
+    {
+        TaikorAudioProcessor processor;
+        setParameterValue (processor, taikor::parameters::output, 6.0f);
+        setParameterValue (processor, taikor::parameters::drive, drive);
+        setParameterValue (processor, taikor::parameters::headDamping, 0.0f);
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> buffer { 2, blockSize };
+        float peak = 0.0f;
+        bool finite = true;
+        for (int block = 0; block < 48; ++block)
+        {
+            juce::MidiBuffer midi;
+            if (block % 6 == 0)
+                for (int octave = taikor::lowestOctaveOffset;
+                     octave <= taikor::highestOctaveOffset; ++octave)
+                    for (int stroke = 0;
+                         stroke < static_cast<int> (taikor::articulationCount); ++stroke)
+                        midi.addEvent (juce::MidiMessage::noteOn (
+                            1, taikor::midiNoteFor (
+                                static_cast<taikor::Articulation> (stroke), octave),
+                            1.0f), stroke * 23);
+
+            processor.processBlock (buffer, midi);
+            finite = finite && bufferIsFinite (buffer);
+            peak = std::max (peak, peakOf (buffer));
+        }
+
+        expect (finite, "maximum output and overlapping strikes produced non-finite audio");
+        expect (peak <= 0.891251f + 1.0e-6f,
+                "maximum output exceeded the -1 dBFS limiter ceiling: "
+                    + std::to_string (peak));
+        // Full Drive's existing makeup attenuation caps this path near 0.445;
+        // the clean path must actually reach the limiter to test its ceiling.
+        expect (peak > (drive == 0.0f ? 0.8f : 0.2f),
+                "the limiter stress render did not reach a loud enough level");
+        expect (processor.getLatencySamples() == 0,
+                "the output limiter added latency to the instrument");
+        processor.releaseResources();
+    }
+}
+
 void testStateRoundTrip()
 {
     TaikorAudioProcessor processor;
@@ -913,6 +1042,9 @@ void testStateRoundTrip()
     setParameterValue (processor, pids::strikeAzimuth, -73.5f);
     setParameterValue (processor, pids::performer, 3.0f);
     setParameterValue (processor, pids::velocityCurve, 0.64f);
+    setParameterValue (processor, pids::outputHighPass, 137.0f);
+    setParameterValue (processor, pids::ensembleSize, 6.0f);
+    setParameterValue (processor, pids::ensembleVariation, 0.73f);
 
     juce::MemoryBlock state;
     processor.getStateInformation (state);
@@ -936,6 +1068,13 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, pids::velocityCurve) - 0.64f)
                 < 1.0e-3f,
             "Velocity Curve did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, pids::outputHighPass) - 137.0f)
+                < 1.0e-3f,
+            "Output High Pass did not survive a state round trip");
+    expect (parameterValue (restored, pids::ensembleSize) == 6.0f
+                && std::abs (parameterValue (restored, pids::ensembleVariation) - 0.73f)
+                       < 1.0e-3f,
+            "ensemble controls did not survive a state round trip");
 
     // A stored tree that predates a control must restore that control to its
     // default rather than to whatever the instance happened to be holding.
@@ -944,6 +1083,9 @@ void testStateRoundTrip()
     setParameterValue (partial, pids::strikeAzimuth, 135.0f);
     setParameterValue (partial, pids::performer, 3.0f);
     setParameterValue (partial, pids::velocityCurve, -1.0f);
+    setParameterValue (partial, pids::outputHighPass, 500.0f);
+    setParameterValue (partial, pids::ensembleSize, 8.0f);
+    setParameterValue (partial, pids::ensembleVariation, 1.0f);
 
     juce::ValueTree trimmed { partial.parameters.state.getType() };
     juce::ValueTree keep { "PARAM" };
@@ -969,6 +1111,12 @@ void testStateRoundTrip()
     expect (std::abs (restoredCurve) < 1.0e-4f,
             "a legacy state missing Velocity Curve must restore it to Linear: "
                 + std::to_string (restoredCurve));
+    expect (parameterValue (partial, pids::outputHighPass) == 0.0f,
+            "a legacy state missing Output High Pass must restore it to Off");
+    expect (parameterValue (partial, pids::ensembleSize) == 1.0f
+                && std::abs (parameterValue (partial, pids::ensembleVariation) - 0.4f)
+                       < 1.0e-3f,
+            "a legacy state must restore a solo player and default ensemble variation");
 
     // Octave Body was continuous in older sessions. The retained parameter ID
     // must let those raw values restore into the nearest Drum Layout endpoint.
@@ -1101,23 +1249,89 @@ void testEditorRendering()
                 && ! azimuthKnob->getBounds().isEmpty(),
             "the Strike Azimuth parameter has no laid-out editor knob");
 
-    TaikorKnob* performerKnob = nullptr;
-    for (int index = 0; index < editor->getNumChildComponents(); ++index)
-        if (auto* child = editor->getChildComponent (index);
-            child != nullptr && child->getName() == "PERFORMER")
-            performerKnob = dynamic_cast<TaikorKnob*> (child);
-    expect (performerKnob != nullptr && performerKnob->isVisible()
-                && ! performerKnob->getBounds().isEmpty(),
-            "the Performer parameter has no laid-out editor knob");
-    if (performerKnob != nullptr)
+    const auto findSwitch = [&editor] (const juce::String& name)
     {
-        expect (performerKnob->slider.getValue() == 0.0
-                    && performerKnob->slider.getTextFromValue (0.0) == "P1",
-                "the Performer editor control does not open on P1");
-        performerKnob->slider.setValue (3.0, juce::sendNotificationSync);
-        expect (parameterValue (processor, taikor::parameters::performer) == 3.0f
-                    && performerKnob->slider.getTextFromValue (3.0) == "P4",
-                "the Performer editor control is not attached through P4");
+        for (auto* child : editor->getChildren())
+            if (child->getName() == name)
+                return dynamic_cast<TaikorChoiceSwitch*> (child);
+        return static_cast<TaikorChoiceSwitch*> (nullptr);
+    };
+    const auto checkSelected = [] (TaikorChoiceSwitch& control,
+                                  const juce::String& selected)
+    {
+        bool found = false;
+        for (auto* child : control.getChildren())
+            if (auto* button = dynamic_cast<juce::TextButton*> (child))
+            {
+                found = found || button->getName() == selected;
+                expect (button->getToggleState() == (button->getName() == selected),
+                        "switch selection disagrees with " + selected.toStdString());
+            }
+        expect (found, "switch is missing choice " + selected.toStdString());
+    };
+    struct GestureListener : juce::AudioProcessorParameter::Listener
+    {
+        void parameterValueChanged (int, float) override { ++changes; }
+        void parameterGestureChanged (int, bool starting) override
+        {
+            gestures.push_back (starting);
+        }
+        int changes = 0;
+        std::vector<bool> gestures;
+    };
+
+    for (const auto& [name, id] : std::array {
+             std::pair { "PERFORMER", taikor::parameters::performer },
+             std::pair { "DRUM LAYOUT", taikor::parameters::octaveBody } })
+    {
+        auto* control = findSwitch (name);
+        auto* parameter = processor.parameters.getParameter (id);
+        expect (control != nullptr && control->isVisible()
+                    && ! control->getBounds().isEmpty(),
+                std::string (name) + " has no laid-out choice switch");
+        if (control == nullptr || parameter == nullptr)
+            continue;
+
+        checkSelected (*control, parameter->getText (parameter->getDefaultValue(), 64));
+        // Host changes must update the selected button without a user gesture.
+        setParameterValue (processor, id, 0.0f);
+        checkSelected (*control, parameter->getText (0.0f, 64));
+
+        GestureListener listener;
+        parameter->addListener (&listener);
+        int buttons = 0;
+        for (auto* child : control->getChildren())
+            if (auto* button = dynamic_cast<juce::TextButton*> (child))
+            {
+                const auto normalised = parameter->getValueForText (button->getName());
+                // Invoke the click callback synchronously: triggerClick queues
+                // a message and this offscreen test has no dispatch loop.
+                expect (button->onClick != nullptr, "a switch choice has no click handler");
+                if (button->onClick != nullptr)
+                    button->onClick();
+                expect (std::abs (parameterValue (processor, id)
+                                  - parameter->convertFrom0to1 (normalised)) < 1.0e-6f,
+                        "clicking a switch choice did not update its parameter");
+                checkSelected (*control, button->getName());
+                ++buttons;
+            }
+        parameter->removeListener (&listener);
+        expect (buttons == parameter->getNumSteps(),
+                std::string (name) + " does not expose every choice as a button");
+        // The first button was already selected; only actual changes notify
+        // the host. Every notification still needs a balanced complete gesture.
+        expect (listener.changes == buttons - 1
+                    && listener.gestures.size() == static_cast<std::size_t> (2 * (buttons - 1)),
+                "a switch click did not send one complete host gesture per change");
+        for (std::size_t index = 0; index < listener.gestures.size(); ++index)
+            expect (listener.gestures[index] == (index % 2 == 0),
+                    "a switch left the host gesture open or ended it before beginning");
+
+        juce::MemoryBlock saved;
+        processor.getStateInformation (saved);
+        setParameterValue (processor, id, 0.0f);
+        processor.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+        checkSelected (*control, parameter->getText (1.0f, 64));
     }
 
     TaikorKnob* velocityCurveKnob = nullptr;
@@ -1143,6 +1357,65 @@ void testEditorRendering()
                            == "Soft 100",
                 "the Velocity Curve editor control is not attached through Soft 100");
     }
+
+    TaikorKnob* highPassKnob = nullptr;
+    for (auto* child : editor->getChildren())
+        if (child->getName() == "LOW CUT")
+            highPassKnob = dynamic_cast<TaikorKnob*> (child);
+    expect (highPassKnob != nullptr && highPassKnob->isVisible()
+                && ! highPassKnob->getBounds().isEmpty(),
+            "Output High Pass has no laid-out LOW CUT knob");
+    if (highPassKnob != nullptr)
+    {
+        expect (highPassKnob->slider.getValue() == 0.0
+                    && highPassKnob->slider.getTextFromValue (0.0) == "Off",
+                "LOW CUT must open on Off");
+        setParameterValue (processor, taikor::parameters::outputHighPass, 137.0f);
+        expect (std::abs (highPassKnob->slider.getValue() - 137.0) < 1.0e-3
+                    && highPassKnob->slider.getTextFromValue (137.0) == "137 Hz",
+                "LOW CUT does not follow host changes in Hertz");
+        highPassKnob->slider.setValue (500.0, juce::sendNotificationSync);
+        expect (parameterValue (processor, taikor::parameters::outputHighPass) == 500.0f,
+                "LOW CUT cannot reach 500 Hz through its parameter attachment");
+        highPassKnob->slider.setValue (0.0, juce::sendNotificationSync);
+        expect (parameterValue (processor, taikor::parameters::outputHighPass) == 0.0f,
+                "LOW CUT cannot bypass the filter");
+    }
+
+    std::array<TaikorKnob*, 2> ensembleKnobs {};
+    const std::array ensembleIds { taikor::parameters::ensembleSize,
+                                  taikor::parameters::ensembleVariation };
+    const std::array ensembleNames { "ENSEMBLE SIZE", "ENSEMBLE VAR" };
+    for (std::size_t index = 0; index < ensembleKnobs.size(); ++index)
+    {
+        for (auto* child : editor->getChildren())
+            if (child->getName() == ensembleNames[index])
+                ensembleKnobs[index] = dynamic_cast<TaikorKnob*> (child);
+        auto* knob = ensembleKnobs[index];
+        expect (knob != nullptr && knob->isVisible() && ! knob->getBounds().isEmpty(),
+                std::string ("missing laid-out ensemble knob: ") + ensembleNames[index]);
+        if (knob == nullptr)
+            continue;
+        auto* parameter = processor.parameters.getParameter (ensembleIds[index]);
+        expect (parameter != nullptr, "ensemble knob has no host parameter");
+        if (parameter == nullptr)
+            continue;
+        const auto initial = parameter->convertFrom0to1 (parameter->getDefaultValue());
+        expect (std::abs (knob->slider.getValue() - initial) < 1.0e-4,
+                "ensemble editor knob does not open on its factory value");
+        const auto maximum = parameter->convertFrom0to1 (1.0f);
+        knob->slider.setValue (maximum, juce::sendNotificationSync);
+        expect (std::abs (parameterValue (processor, ensembleIds[index]) - maximum) < 1.0e-6f,
+                "ensemble editor knob does not control its attached parameter");
+        setParameterValue (processor, ensembleIds[index], initial);
+        expect (std::abs (knob->slider.getValue() - initial) < 1.0e-4,
+                "ensemble editor knob does not follow restored host values");
+    }
+    if (ensembleKnobs[0] != nullptr)
+        expect (ensembleKnobs[0]->slider.getInterval() == 1.0
+                    && ensembleKnobs[0]->slider.getTextFromValue (1.0) == "1 player"
+                    && ensembleKnobs[0]->slider.getTextFromValue (8.0) == "8 players",
+                "Ensemble Size knob must show and select whole player counts");
 
     if (auto* constrainer = editor->getConstrainer())
     {
@@ -1218,6 +1491,34 @@ void testEditorRendering()
              juce::Point<int> { editorMaximumWidth, editorMaximumHeight } })
     {
         editor->setSize (size.x, size.y);
+        if (highPassKnob != nullptr)
+            expect (editor->getLocalBounds().contains (highPassKnob->getBounds())
+                        && ! highPassKnob->slider.getBounds().isEmpty()
+                        && highPassKnob->getLocalBounds().contains (
+                            highPassKnob->slider.getBounds()),
+                    "a resized LOW CUT knob escaped its control row");
+        for (auto* knob : ensembleKnobs)
+            if (knob != nullptr)
+                expect (editor->getLocalBounds().contains (knob->getBounds())
+                            && ! knob->slider.getBounds().isEmpty()
+                            && knob->getLocalBounds().contains (knob->slider.getBounds()),
+                        "a resized ensemble knob escaped its control row");
+        if (ensembleKnobs[0] != nullptr && ensembleKnobs[1] != nullptr)
+            expect (! ensembleKnobs[0]->getBounds().intersects (
+                         ensembleKnobs[1]->getBounds()),
+                    "the ensemble editor knobs overlap after resizing");
+        for (const auto* name : { "PERFORMER", "DRUM LAYOUT" })
+            if (auto* control = findSwitch (name))
+            {
+                expect (editor->getLocalBounds().contains (
+                            editor->getLocalArea (control, control->getLocalBounds())),
+                        "a resized choice switch escaped the editor");
+                for (auto* child : control->getChildren())
+                    if (auto* button = dynamic_cast<juce::TextButton*> (child))
+                        expect (! button->getBounds().isEmpty()
+                                    && control->getLocalBounds().contains (button->getBounds()),
+                                "a resized switch clipped a choice button");
+            }
         juce::Image resized { juce::Image::ARGB, editor->getWidth(),
                               editor->getHeight(), true };
         juce::Graphics resizedGraphics { resized };
@@ -1269,6 +1570,21 @@ void testEditorRendering()
     }
 
     editor.reset();
+    editor.reset (processor.createEditor());
+    expect (editor != nullptr, "the editor could not be recreated");
+    if (editor != nullptr)
+    {
+        for (const auto& [name, selected] : std::array {
+                 std::pair { "PERFORMER", "P4" },
+                 std::pair { "DRUM LAYOUT", "4 Drums" } })
+        {
+            if (auto* control = findSwitch (name))
+                checkSelected (*control, selected);
+            else
+                expect (false, std::string (name) + " disappeared after editor recreation");
+        }
+    }
+    editor.reset();
     processor.releaseResources();
 }
 } // namespace
@@ -1284,6 +1600,7 @@ int main()
     testStrikeControllers();
     testControllersAndPitchBend();
     testParametersReachTheEngine();
+    testOutputLimiterAtMaximumLevel();
     testStateRoundTrip();
     testUiQueueAndLifecycle();
     testPadAnnouncesTheNoteItCurrentlyPlays();

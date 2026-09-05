@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 
-#include "DSP/TaikoEngine.h"
+#include "DSP/EnsembleEngine.h"
 
 #include <array>
 #include <atomic>
@@ -40,8 +40,11 @@ inline constexpr auto output = "output";
 inline constexpr auto strikeAzimuth = "strikeAzimuth";
 inline constexpr auto performer = "performer";
 inline constexpr auto velocityCurve = "velocityCurve";
+inline constexpr auto outputHighPass = "outputHighPass";
+inline constexpr auto ensembleSize = "ensembleSize";
+inline constexpr auto ensembleVariation = "ensembleVariation";
 
-inline constexpr int parameterCount = 25;
+inline constexpr int parameterCount = 28;
 
 // Head diameter is presented in centimetres because that is how drums are
 // sold; the engine works in metres.
@@ -71,7 +74,8 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return taikor::maximumTailSeconds; }
+    double getTailLengthSeconds() const override
+    { return taikor::maximumTailSeconds + taikor::maximumEnsembleDelaySeconds; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -152,7 +156,7 @@ private:
 
     std::array<std::atomic<std::uint32_t>, taikor::articulationCount> triggerCounters {};
 
-    taikor::TaikoEngine engine;
+    taikor::EnsembleEngine engine;
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };

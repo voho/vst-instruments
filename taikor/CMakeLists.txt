@@ -36,9 +36,14 @@ set(TAIKOR_JUCE_PATH "" CACHE PATH
 include(CTest)
 
 set(TAIKOR_DSP_SOURCES
+    Source/DSP/EnsembleEngine.cpp
     Source/DSP/TaikoEngine.cpp
     Source/DSP/UiMath.cpp)
 set(TAIKOR_DSP_HEADERS
+    Source/DSP/EnsembleEngine.h
+    Source/DSP/OutputHighPass.h
+    Source/DSP/OutputLimiter.h
+    Source/DSP/StereoPan.h
     Source/DSP/TaikoEngine.h
     Source/DSP/UiMath.h)
 
@@ -106,7 +111,7 @@ if(TAIKOR_BUILD_PLUGIN)
     juce_add_binary_data(TaikorAssets
         SOURCES
             Assets/taiko-drum-atlas.png
-            Assets/taikor-sumi-background.png)
+            Assets/taikor-woodblock-background.png)
 
     target_sources(Taikor PRIVATE
         Source/PluginProcessor.cpp
@@ -159,6 +164,18 @@ if(TAIKOR_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(TaikorEnsembleEngineTests Tests/EnsembleEngineTests.cpp)
+    target_link_libraries(TaikorEnsembleEngineTests PRIVATE TaikorDSP)
+    add_test(NAME Taikor.EnsembleEngine COMMAND TaikorEnsembleEngineTests)
+
+    add_executable(TaikorOutputHighPassTests Tests/OutputHighPassTests.cpp)
+    target_link_libraries(TaikorOutputHighPassTests PRIVATE TaikorDSP)
+    add_test(NAME Taikor.OutputHighPass COMMAND TaikorOutputHighPassTests)
+
+    add_executable(TaikorOutputLimiterTests Tests/OutputLimiterTests.cpp)
+    target_link_libraries(TaikorOutputLimiterTests PRIVATE TaikorDSP)
+    add_test(NAME Taikor.OutputLimiter COMMAND TaikorOutputLimiterTests)
+
     add_executable(TaikorTaikoEngineTests Tests/TaikoEngineTests.cpp)
     target_link_libraries(TaikorTaikoEngineTests PRIVATE TaikorDSP)
     target_compile_features(TaikorTaikoEngineTests PRIVATE cxx_std_20)

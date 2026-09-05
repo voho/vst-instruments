@@ -4,6 +4,36 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-09-05 — repeated strokes retain contact variation
+
+**The question.** Should Humanise 0 produce identical strokes, or retain
+subtle differences in the physical stick/head contact?
+
+| Letter | What it was | Outcome |
+| --- | --- | --- |
+| A | Previous engine, with exact repetition at Humanise 0 | baseline |
+| B | Always-on impact-speed and actual contact-stiffness variation, with fresh contact texture | **chosen** |
+
+**The comparison.** Identical 12.4-second, 32-hit scores across all four
+drums, with Don and Rimshot at velocity 0.80. Humanise and Stick Noise were
+zero, Drive was zero, Low Cut was off, and Performer was P1. Both started
+from the same reset state at 44.1 kHz with 256-sample render blocks. Natural
+tails overlapped. Whole-file stereo RMS was matched to −26 dBFS using only
+constant gain: +8.425475 dB for A and +8.376360 dB for B. Review files and
+their key remain in the working directory `build/stroke-variation-review/`.
+
+**Verdict: B, by ear.** The user chose “B is better.” This records a listening
+preference, not a measurement of a player's natural variation limits.
+
+**What it licensed.** Retain the current B implementation: at Humanise 0,
+incoming speed varies by up to ±0.5%, and a ±0.4% Hertz contact-time factor
+changes the stiffness used by both the duration estimate and the live
+collision. Humanise adds wider variation and position scatter. The authored
+position at zero, MIDI onset timing and resting drum tuning stay fixed.
+Successive hits advance the variation through silence and Panic; reset
+replays the same performance. Stick Noise was disabled in the comparison,
+so this choice specifically supports the mechanical contact variation.
+
 ## 2026-08-19 — the body moves with the pair
 
 **The question.** Mic Distance moved the head's near field and the head's

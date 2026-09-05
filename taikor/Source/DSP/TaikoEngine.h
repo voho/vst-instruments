@@ -1,5 +1,9 @@
 #pragma once
 
+#include "OutputLimiter.h"
+#include "OutputHighPass.h"
+#include "StereoPan.h"
+
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -11,23 +15,21 @@
 namespace taikor
 {
 
-// The strokes of the kumi-daiko vocabulary, one per pitch class, four to a
+// Four modeled gestures inspired by taiko playing, one per pitch class, four to a
 // drum. An octave of the keyboard is one drum and its four bottom semitones are
 // the four things a player does to it, so the whole instrument is a 4x4 grid:
 // four drums down the keyboard, four strokes across each of them.
 //
 // Four strokes, and each is a different mechanism rather than a different
 // amount of the same one: the middle of the head, the edge out by the tacks,
-// the middle with a hand on it, and the head and the hoop together. There were
-// eight, and the four that went were either duplicates or specialities - Su is
-// a light Don and velocity already covers it; Katsu, Buzz and Bachi are one
-// technique each and none of them is a drum stroke a grid has to spend a key on.
+// the middle with a hand on it, and the head and the hoop together. These are
+// model gestures, not a universal traditional kuchi-shoga vocabulary.
 enum class Articulation : std::uint8_t
 {
     Don,     // C  - full open stroke, a hand's width in from the middle
-    Ka,      // C# - out on the head near the tacks, thin and cutting
-    Tsu,     // D  - damped centre, the free hand resting on the head
-    DonRim,  // D# - head and hoop struck together, the loud accent
+    Ka,      // Legacy ID; displayed as Edge (head, not a traditional ka rim hit)
+    Tsu,     // Legacy ID; displayed as Muted (palm damping, not merely soft tsu)
+    DonRim,  // Legacy ID; displayed as Rimshot (combined head/hoop accent)
     Count
 };
 
@@ -48,6 +50,7 @@ inline constexpr int referenceNote = 48;        // C3
 inline constexpr int lowestOctaveOffset = 0;
 inline constexpr int highestOctaveOffset = 3;
 inline constexpr int drumCount = highestOctaveOffset - lowestOctaveOffset + 1;
+inline constexpr int maximumEnsembleSize = 8;
 
 // The rate the static measurement assumes when a caller has no host to ask.
 // It matters because which of a drum's modes the renderer can instantiate at
@@ -59,7 +62,7 @@ struct ArticulationMetadata
     Articulation articulation {};
     std::string_view displayName;
     std::string_view slug;
-    // The spoken drum syllable (kuchi shoka) this stroke is named for.
+    // Spoken syllable where supported; empty for descriptive model gestures.
     std::string_view mnemonic;
     std::string_view description;
     int pitchClass { 0 };
@@ -92,7 +95,7 @@ struct DrumDescription
     std::string_view slug;
     // What the drum is, in one line, for the octave strip's tooltip.
     std::string_view summary;
-    // Head diameter in metres, as the instrument is actually built.
+    // Modeled membrane diameter in metres, not a measured replica specification.
     float headDiameterMetres { 0.95f };
     // Body depth, head tension, head material and shell material in control
     // units. See drumDescriptionTable in TaikoEngine.cpp for where each number
@@ -188,7 +191,8 @@ struct EngineParameters
     // Level of the broadband contact noise the stick makes on the hide, 0..1.
     float strikeNoise { 0.35f };
     // Per-stroke variation in position, angle, impact speed and contact time.
-    // 0 makes every stroke of a given articulation identical.
+    // At 0 the authored position is exact, but small speed/contact variation
+    // remains. Reset replays the sequence for repeatable offline rendering.
     float humanise { 0.4f };
     // What an octave up the keyboard actually changes, 0..1. At 0 the drum
     // described by the controls above is simply retuned - same head, same body,
@@ -232,10 +236,14 @@ struct EngineParameters
     // retains the same parameter range and curve.
     float outputGain { 0.075000f };
     // Stable player identity for layered instances: 0 = P1 through 3 = P4.
-    // It salts only the existing Humanise variation, so P1 preserves every
-    // established sequence and Humanise at zero remains identical for all
-    // performers. It never detunes or resizes the physical drum.
+    // It salts the performed gesture and contact texture, including the small
+    // variation retained at Humanise 0. It never detunes or resizes the drum.
     int performer { 0 };
+    // Gentle output high-pass in Hz. Zero bypasses this added filter exactly.
+    float outputHighPassHz { 0.0f };
+    // The ensemble coordinator gives each member independently ringing drums.
+    int ensembleSize { 1 };
+    float ensembleVariation { 0.4f };
 
     [[nodiscard]] bool operator== (const EngineParameters&) const noexcept = default;
 };
@@ -266,10 +274,13 @@ public:
     void prepare (double sampleRate, int maxBlockSize) noexcept;
     void reset() noexcept;
     void setParameters (const EngineParameters& parameters) noexcept;
+    // Stable independent contact texture. Set before prepare; reset retains it.
+    void setEnsembleMember (int member) noexcept;
 
     // Strike the drum directly. `octaveOffset` is relative to the reference
     // octave and is clamped to the playable range.
-    void trigger (Articulation articulation, int octaveOffset, float velocity) noexcept;
+    void trigger (Articulation articulation, int octaveOffset, float velocity,
+                  float radialOffset = 0.0f, float tangentialOffset = 0.0f) noexcept;
     // Returns false for notes outside the playable range, which stay silent.
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
     // A hand laid on the head, from MIDI CC1. It damps everything still
@@ -291,6 +302,13 @@ public:
     void allSoundsOff() noexcept;
 
     void process (float* left, float* right, int numSamples) noexcept;
+    // Secondary members supply unprocessed microphone audio to the lead's
+    // shared output path, so Drive, Low Cut and the limiter run only once.
+    void processRaw (float* left, float* right, int numSamples) noexcept;
+    void processWithEnsemble (float* left, float* right, int numSamples,
+                              const float* extraLeft, const float* extraRight,
+                              const float* gain, bool extraActive,
+                              const StereoPan* leadPan = nullptr) noexcept;
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
     [[nodiscard]] float getOutputLevel (int channel) const noexcept;
@@ -517,6 +535,10 @@ private:
         // physical head coordinates rather than the old eigenmode labels.
         float resonantParticipation { 0.0f };
         float stretchNorm { 0.0f };
+        // Fraction of this mode's restoring energy stored in batter tension.
+        // Strain changes that term; bending rigidity, rear tension and the
+        // enclosed air spring keep their own stiffness.
+        float batterTensionFraction { 0.0f };
         float micLeft { 0.0f };
         float micRight { 0.0f };
         // The imaginary parts of the complex pressure residues. A real modal
@@ -843,7 +865,9 @@ private:
         float tensionEnvelope { 0.0f };
         float tensionDecay { 0.999f };
         float tensionDepth { 0.0f };
+        // Ideal batter frequency multiplier, also used for the continuum.
         float appliedTensionShift { 1.0f };
+        float appliedTensionRise { 0.0f };
         // The mounting loss this stroke was built with, kept so retuning can
         // re-evaluate it at the mode's new frequency.
         float mountLoss { 0.0f };
@@ -1252,7 +1276,7 @@ private:
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static std::uint32_t performerRandomSalt (
-        int performer, float humanise) noexcept;
+        int performer) noexcept;
     // Fixed per-head split of a non-axisymmetric cosine/sine pair. Both the
     // renderer and the angle-aware pitch estimate must use the same two poles.
     [[nodiscard]] static float nonAxisymmetricDetune (int entryIndex,
@@ -1434,7 +1458,7 @@ private:
     static void solveContact (float collisionMass, float targetImpedance,
                               const StrikeProfile& profile, float bachiHardness,
                               float impactSpeed, float& contactSeconds,
-                              float& peakForce) noexcept;
+                              float& peakForce, float stiffnessScale = 1.0f) noexcept;
     [[nodiscard]] static float shapeVelocity (float rawVelocity,
                                               float velocityCurve) noexcept;
     [[nodiscard]] static float contactStiffnessFor (
@@ -1474,7 +1498,8 @@ private:
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
                            float noiseLevel) noexcept;
-    void applyTensionShift (Voice& voice, float shift) noexcept;
+    void applyTensionShift (Voice& voice, float shift,
+                            float tensionRise = 0.0f) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
     void advancePhysicalContacts (Voice& physical) noexcept;
     // Adds a strike's per-band continuum injections into the physical bank's
@@ -1519,6 +1544,10 @@ private:
     // out on its own - all three for the same reason: with nothing left
     // sounding, there is nothing for this state to stay continuous with.
     void resetOutputStagePath() noexcept;
+    void processInternal (float* left, float* right, int numSamples,
+                          const float* extraLeft, const float* extraRight,
+                          const float* gain, bool extraActive, bool raw,
+                          const StereoPan* leadPan) noexcept;
     void updateActiveVoiceCount() noexcept;
     void refreshDrumIfNeeded() noexcept;
     // Changes continuous pole loss while preserving instantaneous displacement
@@ -1604,6 +1633,7 @@ private:
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
     std::uint64_t noteSequence_ { 0 };
+    std::uint32_t ensembleMemberSalt_ { 0 };
 
     float handDampingTarget_ { 0.0f };
     float handDamping_ { 0.0f };
@@ -1627,6 +1657,8 @@ private:
     float dcOutputRight_ { 0.0f };
     float driveAdaaLeft_ { 0.0f };
     float driveAdaaRight_ { 0.0f };
+    OutputLimiter outputLimiter_;
+    OutputHighPass outputHighPass_;
     // A drum track is silent most of the time. Once nothing is sounding and
     // the shared DC and drive path has rung out, the whole output chain is
     // switched off and the buffer is written as exact zeros - which is both

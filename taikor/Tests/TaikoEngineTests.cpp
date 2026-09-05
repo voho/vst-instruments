@@ -1280,6 +1280,22 @@ struct TaikoEngineTestAccess
         return TaikoEngine::contactSpectrum (omegaTau);
     }
 
+    // Recover the performed pulse duration from its stored force-squared
+    // integral, without reading the continuum's spectrum or replaying the
+    // variation generator. The nominal UI measurement describes an average
+    // contact, while this exposure includes the current tip and impact speed.
+    static float performedReferenceContactSeconds (const TaikoEngine& engine) noexcept
+    {
+        const auto& voice = engine.voices_[0];
+        const auto& profile = TaikoEngine::strikeProfile (voice.articulation);
+        const double peakForce = voice.contactAmplitude / profile.levelScale;
+        constexpr double squaredPulseIntegral =
+            4.0 / (3.0 * static_cast<double> (3.14159265358979323846f));
+        return static_cast<float> (voice.referenceContactExposure
+            / (peakForce * peakForce * squaredPulseIntegral
+                * voice.contactExposureAdmittance));
+    }
+
     struct PhysicalContinuumState
     {
         float envelope { 0.0f };
@@ -1853,6 +1869,11 @@ struct TaikoEngineTestAccess
             }
     }
 
+    static void setNoteSequence (TaikoEngine& engine, std::uint64_t sequence) noexcept
+    {
+        engine.noteSequence_ = sequence;
+    }
+
     static void setNoiseSeed (TaikoEngine& engine, std::uint32_t seed,
                               int slot = 0) noexcept
     {
@@ -1892,6 +1913,108 @@ struct TaikoEngineTestAccess
     static float appliedTensionShift (const TaikoEngine& engine, int slot = 0) noexcept
     {
         return physicalForSlot (engine, slot).appliedTensionShift;
+    }
+
+    struct TensionProjectionProbe
+    {
+        double eigensolveError { 0.0 };
+        double musicalShiftError { 0.0 };
+        double roundTripError { 0.0 };
+        double shellShiftError { 0.0 };
+        float minimumShare { 1.0f };
+        float maximumShare { 0.0f };
+        float rearOnlyShare { 0.0f };
+        int rearOnlyModes { 0 };
+    };
+
+    static TensionProjectionProbe tensionProjectionProbe (
+        EngineParameters parameters, int octave) noexcept
+    {
+        parameters.humanise = 0.0f;
+        const auto drum = TaikoEngine::resolveDrumFor (
+            TaikoEngine::sanitise (parameters), 0.0f, octave);
+        TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 64);
+        engine.trigger (Articulation::DonRim, octave, 0.9f);
+        auto& voice = physicalForOctave (engine, octave);
+        TensionProjectionProbe result;
+        constexpr float rise = 0.02f;
+        engine.applyTensionShift (voice, std::sqrt (1.0f + rise), rise);
+
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            const double ratio = mode.liveOmega / mode.omega;
+            if (! mode.membrane)
+            {
+                result.shellShiftError = std::max (
+                    result.shellShiftError, std::abs (ratio - 1.0));
+                continue;
+            }
+            const auto& entry = TaikoEngine::membraneModes()[mode.modeEntry];
+            const float lambda = static_cast<float> (entry.besselZero);
+            const auto omegas = TaikoEngine::membraneModeOmegas (
+                drum, drum.radius, lambda, mode.circumferentialOrder);
+            const double tensile = static_cast<double> (omegas.batter)
+                                 * omegas.batter
+                                 / (1.0 + drum.stiffnessBatter * lambda * lambda);
+            double derivative = 1.0
+                / (1.0 + drum.stiffnessBatter * lambda * lambda);
+            if (mode.circumferentialOrder == 0)
+            {
+                float diagonalB = 0.0f, diagonalR = 0.0f, offDiagonal = 0.0f;
+                TaikoEngine::axisymmetricDiagonals (
+                    drum, { lambda, omegas.batter, omegas.resonant },
+                    drum.cavityStiffnesses[mode.modeEntry],
+                    diagonalB, diagonalR, offDiagonal);
+                // Independent double-precision characteristic polynomial,
+                // perturbed on the batter diagonal only. Its central finite
+                // difference audits the projection through rendered poles.
+                const bool upper = mode.physicalIndex % 2 == 0;
+                const auto eigenvalue = [&] (double tensionIncrement)
+                {
+                    const double batter = diagonalB + tensile * tensionIncrement;
+                    const double split = std::hypot (
+                        batter - diagonalR, 2.0 * offDiagonal);
+                    return 0.5 * (batter + diagonalR + (upper ? split : -split));
+                };
+                constexpr double step = 1.0e-5;
+                derivative = (eigenvalue (step) - eigenvalue (-step))
+                           / (2.0 * step * eigenvalue (0.0));
+                if (mode.batterParticipation == 0.0f)
+                {
+                    ++result.rearOnlyModes;
+                    result.rearOnlyShare = std::max (
+                        result.rearOnlyShare, mode.batterTensionFraction);
+                }
+            }
+            const double renderedDerivative = (ratio * ratio - 1.0) / rise;
+            result.eigensolveError = std::max (
+                result.eigensolveError, std::abs (renderedDerivative - derivative));
+            result.minimumShare = std::min (
+                result.minimumShare, mode.batterTensionFraction);
+            result.maximumShare = std::max (
+                result.maximumShare, mode.batterTensionFraction);
+        }
+
+        // Removing strain must restore exact common musical transposition;
+        // applying absolute shifts repeatedly must not compound the correction.
+        for (const float shift : { 1.37f, 1.0f })
+        {
+            engine.applyTensionShift (voice, shift);
+            for (int index = 0; index < voice.modeCount; ++index)
+            {
+                const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+                if (! mode.membrane)
+                    continue;
+                const double error = std::abs (mode.liveOmega / mode.omega - shift);
+                auto& maximum = shift == 1.0f ? result.roundTripError
+                                             : result.musicalShiftError;
+                maximum = std::max (maximum, error);
+            }
+        }
+        return result;
     }
 
     // The tack line as the stroke set it up. Read rather than measured for the
@@ -2214,7 +2337,12 @@ struct TaikoEngineTestAccess
 
         forward.trigger (Articulation::Don, 0, 0.62f);
         forward.trigger (Articulation::Ka, 0, 0.87f);
+        // Reverse the slot allocation while retaining each contact's performed
+        // identity. Swapping sequence indices would change the physical inputs
+        // as well as their summation order, even when Humanise is zero.
+        reverse.noteSequence_ = 1;
         reverse.trigger (Articulation::Ka, 0, 0.87f);
+        reverse.noteSequence_ = 0;
         reverse.trigger (Articulation::Don, 0, 0.62f);
 
         std::array<float, 64> left {};
@@ -6400,10 +6528,9 @@ void testContinuumUsesTheHertzContactSpectrum()
         engine.setParameters (parameters);
         engine.prepare (48000.0, defaultBlockSize);
         constexpr float velocity = 0.45f;
-        const float contact = engine.measureContactSeconds (
-            taikor::Articulation::Don, 0, velocity);
         engine.trigger (taikor::Articulation::Don, 0, velocity);
-        return Capture { contact,
+        return Capture { taikor::TaikoEngineTestAccess::performedReferenceContactSeconds (
+                             engine),
                          taikor::TaikoEngineTestAccess::continuumBands (engine) };
     };
 
@@ -7576,9 +7703,9 @@ void testHumaniseScattersInHeadCoordinates()
 
 // Four layered instances should sound like four people playing one authored
 // part, not four phase-locked copies of the same performance. Performer is
-// deliberately only an identity salt for the variation Humanise already owns:
-// P1 preserves the established sequence, and at Humanise zero there is no
-// variation to salt, so every performer is exactly the same instrument.
+// an identity salt for the performed contact, including the subtle natural
+// differences left when Humanise is zero. Replaying each performer still has
+// to reproduce the same take.
 void testPerformerIdentityMakesRealEnsembles()
 {
     constexpr int samples = 16000;
@@ -7656,18 +7783,21 @@ void testPerformerIdentityMakesRealEnsembles()
                 || std::abs (correlation (performers[0].right, layerRight)) < 0.9999,
             "P1-P4 layering changed only gain, not the performed waveform");
 
-    auto machine = defaultParameters();
-    machine.humanise = 0.0f;
-    const auto machineP1 = strike (
-        machine, taikor::Articulation::Ka, 0, 0.86f, 48000.0, samples);
+    auto precise = defaultParameters();
+    precise.humanise = 0.0f;
+    precise.strikeNoise = 0.0f;
+    const auto preciseP1 = resolvedStrike (
+        precise, taikor::Articulation::Ka, 0, 0.86f, 48000.0, samples);
     for (int performer = 1; performer < 4; ++performer)
     {
-        machine.performer = performer;
-        const auto rendered = strike (
-            machine, taikor::Articulation::Ka, 0, 0.86f, 48000.0, samples);
-        expect (maximumAbsoluteDifference (machineP1.left, rendered.left) == 0.0
-                    && maximumAbsoluteDifference (machineP1.right, rendered.right) == 0.0,
-                "Performer changed a machine-exact Humanise-off stroke");
+        precise.performer = performer;
+        const auto rendered = resolvedStrike (
+            precise, taikor::Articulation::Ka, 0, 0.86f, 48000.0, samples);
+        expect (std::max (
+                    maximumAbsoluteDifference (preciseP1.left, rendered.left),
+                    maximumAbsoluteDifference (preciseP1.right, rendered.right))
+                    > 1.0e-6,
+                "Humanise zero phase-locked two Performers' physical contacts");
     }
 }
 
@@ -8580,10 +8710,9 @@ void testHandControllerIsAPhysicalPalm()
 void testAStrokeLandsOnAHeadThatIsAlreadyMoving()
 {
     auto parameters = defaultParameters();
-    // Every stroke identical, so the comparison below is against the engine's
-    // own output rather than against a different set of jittered strokes, and
-    // quiet enough that no part of the output stage is doing anything
-    // non-linear to either side of it.
+    // Keep authored positions exact and the output linear. The offline sum
+    // below uses each stroke's matching sequence index so the natural contact
+    // differences cannot masquerade as interaction with a moving head.
     parameters.humanise = 0.0f;
     parameters.drive = 0.0f;
     parameters.outputGain = 0.02f;
@@ -8622,14 +8751,23 @@ void testAStrokeLandsOnAHeadThatIsAlreadyMoving()
         return mono;
     };
 
-    const auto single = rollOf (1);
     const auto roll = rollOf (strokes);
 
     std::vector<double> superposed (static_cast<std::size_t> (total), 0.0);
     for (int stroke = 0; stroke < strokes; ++stroke)
+    {
+        taikor::TaikoEngine isolated;
+        isolated.setParameters (parameters);
+        isolated.prepare (48000.0, 1);
+        taikor::TaikoEngineTestAccess::setNoteSequence (
+            isolated, static_cast<std::uint64_t> (stroke));
+        isolated.trigger (taikor::Articulation::Don, 0, 0.9f);
+        taikor::TaikoEngineTestAccess::isolateResolvedBank (isolated);
+        const auto single = render (isolated, total - stroke * spacing, 1).mono();
         for (int sample = stroke * spacing; sample < total; ++sample)
             superposed[static_cast<std::size_t> (sample)] +=
                 single[static_cast<std::size_t> (sample - stroke * spacing)];
+    }
 
     // Up to the second stroke the two must agree exactly: nothing has landed on
     // anything yet, and a mechanism that quietly changed a single stroke would
@@ -8835,6 +8973,39 @@ void testTheAttackGlideComesFromTheHead()
     const auto edgeGlide = peakGlide (full, taikor::Articulation::Ka, 1.0f);
     expect (edgeGlide - 1.0f > (hard - 1.0f) * 1.5f,
             "the high-gradient edge modes stopped contributing to head strain");
+}
+
+void testAttackGlideChangesOnlyBatterTension()
+{
+    using Access = taikor::TaikoEngineTestAccess;
+    for (const float material : { 0.0f, 1.0f })
+        for (const float coupling : { 0.0f, 1.0f })
+            for (const int octave : { 0, 3 })
+            {
+                auto parameters = defaultParameters();
+                parameters.headMaterial = material;
+                parameters.cavityCoupling = coupling;
+                const auto probe = Access::tensionProjectionProbe (parameters, octave);
+                expect (probe.eigensolveError < 2.0e-5,
+                        "attack glide disagrees with an independent two-head "
+                        "stiffness perturbation: " + std::to_string (probe.eigensolveError));
+                expect (probe.minimumShare >= 0.0f && probe.maximumShare <= 1.0f,
+                        "the batter tensile energy fraction escaped [0, 1]");
+                expect (probe.maximumShare > 0.25f,
+                        "tension modulation lost its effect on batter modes");
+                expect (probe.musicalShiftError < 3.0e-7
+                            && probe.roundTripError < 3.0e-7,
+                        "strain projection changed musical tuning or compounded "
+                        "through a retuning round trip");
+                expect (probe.shellShiftError < 3.0e-7,
+                        "head strain retuned the wooden shell");
+                if (coupling == 0.0f)
+                    expect (probe.rearOnlyModes > 0 && probe.rearOnlyShare == 0.0f,
+                            "straining an uncoupled batter head bent the rear head");
+                else
+                    expect (probe.maximumShare - probe.minimumShare > 0.2f,
+                            "cavity and batter modes received the same attack glide");
+            }
 }
 
 // A normal head strike transfers energy into the mounting through the resolved
@@ -9150,10 +9321,9 @@ void testEveryParameterSurvivesTheCache()
         { "Output",             [] (taikor::EngineParameters& p, float v) { p.outputGain = 0.1f + 0.9f * v; } },
     }};
 
-    // Humanisation is seeded from the stroke's own index, so a reused engine's
-    // second stroke would differ from a fresh engine's first for a reason that
-    // has nothing to do with caching. Turning it off is what makes the two
-    // comparable at all.
+    // Keep authored coordinates exact. The reset below also rewinds the
+    // performed stroke sequence, so fresh and reused engines get the same
+    // contact and any difference belongs to the cache.
     const auto base = [] {
         auto parameters = defaultParameters();
         parameters.humanise = 0.0f;
@@ -10158,9 +10328,12 @@ void testContinuumBoundsLegacyResidualExposurePerContact()
     const auto ordinary =
         taikor::TaikoEngineTestAccess::legacyResidualExposureAudit (
             48000.0, 1, taikor::Articulation::Don, 0.9f);
+    // The contact now has small speed/stiffness variation. What matters is
+    // remaining strictly below the actual budget, then delivering all of the
+    // requested exposure; an arbitrary 2% margin was not a physical bound.
     expect (ordinary.requestedFraction > 0.90
-                && ordinary.requestedFraction < 0.98,
-            "the ordinary Chu-daiko Don no longer exercises the below-limit path: "
+                && ordinary.requestedFraction < 1.0,
+            "the ordinary Nagado-daiko Don no longer exercises the below-limit path: "
                 + std::to_string (ordinary.requestedFraction));
     expect (std::abs (ordinary.deliveredFraction - ordinary.requestedFraction)
                 < 5.0e-7,
@@ -10224,34 +10397,190 @@ void testDeterminismAndBlockPartitioning()
                     + std::to_string (blockSize));
     }
 
-    // Humanising must vary successive strokes, and switching it off must make
-    // them identical again.
-    auto humanised = parameters;
-    humanised.humanise = 1.0f;
+    // Variation is indexed by the performed stroke, not by render blocks or
+    // wall-clock entropy. Include overlapping hits and a panic between them.
+    const auto sequence = [] (taikor::TaikoEngine& engine, int blockSize)
+    {
+        Rendered take;
+        for (int hit = 0; hit < 8; ++hit)
+        {
+            if (hit == 4)
+                engine.allSoundsOff();
+            engine.trigger (static_cast<taikor::Articulation> (hit % 4),
+                            (hit / 2) % taikor::drumCount, 0.83f);
+            const auto part = render (engine, 777 + 31 * hit, blockSize);
+            take.left.insert (take.left.end(), part.left.begin(), part.left.end());
+            take.right.insert (take.right.end(), part.right.begin(), part.right.end());
+        }
+        return take;
+    };
+    for (const float humanise : { 0.0f, parameters.humanise })
+    {
+        auto settings = parameters;
+        settings.humanise = humanise;
+        taikor::TaikoEngine engine;
+        engine.setParameters (settings);
+        engine.prepare (48000.0, defaultBlockSize);
+        const auto reference = sequence (engine, 64);
+        for (const int blockSize : { 1, 7, 64, 129, 512 })
+        {
+            engine.reset();
+            const auto replay = sequence (engine, blockSize);
+            expect (maximumAbsoluteDifference (reference.left, replay.left) == 0.0
+                        && maximumAbsoluteDifference (reference.right, replay.right) == 0.0,
+                    "stroke variation changed on replay or block partition at "
+                        + std::to_string (blockSize));
+        }
+    }
+}
 
+void testSuccessiveStrokesVaryPhysically()
+{
+    // Remove every stochastic and airborne output: each hit must change the
+    // resolved drum itself, even with Stick Noise and Humanise both at zero.
+    auto parameters = defaultParameters();
+    parameters.strikeNoise = 0.0f;
+    parameters.drive = 0.0f;
+    parameters.outputGain = 0.02f;
+    constexpr int samples = 4096;
+    constexpr std::size_t hitCount = 8;
+    for (const float humanise : { 0.0f, parameters.humanise })
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+            for (std::size_t articulation = 0;
+                 articulation < taikor::articulationCount; ++articulation)
+            {
+                parameters.humanise = humanise;
+                taikor::TaikoEngine engine;
+                engine.setParameters (parameters);
+                engine.prepare (48000.0, defaultBlockSize);
+                std::array<Rendered, hitCount> hits;
+                for (auto& hit : hits)
+                {
+                    engine.trigger (static_cast<taikor::Articulation> (articulation),
+                                    octave, 0.8f);
+                    taikor::TaikoEngineTestAccess::isolateResolvedBank (
+                        engine, taikor::TaikoEngineTestAccess::newestStrikeSlot (engine));
+                    hit = render (engine, samples);
+                    expect (hit.finite && hit.rms > 1.0e-8,
+                            "the physical stroke-variation probe was silent or non-finite");
+                    engine.allSoundsOff();
+                }
+
+                double largestShapeDifference = 0.0;
+                for (std::size_t first = 0; first < hitCount; ++first)
+                    for (std::size_t second = first + 1; second < hitCount; ++second)
+                    {
+                        // Fit one overall gain, then measure what remains.
+                        // A random gain or independent hiss cannot pass this.
+                        const auto& a = hits[first];
+                        const auto& b = hits[second];
+                        double aa = 0.0, ab = 0.0, bb = 0.0;
+                        for (std::size_t index = 0; index < a.left.size(); ++index)
+                        {
+                            aa += static_cast<double> (a.left[index]) * a.left[index]
+                                + static_cast<double> (a.right[index]) * a.right[index];
+                            ab += static_cast<double> (a.left[index]) * b.left[index]
+                                + static_cast<double> (a.right[index]) * b.right[index];
+                            bb += static_cast<double> (b.left[index]) * b.left[index]
+                                + static_cast<double> (b.right[index]) * b.right[index];
+                        }
+                        const double gain = ab / std::max (bb, 1.0e-30);
+                        double residual = 0.0;
+                        for (std::size_t index = 0; index < a.left.size(); ++index)
+                        {
+                            const double left = a.left[index] - gain * b.left[index];
+                            const double right = a.right[index] - gain * b.right[index];
+                            residual += left * left + right * right;
+                        }
+                        const double difference = std::sqrt (
+                            residual / std::max (aa, 1.0e-30));
+                        largestShapeDifference = std::max (largestShapeDifference, difference);
+                        expect (difference > 1.0e-7,
+                                "two physical strokes repeated or changed only gain: drum "
+                                    + std::to_string (octave) + ", articulation "
+                                    + std::to_string (articulation) + ", Humanise "
+                                    + std::to_string (humanise) + ", pair "
+                                    + std::to_string (first) + "/" + std::to_string (second));
+                    }
+                expect (largestShapeDifference > 1.0e-4,
+                        "natural physical variation shrank to floating-point noise");
+            }
+
+    // The high half of the stroke counter must reach the performed contact;
+    // otherwise the entire sequence repeats at the 32-bit boundary.
+    parameters.humanise = 0.0f;
     taikor::TaikoEngine engine;
-    engine.setParameters (humanised);
+    engine.setParameters (parameters);
     engine.prepare (48000.0, defaultBlockSize);
-    engine.trigger (taikor::Articulation::Don, 0, 0.8f);
-    const auto strokeA = render (engine, 12000);
-    engine.allSoundsOff();
-    engine.trigger (taikor::Articulation::Don, 0, 0.8f);
-    const auto strokeB = render (engine, 12000);
-    expect (maximumAbsoluteDifference (strokeA.left, strokeB.left) > 1.0e-4,
-            "humanising must make successive strokes differ");
+    Rendered first;
+    for (const auto sequence : { std::uint64_t { 0 }, std::uint64_t { 1 } << 32,
+                                std::uint64_t { 1 } << 48 })
+    {
+        engine.allSoundsOff();
+        taikor::TaikoEngineTestAccess::setNoteSequence (engine, sequence);
+        engine.trigger (taikor::Articulation::Don, 0, 0.8f);
+        taikor::TaikoEngineTestAccess::isolateResolvedBank (engine);
+        const auto hit = render (engine, samples);
+        if (sequence == 0)
+            first = hit;
+        else
+            expect (std::max (maximumAbsoluteDifference (first.left, hit.left),
+                             maximumAbsoluteDifference (first.right, hit.right)) > 1.0e-7,
+                    "the performed contact discarded the stroke counter's high bits");
+    }
 
-    auto machine = parameters;
-    machine.humanise = 0.0f;
-    taikor::TaikoEngine tight;
-    tight.setParameters (machine);
-    tight.prepare (48000.0, defaultBlockSize);
-    tight.trigger (taikor::Articulation::Don, 0, 0.8f);
-    const auto tightA = render (tight, 12000);
-    tight.allSoundsOff();
-    tight.trigger (taikor::Articulation::Don, 0, 0.8f);
-    const auto tightB = render (tight, 12000);
-    expect (maximumAbsoluteDifference (tightA.left, tightB.left) < 1.0e-6,
-            "with humanising off, successive strokes must be identical");
+    // These sequence pairs produce equal float-valued impact speeds. Contact
+    // compliance must still distinguish them, including when the attack glide
+    // is disabled; changing only the reference pulse or gain is insufficient.
+    parameters.tensionModulation = 0.0f;
+    engine.setParameters (parameters);
+    constexpr std::array<std::array<std::uint64_t, 2>, 3> equalSpeedSequences {{
+        {{ 387, 778 }}, {{ 155, 799 }}, {{ 355, 802 }}
+    }};
+    for (const auto& pair : equalSpeedSequences)
+    {
+        std::array<Rendered, 2> hits;
+        for (std::size_t index = 0; index < hits.size(); ++index)
+        {
+            engine.allSoundsOff();
+            taikor::TaikoEngineTestAccess::setNoteSequence (engine, pair[index]);
+            engine.trigger (taikor::Articulation::Don, 0, 0.8f);
+            taikor::TaikoEngineTestAccess::isolateResolvedBank (engine);
+            hits[index] = render (engine, samples);
+        }
+        expect (std::abs (correlation (hits[0].left, hits[1].left)) < 1.0 - 1.0e-12
+                    || std::abs (correlation (hits[0].right, hits[1].right)) < 1.0 - 1.0e-12,
+                "equal-speed strokes lost their physical contact differences: "
+                    + std::to_string (pair[0] + 1) + "/"
+                    + std::to_string (pair[1] + 1));
+    }
+
+    // Let a damped shime retire naturally. Neither the bank retiring nor the
+    // output becoming idle may restart the performance sequence.
+    parameters.headDamping = 1.0f;
+    engine.setParameters (parameters);
+    engine.reset();
+    engine.trigger (taikor::Articulation::Don, 3, 0.8f);
+    taikor::TaikoEngineTestAccess::isolateResolvedBank (engine);
+    first = render (engine, samples);
+    std::array<float, 512> left {}, right {};
+    for (int elapsed = 0;
+         elapsed < 48000 * (taikor::maximumTailSeconds + 1.0)
+             && engine.getActiveVoiceCount() > 0;
+         elapsed += 512)
+        engine.process (left.data(), right.data(), 512);
+    expect (engine.getActiveVoiceCount() == 0,
+            "the natural stroke-variation probe never retired");
+    render (engine, 24000);
+    expect (render (engine, 512).peak == 0.0,
+            "the natural stroke-variation probe never reached exact idle");
+    engine.trigger (taikor::Articulation::Don, 3, 0.8f);
+    taikor::TaikoEngineTestAccess::isolateResolvedBank (engine);
+    const auto next = render (engine, samples);
+    expect (std::max (maximumAbsoluteDifference (first.left, next.left),
+                     maximumAbsoluteDifference (first.right, next.right)) > 1.0e-7,
+            "natural silence restarted the performed stroke sequence");
 }
 
 void testPerformanceControls()
@@ -10378,6 +10707,7 @@ void testSanitiseClampsEveryField()
         { "stereoWidth", &taikor::EngineParameters::stereoWidth, 0.0f, 1.0f },
         { "drive", &taikor::EngineParameters::drive, 0.0f, 1.0f },
         { "outputGain", &taikor::EngineParameters::outputGain, 0.0f, 2.0f },
+        { "outputHighPassHz", &taikor::EngineParameters::outputHighPassHz, 0.0f, 500.0f },
     };
 
     for (const auto& field : fields)
@@ -11856,6 +12186,7 @@ int main()
     testTheTackLineRattlesOnlyWhenItIsBeaten();
     testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow();
     testTheAttackGlideComesFromTheHead();
+    testAttackGlideChangesOnlyBatterTension();
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();
@@ -11872,6 +12203,7 @@ int main()
     testContinuumBoundsLegacyResidualExposurePerContact();
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
+    testSuccessiveStrokesVaryPhysically();
     testPerformanceControls();
     testSanitiseClampsEveryField();
     testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints();

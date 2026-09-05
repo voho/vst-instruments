@@ -101,6 +101,21 @@ private:
     VisualRole role;
 };
 
+// Indexed parameters use real radio buttons, so their choices are visible and
+// announced individually, while ParameterAttachment preserves host/state sync.
+class TaikorChoiceSwitch final : public juce::Component
+{
+public:
+    TaikorChoiceSwitch (juce::String name, juce::RangedAudioParameter& parameter,
+                        const juce::String& description);
+    void resized() override;
+
+private:
+    juce::Label label;
+    juce::OwnedArray<juce::TextButton> buttons;
+    juce::ParameterAttachment attachment;
+};
+
 // The drum, seen from the player's side. It draws the head, the tack ring, the
 // two close microphones where the Mic Spread and Mic Distance controls put
 // them, and a ripple where the last stroke landed. Everything on it is read
@@ -191,11 +206,11 @@ private:
     {
         juce::Rectangle<int> header;
         juce::Rectangle<int> gridArea;
-        juce::Rectangle<int> rightUpperArea;
         juce::Rectangle<int> head;
         juce::Rectangle<int> drumDeck;
         juce::Rectangle<int> strokeDeck;
         juce::Rectangle<int> microphoneDeck;
+        juce::Rectangle<int> switchDeck;
     };
 
     void timerCallback() override;
@@ -214,6 +229,7 @@ private:
     TaikorMeter meter;
     juce::TextButton panicButton { "PANIC" };
     juce::Label sealLabel;
+    juce::Label limiterLabel;
 
     juce::Label gridCaption;
     std::array<juce::Label, taikor::articulationCount> strokeLabels;
@@ -259,8 +275,6 @@ private:
                                     TaikorKnob::VisualRole::Stroke };
     TaikorKnob strikeAzimuthKnob { "AZIMUTH", TaikorKnob::ValueStyle::Degrees,
                                    TaikorKnob::VisualRole::Stroke };
-    TaikorKnob performerKnob { "PERFORMER", TaikorKnob::ValueStyle::Plain,
-                               TaikorKnob::VisualRole::Stroke };
     TaikorKnob velocityDepthKnob { "VELOCITY", TaikorKnob::ValueStyle::Percent,
                                    TaikorKnob::VisualRole::Stroke };
     TaikorKnob velocityCurveKnob { "CURVE", TaikorKnob::ValueStyle::Plain,
@@ -271,8 +285,10 @@ private:
                                  TaikorKnob::VisualRole::Stroke };
     TaikorKnob humaniseKnob { "HUMANISE", TaikorKnob::ValueStyle::Percent,
                               TaikorKnob::VisualRole::Stroke };
-    TaikorKnob octaveBodyKnob { "DRUM LAYOUT", TaikorKnob::ValueStyle::Plain,
-                                TaikorKnob::VisualRole::Stroke };
+    TaikorKnob ensembleSizeKnob { "ENSEMBLE SIZE", TaikorKnob::ValueStyle::Plain,
+                                  TaikorKnob::VisualRole::Stroke };
+    TaikorKnob ensembleVariationKnob { "ENSEMBLE VAR", TaikorKnob::ValueStyle::Percent,
+                                       TaikorKnob::VisualRole::Stroke };
 
     TaikorKnob micDistanceKnob { "MIC DISTANCE", TaikorKnob::ValueStyle::Centimetres,
                                  TaikorKnob::VisualRole::Microphone };
@@ -282,9 +298,13 @@ private:
                            TaikorKnob::VisualRole::Microphone };
     TaikorKnob driveKnob { "DRIVE", TaikorKnob::ValueStyle::Percent,
                            TaikorKnob::VisualRole::Master };
+    TaikorKnob outputHighPassKnob { "LOW CUT", TaikorKnob::ValueStyle::Plain,
+                                   TaikorKnob::VisualRole::Master };
     TaikorKnob outputKnob { "OUTPUT", TaikorKnob::ValueStyle::Decibels,
                             TaikorKnob::VisualRole::Master };
 
+    std::unique_ptr<TaikorChoiceSwitch> performerSwitch;
+    std::unique_ptr<TaikorChoiceSwitch> drumLayoutSwitch;
     std::vector<std::unique_ptr<SliderAttachment>> attachments;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TaikorAudioProcessorEditor)

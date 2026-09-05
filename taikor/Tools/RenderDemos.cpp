@@ -343,8 +343,8 @@ Take renderParameterSweep (float EngineParameters::* field,
 {
     auto parameters = defaultVoicing();
     // A diagnostic sweep must move only the named axis. Humanise deliberately
-    // perturbs position, angle, speed and contact, so leave it to performance
-    // takes and make these five strikes exactly comparable.
+    // adds larger position, angle, speed and contact changes, so use the tight
+    // setting here. The always-on subtle contact variation still remains.
     parameters.humanise = 0.0f;
     if (gain > 0.0f)
         parameters.outputGain = gain;
@@ -705,15 +705,15 @@ const std::array<Demo, 27>& demos()
           "All four strokes on the o-daiko, in keyboard order",
           renderVocabulary },
         { "02-the-four-drums.wav",
-          "A Don on each of the four drums: o-daiko, chu-daiko, okedo, shime",
+          "A Don on each of the four drums: o-daiko, nagado-daiko, okedo, shime",
           renderDrumsDon },
         { "03-the-playing-grid.wav",
           "The whole grid: four strokes on each of the four drums", renderGrid },
-        { "04-drums-ka.wav", "An edge Ka on each of the four drums", renderDrumsKa },
+        { "04-drums-ka.wav", "An edge-of-head stroke on each of the four drums", renderDrumsKa },
         { "05-drums-rim-shot.wav", "A rim shot on each of the four drums",
           renderDrumsRim },
         { "06-odaiko-phrase.wav", "A phrase on the o-daiko", renderOdaiko },
-        { "07-chudaiko-phrase.wav", "The same phrase on the chu-daiko",
+        { "07-chudaiko-phrase.wav", "The same phrase on the nagado-daiko",
           renderChudaiko },
         { "08-okedo-phrase.wav", "The same phrase on the okedo-daiko", renderOkedo },
         { "09-shime-phrase.wav", "The same phrase on the shime-daiko", renderShime },

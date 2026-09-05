@@ -39,6 +39,9 @@ enum Slot
     slotStrikeAzimuth,
     slotPerformer,
     slotVelocityCurve,
+    slotOutputHighPass,
+    slotEnsembleSize,
+    slotEnsembleVariation,
     slotCount
 };
 
@@ -52,7 +55,8 @@ constexpr std::array<const char*, slotCount> parameterIds {
     ids::strikePosition, ids::velocityDepth, ids::tensionModulation,
     ids::strikeNoise, ids::humanise, ids::octaveBody, ids::micDistance,
     ids::micSpread, ids::stereoWidth, ids::drive, ids::output,
-    ids::strikeAzimuth, ids::performer, ids::velocityCurve
+    ids::strikeAzimuth, ids::performer, ids::velocityCurve, ids::outputHighPass,
+    ids::ensembleSize, ids::ensembleVariation
 };
 
 float bipolarControllerValue (int rawValue) noexcept
@@ -65,10 +69,11 @@ float bipolarControllerValue (int rawValue) noexcept
 }
 
 std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
-    const juce::String& id, const juce::String& name, float defaultValue)
+    const juce::String& id, const juce::String& name, float defaultValue,
+    int versionHint = 1)
 {
     return std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { id, 1 }, name,
+        juce::ParameterID { id, versionHint }, name,
         juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, defaultValue,
         juce::AudioParameterFloatAttributes()
             .withLabel ("%")
@@ -332,6 +337,40 @@ TaikorAudioProcessor::createParameterLayout()
                 return trimmed.startsWith ("SOFT") ? -amount : amount;
             })));
 
+    // Append the new ID and use a higher version hint: AU hosts sort by this
+    // before the ID hash, preserving every existing automation index.
+    juce::NormalisableRange<float> highPassRange { 0.0f, 500.0f, 1.0f };
+    highPassRange.setSkewForCentre (100.0f);
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::outputHighPass, 2 }, "Output High Pass",
+        highPassRange, 0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                const auto frequency = juce::roundToInt (value);
+                return frequency == 0 ? juce::String ("Off")
+                                      : juce::String (frequency) + " Hz";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.-").getFloatValue();
+            })));
+
+    result.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { ids::ensembleSize, 3 }, "Ensemble Size", 1, 8, 1,
+        juce::AudioParameterIntAttributes()
+            .withStringFromValueFunction ([] (int value, int)
+            {
+                return value == 1 ? juce::String ("1 player")
+                                  : juce::String (value) + " players";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.getIntValue();
+            })));
+    result.push_back (makePercentParameter (
+        ids::ensembleVariation, "Ensemble Variation", 0.4f, 3));
+
     jassert (static_cast<int> (result.size()) == ids::parameterCount);
     return { result.begin(), result.end() };
 }
@@ -372,6 +411,9 @@ taikor::EngineParameters TaikorAudioProcessor::snapshotEngineParameters() const 
     next.strikeAzimuth = juce::degreesToRadians (read (slotStrikeAzimuth));
     next.performer = juce::roundToInt (read (slotPerformer));
     next.velocityCurve = read (slotVelocityCurve);
+    next.outputHighPassHz = read (slotOutputHighPass);
+    next.ensembleSize = juce::roundToInt (read (slotEnsembleSize));
+    next.ensembleVariation = read (slotEnsembleVariation);
     return next;
 }
 
