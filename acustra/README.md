@@ -79,6 +79,8 @@ reverb, room effect or recorded-note layer.
 | `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −3.7 dBFS | +0.7 dB |
 | `09-recuerdos-de-la-alhambra.wav` | Tarrega, Recuerdos de la Alhambra, bars 1-12: a nylon tremolo over a thumb arpeggio | 31.6 s | −14.0 dBFS | +11.0 dB |
 | `10-lagrima.wav` | Tarrega, Lagrima, bars 1-8: a sung nylon melody over held bass | 26.0 s | −19.6 dBFS | +16.6 dB |
+| `11-picking-techniques.wav` | Finger, pick and thumb on steel, then on nylon; same notes and velocity | 10.6 s | −16.6 dBFS | +13.6 dB |
+| `12-capture-types.wav` | Stereo, treble and bass microphones, saddle piezo, then steel magnetic | 12.2 s | −18.6 dBFS | +15.6 dB |
 <!-- peaks-table-end -->
 
 ## Real dry-note benchmark
