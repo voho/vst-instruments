@@ -32,6 +32,7 @@ SOURCE = "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16#i
 MIDI_SOURCE = "https://kayrock.org/kr106/106_calibration.zip"
 REFERENCE_PCM_SHA256 = "3575d2e9dc6e42c6ca7cef0c1b017ed9e6b85a0f0db227ee646ad944146f4bb0"
 REFERENCE_AIFF_SHA256 = "a9282c4a287e7adf1a8cf46879d037633225db6f0e56f16014c08373ffb683aa"
+COMMON_BAND_HZ = (20.0, 20000.0)
 
 
 def sha256(path):
@@ -100,6 +101,15 @@ def db(value):
     return 20 * math.log10(max(float(value), 1e-15))
 
 
+def common_band_rms(samples, rate):
+    # Integrate a rectangular-window periodogram: Parseval preserves the same
+    # time weighting as std(), while excluding DC, subsonics and ultrasound.
+    # No resampling or fitted recording gain enters this measurement.
+    frequencies, power = periodogram(samples, rate, window="boxcar")
+    band = (frequencies >= COMMON_BAND_HZ[0]) & (frequencies <= COMMON_BAND_HZ[1])
+    return math.sqrt(float(np.sum(power[band]) * (frequencies[1] - frequencies[0])))
+
+
 def peak_measurement(samples, rate, low=2.0, high=None):
     # A Hann window and log-parabolic interpolation permit sub-bin estimates.
     nfft = 1 << (4 * len(samples) - 1).bit_length()
@@ -137,6 +147,8 @@ def analyze(path, offset):
         starts = {"noise": 10.5, "saw": 2.5, "pulse_pwm64": 4.5, "sub": 6.5}
         levels = {name: db(np.std(segment(start)[:, channel]))
                   for name, start in starts.items()}
+        band_levels = {name: db(common_band_rms(segment(start)[:, channel], rate))
+                       for name, start in starts.items()}
         level_ranges = {}
         for name, start in starts.items():
             parts = np.array_split(segment(start)[:, channel], 3)
@@ -174,9 +186,12 @@ def analyze(path, offset):
                                      or max(values) / min(values) > 2 ** (100 / 1200)})
             peaks.append(measurement)
         channels.append({"source_rms_dbfs": levels,
+                         "source_common_band_rms_dbfs": band_levels,
                          "source_rms_window_range_dbfs": level_ranges,
                          "source_relative_saw_db": {key: value - levels["saw"]
                                                     for key, value in levels.items()},
+                         "source_common_band_relative_saw_db": {
+                             key: value - band_levels["saw"] for key, value in band_levels.items()},
                          "hpf": hpf, "resonance127_peaks": peaks})
     result["measurements"] = channels
     return result
@@ -190,6 +205,17 @@ def self_test():
     assert measurement["peak_band_power_fraction"] > .999
     assert abs(db(np.std(tone)) - db(.25 / math.sqrt(2))) < .01
     assert abs(db(2) - 6.020599913279624) < 1e-10
+    # Same audible signal at two recording rates; hardware additionally carries
+    # ultrasound and DC. Full-band RMS differs, common-band RMS must agree.
+    values = []
+    for sample_rate in [48000, 96000]:
+        time = np.arange(sample_rate) / sample_rate
+        samples = .25 * np.sin(2 * np.pi * 1000 * time) + .1
+        if sample_rate == 96000:
+            samples += .5 * np.sin(2 * np.pi * 28000 * time)
+        values.append(common_band_rms(samples, sample_rate))
+    assert abs(db(values[0] / values[1])) < 1e-10
+    assert abs(values[0] - .25 / math.sqrt(2)) < 1e-12
     print("hardware calibration analyzer self-check passed")
 
 
@@ -219,6 +245,8 @@ def main():
     result = {"expected_hardware_source": SOURCE, "midi_source": MIDI_SOURCE,
               "midi_sha256": MIDI_SHA256, "analyzer_sha256": sha256(__file__),
               "expected_original_aiff_sha256": REFERENCE_AIFF_SHA256,
+              "common_band_hz": COMMON_BAND_HZ,
+              "common_band_method": "DC-detrended rectangular-window periodogram; sum PSD bins within band times bin width, without resampling. Band-edge resolution is 1 / window duration.",
               "versions": {"python": platform.python_version(), "numpy": np.__version__,
                            "scipy": scipy.__version__},
               "scope": "Descriptive comparison against the expected April 3 calibration recording; identity is checked below.",
@@ -227,6 +255,7 @@ def main():
                         "Noise uses the repeated flat-HPF segment; initial hardware noise note is absent.",
                         "Sub sounds one octave below saw; its level ratio includes the frequency response.",
                         "Independent noise windows and different voice allocations add sampling/unit variation.",
+                        "Full-band RMS includes each file's available bandwidth; use common-band ratios for sample-rate-independent source comparison.",
                         "Resonance127 measures noise-driven spectral peaks, not an isolated self-oscillation fundamental.",
                         "Broad/unstable flags mean <75% local power within +/-5% of peak or >100c window variation; descriptive, not a fidelity pass criterion.",
                         "No recording-chain calibration or original voice-card equivalence is established."],
@@ -248,6 +277,9 @@ def main():
             differences.append({"source_ratio_error_db": {
                 name: model["source_relative_saw_db"][name] - value
                 for name, value in reference["source_relative_saw_db"].items()},
+                "source_ratio_common_band_error_db": {
+                    name: model["source_common_band_relative_saw_db"][name] - value
+                    for name, value in reference["source_common_band_relative_saw_db"].items()},
                 "resonance127_peak_error_cents": [{"cutoff_byte": r["cutoff_byte"],
                     "cents": (None if max(r["peak_hz"], m["peak_hz"]) >= comparison_high_hz else
                               1200 * math.log2(m["peak_hz"] / r["peak_hz"])),
