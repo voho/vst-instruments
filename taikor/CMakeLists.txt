@@ -36,10 +36,12 @@ set(TAIKOR_JUCE_PATH "" CACHE PATH
 include(CTest)
 
 set(TAIKOR_DSP_SOURCES
+    Source/DSP/CoupledCavity.cpp
     Source/DSP/EnsembleEngine.cpp
     Source/DSP/TaikoEngine.cpp
     Source/DSP/UiMath.cpp)
 set(TAIKOR_DSP_HEADERS
+    Source/DSP/CoupledCavity.h
     Source/DSP/EnsembleEngine.h
     Source/DSP/OutputHighPass.h
     Source/DSP/OutputLimiter.h
@@ -144,6 +146,9 @@ endif()
 option(TAIKOR_BUILD_TOOLS "Build offline Taikor tools" ON)
 
 if(TAIKOR_BUILD_TOOLS)
+    add_executable(TaikorCavityStudy Tools/StudyCoupledCavity.cpp)
+    target_link_libraries(TaikorCavityStudy PRIVATE TaikorDSP)
+
     add_executable(TaikorRenderDemos Tools/RenderDemos.cpp)
     target_link_libraries(TaikorRenderDemos PRIVATE TaikorDSP)
     target_compile_features(TaikorRenderDemos PRIVATE cxx_std_20)
@@ -164,6 +169,18 @@ if(TAIKOR_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(TaikorCoupledCavityTests Tests/CoupledCavityTests.cpp)
+    target_link_libraries(TaikorCoupledCavityTests PRIVATE TaikorDSP)
+    add_test(NAME Taikor.CoupledCavity COMMAND TaikorCoupledCavityTests)
+
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME Taikor.PublishedModes
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkPublishedModes.py"
+                         --self-test)
+    endif()
+
     add_executable(TaikorEnsembleEngineTests Tests/EnsembleEngineTests.cpp)
     target_link_libraries(TaikorEnsembleEngineTests PRIVATE TaikorDSP)
     add_test(NAME Taikor.EnsembleEngine COMMAND TaikorEnsembleEngineTests)
@@ -193,6 +210,7 @@ if(BUILD_TESTING)
     set_tests_properties(Taikor.TaikoEngine PROPERTIES TIMEOUT 240)
 
     if(TAIKOR_BUILD_TOOLS)
+        add_test(NAME Taikor.CavityStudy COMMAND TaikorCavityStudy)
         # Guards the renderer that produces the committed demonstration WAVs:
         # it renders a short take to a temporary directory and checks that the
         # audio is finite, audible and written as a readable WAV.

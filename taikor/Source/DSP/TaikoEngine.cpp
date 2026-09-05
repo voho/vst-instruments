@@ -132,12 +132,47 @@ constexpr float handPatchRadiusMetres = 0.055f;
 // drum recordings were not identified, so this is not an auditable calibration.
 constexpr float continuumBandRatio = 2.0f;
 constexpr float continuumBandwidth = 1.35f;
-// A two-dimensional membrane has nearly constant modal density per hertz, so
-// every octave contains about twice as many unresolved modes as the last. For
-// comparable energy per mode their uncorrelated amplitudes add in quadrature:
-// RMS therefore grows as sqrt(f). Contact bandwidth and the hide's measured
-// loss then impose the steep downward slope heard in the finished stroke.
-constexpr float continuumTilt = -0.5f;
+// 64-point Gauss-Legendre quadrature on the cumulative Weyl impulse-
+// displacement measure. These are integration nodes, not fitted partials.
+// Captured factory force histories differ from dense integration by <.001 dB;
+// eight nodes missed some attacks by 4.4 dB. This remains a finite statistical
+// observation, without reciprocal high-mode mechanics or arbitrary recontact
+// accuracy. The original noise filters still approximate modal observation.
+constexpr std::array<double, 64> continuumForceNodes {
+    -0.99930504173577217, -0.99634011677195522, -0.99101337147674429, -0.98333625388462598,
+    -0.97332682778991098, -0.96100879965205366, -0.94641137485840277, -0.92956917213193957,
+    -0.91052213707850282, -0.88931544599511414, -0.86599939815409277, -0.84062929625258043,
+    -0.81326531512279754, -0.78397235894334139, -0.75281990726053194, -0.71988185017161088,
+    -0.68523631305423327, -0.64896547125465731, -0.61115535517239328, -0.571895646202634,
+    -0.53127946401989457, -0.48940314570705296, -0.44636601725346409, -0.40227015796399163,
+    -0.35722015833766813, -0.31132287199021097, -0.26468716220876742, -0.21742364374000708,
+    -0.1696444204239928, -0.12146281929612056, -0.072993121787799042, -0.024350292663424436,
+    0.024350292663424436, 0.072993121787799042, 0.12146281929612056, 0.1696444204239928,
+    0.21742364374000708, 0.26468716220876742, 0.31132287199021097, 0.35722015833766813,
+    0.40227015796399163, 0.44636601725346409, 0.48940314570705296, 0.53127946401989457,
+    0.571895646202634, 0.61115535517239328, 0.64896547125465731, 0.68523631305423327,
+    0.71988185017161088, 0.75281990726053194, 0.78397235894334139, 0.81326531512279754,
+    0.84062929625258043, 0.86599939815409277, 0.88931544599511414, 0.91052213707850282,
+    0.92956917213193957, 0.94641137485840277, 0.96100879965205366, 0.97332682778991098,
+    0.98333625388462598, 0.99101337147674429, 0.99634011677195522, 0.99930504173577217 };
+constexpr std::array<double, 64> continuumForceWeights {
+    0.00089164036084739382, 0.0020735166302814547, 0.0032522289844898237, 0.0044233799131821912,
+    0.0055840697300656916, 0.0067315239483594913, 0.0078630152380125499, 0.0089758578878486438,
+    0.010067411576765006, 0.01113508690419153, 0.01217635128435555, 0.013188734857527222,
+    0.01416983630712979, 0.015117328536201272, 0.016028964177425706, 0.016902580918570709,
+    0.017736106628441141, 0.018527564270120048, 0.019275076589307757, 0.019976870566360178,
+    0.020631281621311694, 0.021236757561826795, 0.021791862264661697, 0.022295279081878248,
+    0.022745813963709022, 0.02314239829065717, 0.023484091408104972, 0.023770082857415116,
+    0.023999694298229127, 0.024172381117401463, 0.024287733720751711, 0.024345478504569851,
+    0.024345478504569851, 0.024287733720751711, 0.024172381117401463, 0.023999694298229127,
+    0.023770082857415116, 0.023484091408104972, 0.02314239829065717, 0.022745813963709022,
+    0.022295279081878248, 0.021791862264661697, 0.021236757561826795, 0.020631281621311694,
+    0.019976870566360178, 0.019275076589307757, 0.018527564270120048, 0.017736106628441141,
+    0.016902580918570709, 0.016028964177425706, 0.015117328536201272, 0.01416983630712979,
+    0.013188734857527222, 0.01217635128435555, 0.01113508690419153, 0.010067411576765006,
+    0.0089758578878486438, 0.0078630152380125499, 0.0067315239483594913, 0.0055840697300656916,
+    0.0044233799131821912, 0.0032522289844898237, 0.0020735166302814547, 0.00089164036084739382 };
+
 // How much the rim takes from the continuum, per unit of a mode's dimensionless
 // wavenumber. The resolved bank uses 0.12 per circumferential order; up here the
 // orders are in the tens and hundreds, which is the whole reason this region
@@ -190,17 +225,14 @@ constexpr float continuumCalibration = 34.0f / 48000.0f;
 constexpr float minimumImpactSpeed = 0.12f;
 constexpr float maximumImpactSpeed = 6.0f;
 
-// One overall level constant. The model produces physical head displacements,
-// which are on the order of tens of microns; this is the only place a number
-// is chosen for how it sounds rather than for what it means, and it is a
-// single scalar so it cannot distort any relationship inside the model.
+// Overall displacement-to-output scale for the resolved model. Separate
+// continuum, shell and tack observation gains remain voicing assumptions.
 //
 // It came down by ten decibels when the head gained its high-frequency
 // continuum, which added a great deal to every stroke, and back up by seventeen
 // when that continuum was cut to the share it should always have had.
-// directCalibration moves with it in both directions, because the airborne
-// click is the one path that does not pass through this scalar and would
-// otherwise drift against everything else.
+// The historical directCalibration reference is retained only by the tack
+// observer; the separate normal-force-derivative click has been removed.
 constexpr float modelScale = 292.0f;
 
 // One level-only reference calibration after Drive. An offline million-order
@@ -320,10 +352,9 @@ constexpr float tackPhysicalBandEnergyAnchor = 0.7069776f;
 // wooden shell is not.
 constexpr float tackCalibration = 0.16f;
 
-// Level of the airborne impact path relative to what the head radiates. It
-// stands in for the contact patch's radiating area and directivity, neither of
-// which this model describes; everything about how that path varies with
-// stroke, position and distance is geometry and is computed, not chosen.
+// Legacy airborne-path reference, now used only by the tack observer together
+// with tackCalibration. Retained to preserve its level after click removal;
+// it is not a model of the bachi's radiating area or directivity.
 constexpr float directCalibration = 0.00478f;
 
 [[nodiscard]] float clampFloat (float value, float low, float high) noexcept
@@ -1772,6 +1803,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.modeProjection.fill (0.0f);
     voice.contactProjection.fill (0.0f);
     voice.continuumInjection.fill (0.0f);
+    voice.continuumForceState = {};
     voice.nonlinearContactActive = false;
     voice.nonlinearContactHasForce = false;
     voice.continuumInjected = false;
@@ -3964,11 +3996,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
     // The head's high-frequency continuum. The resolved bank stops at the
     // highest Bessel zero in the table, which on a large drum is only a few
-    // hundred hertz; a real head goes on having modes for another five octaves
-    // above that, packed far closer together than their own bandwidths. Nobody
-    // hears those individually - what reaches the ear is a shaped burst that
-    // empties from the top down - so they are modelled as bands of noise rather
-    // than as several hundred more resonators.
+    // hundred hertz. The remaining region is approximated by statistical bands
+    // rather than several hundred more resonators. This selected handoff can
+    // precede modal overlap, so the approximation loses individually resolved
+    // partials in some of its lower bands.
     //
     // The bands start above the resolved bank and climb by octaves. Each one
     // carries the head's own loss law, so the top of the drum goes first
@@ -3985,16 +4016,42 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                                             mode.omega / (2.0f * piFloat));
         }
 
-        // Where the resolved bank hands over to the continuum is the modal
-        // overlap frequency, and that falls with the drum: a bigger head has
-        // more modes in the same span, so they stop being separable sooner. A
-        // fixed 120 Hz floor stopped it tracking exactly where it mattered - the
-        // largest drum's top resolved mode is 77 Hz, so its crossover was pinned
-        // an octave above where the head puts it, and because the band tilt is
-        // normalised against this number every band on that drum came out
-        // roughly two decibels loud as well. The remaining guard only catches an
-        // empty bank.
+        // The selected handoff tracks the highest resolved mode; this is not
+        // a measured modal-overlap threshold (which also depends on linewidth).
+        // The low guard allows the handoff to follow large, low-tuned drums
+        // while keeping the band construction defined for an empty bank.
         const float first = std::max (highestResolved * 1.25f, 20.0f);
+
+        // Weyl's leading area term counts N = lambda^2 / 4 modes on a disc.
+        // A membrane has N proportional to f^2, while a bending plate has N
+        // proportional to f: constant density per Hz is the plate limit, not
+        // the membrane law. See Woodhouse et al. (2021), Section 2:
+        // https://doi.org/10.1051/aacus/2021008
+        // Invert the same tension-plus-bending dispersion as stiffnessStretch:
+        // x = lambda^2 + B lambda^4. The rationalized root remains accurate
+        // when B vanishes. A mode's unit-impulse displacement power is
+        // proportional to 1/omega^2. Integrating it against the Weyl count gives
+        // integral dq/[q(1+Bq)], q=lambda^2. Evaluate the endpoint logarithm as
+        // log1p to retain accuracy in the bending-dominated high bands. All
+        // common mass, area and dispersion factors cancel against band one.
+        // These are nominal band edges, not an integral of the filter skirts.
+        const auto squaredWavenumber = [&drum] (double frequency) noexcept
+        {
+            const double stiffness = drum.stiffnessBatter;
+            const double scaled = 2.0 * piDouble * frequency * drum.radius
+                                / drum.waveSpeed;
+            const double x = scaled * scaled
+                           * (1.0 + stiffness * fundamentalZeroSquared);
+            return 2.0 * x / (1.0 + std::sqrt (1.0 + 4.0 * stiffness * x));
+        };
+        const auto bandImpulsePower = [&drum, &squaredWavenumber] (double centre) noexcept
+        {
+            const double stiffness = drum.stiffnessBatter;
+            const double low = squaredWavenumber (centre / continuumBandwidth);
+            const double high = squaredWavenumber (centre * continuumBandwidth);
+            return std::log1p ((high - low) / (low * (1.0 + stiffness * high)));
+        };
+        const double referenceImpulsePower = bandImpulsePower (first);
 
         // Short wavelengths live at the edge. The high-order mode shapes pile
         // up against the rim, so a stroke out there couples into the continuum
@@ -4094,6 +4151,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                               + voice.continuumLossOmega * omega
                               + voice.continuumLossOmegaSquared * omega * omega;
             entry.envelopeDecay = std::exp (-decay / rate);
+            entry.forceBendingRatio = drum.stiffnessBatter
+                                    * squaredWavenumber (centre);
+            configureContinuumForce (entry, rate);
             // Left dark. Every band is lit by the contacts themselves, each in
             // proportion to how hard it lands, so a flam's grace note gets its
             // share and its main stroke gets the whole of it. Starting them
@@ -4101,10 +4161,18 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             // gently it touched the head.
             entry.envelope = 0.0f;
 
-            // Modal density per octave grows with frequency. The contact pulse
-            // and measured hide loss provide the downward spectral slope after
-            // this statistical count has been applied.
-            const float tilt = std::pow (first / centre, continuumTilt);
+            // An impulse excites displacement amplitude Fhat/(M omega), not a
+            // frequency-independent modal amplitude. Add independent modes in
+            // quadrature, integrating their 1/omega response over each band's
+            // interval: a tensioned membrane approaches flat octave RMS,
+            // and a bending plate approaches 1/sqrt(f). The existing fixed
+            // modal observation supplies the mass/level anchor; filter variance
+            // and the normalized contact spectrum contain neither this mode
+            // count nor an additional 1/omega. This is a statistical observed
+            // displacement continuation, not a calibrated pressure PSD or a
+            // reciprocal high-mode mobility. First-band gain is exactly unity.
+            const float tilt = band == 0 ? 1.0f : static_cast<float> (
+                std::sqrt (bandImpulsePower (centre) / referenceImpulsePower));
             // Most of a white-noise input lies outside one octave and is thrown
             // away. Exact state-space normalisation makes the physical level
             // below independent of filter geometry and sample rate.
@@ -4550,9 +4618,9 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
                 std::max (savedContinuum[index].currentFilterVariance, 1.0e-30f)
                 / std::max (configured.baseFilterVariance, 1.0e-30f));
             band = savedContinuum[index];
-            band.envelope *= configured.distanceGain
-                           / std::max (savedContinuum[index].distanceGain, 1.0e-12f)
-                           * varianceGain;
+            scaleContinuumEnvelope (physical, index, configured.distanceGain
+                / std::max (savedContinuum[index].distanceGain, 1.0e-12f)
+                * varianceGain);
             // The inverse state scale cancels varianceGain in the current
             // output sample. The new recurrence then settles into its new
             // covariance without a gain step at the automation boundary.
@@ -4566,13 +4634,17 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
             band.distanceGain = configured.distanceGain;
             band.envelopeDecay = configured.envelopeDecay;
             band.centre = configured.centre;
+            band.forceFrequencyRatios = configured.forceFrequencyRatios;
+            band.forceBendingRatio = configured.forceBendingRatio;
+            band.forceRotations = configured.forceRotations;
+            band.forceIntegrals = configured.forceIntegrals;
             band.common = configured.common;
             band.independent = configured.independent;
         }
         else
         {
             band = configured;
-            band.envelope = 0.0f;
+            scaleContinuumEnvelope (physical, index, 0.0f);
         }
         // A strike slot supplies the physically calibrated, variance-normalised
         // amplitude. The canonical band owns only one persistent filter and
@@ -4899,8 +4971,8 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
             resonator.y1 *= gain;
             resonator.y2 *= gain;
         }
-        for (auto& band : physical.continuum)
-            band.envelope *= gain;
+        for (std::size_t index = 0; index < physical.continuum.size(); ++index)
+            scaleContinuumEnvelope (physical, index, gain);
         physical.tensionEnvelope *= gain * gain;
     }
 
@@ -5087,11 +5159,9 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // profile and residualImpedance on every one of its own iterations.
     voice.contactExposureAdmittance = referenceTailAdmittance;
 
-    // Integral of sin(pi t/tau)^3 over the contact, through the same omitted-
-    // mode admittance the dynamic solve uses. These are the continuum's legacy
-    // F^2/Z residual units, not mechanical Joules: residualImpedance is still
-    // per-unit-length. Dividing by this reference preserves the recording-led
-    // tail calibration without applying the articulation transformer twice.
+    // Former F^2/Z reference retained for contact-solver diagnostics. Its
+    // per-unit-length impedance is not a mechanical Joule coordinate; the
+    // causal continuum below uses the full force history and impulse anchor.
     constexpr double squaredHertzPulseIntegral = 4.0 / (3.0 * piFloat);
     voice.referenceContactExposure = static_cast<double> (peakForce) * peakForce
                                    * static_cast<double> (contactSeconds)
@@ -5117,34 +5187,19 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     voice.solvedContactForce = 0.0f;
     voice.nextContact = voice.contactCount;
 
-    // The continuum was built against the resolved bank's drive; the modes are
-    // then driven by the contact, so the continuum has to be scaled by the same
-    // force to sit where it belongs against them.
-    //
-    // And shaded by how long that contact lasted. A force pulse of duration tau
-    // has no useful content much above 1/tau, so a soft stroke - which rests on
-    // the head nearly twice as long - simply cannot reach the top of the
-    // continuum, while a hard one lights all of it. This is the same v^(-1/5)
-    // contact law that shortens the pulse and brightens the resolved modes,
-    // finally reaching the region where most of the brightness actually lives.
-
+    // Preserve the established reference-pulse level, but let the actual
+    // signed force history determine spectral cancellation. The reference
+    // impulse is integral peakForce*sin(pi*t/tau)^1.5 dt. It remains a voicing
+    // anchor, not a measured absolute radiation calibration. No nominal Hertz
+    // spectrum or positive F^2 exposure cap gates this causal response.
+    const double referenceImpulse = static_cast<double> (peakForce)
+                                  * contactSeconds * hertzImpulseIntegral / piDouble;
     for (std::size_t index = 0; index < voice.continuum.size(); ++index)
     {
         auto& band = voice.continuum[index];
-        // Use the same Hertz-pulse transform that ranks the resolved modes.
-        // The former one-pole shortcut fell much more slowly above 1/tau and
-        // left soft/long contacts with an unrelated wash of high-band energy.
-        const float spectrum = contactSpectrum (
-            2.0f * piFloat * band.centre * contactSeconds);
-        band.level *= excitationScale * spectrum;
+        band.level *= static_cast<float> (excitationScale / referenceImpulse);
         voice.continuumInjection[index] = band.level;
     }
-
-    // What a contact's amplitude is measured against when it relights the
-    // continuum: the force the continuum was scaled by, not the first contact's
-    // amplitude. A flam's first contact is its quiet grace note, so measuring
-    // against that gave the main stroke well over twice the continuum it should
-    // have had - and put the loudest articulation on the limiter.
 
     // Contact noise is stick and hide texture, so it sits an octave or so
     // above the drum and follows how sharp the contact was.
@@ -5230,14 +5285,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
                         0.0f, static_cast<float> (directLineSize - 4));
         voice.directLine.fill (0.0f);
         voice.directWriteIndex = 0;
-        voice.directPrevious = 0.0f;
-        voice.directLowpassState = 0.0f;
-        // A contact patch a few millimetres across stops radiating somewhere
-        // around 3.5 kHz, and a softer bachi spreads over more of the head.
-        const float patchCorner = 3500.0f * (0.55f + 0.75f * applied_.bachiHardness);
-        voice.directLowpassCoefficient = 1.0f - std::exp (
-            -2.0f * piFloat * std::min (patchCorner, 0.45f * static_cast<float> (sampleRate_))
-            * inverseSampleRate_);
+
     }
 
     // A flam's main stroke lands 32 ms after its grace note, and a press roll
@@ -5420,8 +5468,9 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift,
     // the resolved bank away while the region that now dominates the upper
     // spectrum stood still, and put a smaller version of the same mismatch into
     // the attack glide of every hard stroke.
-    for (auto& band : voice.continuum)
+    for (std::size_t index = 0; index < voice.continuum.size(); ++index)
     {
+        auto& band = voice.continuum[index];
         if (! (band.centre > 0.0f))
             continue;
 
@@ -5433,7 +5482,7 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift,
         const float varianceGain = std::sqrt (
             std::max (band.currentFilterVariance, 1.0e-30f)
             / std::max (nextVariance, 1.0e-30f));
-        band.envelope *= varianceGain;
+        scaleContinuumEnvelope (voice, index, varianceGain);
         scaleContinuumFilterState (band, 1.0f / varianceGain);
         band.currentFilterVariance = nextVariance;
         band.lowCoefficient =
@@ -5449,6 +5498,7 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift,
                               + voice.continuumLossOmega * bandOmega
                               + voice.continuumLossOmegaSquared * bandOmega * bandOmega;
         band.envelopeDecay = std::exp (-bandDecay / rate);
+        configureContinuumForce (band, rate, shift);
     }
 
     // A canonical drum's lifetime is twelve seconds from its latest contact,
@@ -5580,8 +5630,8 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
             + (localMuteActive ? voice.continuumMuteDampingRate : 0.0f);
         const float continuumGain = std::exp (
             -0.5f * continuumVelocityLoss * secondsPerTick);
-        for (auto& band : voice.continuum)
-            band.envelope *= continuumGain;
+        for (std::size_t index = 0; index < voice.continuum.size(); ++index)
+            scaleContinuumEnvelope (voice, index, continuumGain);
     }
 
     if (localMuteActive)
@@ -6022,20 +6072,9 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         voice.stickPrevious = voice.stickPosition;
         voice.stickPosition = next;
         voice.solvedContactForce = static_cast<float> (force[slot]);
-        // The stochastic field is currently an observed high-mode residual,
-        // not a memoryless mechanical dashpot. A pure resistance captured soft
-        // and edge strikes for several milliseconds because it omitted the
-        // reactive storage that returns energy from real high modes. Use the
-        // solved force history to drive the calibrated observation until that
-        // omitted-mode impedance is represented by fitted dynamic states.
-        // contactExposureAdmittance is (membraneGain * levelScale)^2 /
-        // residualImpedance, cached once by trigger() since neither operand
-        // changes for the life of the contact - see the field comment.
-        // The continuum's level already describes one complete legacy residual
-        // exposure, integral(F^2/Z dt). Bound only that proxy: residualImpedance
-        // is per-unit-length, so this is not a Joule or mechanical-passivity cap.
-        // Until the residual becomes a fitted mobility, a low-mode contact must
-        // not reuse the observation calibration.
+        // Retain the former exposure proxy as a contact-solver diagnostic.
+        // It is not a Joule/passivity bound and no longer gates the continuum:
+        // phase cancellation requires its complete solved force history.
         const double requestedContactExposure = h * force[slot] * force[slot]
                                               * voice.contactExposureAdmittance;
         const double availableContactExposure =
@@ -6050,7 +6089,11 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         const double nextMidpoint = midpointCompression[slot] + 0.5 * s[slot];
         if (voice.nonlinearContactHasForce
             && (force[slot] <= 1.0e-9 || (nextMidpoint <= 0.0 && s[slot] <= 0.0)))
+        {
             voice.nonlinearContactActive = false;
+            if (force[slot] == 0.0)
+                voice.continuumForceState = {};
+        }
     }
 
     for (int index = 0; index < physical.modeCount; ++index)
@@ -6075,34 +6118,111 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
     }
 }
 
-void TaikoEngine::injectContinuumEnergy (const Voice& voice, Voice& physical,
-                                         float share) noexcept
+void TaikoEngine::configureContinuumForce (Voice::ContinuumBand& band,
+                                           double rate, float shift) noexcept
+{
+    // Forced modal coordinates follow the convolution of contact force with
+    // their damped impulse response; see Marogna & Avanzini (DAFx 2009), Eq. 5:
+    // https://www.dafx.de/paper-archive/2009/papers/paper_77.pdf
+    const double centre = static_cast<double> (band.centre) * shift;
+    const double low = 1.0 / continuumBandwidth;
+    const double high = std::min (static_cast<double> (continuumBandwidth),
+                                  0.45 * rate / std::max (centre, 1.0));
+    if (! (centre > 0.0) || high <= low)
+    {
+        band.forceRotations = {};
+        band.forceIntegrals = {};
+        return;
+    }
+    // Normalize quadrature within the represented interval. targetRms keeps
+    // the accepted nominal-band Weyl calibration; the filter skirts and its
+    // high-edge clamp are still a statistical observation approximation.
+    const double bending = band.forceBendingRatio;
+    const auto relativeQ = [bending] (double ratio) noexcept
+    {
+        const double x = ratio * ratio * (1.0 + bending);
+        return 2.0 * x / (1.0 + std::sqrt (1.0 + 4.0 * bending * x));
+    };
+    const double lowQ = relativeQ (low);
+    const double highQ = relativeQ (high);
+    const double measure = std::log1p (
+        (highQ - lowQ) / (lowQ * (1.0 + bending * highQ)));
+    const double sigma = -std::log (std::max (
+        static_cast<double> (band.envelopeDecay), 1.0e-30)) * rate;
+    for (std::size_t node = 0; node < continuumForceNodes.size(); ++node)
+    {
+        const double increment = std::expm1 (
+            0.5 * (1.0 + continuumForceNodes[node]) * measure);
+        const double q = lowQ * (1.0 + increment)
+                       / (1.0 - bending * lowQ * increment);
+        const double ratio = std::sqrt (q * (1.0 + bending * q)
+                                       / (1.0 + bending));
+        band.forceFrequencyRatios[node] = ratio;
+        const double omega = 2.0 * piDouble * centre * ratio;
+        const std::complex<double> lambda { -sigma, omega };
+        const auto rotation = std::polar (1.0, omega / rate);
+        band.forceRotations[node] = rotation;
+        // Exact Duhamel integral for the solver's held sample force. Unlike
+        // Euler impulse injection this retains the within-sample sinc rolloff.
+        band.forceIntegrals[node] =
+            (static_cast<double> (band.envelopeDecay) * rotation - 1.0) / lambda;
+    }
+}
+
+void TaikoEngine::scaleContinuumEnvelope (Voice& physical, std::size_t index,
+                                          float gain) noexcept
+{
+    physical.continuum[index].envelope *= gain;
+    if (! physical.physicalBank)
+        return;
+    const auto drumIndex = static_cast<std::uint8_t> (
+        physical.octaveOffset - lowestOctaveOffset);
+    for (auto& contact : voices_)
+        if (contact.active && contact.physicalDrumIndex == drumIndex)
+            for (auto& state : contact.continuumForceState[index])
+                state *= gain;
+}
+
+void TaikoEngine::advanceContinuumForce (Voice& voice, Voice& physical,
+                                         double force) noexcept
 {
     for (std::size_t index = 0; index < voice.continuumInjection.size(); ++index)
     {
-        auto& physicalBand = physical.continuum[index];
-        if (! (physicalBand.centre > 0.0f))
+        auto& band = physical.continuum[index];
+        if (! (band.centre > 0.0f))
             continue;
 
-        float injection = voice.continuumInjection[index] * share;
-        const float strikeDistanceGain = voice.continuum[index].distanceGain;
-        if (physicalBand.distanceGain != strikeDistanceGain)
-            injection *= physicalBand.distanceGain
-                       / std::max (strikeDistanceGain, 1.0e-12f);
+        double gain = voice.continuumInjection[index];
+        gain *= band.distanceGain
+              / std::max (voice.continuum[index].distanceGain, 1.0e-12f);
+        gain *= std::sqrt (
+            std::max (voice.continuum[index].baseFilterVariance, 1.0e-30f)
+            / std::max (band.currentFilterVariance, 1.0e-30f));
 
-        // A strike stores its calibrated amplitude in the input coordinate of
-        // the filter it was built against. A live physical bank may since have
-        // moved to another bandwidth; convert before adding energy so a flam
-        // or roll does not inherit the first hit's variance error.
-        const float strikeVariance = voice.continuum[index].baseFilterVariance;
-        const float physicalVariance = physicalBand.currentFilterVariance;
-        if (strikeVariance != physicalVariance)
-            injection *= std::sqrt (
-                std::max (strikeVariance, 1.0e-30f)
-                / std::max (physicalVariance, 1.0e-30f));
-
-        auto& destination = physicalBand.envelope;
-        destination = std::hypot (destination, injection);
+        double change = 0.0;
+        for (std::size_t node = 0; node < continuumForceNodes.size(); ++node)
+        {
+            auto& state = voice.continuumForceState[index][node];
+            const double previousPower = std::norm (state);
+            state = band.forceRotations[node] * state
+                  + band.forceIntegrals[node] * (force * gain);
+            change += continuumForceWeights[node]
+                    * (std::norm (state) - previousPower);
+            // The canonical envelope is decayed after this sample is heard.
+            // Store the same decay now; applying it again on the next update
+            // would charge damping twice. Control/mic moves scale both states.
+            state *= band.envelopeDecay;
+        }
+        // Coherence belongs within a contact. Distinct contacts retain the
+        // independent-power assumption of the statistical field. A later
+        // positive force can REMOVE this contact's earlier modal excitation;
+        // hypot-only/F^2 injection cannot represent that cancellation.
+        const double power = static_cast<double> (band.envelope) * band.envelope;
+        band.envelope = static_cast<float> (std::sqrt (std::max (0.0, power + change)));
+        // Once released, the already-added power rings in the canonical bank;
+        // clearing the transient accumulator neither removes nor duplicates it.
+        if (! voice.nonlinearContactActive)
+            voice.continuumForceState[index] = {};
     }
 }
 
@@ -6186,21 +6306,13 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
         contactEnvelope = force
             / std::max (voice.contactAmplitude, 1.0e-9f);
 
-        // Feed the unresolved field from the actual solved contact, one energy
-        // increment at a time. Its existing calibration describes the complete
-        // reference Hertz pulse, so each sample contributes the square root of
-        // its share of that pulse's legacy F^2/Z residual integral; hypot then
-        // adds independent high-mode amplitudes in quadrature. This removes the
-        // old full-strength burst that
-        // appeared on the first positive force sample regardless of what the
-        // moving head let the stick deliver.
-        if (voice.solvedContactExposureStep > 0.0
-            && voice.referenceContactExposure > 0.0 && physical != nullptr)
+        if (physical != nullptr
+            && (voice.nonlinearContactActive || voice.solvedContactForce > 0.0f))
         {
-            const float share = static_cast<float> (std::sqrt (
-                voice.solvedContactExposureStep / voice.referenceContactExposure));
-            injectContinuumEnergy (voice, *physical, share);
-            voice.continuumInjected = true;
+            advanceContinuumForce (voice, *physical,
+                                   std::max (voice.solvedContactForce, 0.0f));
+            voice.continuumInjected = voice.continuumInjected
+                                  || voice.solvedContactForce > 0.0f;
         }
     }
 
@@ -6273,7 +6385,10 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
     for (auto& band : voice.continuum)
     {
         if (band.envelope <= 1.0e-5f || band.level <= 0.0f)
+        {
+            band.envelope *= band.envelopeDecay;
             continue;
+        }
 
         const float shared = nextNoise (voice.noiseState);
         const float sideLeft = nextNoise (voice.noiseState);
@@ -6380,27 +6495,12 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
     if (voice.physicalBank)
         voice.modalInput.fill (0.0f);
 
-    // The impact heard straight through the air. Pressure follows the rate of
-    // change of the contact force rather than the force itself, so a shorter,
-    // harder contact makes a proportionally sharper and louder click - the
-    // same v^(-1/5) law that brightens the head, arriving by a second route.
+    // The tack line retains its airborne propagation. Contact force excites
+    // the head and shell above; an additional F-prime click had no radiation
+    // model and was removed in the accepted listening comparison.
     if (! voice.physicalBank)
     {
-        // Roughness excites the struck object through modeProjection above.
-        // Differentiating that stochastic signal here cancelled the contact-
-        // patch low-pass and made a flat noise shelf up to Nyquist. The direct
-        // airborne pressure follows the normal contact force itself.
-        const float slope = (force - voice.directPrevious)
-                          * static_cast<float> (sampleRate_) * 1.0e-5f;
-        voice.directPrevious = force;
-        voice.directLowpassState +=
-            voice.directLowpassCoefficient * (slope - voice.directLowpassState);
-        // The tack rattle joins the airborne path after the contact patch's
-        // own low-pass rather than before it: that corner describes how large
-        // the bachi's contact with the hide is, and a tack head is a great deal
-        // smaller than that. It does take the same distances and delays, since
-        // the tacks a stroke can rattle are the ones it landed among.
-        const float radiated = voice.directLowpassState + tack;
+        const float radiated = tack;
 
         voice.directLine[static_cast<std::size_t> (voice.directWriteIndex)] = radiated;
 
@@ -6412,10 +6512,8 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
         voice.directWriteIndex = (voice.directWriteIndex + 1) & (directLineSize - 1);
     }
 
-    // Only the membrane is damped. The wooden shell is not what the hand is
-    // resting on, the stick-on-stick stroke has nothing to do with the drum at
-    // all, and the airborne click of the impact itself reaches the microphones
-    // through the air rather than through the head.
+    // The palm acts on the membrane. The shell and the separately routed tack
+    // source are not under that contact patch.
     left += membraneLeft;
     right += membraneRight;
 

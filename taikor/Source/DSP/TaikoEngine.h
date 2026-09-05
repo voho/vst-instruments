@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -420,6 +421,7 @@ public:
 
 private:
     friend struct TaikoEngineTestAccess;
+    friend struct CavityStudyAccess;
 
     static constexpr int maxVoices = 16;
     // Twenty membrane modes (m, n). The four axisymmetric modes are split in
@@ -431,16 +433,11 @@ private:
     static constexpr int shellResonatorCount = 6;
     static constexpr int resonatorCount =
         membraneResonatorCount + shellResonatorCount;
-    // Bands of the head's high-frequency modal continuum. Above a few hundred
-    // hertz a struck membrane has far more modes than can usefully be resolved
-    // one at a time - the spacing falls below their own bandwidth and the
-    // response stops being a set of peaks and becomes statistical. Resolving
-    // that region mode by mode would need hundreds of resonators; what it
-    // actually sounds like is a shaped noise burst that decays faster the
-    // higher it sits, which is what these bands are. Without them the model
-    // simply stopped at its highest resolved mode and the drum had no body
-    // above about three hundred hertz at all.
+    // Statistical continuation above the selected resolved-bank cutoff. That
+    // handoff can precede modal overlap: filtered-noise bands approximate the
+    // unresolved population, losing individually audible upper partials.
     static constexpr int continuumBandCount = 5;
+    static constexpr int continuumForceNodeCount = 64;
 
     struct ContinuumVarianceCacheEntry
     {
@@ -719,12 +716,10 @@ private:
         double contactDamping { 0.0 };
         double residualImpedance { 1.0 };
         double referenceContactExposure { 1.0 };
-        // What remains of the rigid-target Hunt-Crossley F^2/Z ceiling in the
-        // continuum's legacy residual-exposure units. residualImpedance is
-        // per-unit-length, so this is neither mechanical Joules nor a passivity
-        // bound. It only limits how far one contact can reuse the observation
-        // calibration; fitted residual mobility is still needed to transfer
-        // energy from a moving head into a delayed recontact.
+        // Legacy rigid-target F^2/Z exposure diagnostic. This does not gate
+        // output: the continuum now needs the complete coherent force history.
+        // The per-unit-length impedance makes this neither Joules nor a
+        // mechanical passivity bound.
         double remainingContactExposure { 0.0 };
         // (membraneGain * levelScale)^2 / residualImpedance for this voice's
         // articulation, i.e. the per-sample coefficient advancePhysicalContacts
@@ -834,6 +829,12 @@ private:
             // Kept so the strike can shade the band by how long the stick
             // stayed on the head: a short contact reaches further up.
             float centre { 0.0f };
+            // Quadrature of the band's Weyl impulse-displacement measure.
+            // These coefficients are shared by all contacts on this head.
+            std::array<double, continuumForceNodeCount> forceFrequencyRatios {};
+            double forceBendingRatio { 0.0 };
+            std::array<std::complex<double>, continuumForceNodeCount> forceRotations {};
+            std::array<std::complex<double>, continuumForceNodeCount> forceIntegrals {};
             // How much of the band the two microphones hear in common. A
             // wavelength long against the spacing arrives at both alike; one
             // short against it does not, so the top of the continuum is very
@@ -842,10 +843,14 @@ private:
             float independent { 0.0f };
         };
         std::array<ContinuumBand, continuumBandCount> continuum {};
-        // Calibrated RMS injected into the one physical residual field when a
-        // scheduled contact begins. Kept outside ContinuumBand because a
-        // strike owns an injection, never filter or noise state.
+        // Calibrated filter-input amplitude per force impulse. The nominal
+        // Hertz impulse retains the existing reference-pulse level anchor.
         std::array<float, continuumBandCount> continuumInjection {};
+        // Coherent force history within each contact; distinct contacts still
+        // contribute independent statistical powers to the canonical field.
+        // Stored in its current filter-input coordinate, after envelope decay.
+        std::array<std::array<std::complex<double>, continuumForceNodeCount>,
+                   continuumBandCount> continuumForceState {};
 
         // Attack pitch glide. A membrane held at a fixed rim cannot move
         // transversely without getting longer, and a longer head is a tighter
@@ -920,26 +925,14 @@ private:
         // exactly the reason the wheel does.
         float tuningAtStrike { 0.0f };
 
-        // The airborne path from the stick to each microphone. A close pair
-        // hears the impact itself, not only what the head does afterwards, and
-        // because the two mics are different distances from the strike it
-        // arrives at different levels and different times. That is the cue
-        // that puts a stroke somewhere on the drum rather than in the middle
-        // of it, and it is why a spaced pair over a real drum stays in phase
-        // even on an edge strike that the membrane modes alone would cancel.
+        // Airborne tack-rattle propagation from the struck rim to each mic.
+        // The head and shell already radiate through their modal observers.
         std::array<float, directLineSize> directLine {};
         int directWriteIndex { 0 };
         float directDelayLeft { 0.0f };
         float directDelayRight { 0.0f };
         float directGainLeft { 0.0f };
         float directGainRight { 0.0f };
-        float directPrevious { 0.0f };
-        // The contact patch has a size, so it cannot radiate wavelengths
-        // shorter than itself. Without this the differentiated force is an
-        // unbounded spike and the attack reads as a click on top of a drum
-        // rather than as the drum's own attack.
-        float directLowpassState { 0.0f };
-        float directLowpassCoefficient { 0.5f };
 
         float velocity { 0.0f };
         float strikeRadius { 0.0f };
@@ -1502,15 +1495,12 @@ private:
                             float tensionRise = 0.0f) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
     void advancePhysicalContacts (Voice& physical) noexcept;
-    // Adds a strike's per-band continuum injections into the physical bank's
-    // unresolved envelopes as energy rather than amplitude - hypot, not a sum -
-    // because distinct unresolved modes do not add coherently. `share` is the
-    // fraction of the reference contact this particular injection represents;
-    // renderVoice calls this both when a scheduled contact begins and, for the
-    // nonlinear solve, once per sample of the running contact, so the two
-    // sites shared this loop rather than each keeping its own copy of it.
-    static void injectContinuumEnergy (const Voice& voice, Voice& physical,
-                                       float share) noexcept;
+    static void configureContinuumForce (Voice::ContinuumBand& band,
+                                         double rate, float shift = 1.0f) noexcept;
+    static void advanceContinuumForce (Voice& voice, Voice& physical,
+                                       double force) noexcept;
+    void scaleContinuumEnvelope (Voice& physical, std::size_t index,
+                                  float gain) noexcept;
     // One channel's pass through a continuum band's two-high-pass/seven-
     // low-pass cascade: renderVoice ran this identically for the left and
     // right channel of every band, differing only in which of the band's two

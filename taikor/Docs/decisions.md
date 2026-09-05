@@ -4,6 +4,66 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-09-05 — remove the additional airborne click
+
+**The question.** The attack still sounded artificial. Does it improve when
+the additional differentiated-force click is removed?
+
+| Letter | What it was | Outcome |
+| --- | --- | --- |
+| A | Current engine, including the previously preferred continuum weighting | baseline |
+| C | Same engine with only the extra normal-force-derivative click removed | **chosen** |
+
+**The comparison.** Identical 12.4-second, 32-hit scores across the four
+drums, with four Don and four Edge strokes per drum at velocities 0.4, 0.6,
+0.8 and 1.0. Humanise was zero, Stick Noise was 0.35, Drive was zero, Low
+Cut was off, Performer was P1 and Ensemble Size was 1. Both used the same
+reset state, 44.1 kHz sample rate and 256-sample blocks. Whole-file stereo
+RMS was matched to −30 dBFS using constant gain only: +15.870748 dB for A
+and +15.928435 dB for C. Sources, audio and key are retained in the working
+directory `build/hit-realism-review/`.
+
+**Verdict: C, by ear.** The user chose C when asked which attack sounded
+more natural. This is a listening preference, not a measured taiko match.
+
+**What it licensed.** Remove the separate normal-force-derivative pressure
+layer and its unsubstantiated contact-patch low-pass. Keep the contact
+mechanics, resonant head and shell, accepted continuum weighting, and tack
+source with its existing propagation intact. The final second of the A/C
+renders is sample-identical. This does not claim that real bachi produce no
+acceleration sound; that source needs its own geometry and radiation model.
+The force-history continuum candidate is a separate comparison, with C
+as its accepted baseline.
+
+## 2026-09-05 — statistical upper spectrum follows impulse displacement
+
+**The question.** Does the derived modal impulse-displacement weighting
+improve the upper spectrum compared with the previous fixed rising tilt?
+
+| Letter | What it was | Outcome |
+| --- | --- | --- |
+| A | Shipping engine at `1e20b319`, unchanged | baseline |
+| B | Band levels from Weyl modal count and squared impulse displacement under tension and bending | **tentatively preferred** |
+
+**The comparison.** Identical 12.4-second, 32-hit scores across all four
+drums: four Don and four Edge strokes per drum, at velocities 0.4, 0.6,
+0.8 and 1.0. Humanise, Stick Noise and Drive were zero, Low Cut was off,
+Performer was P1 and Ensemble Size was 1. Both used the same reset state,
+44.1 kHz sample rate and 256-sample blocks, with natural tail overlap.
+Whole-file stereo RMS was matched to −30 dBFS using constant gain only:
++14.536871 dB for A and +15.971877 dB for B. The WAVs, raw renders,
+render settings and key remain in `build/realism-review/continuum/`.
+
+**Verdict: B, tentatively, by ear.** The user said “B is better i guess.”
+This records a tentative listening preference, not a measured match to real
+taiko or a comparison with other products.
+
+**What it licensed.** Retain B's derived relative band levels in the live
+engine, with the existing first-band anchor and 2HP/7LP filters. No fitted
+constant is introduced by this choice. The experimental shared-cavity
+solver was inactive in both renders and is outside this verdict. This is
+a separate comparison from the repeated-stroke variation choice below.
+
 ## 2026-09-05 — repeated strokes retain contact variation
 
 **The question.** Should Humanise 0 produce identical strokes, or retain

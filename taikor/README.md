@@ -262,10 +262,9 @@ separate control, because it is not a separate effect: Hertz contact time falls
 as the fifth root of impact speed, so a harder stroke is shorter, brighter and
 louder at once.
 
-At the default **Linear** Velocity Curve, equal steps of MIDI velocity remain
-equal steps of decibels — which is what an arm does. At full Velocity Depth that
-is 33.6 dB between a ghost stroke and a full blow on an open Don on the ō-daiko,
-and 39.1 dB on the shime. The curve calibrates a controller before that physical
+At the default **Linear** Velocity Curve, MIDI velocity feeds the logarithmic
+impact-speed mapping directly. The resulting audio level also depends on the
+drum and articulation. The curve calibrates a controller before that physical
 map: `v_curve = pow(v, exp2(c))`, where `c` runs from −1 to +1. Soft 100 uses
 the square root, Linear is the exact identity, and Hard 100 squares the input.
 Both endpoints stay fixed. This lets a light or heavy pad reach the intended
@@ -276,7 +275,7 @@ whatever is still ringing, and it goes on damping while it is held — so a stro
 played with the hand down is a muted stroke. Each mode loses energy according to
 the established five-point radial area projection. The two orientations of a
 non-axisymmetric pair receive its angular average; exact local, cross-modal palm
-damping is not claimed. The wooden shell and airborne stick click remain
+damping is not claimed. The wooden shell and airborne tack source remain
 untouched. Release CC1 and the head is open again.
 
 **Strike Azimuth** rotates each articulation's authored radius around the head.
@@ -449,19 +448,21 @@ modes at *f(m,n) = c·λ(m,n) / 2πa*, where *c = √(T/σ)* and *λ(m,n)* is th
 zero of the Bessel function *J(m)*. Taikor runs twenty such modes — four
 axisymmetric and sixteen with a circumferential order.
 
-A taiko head is not that membrane, though, and the difference is audible. It is
-chemically treated cowhide with a Young's modulus around 3.5 GPa, several
-tenths of a millimetre thick, held at a tension far above a drum-kit head's — a
-*stretched plate*, in the acoustics literature, rather than an ideal membrane.
+A treated cowhide head can also resist bending. A
+[Japanese-drum diaphragm study](https://doi.org/10.1250/ast.30.348) measured a
+Young's modulus around 3.5 GPa and investigated a *stretched plate* model.
+Taikor includes that mechanism, with effective thickness and tension selected
+for its family profiles. These are model parameters, not measurements of four
+owned instruments.
 A plate resists bending as well as stretching, and bending adds a term in the
 fourth power of the wavenumber to *ω²*: *ω² = (T k² + D k⁴)/σ*, with the
 flexural rigidity *D = E h³ / 12(1 − ν²)*. So the ratios between the modes are
 not constants of the geometry. They open out with the mode's order, and they
 open out further the smaller the drum and the thicker its hide.
 
-That single term is most of what separates a shime-daiko's spectrum from an
-ō-daiko's, and on this instrument it is a measured difference between two of the
-four drums rather than a claim. The top of the resolved bank sits 30 cents above
+Within this model, that term changes the spacing of the family's partials.
+The following numbers are model predictions, not recorded-drum measurements:
+the top of the resolved bank sits 30 cents above
 where an ideal membrane would put it on the ō-daiko, 33 on the nagadō-daiko, 13 on
 the okedo and 6 on the shime — because *B = D/(Ta²)* falls as the hide gets
 thinner (as the cube of its thickness) and as it is pulled tighter, and both of
@@ -491,6 +492,27 @@ the pair sits a fraction of a percent apart and beats. That asymmetry belongs to
 the hide rather than to the stroke, so it is seeded from a fixed constant: the
 same drum splits the same way every time it is hit.
 
+#### Published frequency comparison
+
+The stiffness hypothesis has an external check in
+[`Tools/BenchmarkPublishedModes.py`](Tools/BenchmarkPublishedModes.py).
+It compares eight measured frequencies from Suzuki et al.'s 2009 single-headed
+nagadō-daiko experiment against the published plate theories and Taikor's
+single-head frequency equation using the paper's material inputs. After
+removing one common tuning offset, RMS spacing error is 44.27 cents for an
+ideal membrane, 75.79–78.95 cents for the published plate theories, and
+85.70–89.09 cents for Taikor's equation at the two inferred tensions.
+The simpler membrane hypothesis fits this specimen better. The paper itself
+reports that its measured low-mode spacing contradicted the predicted bending
+effect. The open body, floor loading and actual rim condition are unresolved;
+these figures assess equation hypotheses, not the full plugin or its presets.
+
+Run `python3 Tools/BenchmarkPublishedModes.py` to reproduce the comparison.
+The tool retains the paper's mode labels, setup and distinction between measured
+frequencies and inferred inputs. Its tests check analytic limits and invariance
+to a common tuning change. This is an external reference, not a fitted factory
+profile or evidence of superiority to other instruments.
+
 #### The air on the head
 
 The air a mode has to move rides along with it as added mass, and lowers it. How
@@ -510,22 +532,23 @@ silently treating an unmeasured loading law as a calibrated mechanical mass.
 #### The air inside the body
 
 A taiko is a closed drum, and the enclosed air is a spring between its two heads.
-Only the axisymmetric modes can compress it — every other mode moves the same
-amount of air in and out and leaves the volume unchanged — so the coupling is
-applied to those modes alone, weighted by how much volume each one displaces.
+The current pressure approximation couples only axisymmetric head modes,
+weighted by their net volume displacement. Other head modes leave the total
+volume unchanged, but a real cavity can still carry nonuniform pressure fields;
+those transverse acoustic modes are outside this approximation.
 
 The result is that each axisymmetric mode splits in two: a **breathing** mode
 where both heads move outward together, lifted well above its uncoupled
 frequency by the air spring, and a volume-preserving mode that is left roughly
 where it was. On the default drum the pair lands at about 32.7 Hz and 61.4 Hz. The
-breathing mode is also the one that radiates, because it is the one that changes
-the drum's volume — which is why a sealed taiko is heard higher than its
-membrane fundamental.
+breathing mode has a net volume source; other branches can radiate as spatial
+multipoles. The microphone perspective and branch losses determine which one
+is heard most strongly.
 
 The spring is a column and not an infinite one. *ρc²/L* is what a cavity is
 worth only while the wavelength runs away from the body, and this instrument
 leaves that limit inside its own range: the body's first axial resonance is
-212 Hz on the ō-daiko, 259 on the nagadō-daiko, 343 on the okedo and 819 on the
+134.5 Hz on the ō-daiko, 183.2 on the nagadō-daiko, 343.5 on the okedo and 817.7 on the
 shime, every one of them inside the resolved bank of the drum it belongs to.
 What each head actually drives is a rigidly terminated column of length *L/2* —
 the volume-changing motion is symmetric about the midplane, so that plane
@@ -538,8 +561,10 @@ head — and 0.65 on the shime, falling to 0.05 there at full Body Depth. It has
 to be solved for rather than computed, because the stiffness depends on the
 frequency it sets. Each axisymmetric pair now converges on its own
 factor; the three higher solves are deferred until the octave search has chosen
-the final drum, because they cannot move the pair the keyboard is tuned by, and
-the audio loop never sees the iteration. The model reports the lowest pair's
+the final drum. In this independent-pair approximation their cavity factors
+do not change the lowest pair used by that search; this does not guarantee
+that higher-mode changes are perceptually pitch-neutral. The audio loop never
+sees the iteration. The model reports the lowest pair's
 factor for the same reason: it is an answer the drum has to converge on rather
 than an expression anything can write down.
 
@@ -547,7 +572,7 @@ Musically this is what stops a long-bodied drum being an air spring with a hide
 attached, and it is why the four drums split their lowest pair so differently:
 1.88, 1.39, 1.07 and 1.08 times the fundamental going up the family. The
 keyboard is an octave in the pitch each drum is heard at and it is not an octave
-in the breathing branch, which steps 747 / 1727 / 1206 cents — because the branch
+in the breathing branch, which steps 747 / 1730 / 1206 cents — because the branch
 above the fundamental is lifted by a column whose length is a property of each
 instrument rather than of a scaling.
 
@@ -562,12 +587,11 @@ modes already cross it: the factory ō-daiko's four cached factors are about
 0.823 / 0.610 / 0 / 0. The zeroes are a continuous truncation of this scalar
 spring model, not a claim that the higher acoustic field disappears.
 
-Because the breathing mode is the one that radiates, it is also the one that
-empties first — on the default drum it is gone in about half a second while the
-radial orders above it are still sounding after three. The tail figure the editor
-shows is therefore not the fundamental's decay but the longest-lived branch any
-stroke can drive, swept across the whole axisymmetric family; reporting the
-fundamental's own decay understated a sealed drum by a factor of four.
+Radiation, mounting and material loss jointly determine the decay. On the
+factory ō-daiko, the breathing branch has a T60 of about 1.02 seconds, the
+lower branch about 0.57 seconds, and the slowest higher radial branch about
+3.81 seconds. The editor therefore reports the longest-lived audible
+axisymmetric branch rather than treating the lowest pair as the whole tail.
 
 Turn Air Coupling all the way down and there is no split at all: the two heads
 are independent, and a stroke on the batter head cannot reach the far one. The
@@ -629,11 +653,30 @@ on `radiationEfficiency` is the wrong term in the wrong place.
 A modal bank can only resolve so far. The mode table runs to the Bessel zeros
 around *λ = 13*, which on a large drum puts the highest resolved mode a couple
 of hundred hertz up — and a real head goes on having modes for another five
-octaves above that, spaced far closer together than their own bandwidths. Nobody
-hears those individually. What reaches the ear is a shaped burst that empties
-from the top down, so that is what Taikor models: five overlapping bands of
-noise, each carrying the head's own loss law and each lit by the same contact
-that drives the modes.
+octaves above that. Taikor approximates this unresolved region with five
+overlapping statistical bands, each carrying the head's loss law and driven
+by the same contact as the resolved modes. The handoff is a selected model
+boundary: some low bands on the large drums begin before genuine modal overlap.
+
+Their relative levels now follow the statistical **impulse displacement** of a
+head under both tension and bending. With dimensionless squared wavenumber
+`q = (k a)^2`, Weyl's leading modal count is `N = q/4`; the head's dispersion
+is `omega^2 = C q (1 + B q)`. Each mode's displacement after a force impulse
+scales as `1/omega`. Integrating squared displacement over the modes in each
+band therefore gives
+`W = log1p((q_high - q_low) / (q_low * (1 + B*q_high)))`.
+The band's relative RMS is `sqrt(W/W_first)`. A tension-dominated membrane
+has flat octave displacement RMS; in the bending limit it falls as
+`1/sqrt(f)`. The first-band level remains the existing reference.
+
+This replaces a fixed rising tilt that conflated membrane and plate mode
+density and omitted the frequency dependence of impulse displacement. The
+[modal impulse-response formulation](https://www.dafx.de/paper-archive/2009/papers/paper_77.pdf)
+is checked here against independently enumerated membrane/plate modes and
+their summed squared displacement amplitudes. Statistical input/output coupling is still
+approximated; this is not a measured microphone-pressure spectrum or a
+reciprocal mechanical residual. The integral uses nominal band limits,
+whereas the actual filters overlap.
 
 Each octave is a serial two-pole high-pass followed by a seven-pole low-pass.
 Its lower skirt therefore falls at twelve decibels per octave and its upper one
@@ -658,9 +701,9 @@ recordings, but did not identify the recordings or retain a reproducible
 comparison. That claim is unverified. Current regression tests establish
 internal model behavior and stability, not a measured match to acoustic taiko.
 
-What sets its weight is the head's own modal receptance — the velocity a unit
-force gets out of the drum — observed once at the factory microphone position.
-From that exact compatibility anchor, each octave follows its own wavelength-
+Its level reference is the strongest resolved modal displacement response to a
+unit impulse, observed at the factory microphone position. The first statistical
+band retains that level anchor. Each octave also follows its own wavelength-
 dependent distance gain. That is a property of the drum and its placement, and
 of nothing else. Regression tests isolate the uppermost statistical band at
 44.1, 48, 96 and 192 kHz and require it to remain within 2 dB; the complete
@@ -680,23 +723,45 @@ underneath, which measures as a body and does not sound like one. In the model
 voicing, the sustained low-mid is primarily resolved modal energy; the
 continuum supplements it. This balance still needs controlled acoustic captures.
 
-Three things fall out of modelling it as the head rather than as an effect. It
-follows the contact: every band uses the same smooth Hertz-pulse transform as
-the resolved-mode readout, so a force pulse of duration *τ* has nothing much
-above *1/τ*. A soft stroke — resting on the head nearly twice as long — cannot
-reach the top of it, while a full-arm stroke lights all of it. It follows the strike
-position, because the short-wavelength mode shapes pile up against the rim, so a
-Edge reaches into it eleven decibels harder than a Don. And the two microphones hear the
-bottom of it in common and the top of it independently, because a wavelength
-long against their spacing arrives at both alike and a short one does not —
-which is why opening the pair now widens the drum's air and not merely its
-partials.
+The upper spectrum now follows the **actual contact-force history**. Each band
+uses 64 quadrature frequencies distributed through its Weyl-weighted modal
+population. A complex response at each frequency obeys
+`dz/dt = (-sigma + i*omega)*z + F(t)`, integrated exactly for the force held
+over one sample. The band's squared amplitude follows the weighted sum of
+`|z|^2`. Later force can reinforce or cancel earlier excitation, just as it can
+in a forced mode; the former positive-only `F^2` envelope could only add to it.
+This is a causal approximation of the
+[forced modal response](https://www.dafx.de/paper-archive/2009/papers/paper_77.pdf),
+so the attack starts during contact rather than waiting for the stick to leave.
 
-The direct airborne attack is the derivative of the solved normal contact
-force, filtered by the finite contact-patch corner. Stick/hide roughness still
-excites the resonant drum, but it is not differentiated into that pressure path
-a second time; doing so would cancel the patch roll-off and leave a flat random
-shelf up to Nyquist.
+That distinction matters when a moving head keeps the bachi in contact longer
+than the nominal Hertz estimate. The previous model timed its noise injection
+from the solved collision but shaded its spectrum using the estimated pulse.
+Those two descriptions could disagree by several milliseconds. The new model
+uses one force history for both timing and spectral cancellation. Its absolute
+level still uses the nominal reference pulse's impulse as a compatibility
+anchor; it is not a measured pressure calibration. The finite quadrature
+approximates a band rather than resolving all its physical modes. For 24
+captured factory Don/Edge contacts, 64 nodes agreed with dense integration to
+within 0.001 dB in bands within 30 dB of each attack's strongest continuum band.
+That checks numerical convergence for those contacts, not acoustic realism or
+every possible control setting.
+
+Separate strikes still contribute independent statistical powers to one shared
+field. Its existing position weighting and microphone correlation remain:
+shorter wavelengths become less correlated between the two microphones.
+Distance, palm damping and filter-variance changes scale both the shared field
+and the active contacts' response states, keeping subsequent cancellation in
+the same amplitude coordinates.
+
+The attack comes from the contact-driven drum and its statistical upper modes.
+The former additional differentiated-force click has been removed following a
+[listening comparison](Docs/decisions.md#2026-09-05--remove-the-additional-airborne-click).
+Its nominal 3.5 kHz low-pass was not derived from a millimetre-sized contact
+patch: that patch is acoustically compact at these frequencies. A separate
+bachi [acceleration-noise model](https://www.cs.cornell.edu/projects/Sound/impact/)
+would need the stick's radiating geometry and motion. Stick/hide roughness still
+excites the resonant drum, and the tack source retains its airborne path.
 
 #### Where the body comes from
 
@@ -733,7 +798,7 @@ conditions and analysis cannot be checked from this repository.
 The hysteretic part has a frequency-independent loss angle and damps as *ω*; the
 viscous part follows the rate of strain and damps as *ω²*. Only the pair works
 here, because this model resolves the low modes individually and treats
-everything above the modal overlap as a continuum, and no single power of *ω*
+the region above its selected crossover as a continuum, and no single power of *ω*
 serves both: set for the body, the continuum rings for the best part of a second
 as a bed of noise behind the drum; set for the continuum, the body is gone
 before it is heard.
@@ -741,8 +806,9 @@ before it is heard.
 **The rim** takes the rest. It is the only term that does not scale with
 frequency, which makes it the ceiling on how long anything can ring — a mode
 cannot outlast *6.9/edgeLoss* however little else touches it — and measured
-against recordings a real head wants a second and a half in its body, so it has
-to stay small. Head Damping scales it from almost nothing to a great deal, so
+decays would be needed to identify it for a particular drum. The factory value
+is a model choice, not a retained recording fit. Head Damping scales it from
+almost nothing to a great deal, so
 the long ō-daiko boom is still there at the bottom of the control. A mode with a
 circumferential order pays more of it, because those shapes are pressed against
 the boundary rather than spread across the head.
@@ -780,7 +846,7 @@ emerge from that coupled motion.
 The analytic reference pulse is `sin(πt/τ)^1.5`. Its exact impulse integral
 is `sqrt(π)·Γ(5/4)/Γ(7/4) = 1.7480383695280799`; the former 2.3963 is
 the integral of `sqrt(sin(x))` and understated the reference peak force. This
-reference calibrates the residual and direct paths; the moving-head contact
+reference anchors the statistical residual's level; the moving-head contact
 force itself still comes from the coupled solve.
 
 The contact is advanced with a discrete-gradient IMP-2 scheme whose free modal
@@ -959,11 +1025,10 @@ top instead of making the distant drum brighter. On the factory ō-daiko the
 five target-level drops rise from about 9.1 to 22.1 dB. The factory voicing is
 unchanged because that position is the exact unity point of the new law.
 
-On top of that, each microphone hears the impact **through the air** from
-wherever the stick landed, at its own distance and so at its own level and its
-own arrival time. That is what places a stroke somewhere on the drum rather than
-in the middle of it, and it is what keeps a spaced pair in phase on an edge
-strike that the membrane modes alone would cancel.
+The tack source has an additional airborne path with separate propagation
+distances and arrival times at the two microphones. The former standalone
+stick click used that path too; removing it leaves the head's stereo image
+to its modal observations and statistical correlation model.
 
 Fully opened, the two sit about fifty degrees of arc apart, which is what a
 close pair over one head actually is. It is worth being strict about that: at a
@@ -1039,7 +1104,7 @@ prevents sample overload; it does not remove acoustic spill.
 The room, the player's body, the stand, and the far head's own radiation into
 the space behind the drum. The enclosed air carries the stiffness of a finite
 column but not its mass or its own resonances: above the body's first axial
-resonance — 212 Hz on the ō-daiko, 819 on the shime, and between 139 and 451 Hz
+resonance — 134.5 Hz on the ō-daiko, 817.7 on the shime, and between 87.9 and 285.8 Hz
 across Body Depth on the ō-daiko — the column is treated as absent rather than
 as the mass it becomes.
 Nothing anywhere associates a loss with the enclosed air either. Body Depth still
@@ -1073,27 +1138,50 @@ modes excite a spatial pressure field, and at the quarter-wave the current
 model continuously floors the stiffness to zero rather than introducing the
 cavity mass and poles required beyond it.
 
+An experimental replacement is implemented in
+[`Source/DSP/CoupledCavity.cpp`](Source/DSP/CoupledCavity.cpp). It uses eight
+physical head coordinates and two shared axial air coordinates by default,
+with up to four available for convergence checks. Integrating the air's kinetic
+and compression energies gives symmetric mass and stiffness matrices; the
+generalized eigensolve retains both cavity inertia and acoustic resonances.
+This follows the importance of internal-air mass and compression identified
+in [Suzuki and Hwang's Japanese-drum study](https://doi.org/10.1250/ast.29.215),
+using an explicit cylindrical, plane-wave reduction rather than claiming the
+paper's barrel geometry or measured pressure transfer.
+
+`build/TaikorCavityStudy` compares this solver with the current four factory
+drums. Increasing from two to four axial coordinates moves the selected
+fundamental-head pairs by less than 0.61 cents in that comparison. Tests also
+check the energy integrals against spatial quadrature, positive energy,
+mass-orthogonal eigenvectors, the zero-coupling limit, rigid-head air poles,
+and convergence against the one-dimensional wave equation. The two-air-mode
+solve takes about 10 microseconds on the development machine.
+
+**The experimental cavity solver is not in the plugin's audio path.** It
+changes each mode into a mixture of several head and air coordinates; live
+contact, damping, microphone observation and retuning must carry that complete
+state before activation. The study holds the existing exterior-air frequency
+approximation fixed and does not establish calibrated taiko pressure or decay.
+An independent-pair inertia shortcut was checked and rejected: it differs from
+the shared model by up to about 86 cents on the factory pairs.
+
 The statistical continuum is not yet a mechanical load in the bachi solve.
 Contact sees the forty resolved membrane coordinates; afterwards its force
 history excites the higher stochastic bands, but those bands exert no reciprocal
-force on the stick. Until a measured dynamic residual replaces that observation,
-one contact can spend at most the direct rigid-target Hunt–Crossley squared-force
-integral through the same residual admittance. This legacy `∫F²/Z dt` exposure
-is not Joules or a passivity claim: the residual `Z` is still per unit length.
-The cap changes continuum injection only; solved modal force, roughness, direct
-airborne pressure and tack drive remain untouched.
+force on the stick. Causal force-history integration fixes temporal and spectral
+consistency in that observation; it does not complete the missing mechanical
+coupling. The former positive-only `∫F²/Z dt` exposure ceiling no longer gates
+the upper spectrum, since truncating the later force would also remove its
+physical phase cancellation. The retained exposure calculation is diagnostic
+only, and its per-unit-length `Z` does not make it a mechanical energy measure.
+Output protection remains downstream of the complete instrument.
 
-At 48 kHz an ordinary factory nagadō-daiko Don requests about **0.953** of its
-limit and therefore passes uncapped. The former hostile shime Don asks for about
-**446×** the direct-contact exposure and is capped. Against an otherwise exact
-cap-disabled render, every shime's 80–500 ms tail is unchanged, while flams,
-rolls and 18 ms retriggers retain clear onsets. That validates the boundary, not
-the absolute shime or roll transfer: fitting those still needs the controlled
-driving-point mobility and pressure captures. On the two large drums the first
-continuum band also begins before the deterministic modes have reached
-statistical overlap; closing both gaps needs a measured complex mobility and a
-passive dynamic residual, not an uncalibrated resistance which captures soft
-and edge strokes instead of returning stored energy.
+The continuum's absolute level and spatial weighting still need controlled
+driving-point mobility and pressure captures. Its first bands on the large
+drums can begin before statistical overlap, and its finite frequency nodes can
+miss fine interference across a band. Closing these gaps needs a passive
+dynamic residual with sufficient frequency resolution, rather than treating
+the omitted modes as an uncalibrated resistance.
 
 Resolved modes still reach the capsules through real scalar observations. They
 carry mode-dependent near-field cancellation, and every non-axisymmetric mode
@@ -1117,15 +1205,12 @@ sitting unreachable. Building it back for the striker is cheap in modes and
 expensive in level, because what a bachi is worth against the drum it is hitting
 was only ever pinned by how the stick-against-stick stroke sounded.
 
-Six constants are calibrated rather than derived, and each of them sets the
-*depth* of a term whose shape is computed: the overall level of radiation
-damping, and how efficiently the shell, the airborne click and a lifted tack
-reach the microphones — the first three of those turn on how the drum is mounted
-and where the player is standing, neither of which this model describes, and the
-fourth on the radiating efficiency of a 6 mm iron head against wood; the weight
-of the head's high-frequency continuum against its resolved bank, which is a time in
-seconds because what it multiplies is the head's receptance; and the shape
-factor of the attack pitch glide, which stands in for the difference between the
+Several coefficients remain voicing choices rather than identified physical
+parameters: radiation damping strength, shell and tack observation levels,
+the statistical upper spectrum's level relative to the resolved head, and the
+attack pitch glide's shape factor. Their values need controlled captures of
+the mounted drum and microphone arrangement. The glide factor stands in for
+the difference between the
 modal states the engine has and the mean square slope the tension rise depends
 on. Everything about how those terms *vary* with size, material, position and
 stroke is computed.
@@ -1137,6 +1222,25 @@ controlled. Pure refactors, deduplications and test-coverage additions are in
 git history rather than here.
 
 ### 2026-09-05
+
+- **The upper spectrum follows the solved strike force.** Causal modal-response
+  integration replaces nominal Hertz spectral shading and positive-only noise
+  injection. Sustained contact can now cancel high-mode excitation. The accepted
+  tension/bending weighting remains, while the attack and upper tail can change
+  in existing sessions. The reference impulse still anchors overall voicing.
+
+- **Removed the extra airborne click.** The hit now reaches the output through
+  the contact-driven drum, its statistical upper spectrum and the applicable
+  tack source. The separate differentiated-force layer and its unsupported
+  patch-size filter were removed after the user preferred the comparison
+  without them. This changes the attack of existing sessions.
+
+- **Corrected the high-mode statistical impulse response.** Relative band
+  levels now integrate modal population and force-to-displacement response
+  using each head's tension/bending dispersion. The original crossover band,
+  filter topology and output protection remain in place; higher bands change
+  level, so existing sessions can sound different above the resolved modes.
+  This is a model correction, not a recording-derived calibration.
 
 - **Added Ensemble Size and Ensemble Variation.** Each played row can trigger
   1–8 independent drum models with up to 30 ms of companion timing spread and
