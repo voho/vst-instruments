@@ -339,9 +339,9 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 //     modelled asymptote, the untrimmed bank peaked no higher than -3.67 dBFS.
 //     It stays as a floor under the contract rather than as the thing the
 //     trims are chosen to satisfy.
-//   * No factory preset may exceed -31 dBFS gated loudness. Derived once, as
-//     three decibels above the -34.20 dBFS corpus median measured with every
-//     preset at the panel default, then frozen as an absolute figure. It is
+//   * No factory preset may exceed -28.5 dBFS gated loudness. Originally
+//     frozen at -31 dBFS from the untrimmed corpus, then shifted with the
+//     common +2.5 dB output-reference change. It is
 //     deliberately not re-expressed against the median: pulling the loud end
 //     down moves the median too, so a relative rule would chase itself and
 //     could never be satisfied. Tools/AuditFactoryPresets enforces both as
@@ -357,20 +357,20 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // below the corpus median to 12.9 dB below it.
 constexpr std::array<float, presetCount> factoryVolume {{
     0.800f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
-    0.462f, 0.557f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.450f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.744f, 0.800f, 0.394f, 0.596f, 0.617f, 0.800f, 0.775f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.254f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.247f,
     0.645f, 0.800f, 0.800f, 0.800f, 0.790f, 0.337f, 0.322f, 0.800f,
-    0.800f, 0.760f, 0.321f, 0.800f, 0.611f, 0.458f, 0.800f, 0.800f,
+    0.800f, 0.760f, 0.295f, 0.800f, 0.611f, 0.449f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.530f, 0.800f, 0.650f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.640f, 0.800f, 0.591f, 0.653f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.450f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.754f, 0.800f, 0.800f, 0.766f, 0.800f,
     0.800f, 0.800f, 0.523f, 0.356f, 0.800f, 0.800f, 0.534f, 0.800f,
-    0.800f, 0.760f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.727f, 0.800f, 0.800f, 0.800f, 0.617f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.750f,
+    0.800f, 0.760f, 0.800f, 0.800f, 0.800f, 0.786f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.673f, 0.800f, 0.800f, 0.800f, 0.617f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.679f, 0.800f, 0.750f,
     0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.800f, 0.611f,
 }};
 
