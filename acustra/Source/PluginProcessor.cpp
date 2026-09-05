@@ -25,6 +25,7 @@ enum ParameterSlot
     slotCapture,
     slotPicking,
     slotBridgeModel,
+    slotUpperMic,
     slotCount
 };
 
@@ -43,7 +44,8 @@ constexpr std::array<const char*, slotCount> parameterIds {
     ids::output,
     ids::capture,
     ids::picking,
-    ids::bridgeModel
+    ids::bridgeModel,
+    ids::upperMic
 };
 
 std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
@@ -208,6 +210,11 @@ AcustraAudioProcessor::createParameterLayout()
     result.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { ids::bridgeModel, 3 }, "Bridge Model",
         juce::StringArray { "Original", "Measured Fylde (steel)" }, 0));
+    // Keep Capture's five-value normalized range: adding a sixth choice there
+    // would reinterpret existing host automation. The editor combines this
+    // independent override with the legacy choices into one Capture menu.
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { ids::upperMic, 4 }, "Upper mic", false));
 
     return { result.begin(), result.end() };
 }
@@ -235,6 +242,8 @@ AcustraAudioProcessor::snapshotEngineParameters() const noexcept
     result.stereoWidth = 0.01f * value (slotStereoWidth);
     result.outputGain = juce::Decibels::decibelsToGain (value (slotOutput));
     result.capture = choiceValue<acustra::CaptureType> (value (slotCapture), 4);
+    if (value (slotUpperMic) >= 0.5f)
+        result.capture = acustra::CaptureType::UpperMic;
     result.picking = choiceValue<acustra::PickingTechnique> (value (slotPicking), 2);
     result.bridgeModel = choiceValue<acustra::BridgeModel> (value (slotBridgeModel), 1);
     return result;

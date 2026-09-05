@@ -18,7 +18,7 @@
 #define ACUSTRA_BRIDGE_MODE_COUNT 50
 #endif
 #if !defined(ACUSTRA_BODY_MODE_COUNT)
-#define ACUSTRA_BODY_MODE_COUNT 103
+#define ACUSTRA_BODY_MODE_COUNT 109
 #endif
 
 namespace acustra
@@ -52,7 +52,8 @@ enum class CaptureType
     TrebleMic,
     BassMic,
     SaddlePiezo,
-    Magnetic
+    Magnetic,
+    UpperMic
 };
 
 enum class Tuning
@@ -407,8 +408,10 @@ private:
         float leftImaginary { 0.0f };
         float rightReal { 0.0f };
         float rightImaginary { 0.0f };
+        float upperReal { 0.0f };
+        float upperImaginary { 0.0f };
 
-        void process(float input, float& left, float& right) noexcept
+        void process(float input, float& left, float& right, float& upper) noexcept
         {
             const float nextReal = input + poleReal * real
                                  - poleImaginary * imaginary;
@@ -420,6 +423,8 @@ private:
                           - leftImaginary * imaginary);
             right += 2.0f * (rightReal * real
                            - rightImaginary * imaginary);
+            upper += 2.0f * (upperReal * real
+                           - upperImaginary * imaginary);
         }
         void reset() noexcept { real = imaginary = 0.0f; }
     };
@@ -527,6 +532,7 @@ private:
     {
         float left { 0.0f };
         float right { 0.0f };
+        float upper { 0.0f };
     };
 
     static EngineParameters sanitise(const EngineParameters&) noexcept;
@@ -621,7 +627,7 @@ private:
     BridgeLoad bridgeLoad_ {};
     FixedDerivative bridgeVelocityDerivative_ {};
     FixedDerivative magneticDerivative_ {};
-    std::array<float, 5> captureMix_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    std::array<float, 6> captureMix_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     bool magneticNeedsPriming_ { true };
     FixedDerivative bridgeRotationDerivative_ {};
     // The junction's power is the sum over both coordinates, so the moments

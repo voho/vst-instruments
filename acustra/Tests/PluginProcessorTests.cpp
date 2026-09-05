@@ -110,11 +110,12 @@ void testParameterContract()
     constexpr std::array<const char*, ids::parameterCount> expectedIds {
         ids::shape, ids::bodyMaterial, ids::stringMaterial, ids::tuning,
         ids::stringAge, ids::pluckPosition, ids::touch, ids::bodyAmount,
-        ids::stereoWidth, ids::output, ids::capture, ids::picking, ids::bridgeModel
+        ids::stereoWidth, ids::output, ids::capture, ids::picking, ids::bridgeModel,
+        ids::upperMic
     };
     constexpr std::array<float, ids::parameterCount> expectedDefaults {
         2.0f, 0.0f, 1.0f, 0.0f, 15.0f, 28.0f, 58.0f, 82.0f, 62.0f, -7.5f,
-        0.0f, 0.0f, 0.0f
+        0.0f, 0.0f, 0.0f, 0.0f
     };
 
     const auto& hostParameters = processor.getParameters();
@@ -150,6 +151,8 @@ void testParameterContract()
         processor.parameters.getParameter (ids::capture));
     const auto* picking = dynamic_cast<const juce::AudioParameterChoice*> (
         processor.parameters.getParameter (ids::picking));
+    const auto* upperMic = dynamic_cast<const juce::AudioParameterBool*> (
+        processor.parameters.getParameter (ids::upperMic));
     expect (shape != nullptr && shape->choices.size() == 4,
             "Shape does not expose four bodies");
     expect (wood != nullptr && wood->choices.size() == 4,
@@ -163,7 +166,10 @@ void testParameterContract()
     expect (capture != nullptr && capture->choices == juce::StringArray {
                 "Stereo mics", "Treble mic", "Bass mic", "Saddle piezo",
                 "Magnetic (steel)" },
-            "Capture does not expose the five supported transducers");
+            "the five legacy capture choices changed their automation contract");
+    expect (upperMic != nullptr && upperMic->getVersionHint() == 4
+                && upperMic->getParameterIndex() == 13,
+            "Upper mic is not an appended boolean with AU version hint 4");
     expect (picking != nullptr && picking->choices
                 == juce::StringArray { "Finger", "Pick", "Thumb" },
             "Picking does not expose finger, pick and thumb");
@@ -199,6 +205,28 @@ void testParameterContract()
     expect (std::abs (engine.outputGain
                       - juce::Decibels::decibelsToGain (-3.0f)) < 0.001f,
             "Output was not converted from dB to linear gain");
+
+    // A sixth item in the old choice would reinterpret existing normalized
+    // automation. Upper mic instead overrides that unchanged five-item value.
+    auto* legacyCapture = processor.parameters.getParameter (ids::capture);
+    if (legacyCapture != nullptr)
+        for (int choice = 0; choice < 5; ++choice)
+        {
+            legacyCapture->setValueNotifyingHost (choice * 0.25f);
+            expect (valueOf (processor, ids::capture) == static_cast<float> (choice)
+                        && processor.snapshotEngineParameters().capture
+                            == static_cast<acustra::CaptureType> (choice),
+                    "legacy normalized capture automation changed meaning");
+            setValue (processor, ids::upperMic, 1.0f);
+            expect (processor.snapshotEngineParameters().capture
+                        == acustra::CaptureType::UpperMic
+                        && valueOf (processor, ids::capture) == static_cast<float> (choice),
+                    "Upper mic did not override capture while retaining its saved value");
+            setValue (processor, ids::upperMic, 0.0f);
+            expect (processor.snapshotEngineParameters().capture
+                        == static_cast<acustra::CaptureType> (choice),
+                    "disabling Upper mic did not restore the legacy capture");
+        }
 }
 
 void testProcessorContractAndSampleAccurateMidi()
@@ -1155,6 +1183,7 @@ void testStateRoundTripAndMigration()
     setValue (source, ids::capture, 4.0f);
     setValue (source, ids::picking, 1.0f);
     setValue (source, ids::bridgeModel, 1.0f);
+    setValue (source, ids::upperMic, 1.0f);
 
     juce::MemoryBlock stored;
     source.getStateInformation (stored);
@@ -1165,9 +1194,29 @@ void testStateRoundTripAndMigration()
                                   static_cast<int> (stored.getSize()));
     for (const char* id : { ids::shape, ids::bodyMaterial, ids::stringMaterial,
                             ids::tuning, ids::stringAge, ids::pluckPosition,
-                            ids::output, ids::capture, ids::picking, ids::bridgeModel })
+                            ids::output, ids::capture, ids::picking, ids::bridgeModel,
+                            ids::upperMic })
         expect (std::abs (valueOf (restored, id) - valueOf (source, id)) < 0.011f,
                 std::string { "state round trip lost " } + id);
+
+    // A complete version-3 state has a saved capture value but no upper-mic
+    // override. Loading it into a live upper-mic session must restore that
+    // actual capture, not leave the new override latched.
+    auto previousState = source.parameters.copyState();
+    for (int child = previousState.getNumChildren(); --child >= 0;)
+        if (previousState.getChild (child).getProperty ("id").toString()
+                == ids::upperMic)
+            previousState.removeChild (child, nullptr);
+    juce::MemoryBlock previousBytes;
+    if (const auto xml = previousState.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*xml, previousBytes);
+    restored.setStateInformation (previousBytes.getData(),
+                                  static_cast<int> (previousBytes.getSize()));
+    expect (valueOf (restored, ids::upperMic) == 0.0f
+                && valueOf (restored, ids::capture) == 4.0f
+                && restored.snapshotEngineParameters().capture
+                    == acustra::CaptureType::Magnetic,
+            "a legacy state retained the new upper-mic override or lost its capture");
 
     // A session saved before later controls existed must receive their factory
     // defaults, not whatever values happen to be live in the destination.
@@ -1176,6 +1225,7 @@ void testStateRoundTripAndMigration()
     setValue (restored, ids::capture, 3.0f);
     setValue (restored, ids::picking, 2.0f);
     setValue (restored, ids::bridgeModel, 1.0f);
+    setValue (restored, ids::upperMic, 1.0f);
     juce::ValueTree oldState { restored.parameters.state.getType() };
     juce::ValueTree shape { "PARAM" };
     shape.setProperty ("id", ids::shape, nullptr);
@@ -1192,7 +1242,8 @@ void testStateRoundTripAndMigration()
                 && std::abs (valueOf (restored, ids::output) + 7.5f) < 0.011f
                 && valueOf (restored, ids::capture) == 0.0f
                 && valueOf (restored, ids::picking) == 0.0f
-                && valueOf (restored, ids::bridgeModel) == 0.0f,
+                && valueOf (restored, ids::bridgeModel) == 0.0f
+                && valueOf (restored, ids::upperMic) == 0.0f,
             "parameters absent from an old state did not receive defaults");
 
     const char garbage[] = "not an Acustra state";
@@ -1322,6 +1373,14 @@ void testEditorRendering()
                     expect (captureMenu->getSelectedId() == 5
                                 && valueOf (processor, ids::capture) == 4.0f,
                             "the UI silently replaced host-automated magnetic capture");
+                    setValue (processor, ids::upperMic, 1.0f);
+                    juce::Timer::callPendingTimersSynchronously();
+                    expect (captureMenu->isItemEnabled (6)
+                                && captureMenu->getSelectedId() == 6
+                                && engineStatus != nullptr
+                                && engineStatus->getText().contains ("kHz"),
+                            "the upper microphone retained a false magnetic/nylon warning");
+                    setValue (processor, ids::upperMic, 0.0f);
                     setValue (processor, ids::capture, 0.0f);
                 }
             menu->setSelectedId (2, juce::sendNotificationSync);
@@ -1360,6 +1419,44 @@ void testEditorRendering()
             expect (std::abs (valueOf (processor, id)
                               - (captureMenu ? 3.0f : 2.0f)) < 0.011f,
                     "a setup menu did not update its host parameter");
+            if (captureMenu)
+            {
+                expect (menu->getNumItems() == 6,
+                        "the Capture menu does not expose the sixth upper microphone");
+                // ComboBox user notifications are asynchronous. A display
+                // timer firing before that notification must not replace the
+                // user's pending selection with the old parameter value.
+                menu->setSelectedId (6, juce::sendNotificationAsync);
+                // Keep ComboBox delivery queued while the 12 Hz display timer
+                // becomes due; otherwise this race assertion can pass without
+                // running a timer callback at all.
+                juce::Thread::sleep (110);
+                juce::Timer::callPendingTimersSynchronously();
+                expect (menu->getSelectedId() == 6,
+                        "a display timer discarded the pending upper-mic selection");
+                // Deliver a synchronous selection to drain the pending
+                // notification and return to the same starting capture.
+                menu->setSelectedId (4, juce::sendNotificationSync);
+                menu->setSelectedId (6, juce::sendNotificationSync);
+                expect (valueOf (processor, ids::upperMic) == 1.0f
+                            && valueOf (processor, ids::capture) == 3.0f
+                            && processor.snapshotEngineParameters().capture
+                                == acustra::CaptureType::UpperMic,
+                        "the upper microphone menu item changed the legacy choice");
+                setValue (processor, ids::capture, 1.0f);
+                juce::Timer::callPendingTimersSynchronously();
+                expect (menu->getSelectedId() == 6,
+                        "legacy capture automation hid an active upper-mic override");
+                menu->setSelectedId (3, juce::sendNotificationSync);
+                expect (valueOf (processor, ids::upperMic) == 0.0f
+                            && valueOf (processor, ids::capture) == 2.0f,
+                        "selecting a legacy microphone left the upper override enabled");
+                setValue (processor, ids::upperMic, 1.0f);
+                juce::Timer::callPendingTimersSynchronously();
+                expect (menu->getSelectedId() == 6,
+                        "upper microphone host automation did not update the menu");
+                setValue (processor, ids::upperMic, 0.0f);
+            }
             setValue (processor, id, 0.0f);
             expect (menu->getSelectedItemIndex() == 0,
                     "host automation did not update the setup menu");

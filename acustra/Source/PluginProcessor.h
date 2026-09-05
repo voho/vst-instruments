@@ -22,8 +22,9 @@ inline constexpr auto output = "output";
 inline constexpr auto capture = "capture";
 inline constexpr auto picking = "picking";
 inline constexpr auto bridgeModel = "bridgeModel";
+inline constexpr auto upperMic = "upperMic";
 
-inline constexpr int parameterCount = 13;
+inline constexpr int parameterCount = 14;
 } // namespace acustra::parameters
 
 class AcustraAudioProcessorEditor;

@@ -788,7 +788,7 @@ EngineParameters AcustraEngine::sanitise(const EngineParameters& source) noexcep
         static_cast<int>(source.stringMaterial), 1,
         static_cast<int>(EngineParameters {}.stringMaterial)));
     result.capture = static_cast<CaptureType>(enumOr(
-        static_cast<int>(source.capture), 4,
+        static_cast<int>(source.capture), 5,
         static_cast<int>(EngineParameters {}.capture)));
     result.tuning = static_cast<Tuning>(enumOr(
         static_cast<int>(source.tuning), 4,
@@ -1582,10 +1582,14 @@ void AcustraEngine::configureBody() noexcept
             measured.leftReal, measured.leftImaginary);
         const auto right = scaledResidue(
             measured.rightReal, measured.rightImaginary);
+        const auto upperMic = scaledResidue(
+            measured.upperReal, measured.upperImaginary);
         mode.leftReal = left.real();
         mode.leftImaginary = left.imag();
         mode.rightReal = right.real();
         mode.rightImaginary = right.imag();
+        mode.upperReal = upperMic.real();
+        mode.upperImaginary = upperMic.imag();
         if (bodyConfigured_)
             mode.reset();
     }
@@ -3688,7 +3692,7 @@ AcustraEngine::BodyOutput AcustraEngine::renderBody(float bridgeInput) noexcept
         BodyOutput output;
         for (auto& mode : modes)
         {
-            mode.process(bridgeInput, output.left, output.right);
+            mode.process(bridgeInput, output.left, output.right, output.upper);
             if (std::abs(mode.real) < 1.0e-30f)
                 mode.real = 0.0f;
             if (std::abs(mode.imaginary) < 1.0e-30f)
@@ -3704,6 +3708,7 @@ AcustraEngine::BodyOutput AcustraEngine::renderBody(float bridgeInput) noexcept
         const float mix = bodyModelFade_;
         result.left = previous.left + mix * (result.left - previous.left);
         result.right = previous.right + mix * (result.right - previous.right);
+        result.upper = previous.upper + mix * (result.upper - previous.upper);
         bodyModelFade_ = std::min(1.0f, bodyModelFade_ + bodyModelFadeStep_);
     }
     return result;
@@ -4013,7 +4018,9 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                    + captureMix_[2]
                        * (bodyScale * body.right + directScale * directRight)
                    + captureMix_[3] * lastBridgeReactionForce_
-                   + captureMix_[4] * magnetic);
+                   + captureMix_[4] * magnetic
+                   + captureMix_[5]
+                       * (bodyScale * body.upper + directScale * directMono));
             outputLeft = captureMix_[0] * outputLeft + mono;
             outputRight = captureMix_[0] * outputRight + mono;
         }

@@ -40,6 +40,7 @@ private:
 
     void timerCallback() override;
     void updateConstructionControls();
+    void updateCaptureControl();
     void configureSetupMenu (std::size_t index, const juce::String& name,
                              const juce::String& description);
     void configureChoice (std::size_t index, const juce::String& name,
@@ -61,8 +62,10 @@ private:
 
     std::array<juce::Label, 3> setupLabels;
     std::array<juce::ComboBox, 3> setupControls;
-    std::array<std::unique_ptr<
-        juce::AudioProcessorValueTreeState::ComboBoxAttachment>, 2> setupAttachments;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
+        pickingAttachment;
+    std::array<std::unique_ptr<juce::ParameterAttachment>, 2> captureAttachments;
+    std::array<float, 2> captureValues {};
 
     std::array<juce::Label, 4> choiceLabels;
     std::array<std::unique_ptr<ChoiceButtonGroup>, 4> choiceControls;

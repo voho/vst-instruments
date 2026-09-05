@@ -382,7 +382,7 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--renderer", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--capture", default="stereo_mic", choices=("stereo_mic", "treble_mic", "bass_mic", "saddle_piezo", "magnetic"))
+    parser.add_argument("--capture", default="stereo_mic", choices=("stereo_mic", "treble_mic", "bass_mic", "saddle_piezo", "magnetic", "upper_mic"))
     parser.add_argument("--reference-capture", default="microphone", choices=("microphone", "magnetic_pickup"))
     parser.add_argument("--picking", default="finger", choices=("finger", "pick", "thumb"))
     parser.add_argument("--bridge-model", default="original", choices=("original", "fylde"))

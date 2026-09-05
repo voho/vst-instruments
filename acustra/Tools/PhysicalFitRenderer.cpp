@@ -541,7 +541,7 @@ std::string modelControlsJson()
          << "\""
          << ", \"capture\": \""
          << std::array { "stereo_mic", "treble_mic", "bass_mic",
-                               "saddle_piezo", "magnetic" }[
+                               "saddle_piezo", "magnetic", "upper_mic" }[
                       static_cast<std::size_t>(parameters.capture)]
          << "\", \"picking\": \""
          << std::array { "finger", "pick", "thumb" }[

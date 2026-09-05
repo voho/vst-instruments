@@ -389,24 +389,57 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
         "CC68 legato; note-off velocity controls finger lift.");
     configureSetupMenu (
         2, "CAPTURE", "Listen through body microphones, bridge-force saddle "
-        "piezo or a magnetic string pickup. Magnetic pickups require steel "
+        "piezo or a magnetic string pickup. Upper mic is a measured position "
+        "10 cm above the upper bout. Magnetic pickups require steel "
         "strings; a magnetic capture selected by automation is silent on nylon.");
-    constexpr std::array<const char*, 2> setupParameterIds {
-        acustra::parameters::picking, acustra::parameters::capture
-    };
-    for (std::size_t index = 0; index < setupParameterIds.size(); ++index)
+    if (auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
+            audioProcessor.parameters.getParameter (acustra::parameters::picking)))
     {
-        auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
-            audioProcessor.parameters.getParameter (setupParameterIds[index]));
-        jassert (parameter != nullptr);
-        if (parameter == nullptr)
-            continue;
-        auto& control = setupControls[index + 1];
-        control.addItemList (parameter->choices, 1);
-        setupAttachments[index] = std::make_unique<
+        setupControls[1].addItemList (parameter->choices, 1);
+        pickingAttachment = std::make_unique<
             juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-                audioProcessor.parameters, setupParameterIds[index], control);
+                audioProcessor.parameters, acustra::parameters::picking,
+                setupControls[1]);
     }
+    if (auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
+            audioProcessor.parameters.getParameter (acustra::parameters::capture)))
+        setupControls[2].addItemList (parameter->choices, 1);
+    setupControls[2].addItem ("Upper mic", 6);
+    setupControls[2].onChange = [this]
+    {
+        const int selected = setupControls[2].getSelectedId();
+        if (selected < 1 || selected > 6)
+            return;
+        const auto set = [this] (const char* id, float value)
+        {
+            auto* parameter = audioProcessor.parameters.getParameter (id);
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+            parameter->endChangeGesture();
+        };
+        // The appended override leaves the legacy Capture parameter's
+        // normalized automation untouched. Both appear as one menu here.
+        if (selected != 6)
+            set (acustra::parameters::capture, static_cast<float> (selected - 1));
+        set (acustra::parameters::upperMic, selected == 6 ? 1.0f : 0.0f);
+    };
+    constexpr std::array captureIds {
+        acustra::parameters::capture, acustra::parameters::upperMic
+    };
+    for (std::size_t index = 0; index < captureIds.size(); ++index)
+    {
+        auto* parameter = audioProcessor.parameters.getParameter (captureIds[index]);
+        captureAttachments[index] = std::make_unique<juce::ParameterAttachment> (
+            *parameter, [this, index] (float value)
+            {
+                // Use the delivered value: the APVTS raw-value listener can
+                // run after this attachment's callback on the message thread.
+                captureValues[index] = value;
+                updateCaptureControl();
+            }, nullptr);
+    }
+    captureAttachments[0]->sendInitialUpdate();
+    captureAttachments[1]->sendInitialUpdate();
 
     configureChoice (
         0, "BODY SHAPE", acustra::parameters::shape,
@@ -505,6 +538,20 @@ void AcustraAudioProcessorEditor::updateConstructionControls()
     setupControls[0].setSelectedId (presetId, juce::dontSendNotification);
     setupControls[2].setItemEnabled (
         5, state.stringMaterial == acustra::StringMaterial::Steel);
+}
+
+void AcustraAudioProcessorEditor::updateCaptureControl()
+{
+    auto& captureMenu = setupControls[2];
+    const int captureId = captureValues[1] >= 0.5f
+        ? 6 : juce::roundToInt (captureValues[0]) + 1;
+    if (captureMenu.getSelectedId() != captureId)
+    {
+        captureMenu.setSelectedId (captureId, juce::dontSendNotification);
+        if (auto* handler = captureMenu.getAccessibilityHandler())
+            handler->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
+    }
+    timerCallback();
 }
 
 void AcustraAudioProcessorEditor::configureChoice (
@@ -715,7 +762,8 @@ void AcustraAudioProcessorEditor::timerCallback()
     updateConstructionControls();
     juce::String next;
     const auto state = audioProcessor.snapshotEngineParameters();
-    if (state.capture == acustra::CaptureType::Magnetic
+    if (captureValues[1] < 0.5f
+        && juce::roundToInt (captureValues[0]) == 4
         && state.stringMaterial == acustra::StringMaterial::Nylon)
     {
         next = "Magnetic needs steel";

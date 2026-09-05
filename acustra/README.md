@@ -586,18 +586,25 @@ allocator when its release damping has run its time, keeping whatever it
 still carries as an idle string's wave.
 
 Bridge force (the heave coordinate) then excites the measured body modes for
-whichever guitar the string material selects: 96 modes on steel's g21
+whichever guitar the string material selects: 109 modes on steel's g21
 flamenca blanca (measured in a semi-reverberant music room), 103 on nylon's
-g34 classical (measured anechoic). Their independent complex residues
-reproduce the two microphone paths of the same measured guitar, so stereo
+g34 classical (measured anechoic). Thirteen g21 modes serve only the new upper
+microphone; the original 96 poles and both stereo residues remain exact.
+Their independent complex residues reproduce microphone paths from the same
+measured guitar, so stereo
 comes from body radiation rather than artificial delay or reverb. Those two
 microphones are close ones: the archive placed them in the near field, 10 cm
 above the top plate and 20 cm apart, one each side of the bridge, with a floor
 absorber under the guitar and the room's first reflections 12 ms or more away
 on g21, so the stereo image is a spaced pair of close microphones on a real
-guitar. Its third microphone, 20 cm toward the neck, is the
-bridge/twelfth-fret placement; the decision log records that pair as a
-listening question. The fit found no held-out benefit from the optional
+guitar. **Upper mic** exposes the archive's third position: 20 cm from the
+treble microphone toward the upper bout, also 10 cm above the top. It is a
+mono observation with its own minimum-phase response, fitted on the same
+windows and with all existing error limits retained. Median magnitude errors
+are 1.08 dB for g21 and 1.17 dB for g34; the g21 extension is the smallest
+prominence-ordered set of measured poles that passes every limit. The original
+stereo pair remains the default. This does not settle the separate stereo-pair
+listening question in the decision log. The fit found no held-out benefit from the optional
 bridge-local direct branch, so the shipping calibration disables it. A shared
 calibration broadens the measured modal poles and restores the two existing
 85--145 Hz body/air modes; both corrections independently improved training
@@ -644,7 +651,7 @@ construction.
 | **String Material** | Selects the dedicated nylon or steel geometry, impedance, stiffness, loss and fitted calibration. |
 | **Tuning** | Changes the six open-string/fret constraints. |
 | **Picking** | Finger retains the original full Touch range; Pick selects its narrower-contact half and Thumb its broader-contact half, including MIDI velocity response. |
-| **Capture** | Stereo microphones, individual treble/bass microphones, ideal saddle-force piezo or local steel-string-velocity magnetic pickup. |
+| **Capture** | Stereo microphones, individual treble/bass/upper microphones, ideal saddle-force piezo or local steel-string-velocity magnetic pickup. |
 | **String Age** | Lowers the string cutoff and increases frequency-dependent loss. |
 | **Pluck Position** | Moves the physical pluck point from bridgeward toward the neck. |
 | **Touch** | Changes displacement aperture, transient colour and brightness within the chosen picking range. |
@@ -652,7 +659,7 @@ construction.
 | **Stereo Width** | Blends the measured stereo pair toward mono; individual microphones and pickups are mono. |
 | **Output** | Final gain; exactly linear through −1 dBFS, then bounded by a headroom-only safety limiter. |
 
-The individual microphone modes expose the existing measured treble and bass
+The individual microphone modes expose measured treble, bass and upper
 paths. Piezo observes net saddle force before body radiation; magnetic observes
 local string velocity through two displacement-wave taps and the engine's
 sample-rate-normalized derivative. Neither feeds back into the instrument.
@@ -660,6 +667,13 @@ Capture changes crossfade on the existing parameter smoothing, preserving
 ringing notes. The ideal magnetic pickup is silent on ordinary nylon strings,
 so its menu entry is disabled with nylon; host automation still retains the
 requested capture, with the same physical silence.
+
+For host automation, the original five-value Capture parameter retains its
+normalized mapping. A new **Upper mic** switch selects the additional microphone
+when enabled; turning it off restores the underlying Capture choice. The editor
+combines these into one six-choice menu. Old sessions default the new switch off.
+Thirty renders across both string materials, all five original captures and
+44.1/48/96 kHz remain byte-identical to the previous engine.
 
 ## Why this architecture
 
@@ -1487,6 +1501,9 @@ git history rather than here.
 - Corrected string-loss filter conversion between sample rates, retaining the
   exact 48 kHz sound. Pitch-tracked upper-partial decay spreads fall from
   19–33% to 4–13% across 44.1/48/96 kHz; residual frequency warping remains.
+- Added the measured upper microphone for both string materials. The Capture
+  menu stays simple; existing audio, saved sessions and normalized capture
+  automation retain their previous behavior.
 
 ### 2026-09-04
 

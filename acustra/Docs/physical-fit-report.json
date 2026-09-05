@@ -76383,5 +76383,1096 @@
    "This does not recover or correct the historical scratch render: its implementation and routing remain unavailable.",
    "Training aggregate improves 1.036%, while attack and pitch-trajectory losses worsen; three release/pull-off regression failures and unmeasured geometry/radiation prevent shipping this candidate."
   ]
+ },
+ "upper_microphone_capture_2026_09_05": {
+  "status": "optional measured upper-microphone capture; shipping default and five existing captures retained",
+  "measurement": {
+   "source": "https://zenodo.org/records/4604577",
+   "raw_md5": "733cb10baf5ce36d8bf333610ffbb260",
+   "guitars": {
+    "steel_adaptation": "g21 Lester DeVoe flamenca, measured nylon-strung",
+    "nylon": "g34 Manuel Contreras classical"
+   },
+   "input": "same treble-side bridge impact as existing bodybank",
+   "output": "MATLAB channel4 upper-east microphone; 20cm from treble microphone toward upper bout; all three microphones10cm above top",
+   "transform": "calibrated H1 pressure/force; same causal window; independently minimum phase, consistent with existing microphones; not a phase-preserving radiation matrix"
+  },
+  "fit": {
+   "old_modes": {
+    "g21": 96,
+    "g34": 103
+   },
+   "new_modes": {
+    "g21": 109,
+    "g34": 103
+   },
+   "policy": "Freeze all original rounded poles and left/right residue tokens. Fit upper output; append smallest prominence-ordered prefix of distinct measured upper-mic poles that passes every unchanged output, pair-balance and ERB gate. Added poles have exact zero left/right residues. All upper gates checked afterfloat32 quantization.",
+   "trials": [
+    {
+     "guitar": 21,
+     "added": 0,
+     "upper_error": [
+      0.2832700794423027,
+      1.2499004232249558,
+      3.751864340683463
+     ],
+     "pair_ratios": [
+      4.553789888439463,
+      5.245134980726905
+     ],
+     "erb": 0.4642679049621997,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 1,
+     "upper_error": [
+      0.27338151581114284,
+      1.2345087070653067,
+      3.640999552308428
+     ],
+     "pair_ratios": [
+      4.488277459105514,
+      5.080039064068163
+     ],
+     "erb": 0.4840600116353969,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 2,
+     "upper_error": [
+      0.2690794299594094,
+      1.2295255462214634,
+      3.6355159174625844
+     ],
+     "pair_ratios": [
+      4.413635784294056,
+      5.061086346398487
+     ],
+     "erb": 0.47487316146624536,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 3,
+     "upper_error": [
+      0.2618083902435019,
+      1.2072465879303416,
+      3.4491772486834646
+     ],
+     "pair_ratios": [
+      4.336844221257729,
+      5.207336118251504
+     ],
+     "erb": 0.4642679049621997,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 4,
+     "upper_error": [
+      0.25849853639858156,
+      1.184309272109311,
+      3.461065978016275
+     ],
+     "pair_ratios": [
+      4.340042194254641,
+      5.192336728954721
+     ],
+     "erb": 0.465139698932244,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 5,
+     "upper_error": [
+      0.25799455484760564,
+      1.1812451601843932,
+      3.413814530855693
+     ],
+     "pair_ratios": [
+      4.344272563258749,
+      5.161853040515668
+     ],
+     "erb": 0.46934661676064476,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 6,
+     "upper_error": [
+      0.2573623404146364,
+      1.1636058583633755,
+      3.419888918351111
+     ],
+     "pair_ratios": [
+      4.364818711423439,
+      5.136525697626809
+     ],
+     "erb": 0.4735331206392557,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 7,
+     "upper_error": [
+      0.25697346307642266,
+      1.1635522045532052,
+      3.3696427778776394
+     ],
+     "pair_ratios": [
+      4.3099873289748025,
+      5.065649060638042
+     ],
+     "erb": 0.47209940659068983,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 8,
+     "upper_error": [
+      0.2514252312581336,
+      1.1527121804526157,
+      3.331450887196443
+     ],
+     "pair_ratios": [
+      4.384752085060532,
+      5.056696258687275
+     ],
+     "erb": 0.47164865172235004,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 9,
+     "upper_error": [
+      0.2510281085612891,
+      1.1534238680438316,
+      3.3165115656683133
+     ],
+     "pair_ratios": [
+      4.408646562222299,
+      5.0619469450966506
+     ],
+     "erb": 0.4695297662726464,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 10,
+     "upper_error": [
+      0.25082201445336205,
+      1.1520645327656567,
+      3.3152124215574044
+     ],
+     "pair_ratios": [
+      4.41044206605581,
+      5.071222507757063
+     ],
+     "erb": 0.4673780092770682,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 11,
+     "upper_error": [
+      0.25065874213790357,
+      1.142527304989958,
+      3.3174784360511027
+     ],
+     "pair_ratios": [
+      4.432727863732563,
+      5.065598645360918
+     ],
+     "erb": 0.4642679049621997,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 12,
+     "upper_error": [
+      0.2506947867384227,
+      1.1308643503656506,
+      3.3064976791812195
+     ],
+     "pair_ratios": [
+      4.438082227805792,
+      5.060149291391933
+     ],
+     "erb": 0.4642679049621997,
+     "pass_all": false
+    },
+    {
+     "guitar": 21,
+     "added": 13,
+     "upper_error": [
+      0.23112166534986814,
+      1.0848241168011306,
+      3.165207481201956
+     ],
+     "pair_ratios": [
+      4.345391422997605,
+      4.99841332915682
+     ],
+     "erb": 0.4642679049621997,
+     "pass_all": true
+    },
+    {
+     "guitar": 34,
+     "added": 0,
+     "upper_error": [
+      0.23704948722501382,
+      1.1732291689875174,
+      3.2699069302531005
+     ],
+     "pair_ratios": [
+      4.909473196614099,
+      4.080978233130459
+     ],
+     "erb": 0.62142664137309,
+     "pass_all": true
+    }
+   ],
+   "deterministic_header_check": "passed fresh second full regeneration with --check"
+  },
+  "host_contract": {
+   "engine_upper_capture_index": 5,
+   "existing_capture_parameter_choices": 5,
+   "existing_capture_normalized_positions": [
+    0,
+    0.25,
+    0.5,
+    0.75,
+    1
+   ],
+   "new_parameter": "upperMic",
+   "index": 13,
+   "au_version_hint": 4,
+   "default": false,
+   "semantics": "Upper mic switch overrides the underlying legacy Capture choice. The GUI combines both into one six-item Capture menu. Missing switch in old state restores false. Existing parameter identities/order/ranges remain unchanged."
+  },
+  "source_sha256": {
+   "Tools/GenerateMeasuredBody.py": "5074c5e6c9d961a9c255bbb4efc59114d3ec56d0e67a1d36afbf041c9173c64a",
+   "Source/DSP/MeasuredBodyData.h": "7dfced1b0e037eec2f490624d818b8bdbe3272881cc84810c13dbe697cfba375",
+   "Source/DSP/AcustraEngine.cpp": "611f3d1c851845de8e1237fc5545f09652230a311ee9e365b9e2ebd1794a4880",
+   "Source/DSP/AcustraEngine.h": "cc65945b9ecf6bb688c91b7b59aec0abab837c1c497aa1e7943edd5bd181331e",
+   "Source/PluginEditor.cpp": "9ae2ee9c34bd7ad1384ae434576e8acc321d07d914b868af693c0870dc506507",
+   "Source/PluginEditor.h": "a05dcb34113b533db0bf2a9c4c2e2abe22b4744512710b0a188025c3c533ae62",
+   "Source/PluginProcessor.cpp": "4f46c9a6fb0e7f68e20a78c784acdf7ed6327cbf29d9cd0575efaf1cbd8f2796",
+   "Source/PluginProcessor.h": "3a1be74fabf706843bb56c88766ae3d817d180c2eecf07531437dfaa01505e9e",
+   "Tools/PerformanceRenderer.cpp": "6b3146204143d96e5d2136fb1ef146effc27e1479603cc5f408427697f150b42",
+   "Tests/CaptureTests.cpp": "4f0197cd0a4da6dcd77c9779e942eac497b7e00ba0e5354b556710e025071bd4",
+   "Tests/PluginProcessorTests.cpp": "38eb9ae95771222b9c309f89e0a756927a1b496ea8787ab7655c0d38e9cc860a"
+  },
+  "legacy_audio_regression": {
+   "baseline_revision": "37246566",
+   "protocol": "same one-second six-string held chord, baseline/candidate statically linked with corresponding headers; left then right float32",
+   "clip_count": 30,
+   "all_identical": true,
+   "source_sha256": "35a0163048163451d87eb1b6e5799ac5fc5df5dbedb17776fa3c0b0d48d1d830",
+   "baseline_executable_sha256": "5791a8be2c4d2170e237dc128a28c14d7b225940669f460867a0dd6e67b4c6db",
+   "candidate_executable_sha256": "c30390c57021ca6d70edece3f0bf5a2532fd2845ccfdc51c038b97a9e2a2b2f9",
+   "rows": [
+    {
+     "file": "44100-nylon-capture0.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "575bf1a1b0145bc0d6700541f59c49ae7b1357f1967292ff60d4c2caaeae82af",
+     "candidate_sha256": "575bf1a1b0145bc0d6700541f59c49ae7b1357f1967292ff60d4c2caaeae82af"
+    },
+    {
+     "file": "44100-nylon-capture1.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "849f887fa394b3a420bc4ef1c97f011f0cfeba45d0368c8e63505855516214ac",
+     "candidate_sha256": "849f887fa394b3a420bc4ef1c97f011f0cfeba45d0368c8e63505855516214ac"
+    },
+    {
+     "file": "44100-nylon-capture2.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "6344f1980284ece64080af647dcf13273ca6468b6f41452f54b40134be0cc9f5",
+     "candidate_sha256": "6344f1980284ece64080af647dcf13273ca6468b6f41452f54b40134be0cc9f5"
+    },
+    {
+     "file": "44100-nylon-capture3.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "f1254ab967011e140fb5587f4dd645b4e5b05f7a5ab27ce318a931fcc69bddce",
+     "candidate_sha256": "f1254ab967011e140fb5587f4dd645b4e5b05f7a5ab27ce318a931fcc69bddce"
+    },
+    {
+     "file": "44100-nylon-capture4.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "19f0212a2c85ff556ebeb0e7ec8d5ac64299145a606f207ac650c4aab24bf73c",
+     "candidate_sha256": "19f0212a2c85ff556ebeb0e7ec8d5ac64299145a606f207ac650c4aab24bf73c"
+    },
+    {
+     "file": "44100-steel-capture0.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "32687f44110fe11623901445465ba0924c24228a1bfc69ac1f5ed796a86cbf0c",
+     "candidate_sha256": "32687f44110fe11623901445465ba0924c24228a1bfc69ac1f5ed796a86cbf0c"
+    },
+    {
+     "file": "44100-steel-capture1.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "daecdec823e8c35d088d768d2ab78cdfe968524e28344a2b42b7d43fb3af1017",
+     "candidate_sha256": "daecdec823e8c35d088d768d2ab78cdfe968524e28344a2b42b7d43fb3af1017"
+    },
+    {
+     "file": "44100-steel-capture2.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "80927806abe0874aff1b4df355b8877307050848d417d1c8908a08e169971f6a",
+     "candidate_sha256": "80927806abe0874aff1b4df355b8877307050848d417d1c8908a08e169971f6a"
+    },
+    {
+     "file": "44100-steel-capture3.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "9486c6241631f6f243d392d15562cd72294e45f10ed30e2a5d54c8d5d916e076",
+     "candidate_sha256": "9486c6241631f6f243d392d15562cd72294e45f10ed30e2a5d54c8d5d916e076"
+    },
+    {
+     "file": "44100-steel-capture4.f32",
+     "bytes": 352800,
+     "identical": true,
+     "baseline_sha256": "0b0153187d79c24d28ab7203134a892655621d382832dcc4b6ba84d7b94723f3",
+     "candidate_sha256": "0b0153187d79c24d28ab7203134a892655621d382832dcc4b6ba84d7b94723f3"
+    },
+    {
+     "file": "48000-nylon-capture0.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "0a61e29098df2ab620a98c891125e0f557b9828f61815cc01392a8105ab08375",
+     "candidate_sha256": "0a61e29098df2ab620a98c891125e0f557b9828f61815cc01392a8105ab08375"
+    },
+    {
+     "file": "48000-nylon-capture1.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "b452ff83f4c6d469a409d993154dd08db62616d68609d4eb6f82d0ff821b8ebc",
+     "candidate_sha256": "b452ff83f4c6d469a409d993154dd08db62616d68609d4eb6f82d0ff821b8ebc"
+    },
+    {
+     "file": "48000-nylon-capture2.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "369f81246ba82aa21c7f43f939501157bc77d0bf06474b2a726b779f7dce7862",
+     "candidate_sha256": "369f81246ba82aa21c7f43f939501157bc77d0bf06474b2a726b779f7dce7862"
+    },
+    {
+     "file": "48000-nylon-capture3.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "fef4a8d3f0a616b98831b568f45ec83f492a8a523d75cea37c0e3d929be56333",
+     "candidate_sha256": "fef4a8d3f0a616b98831b568f45ec83f492a8a523d75cea37c0e3d929be56333"
+    },
+    {
+     "file": "48000-nylon-capture4.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "fec9afb531a8e036eba1d81651896e1b2c1f78b0234dbadc8e7549563f09407b",
+     "candidate_sha256": "fec9afb531a8e036eba1d81651896e1b2c1f78b0234dbadc8e7549563f09407b"
+    },
+    {
+     "file": "48000-steel-capture0.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "2035dd87507e32df4fc219bac40e2e4151101bae9eccc926363f4985d7b3945c",
+     "candidate_sha256": "2035dd87507e32df4fc219bac40e2e4151101bae9eccc926363f4985d7b3945c"
+    },
+    {
+     "file": "48000-steel-capture1.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "6cc8b40c3ff439270b41c34784566b8b7ac06d5df524921b7e1b27795d9c5d4a",
+     "candidate_sha256": "6cc8b40c3ff439270b41c34784566b8b7ac06d5df524921b7e1b27795d9c5d4a"
+    },
+    {
+     "file": "48000-steel-capture2.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "63ed6eda40513406ffd0b69c310f1b010c52104acf2e7dd72b832f04a73cfe1d",
+     "candidate_sha256": "63ed6eda40513406ffd0b69c310f1b010c52104acf2e7dd72b832f04a73cfe1d"
+    },
+    {
+     "file": "48000-steel-capture3.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "d9bd7bdc343e8e4656df3acc0a093e1a209e81db3dffa5a5dbf774e896a856db",
+     "candidate_sha256": "d9bd7bdc343e8e4656df3acc0a093e1a209e81db3dffa5a5dbf774e896a856db"
+    },
+    {
+     "file": "48000-steel-capture4.f32",
+     "bytes": 384000,
+     "identical": true,
+     "baseline_sha256": "a992f5143bc180756fe6b1d6c87712cc7704dfb97b5b52f49784c83c7d0685f7",
+     "candidate_sha256": "a992f5143bc180756fe6b1d6c87712cc7704dfb97b5b52f49784c83c7d0685f7"
+    },
+    {
+     "file": "96000-nylon-capture0.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "c75526f97dc10559d740c493293cc0b14193cc8571161cbc7fb5411b60c61a51",
+     "candidate_sha256": "c75526f97dc10559d740c493293cc0b14193cc8571161cbc7fb5411b60c61a51"
+    },
+    {
+     "file": "96000-nylon-capture1.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "3b8264034016f35d94ed4ba3f81c4fb2b3ddf6137c09636c06ca0307f8b283f1",
+     "candidate_sha256": "3b8264034016f35d94ed4ba3f81c4fb2b3ddf6137c09636c06ca0307f8b283f1"
+    },
+    {
+     "file": "96000-nylon-capture2.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "e38b68314973875ba58f7d63b8cf7864a427fbfbb15dd8aa1f63e61f8dca80f7",
+     "candidate_sha256": "e38b68314973875ba58f7d63b8cf7864a427fbfbb15dd8aa1f63e61f8dca80f7"
+    },
+    {
+     "file": "96000-nylon-capture3.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "cdbb26887c724f4ed2b3f7f3cd5383e86b4e4c3a0c911452ac04c5014ca1ced4",
+     "candidate_sha256": "cdbb26887c724f4ed2b3f7f3cd5383e86b4e4c3a0c911452ac04c5014ca1ced4"
+    },
+    {
+     "file": "96000-nylon-capture4.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "351a8054b23144894668c6a51d5dbba82f56523ef43cc45b6f4d7060a969c31a",
+     "candidate_sha256": "351a8054b23144894668c6a51d5dbba82f56523ef43cc45b6f4d7060a969c31a"
+    },
+    {
+     "file": "96000-steel-capture0.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "1c6e05967632121bb4165df315bfb3eb46b80d655026010c28084b41bc194549",
+     "candidate_sha256": "1c6e05967632121bb4165df315bfb3eb46b80d655026010c28084b41bc194549"
+    },
+    {
+     "file": "96000-steel-capture1.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "a1e34850e84edb41dac74ba32ab8ee37fb9fe41efd64c060c184185869bebf64",
+     "candidate_sha256": "a1e34850e84edb41dac74ba32ab8ee37fb9fe41efd64c060c184185869bebf64"
+    },
+    {
+     "file": "96000-steel-capture2.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "81a55556742aa18aa17c4e6df0b5dc986b5f6a465239173d243db2f40ed368b0",
+     "candidate_sha256": "81a55556742aa18aa17c4e6df0b5dc986b5f6a465239173d243db2f40ed368b0"
+    },
+    {
+     "file": "96000-steel-capture3.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "ecdbd704ab0358edd190d5607f1819db9dfa460e2d2acc0a55a59ddb87122627",
+     "candidate_sha256": "ecdbd704ab0358edd190d5607f1819db9dfa460e2d2acc0a55a59ddb87122627"
+    },
+    {
+     "file": "96000-steel-capture4.f32",
+     "bytes": 768000,
+     "identical": true,
+     "baseline_sha256": "2f112c58aa48bae3947e1310b8ff0308f775616c2581a0fd7ece171d04163b20",
+     "candidate_sha256": "2f112c58aa48bae3947e1310b8ff0308f775616c2581a0fd7ece171d04163b20"
+    }
+   ]
+  },
+  "performance": {
+   "baseline": "same frozen six GuitarSet microphone excerpts; Original bridge, default stereo mics",
+   "baseline_mean": {
+    "log_magnitude_mae_db": 14.875728857784772,
+    "spectral_convergence": 0.9031206948660145,
+    "chroma_cosine_distance": 0.3119508057014604
+   },
+   "upper_report": {
+    "dataset": "GuitarSet v1.1.0",
+    "source": "https://zenodo.org/records/3371780",
+    "attribution": "Qingyang Xi, Rachel M. Bittner, Johan Pauwels, Xuzhou Ye, Juan P. Bello, ISMIR 2018; CC BY 4.0",
+    "archive_md5": {
+     "annotation.zip": "b39b78e63d3446f2e54ddb7a54df9b10",
+     "audio_mono-mic.zip": "275966d6610ac34999b58426beb119c3"
+    },
+    "renderer_sha256": "088029d56bb895d51399e03d31a7f49f983a404efd18c4fa838b93b198420733",
+    "physical_scorer_sha256": "94ec199da74c3432801225829028abf25a100d73d66015e754d6dea8da80c7bd",
+    "scorer_sha256": "a8e5e7267fa18663d0b5ad60c2a7f90e3c4339413121a4de6b68c9c89a5716bf",
+    "numpy_version": "1.26.4",
+    "scipy_version": "1.14.1",
+    "analysis_rate": 48000,
+    "start_seconds": 0,
+    "duration_seconds": 12,
+    "velocity": 91,
+    "capture": "upper_mic",
+    "picking": "finger",
+    "bridge_model": "original",
+    "reference_capture": "microphone",
+    "reference_transducer": "Neumann U87 condenser, about 30 cm from the 18th fret",
+    "render_protocol": "shipping calibration/default controls; string-per-channel; 127-frame blocks; annotated mean pitch; zero release velocity",
+    "limitations": "One phrase, six players; timing/strum statistics previously informed engine. No measured note velocities, gesture labels, matched guitar body or matched transducer. Pickup position, field response, loaded electronics and channel balance are undocumented. Descriptor distances include those differences and do not establish perceptual equivalence or market rank.",
+    "mean": {
+     "log_magnitude_mae_db": 14.876504166877936,
+     "spectral_convergence": 0.8943354364042548,
+     "chroma_cosine_distance": 0.29731279589355425
+    },
+    "performances": [
+     {
+      "track": "00_BN1-129-Eb_comp",
+      "notes": 74,
+      "source_rate": 44100,
+      "source_audio_filename": "00_BN1-129-Eb_comp_mic.wav",
+      "source_audio_sha256": "59e1e3c9bebdabd48afe28050a2c031e6cf36e5697268301cdf2e74bc66b71f1",
+      "annotation_sha256": "cd79564c51d0dec7d04e010d31525e9f7d2b9d41cf6116118a66ac5a8c181007",
+      "events_sha256": "25c82f2c666ecbe8ca704d1e5303a990c3c08c6feca2746b5ba7644582a343a2",
+      "model_sha256": "6d3863beba4a9fa1945e6536513ef3c23b8f41aac53285a8d8828580bcf9685e",
+      "reference_audition_trim_db": 9.73014703683393,
+      "model_audition_trim_db": -1.8036755096575918,
+      "metrics": {
+       "log_magnitude_mae_db": 12.888838628166857,
+       "spectral_convergence": 0.8861043941585528,
+       "chroma_cosine_distance": 0.3956414157468885,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -5.574780330336219
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.7895471655966012
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 0.12345454206724686
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 3.792706216975195
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -6.196132567943698
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -5.265462384821578
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -7.236881643331973
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 12.342002599452213,
+         "spectral_convergence": 0.8657032479049734
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 12.648865991511002,
+         "spectral_convergence": 0.8299215180249663
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 12.995299097785738,
+         "spectral_convergence": 0.8038619306273534
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.189083043296641,
+         "spectral_convergence": 0.8505396315723023
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 13.054402849382631,
+         "spectral_convergence": 0.9472989033419599
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.103378187572915,
+         "spectral_convergence": 1.0193011334797608
+        }
+       ]
+      }
+     },
+     {
+      "track": "01_BN1-129-Eb_solo",
+      "notes": 34,
+      "source_rate": 44100,
+      "source_audio_filename": "01_BN1-129-Eb_solo_mic.wav",
+      "source_audio_sha256": "76330537c6a88df56c7e338da9dd81d84cbf7f3a5ae7cd1b32a663bded6b76b4",
+      "annotation_sha256": "ecdd877eaf6208cfefa47b74c1a6a5211146e12dfa0f5132345a4c456cd67fc8",
+      "events_sha256": "b7aaedbfc5b3cc1454f300bc4974a537cca2e08ce5c81331f3a54d27757549ab",
+      "model_sha256": "4b0e6e55115875a475733a09a079218183c5f61804481c47c72d9dc9b577e6b6",
+      "reference_audition_trim_db": 14.000153752705415,
+      "model_audition_trim_db": 1.6311122339727269,
+      "metrics": {
+       "log_magnitude_mae_db": 13.915029519512105,
+       "spectral_convergence": 0.784249731671664,
+       "chroma_cosine_distance": 0.18403096156073165,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -1.8743826837464497
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 2.2462289843388423
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": -2.469797045111274
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -0.7103745310787902
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -10.691646515962407
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -11.532861935053692
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -7.210740774649675
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 13.955151133260543,
+         "spectral_convergence": 0.8786158433288297
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 14.01701390438559,
+         "spectral_convergence": 0.8286315938082118
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 13.97018549729403,
+         "spectral_convergence": 0.745559846489216
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.728081787636537,
+         "spectral_convergence": 0.7365495654389365
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.107372980438038,
+         "spectral_convergence": 0.7483427948724594
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.712371814057889,
+         "spectral_convergence": 0.7677987460923303
+        }
+       ]
+      }
+     },
+     {
+      "track": "02_BN1-129-Eb_comp",
+      "notes": 78,
+      "source_rate": 44100,
+      "source_audio_filename": "02_BN1-129-Eb_comp_mic.wav",
+      "source_audio_sha256": "54d0b5d30a727ddbf3f9dbe18663063d6c55c979627ab6993fdede63f0a54cc0",
+      "annotation_sha256": "38208980f05c69d1560306553651f687a3c6260f47d98b64e33eb74c33e14931",
+      "events_sha256": "e015bc9727f1a5ecd9dd20e837b02bfbd3d488d36e7c5fd0f22c1f2a42001d48",
+      "model_sha256": "82f61a2ac7b97129bd73c9258f58287d1c5bc68a8902432e82a95f30078f0386",
+      "reference_audition_trim_db": -3.2082305572645136,
+      "model_audition_trim_db": -0.8848658228589324,
+      "metrics": {
+       "log_magnitude_mae_db": 19.650495252128607,
+       "spectral_convergence": 0.9120335274801185,
+       "chroma_cosine_distance": 0.36417363056689994,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -5.538694752025886
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 0.8344083536548379
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 7.452651051906324
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 0.19403963656045312
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -2.920630837599993
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -1.2983051080577523
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": 0.19660432713151477
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 19.627635270365904,
+         "spectral_convergence": 0.8502894398933858
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 20.347070051365087,
+         "spectral_convergence": 0.8123239769403237
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 20.70771557300789,
+         "spectral_convergence": 0.8101932352789069
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 20.7607350884339,
+         "spectral_convergence": 0.9103618667706063
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 19.73111974242556,
+         "spectral_convergence": 1.0252429709207629
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 16.7286957871733,
+         "spectral_convergence": 1.063789675076726
+        }
+       ]
+      }
+     },
+     {
+      "track": "03_BN1-129-Eb_solo",
+      "notes": 35,
+      "source_rate": 44100,
+      "source_audio_filename": "03_BN1-129-Eb_solo_mic.wav",
+      "source_audio_sha256": "51ec6f1d43b4866a02ca5ff43bb5cfcb7f2b8069fe12b078385e091a8f8d78f4",
+      "annotation_sha256": "44dd4061b27bb3320d1e42180f5602e71932be8c388945f8b06a46d2df6d7aef",
+      "events_sha256": "00e4e78f6b33523eb5e516fd7d97dec783cc6b4620e2ce90314e6b4996ff4913",
+      "model_sha256": "f441a9cf4c50a4614ea098f9a70287ff61fa8b7c02e55db50b4d968b34810f82",
+      "reference_audition_trim_db": -0.3362882949392624,
+      "model_audition_trim_db": 4.591644849759764,
+      "metrics": {
+       "log_magnitude_mae_db": 14.928497816739695,
+       "spectral_convergence": 1.0029280164611958,
+       "chroma_cosine_distance": 0.239431937702182,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -3.7151902089648496
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 1.5346850195256643
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": -0.5911340819177419
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -3.2104119655334538
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -9.7507602526692
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -13.79819165293662
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -8.513436088739505
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 15.09120505476638,
+         "spectral_convergence": 1.0266654472775347
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 15.271084176944852,
+         "spectral_convergence": 1.0005191285623958
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 15.371650979650312,
+         "spectral_convergence": 0.9693860105819968
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 15.052017795851464,
+         "spectral_convergence": 0.9866860513900436
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 14.674431169492491,
+         "spectral_convergence": 1.006723011514644
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 14.110597723732678,
+         "spectral_convergence": 1.0275884494405596
+        }
+       ]
+      }
+     },
+     {
+      "track": "04_BN1-129-Eb_comp",
+      "notes": 70,
+      "source_rate": 44100,
+      "source_audio_filename": "04_BN1-129-Eb_comp_mic.wav",
+      "source_audio_sha256": "ca4b487760400edabb87ed478a523ad0587c020b8463f97429af4009789f4ebd",
+      "annotation_sha256": "81c4818b93f86a45a582d1b958837b5579c599a2b0a214e9025c63981c87538a",
+      "events_sha256": "658234f20ec10b3ac526eba900e66fb38cb0aa4fb1d0b4df89d656008e57b1d9",
+      "model_sha256": "51fa7a7c26862817eaf5732f8d1a18f1dcc2d0bb0c44745cfa190403b0d27ef8",
+      "reference_audition_trim_db": 7.501653209529044,
+      "model_audition_trim_db": -2.3284671232834158,
+      "metrics": {
+       "log_magnitude_mae_db": 13.480540279410093,
+       "spectral_convergence": 0.8055890821816437,
+       "chroma_cosine_distance": 0.43513865028650256,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -5.832828576495174
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 1.3741813503292106
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": 1.3142511189206318
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": 4.220897415428212
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -3.8410289022011868
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -12.402563589401854
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -8.821327890706351
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 12.943231950605702,
+         "spectral_convergence": 0.8327849823768657
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 13.229165420497024,
+         "spectral_convergence": 0.7940154889954195
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 13.541137969191832,
+         "spectral_convergence": 0.7446017696775101
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 13.791029881166923,
+         "spectral_convergence": 0.7620669008180325
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 13.758038922222303,
+         "spectral_convergence": 0.8134146204654745
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 13.62063753277678,
+         "spectral_convergence": 0.8866507307565605
+        }
+       ]
+      }
+     },
+     {
+      "track": "05_BN1-129-Eb_solo",
+      "notes": 24,
+      "source_rate": 44100,
+      "source_audio_filename": "05_BN1-129-Eb_solo_mic.wav",
+      "source_audio_sha256": "ccf801f3a6e7b1ab38dd9bf1ae917d13c51ef93c977af41cdabcb0548f55a261",
+      "annotation_sha256": "8b9c47dae61790596142ffc898995a82d066229fa5b2947facc4a83750a921e1",
+      "events_sha256": "767d5e6af9b502ae8132e2068d1ea7b8b0126d02874e7fe349d2d3df80fff29b",
+      "model_sha256": "6ac807ea472b336fc452487931e2e1153a7ac9dc205c301ec070d7e0771a68f3",
+      "reference_audition_trim_db": 0.7758792886505601,
+      "model_audition_trim_db": 1.0457645588951816,
+      "metrics": {
+       "log_magnitude_mae_db": 14.39562350531025,
+       "spectral_convergence": 0.9751078664723543,
+       "chroma_cosine_distance": 0.1654601794981208,
+       "octave_bands": [
+        {
+         "low_hz": 80,
+         "high_hz": 160,
+         "model_minus_reference_db": -16.312113529734358
+        },
+        {
+         "low_hz": 160,
+         "high_hz": 320,
+         "model_minus_reference_db": 5.616530909472036
+        },
+        {
+         "low_hz": 320,
+         "high_hz": 640,
+         "model_minus_reference_db": -2.483465430683233
+        },
+        {
+         "low_hz": 640,
+         "high_hz": 1280,
+         "model_minus_reference_db": -7.652701084946447
+        },
+        {
+         "low_hz": 1280,
+         "high_hz": 2560,
+         "model_minus_reference_db": -8.78729392696081
+        },
+        {
+         "low_hz": 2560,
+         "high_hz": 5120,
+         "model_minus_reference_db": -13.161652556427068
+        },
+        {
+         "low_hz": 5120,
+         "high_hz": 10000,
+         "model_minus_reference_db": -13.219355293246235
+        }
+       ],
+       "scales": [
+        {
+         "fft_size": 67,
+         "log_magnitude_mae_db": 15.523685725616422,
+         "spectral_convergence": 1.0332704684952998
+        },
+        {
+         "fft_size": 127,
+         "log_magnitude_mae_db": 15.875769411810591,
+         "spectral_convergence": 0.9990478971983064
+        },
+        {
+         "fft_size": 257,
+         "log_magnitude_mae_db": 16.027521440433443,
+         "spectral_convergence": 0.9521423748897626
+        },
+        {
+         "fft_size": 509,
+         "log_magnitude_mae_db": 14.750033808740296,
+         "spectral_convergence": 0.9544010476900215
+        },
+        {
+         "fft_size": 1021,
+         "log_magnitude_mae_db": 12.933642271978067,
+         "spectral_convergence": 0.9549663180445636
+        },
+        {
+         "fft_size": 2053,
+         "log_magnitude_mae_db": 11.263088373282677,
+         "spectral_convergence": 0.9568190925161719
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "paired_reference_identities_verified": true,
+   "interpretation": "Mixed descriptor changes: log-magnitude error is essentially unchanged; spectral-convergence and chroma distances decrease slightly. This is an additional measured observation, not a fitted default change or a perceptual/market win. Reference guitar and microphone arrangement differ."
+  },
+  "previews": {
+   "protocol": "same six-string ascending open-string phrase; 48000Hz,127-frame blocks,8s,no note releases; upper mic, finger, original bridge, otherwise shipping defaults; no external EQ/effects",
+   "events_sha256": "8eb79c644789fc3005304bb3d1a7cb0c969a4ee79af79505f24349985bcceda8",
+   "files": [
+    {
+     "material": "steel",
+     "wav": "/tmp/acustra-upper-mic-preview/steel-upper-mic.wav",
+     "raw_sha256": "e7a89016d45bbf5e025993b65b0160ea47a42c5fd5483d36a7d5b4c0d3b39099",
+     "wav_sha256": "47639f193eab374a60018c7cf823843f26ac5d26cb68eaa7d4a86e8ea2b344af",
+     "raw_peak": 0.3821246027946472,
+     "trim_db": 4.006400672641269,
+     "whole_file_rms_dbfs": -24
+    },
+    {
+     "material": "nylon",
+     "wav": "/tmp/acustra-upper-mic-preview/nylon-upper-mic.wav",
+     "raw_sha256": "3d6b1d5178d496d651d3adf31fe1f652cd1d98bb690962023acc961c74b44129",
+     "wav_sha256": "4f92b264bb09ebae16e6de0965f5b6351b6a5da5ac1f185b93738d3112c43e7a",
+     "raw_peak": 0.21894149482250214,
+     "trim_db": 8.089358261478884,
+     "whole_file_rms_dbfs": -24
+    }
+   ]
+  },
+  "validation": {
+   "capture_tests": "passed including both materials,44.1/48/96k,mono/nonzero/distinct/finite/block partitioning, no string/body reset on switching",
+   "engine_and_renderer_tests": "Acustra.Engine, PhysicalFitRenderer and PerformanceBenchmark all passed in92.18s",
+   "plugin_tests": "Acustra.PluginProcessor passed in 4.60s after final native rebuild, including deterministic queued-selection timer race, host-automation updates and status, state migration, and min/default/max editor snapshots",
+   "native_formats": "VST3,AudioUnit,Standalone; arm64 Release; no installation or universal-build claim"
+  }
  }
 }

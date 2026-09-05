@@ -35,7 +35,7 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cerr << "usage: AcustraPerformanceRenderer EVENTS OUTPUT.f32 "
-                     "[stereo_mic|treble_mic|bass_mic|saddle_piezo|magnetic "
+                     "[stereo_mic|treble_mic|bass_mic|saddle_piezo|magnetic|upper_mic "
                      "finger|pick|thumb [original|fylde]] "
                      "[--string-material steel|nylon] [--tuning standard|drop_d]\n";
         return 2;
@@ -52,7 +52,7 @@ int main(int argc, char** argv)
         if (positionalCount >= 2)
         {
             const std::array captures { "stereo_mic", "treble_mic", "bass_mic",
-                                        "saddle_piezo", "magnetic" };
+                                        "saddle_piezo", "magnetic", "upper_mic" };
             const std::array techniques { "finger", "pick", "thumb" };
             const auto capture = std::find(captures.begin(), captures.end(), std::string(argv[3]));
             const auto technique = std::find(techniques.begin(), techniques.end(), std::string(argv[4]));

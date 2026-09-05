@@ -147,7 +147,7 @@ void testCaptureObservations()
 void testCaptureLifecycle()
 {
     for (int rate : { 44100, 48000, 96000 })
-        for (int type = 0; type < 5; ++type)
+        for (int type = 0; type < 6; ++type)
         {
             acustra::EngineParameters parameters;
             parameters.capture = static_cast<acustra::CaptureType>(type);
@@ -178,7 +178,7 @@ void testCaptureLifecycle()
     engine->noteOn(40, 0.8f);
     for (int i = 0; i < 200; ++i)
     {
-        parameters.capture = static_cast<acustra::CaptureType>(i % 5);
+        parameters.capture = static_cast<acustra::CaptureType>(i % 6);
         engine->setParameters(parameters);
         engine->process(left.data(), right.data(), 64);
         expect(engine->getActiveVoiceCount() == 1,
@@ -207,7 +207,7 @@ void testCaptureLifecycle()
     for (int block = 0; block < 600; ++block)
     {
         if (block < 100)
-            parameters.capture = static_cast<acustra::CaptureType>(block % 5);
+            parameters.capture = static_cast<acustra::CaptureType>(block % 6);
         else
             parameters.capture = acustra::CaptureType::StereoMic;
         engine->setParameters(parameters);
@@ -216,6 +216,68 @@ void testCaptureLifecycle()
     }
     expect(left == referenceLeft && right == referenceRight,
            "pickup observation changed the state of the vibrating instrument");
+}
+
+void testUpperMicrophone()
+{
+    for (auto material : { acustra::StringMaterial::Steel,
+                           acustra::StringMaterial::Nylon })
+        for (int rate : { 44100, 48000, 96000 })
+        {
+            acustra::EngineParameters parameters;
+            parameters.stringMaterial = material;
+            parameters.capture = acustra::CaptureType::UpperMic;
+            const auto upper = render(parameters, rate);
+            expect(upper.left == upper.right,
+                   "upper microphone output is not mono");
+            expect(upper.left == render(parameters, rate, 127).left,
+                   "upper microphone changed with host block size");
+            expect(energy(upper) > 1.0e-10,
+                   "upper microphone is silent for a supported string material");
+            for (float sample : upper.left)
+                expect(std::isfinite(sample) && std::abs(sample) <= 1.0f,
+                       "upper microphone is not finite and bounded");
+            for (auto other : { acustra::CaptureType::TrebleMic,
+                                 acustra::CaptureType::BassMic })
+            {
+                parameters.capture = other;
+                expect(upper.left != render(parameters, rate).left,
+                       "upper microphone duplicates an existing microphone");
+            }
+
+            // Switching observation must neither reset nor perturb a held
+            // string. After returning to stereo and settling the capture
+            // fade, compare to the engine that never switched, byte for byte.
+            parameters.capture = acustra::CaptureType::StereoMic;
+            auto engine = std::make_unique<acustra::AcustraEngine>();
+            auto reference = std::make_unique<acustra::AcustraEngine>();
+            for (auto* instrument : { engine.get(), reference.get() })
+            {
+                instrument->setParameters(parameters);
+                instrument->prepare(rate, 64);
+                instrument->noteOn(45, 0.7f);
+            }
+            std::array<float, 64> left {}, right {}, referenceLeft {}, referenceRight {};
+            for (int block = 0; block < 600; ++block)
+            {
+                if (block == 40 || block == 120)
+                {
+                    parameters.capture = block == 40
+                        ? acustra::CaptureType::UpperMic
+                        : acustra::CaptureType::StereoMic;
+                    engine->setParameters(parameters);
+                }
+                engine->process(left.data(), right.data(), 64);
+                reference->process(referenceLeft.data(), referenceRight.data(), 64);
+                expect(engine->getActiveVoiceCount() == 1,
+                       "upper microphone switching reset a held string");
+                expect(engine->getLastBridgeBodyForce()
+                            == reference->getLastBridgeBodyForce(),
+                       "upper microphone observation changed the mechanical bridge");
+            }
+            expect(left == referenceLeft && right == referenceRight,
+                   "upper microphone observation changed the retained radiation state");
+        }
 }
 
 void testScopedRemovalDoesNotStrikeTheMagneticPickup()
@@ -321,6 +383,7 @@ int main()
 {
     testCaptureObservations();
     testCaptureLifecycle();
+    testUpperMicrophone();
     testScopedRemovalDoesNotStrikeTheMagneticPickup();
     testPickupPositionFollowsLengthAndNotTension();
     if (failures == 0)

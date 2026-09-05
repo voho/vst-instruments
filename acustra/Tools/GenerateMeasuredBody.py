@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Acustra's dual-radiation modal coefficient header.
+"""Generate Acustra's measured microphone modal coefficient header.
 
 This is the complete deterministic path from Robert Mores'
 ``qualified_selected_impulses.mat`` to ``MeasuredBodyData.h``. For each guitar
@@ -8,6 +8,15 @@ H1 responses for the treble and bass microphones, reconstructs minimum phase,
 selects shared pole pairs, and fits one complex residue per output and pole.
 The generated model must also remain within fixed complex, magnitude and stereo
 balance regression limits; finiteness alone is not accepted.
+
+The upper-east microphone is then fitted without changing any existing rounded
+pole or treble/bass residue. Method.pdf section 2c/Figure 4 places it 20 cm from
+the treble microphone toward the upper bout; all three are 10 cm above the top.
+If the existing poles do not meet all current output and pair-balance limits,
+append the smallest prominence-ordered prefix of distinct poles measured in
+that microphone. Added poles have exactly zero treble/bass residues. This is
+another measured output, not a second mechanical input or a phase-preserving
+force/moment radiation matrix: each microphone still uses minimum phase.
 
 Two measured nylon-string guitars are emitted for the engine's two material
 settings. The g21 DeVoe flamenco is adapted for steel; it was not steel-strung.
@@ -62,6 +71,7 @@ IMPACT_INDEX = 2  # Third one-second segment: treble-side bridge impact.
 FORCE_CHANNEL = 0
 TREBLE_MIC_CHANNEL = 4  # MATLAB channel 5.
 BASS_MIC_CHANNEL = 5  # MATLAB channel 6.
+UPPER_MIC_CHANNEL = 3  # MATLAB channel 4, Method.pdf section 2c/Figure 4.
 ROOM_KEEP_SAMPLES = 3_000  # DAFx-26's truncated response.
 CANDIDATE_KEEP_SAMPLES = (3_000, 6_000, 12_000, 24_000, 48_000)
 CONVERGENCE_BAND_HZ = 700.0
@@ -177,7 +187,8 @@ def load_matrix(path: Path) -> np.ndarray:
 
 
 def extract_targets(
-    path: Path, guitar: int = 21, keep_samples: int = ROOM_KEEP_SAMPLES
+    path: Path, guitar: int = 21, keep_samples: int = ROOM_KEEP_SAMPLES,
+    channels: tuple[int, ...] = (TREBLE_MIC_CHANNEL, BASS_MIC_CHANNEL),
 ) -> list[np.ndarray]:
     values = load_matrix(path)
     start = IMPACT_INDEX * RECORD_SAMPLES
@@ -204,7 +215,7 @@ def extract_targets(
     )
 
     targets: list[np.ndarray] = []
-    for channel in (TREBLE_MIC_CHANNEL, BASS_MIC_CHANNEL):
+    for channel in channels:
         pressure = record[:, channel] * full_taper * MIC_PASCALS_PER_FULL_SCALE
         spectrum = np.fft.rfft(pressure, FFT_SIZE)
         h1 = spectrum * np.conj(force) / denominator
@@ -512,6 +523,50 @@ def modal_fit(path: Path, guitar: int) -> dict:
     )
 
 
+def add_upper_microphone(path: Path, bank: dict) -> dict:
+    """Append a measured output while freezing the existing rounded model.
+
+    Candidate ordering and duplicate tolerance use the existing peak selector.
+    All gates run on emitted float32 poles/residues, including upper/treble and
+    upper/bass balance. No failed gate changes a limit or an existing output.
+    """
+    targets = extract_targets(path, bank["guitar"], bank["keep_samples"],
+                              (TREBLE_MIC_CHANNEL, BASS_MIC_CHANNEL, UPPER_MIC_CHANNEL))
+    modes = [(float(np.float32(frequency)), float(np.float32(q)), prominence)
+             for frequency, q, prominence in bank["modes"]]
+    base_count = len(modes)
+    rounded = lambda values: (values.real.astype(np.float32).astype(float)
+                              + 1j * values.imag.astype(np.float32).astype(float))
+    original_residues = [rounded(values) for values in bank["residues"]]
+    candidates = sorted(candidate_poles([targets[2]]), key=lambda item: (-item[2], item[0]))
+    trials = []
+    while True:
+        upper = rounded(fit_residues(targets[2], modes))
+        residues = [np.pad(values, (0, len(modes) - base_count)) for values in original_residues]
+        checks = [fit_errors([targets[2], target], modes, [upper, other])
+                  for target, other in zip(targets, residues)]
+        passed = all(within_limits(*check) for check in checks)
+        trials.append({"added_modes": len(modes) - base_count,
+                       "upper_error": checks[0][0][0],
+                       "pair_ratio_p90": [check[1] for check in checks],
+                       "worst_pair_erb": max(check[2] for check in checks),
+                       "passed": passed})
+        if passed:
+            return {**bank, "modes": modes, "residues": [*residues, upper],
+                    "base_mode_count": base_count, "upper_trials": trials}
+        for candidate in candidates:
+            # Same frequency/bandwidth tolerance as candidate_poles' merge.
+            if all(abs(candidate[0] - other[0]) > max(
+                    2.0, 0.5 * min(candidate[0] / candidate[1], other[0] / other[1]))
+                   for other in modes):
+                modes.append((float(np.float32(candidate[0])),
+                              float(np.float32(candidate[1])), candidate[2]))
+                break
+        else:
+            raise ValueError(f"g{bank['guitar']}: upper microphone exhausted distinct measured poles "
+                             f"without passing existing limits; last trial {trials[-1]}")
+
+
 def cpp_float(value: float) -> str:
     text = format(float(np.float32(value)), ".9g")
     if "." not in text and "e" not in text:
@@ -521,10 +576,9 @@ def cpp_float(value: float) -> str:
 
 def bank_block(name: str, bank: dict) -> str:
     rows = []
-    for mode, treble, bass in zip(bank["modes"], bank["residues"][0],
-                                  bank["residues"][1]):
+    for mode, treble, bass, upper in zip(bank["modes"], *bank["residues"]):
         values = (mode[0], mode[1], treble.real, treble.imag,
-                  bass.real, bass.imag)
+                  bass.real, bass.imag, upper.real, upper.imag)
         rows.append("    { " + ", ".join(cpp_float(value) for value in values)
                     + " },")
     guitar = bank["guitar"]
@@ -544,11 +598,22 @@ def bank_block(name: str, bank: dict) -> str:
     )
     comment = textwrap.fill(
         f'g{guitar}, {GUITAR_DESCRIPTION[guitar]}. Window {window}, with the'
-        f' final tenth as the raised-cosine fade. {len(bank["modes"])} shared'
+        f' final tenth as the raised-cosine fade. {bank["base_mode_count"]} original'
         f' poles: {errors}; stereo-ratio p90 {bank["stereo"]:.3f} dB;'
         f' worst ERB-band level error above 5 kHz {bank["band"]:.3f} dB.',
         width=76, initial_indent="// ", subsequent_indent="// ")
+    upper = bank["upper_trials"][-1]
+    upper_comment = textwrap.fill(
+        f'Upper-east microphone: {upper["added_modes"]} appended output-only poles;'
+        f' existing rounded poles and treble/bass residues unchanged. Upper complex'
+        f' {upper["upper_error"][0]:.4f}, median {upper["upper_error"][1]:.3f} dB,'
+        f' p90 {upper["upper_error"][2]:.3f} dB; upper/treble and upper/bass ratio'
+        f' p90 {upper["pair_ratio_p90"][0]:.3f}/{upper["pair_ratio_p90"][1]:.3f} dB;'
+        f' worst pair ERB error {upper["worst_pair_erb"]:.3f} dB. Each smaller'
+        f' prominence-ordered prefix failed at least one unchanged gate.',
+        width=76, initial_indent="// ", subsequent_indent="// ")
     return f'''{comment}
+{upper_comment}
 inline constexpr std::array<MeasuredBodyMode, {len(bank["modes"])}> {name} {{{{
 {chr(10).join(rows)}
 }}}};'''
@@ -556,8 +621,10 @@ inline constexpr std::array<MeasuredBodyMode, {len(bank["modes"])}> {name} {{{{
 
 def render_header(steel: dict, nylon: dict) -> str:
     return f'''// Generated by Tools/GenerateMeasuredBody.py; do not hand-edit.
-// The treble-side bridge impact drives two calibrated H1 paths per guitar:
-// left is the treble microphone, right the bass microphone. Each causal
+// The treble-side bridge impact drives three calibrated H1 paths per guitar:
+// left is the treble microphone, right the bass microphone, upper the
+// upper-east microphone (20 cm from the treble mic toward the upper bout,
+// all 10 cm above the top; Method.pdf section 2c/Figure 4). Each causal
 // response is converted independently to minimum phase. DAFx-26 specifies the
 // retained length and raised-cosine taper, but not its inner length; Acustra
 // authors the final tenth as that fade. The shared frequency/Q pairs and
@@ -585,6 +652,8 @@ struct MeasuredBodyMode
     float leftImaginary;
     float rightReal;
     float rightImaginary;
+    float upperReal;
+    float upperImaginary;
 }};
 
 {bank_block("measuredSteelBodyModes", steel)}
@@ -630,8 +699,8 @@ def main() -> int:
     )
     arguments = parser.parse_args()
 
-    steel = modal_fit(arguments.raw_mat, 21)
-    nylon = modal_fit(arguments.raw_mat, arguments.nylon_guitar)
+    steel = add_upper_microphone(arguments.raw_mat, modal_fit(arguments.raw_mat, 21))
+    nylon = add_upper_microphone(arguments.raw_mat, modal_fit(arguments.raw_mat, arguments.nylon_guitar))
     header = render_header(steel, nylon)
     if arguments.check:
         return 0 if check_output(arguments.output, header) else 1
@@ -640,8 +709,10 @@ def main() -> int:
     for name, bank in (("steel", steel), ("nylon", nylon)):
         print(
             f"generated {name} bank g{bank['guitar']}: {len(bank['modes'])} "
-            f"shared modes, window {bank['keep_samples']} samples"
+            f"modes ({len(bank['modes']) - bank['base_mode_count']} upper-only), "
+            f"window {bank['keep_samples']} samples"
         )
+        print(f"upper microphone gates: {bank['upper_trials'][-1]}")
     print(f"wrote {arguments.output}")
     return 0
 
