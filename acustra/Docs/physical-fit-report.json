@@ -1769,5 +1769,252 @@
   "date": "2026-09-05",
   "engine_revision": "7e32fd6f",
   "build": "macOS arm64, CMake Release, AppleClang 21.0.0"
+ },
+ "performance_spectral_diagnostic_2026_09_05": {
+  "baseline_entry": "performance_benchmark_2026_09_05",
+  "scorer_sha256": "15475359bb493355c69c46892c6d80f2117d2564f891af05971ed331d09de312",
+  "protocol": "4096-point Hann spectra, 2048 hop, no padding; exact same target and model bytes as baseline; one whole-clip RMS match; positive=model excess, negative=model deficit; signed diagnostics excluded from distances",
+  "performances": [
+   {
+    "track": "00_BN1-129-Eb_comp",
+    "octave_bands": [
+     {
+      "low_hz": 80,
+      "high_hz": 160,
+      "model_minus_reference_db": -15.244857054582466
+     },
+     {
+      "low_hz": 160,
+      "high_hz": 320,
+      "model_minus_reference_db": 0.5195899022349194
+     },
+     {
+      "low_hz": 320,
+      "high_hz": 640,
+      "model_minus_reference_db": 1.9626965634359577
+     },
+     {
+      "low_hz": 640,
+      "high_hz": 1280,
+      "model_minus_reference_db": 6.102627240653904
+     },
+     {
+      "low_hz": 1280,
+      "high_hz": 2560,
+      "model_minus_reference_db": -3.998102747489983
+     },
+     {
+      "low_hz": 2560,
+      "high_hz": 5120,
+      "model_minus_reference_db": -5.156532396226448
+     },
+     {
+      "low_hz": 5120,
+      "high_hz": 10000,
+      "model_minus_reference_db": -7.605621456205876
+     }
+    ]
+   },
+   {
+    "track": "01_BN1-129-Eb_solo",
+    "octave_bands": [
+     {
+      "low_hz": 80,
+      "high_hz": 160,
+      "model_minus_reference_db": -11.72648850847138
+     },
+     {
+      "low_hz": 160,
+      "high_hz": 320,
+      "model_minus_reference_db": 1.6892748538111766
+     },
+     {
+      "low_hz": 320,
+      "high_hz": 640,
+      "model_minus_reference_db": -1.1296948924032475
+     },
+     {
+      "low_hz": 640,
+      "high_hz": 1280,
+      "model_minus_reference_db": 1.3881034275933417
+     },
+     {
+      "low_hz": 1280,
+      "high_hz": 2560,
+      "model_minus_reference_db": -9.022348368694836
+     },
+     {
+      "low_hz": 2560,
+      "high_hz": 5120,
+      "model_minus_reference_db": -11.737091034803779
+     },
+     {
+      "low_hz": 5120,
+      "high_hz": 10000,
+      "model_minus_reference_db": -7.883876005250537
+     }
+    ]
+   },
+   {
+    "track": "02_BN1-129-Eb_comp",
+    "octave_bands": [
+     {
+      "low_hz": 80,
+      "high_hz": 160,
+      "model_minus_reference_db": -15.10448339487093
+     },
+     {
+      "low_hz": 160,
+      "high_hz": 320,
+      "model_minus_reference_db": 0.7774414796927769
+     },
+     {
+      "low_hz": 320,
+      "high_hz": 640,
+      "model_minus_reference_db": 9.403479969073219
+     },
+     {
+      "low_hz": 640,
+      "high_hz": 1280,
+      "model_minus_reference_db": 2.351104433574979
+     },
+     {
+      "low_hz": 1280,
+      "high_hz": 2560,
+      "model_minus_reference_db": -0.26465121521072726
+     },
+     {
+      "low_hz": 2560,
+      "high_hz": 5120,
+      "model_minus_reference_db": -0.8110670827533675
+     },
+     {
+      "low_hz": 5120,
+      "high_hz": 10000,
+      "model_minus_reference_db": 0.08859308452405858
+     }
+    ]
+   },
+   {
+    "track": "03_BN1-129-Eb_solo",
+    "octave_bands": [
+     {
+      "low_hz": 80,
+      "high_hz": 160,
+      "model_minus_reference_db": -13.51962531408237
+     },
+     {
+      "low_hz": 160,
+      "high_hz": 320,
+      "model_minus_reference_db": 0.7098705047506858
+     },
+     {
+      "low_hz": 320,
+      "high_hz": 640,
+      "model_minus_reference_db": 1.0509879671157778
+     },
+     {
+      "low_hz": 640,
+      "high_hz": 1280,
+      "model_minus_reference_db": -1.4624693423002775
+     },
+     {
+      "low_hz": 1280,
+      "high_hz": 2560,
+      "model_minus_reference_db": -7.768683665186308
+     },
+     {
+      "low_hz": 2560,
+      "high_hz": 5120,
+      "model_minus_reference_db": -14.190770882288428
+     },
+     {
+      "low_hz": 5120,
+      "high_hz": 10000,
+      "model_minus_reference_db": -9.22090582158334
+     }
+    ]
+   },
+   {
+    "track": "04_BN1-129-Eb_comp",
+    "octave_bands": [
+     {
+      "low_hz": 80,
+      "high_hz": 160,
+      "model_minus_reference_db": -15.40676719503134
+     },
+     {
+      "low_hz": 160,
+      "high_hz": 320,
+      "model_minus_reference_db": 1.396935749280589
+     },
+     {
+      "low_hz": 320,
+      "high_hz": 640,
+      "model_minus_reference_db": 3.449634758436675
+     },
+     {
+      "low_hz": 640,
+      "high_hz": 1280,
+      "model_minus_reference_db": 6.291338659668141
+     },
+     {
+      "low_hz": 1280,
+      "high_hz": 2560,
+      "model_minus_reference_db": -1.3789983841976452
+     },
+     {
+      "low_hz": 2560,
+      "high_hz": 5120,
+      "model_minus_reference_db": -11.852850174513405
+     },
+     {
+      "low_hz": 5120,
+      "high_hz": 10000,
+      "model_minus_reference_db": -8.796934421793846
+     }
+    ]
+   },
+   {
+    "track": "05_BN1-129-Eb_solo",
+    "octave_bands": [
+     {
+      "low_hz": 80,
+      "high_hz": 160,
+      "model_minus_reference_db": -26.14564824040857
+     },
+     {
+      "low_hz": 160,
+      "high_hz": 320,
+      "model_minus_reference_db": 4.900354782344457
+     },
+     {
+      "low_hz": 320,
+      "high_hz": 640,
+      "model_minus_reference_db": -1.168768738363807
+     },
+     {
+      "low_hz": 640,
+      "high_hz": 1280,
+      "model_minus_reference_db": -5.870512741554813
+     },
+     {
+      "low_hz": 1280,
+      "high_hz": 2560,
+      "model_minus_reference_db": -6.865263660079202
+     },
+     {
+      "low_hz": 2560,
+      "high_hz": 5120,
+      "model_minus_reference_db": -13.446853732502145
+     },
+     {
+      "low_hz": 5120,
+      "high_hz": 10000,
+      "model_minus_reference_db": -13.914896045084204
+     }
+    ]
+   }
+  ]
  }
 }

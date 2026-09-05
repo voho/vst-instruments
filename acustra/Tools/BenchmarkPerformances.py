@@ -32,6 +32,10 @@ remain in every mean. Chroma measures pitch-class energy, not transcription
 accuracy. There is no fitted loss, scalar realism ranking or measured velocity
 score. Lower distances mean closer descriptors on exactly these recordings;
 room/mic/body, unannotated noise and missing expressive controls also contribute.
+The same 4096-point spectra report octave-band energy differences from 80 Hz to
+10 kHz after the whole-clip RMS match. Positive means more model energy, negative
+means less; these signed diagnostics locate spectral gaps and are not additional
+terms in the distance. An exactly empty band on either side is reported as null.
 
 Usage (NumPy and SciPy, no JAMS/MIDI dependency):
   python3 Tools/BenchmarkPerformances.py --dataset /tmp/acustra-guitarset \
@@ -62,6 +66,7 @@ RATE = 48_000
 SECONDS = 12
 VELOCITY = 91
 OPEN_NOTES = (40, 45, 50, 55, 59, 64)
+BAND_EDGES = (80, 160, 320, 640, 1280, 2560, 5120, 10000)
 TRACKS = tuple(f"{player:02d}_BN1-129-Eb_{'comp' if player % 2 == 0 else 'solo'}"
                for player in range(6))
 ARCHIVES = {"annotation.zip": "b39b78e63d3446f2e54ddb7a54df9b10",
@@ -149,9 +154,13 @@ def score(target: np.ndarray, model: np.ndarray) -> dict:
                 - 20 * np.log10(np.maximum(second, 1e-5))))),
             "spectral_convergence": float(np.linalg.norm(first - second) / target_norm),
         })
-    chromas = []
+    chromas, band_energies = [], []
     for audio in (target, model):
         frequency, magnitude = spectrum(audio, 4096)
+        band_energies.append(np.array([
+            np.square(magnitude[(frequency >= low) & (frequency < high)]).sum()
+            for low, high in zip(BAND_EDGES[:-1], BAND_EDGES[1:])
+        ]))
         selected = (frequency >= 80) & (frequency <= 5000)
         classes = np.rint(69 + 12 * np.log2(frequency[selected] / 440)).astype(int) % 12
         power = np.square(magnitude[selected])
@@ -165,6 +174,13 @@ def score(target: np.ndarray, model: np.ndarray) -> dict:
         "log_magnitude_mae_db": float(np.mean([row["log_magnitude_mae_db"] for row in scales])),
         "spectral_convergence": float(np.mean([row["spectral_convergence"] for row in scales])),
         "chroma_cosine_distance": float(np.mean(1 - np.clip(similarity, 0, 1))),
+        "octave_bands": [
+            {"low_hz": low, "high_hz": high,
+             "model_minus_reference_db": float(10 * np.log10(second / first))
+             if min(first, second) > 0 else None}
+            for low, high, first, second in zip(
+                BAND_EDGES[:-1], BAND_EDGES[1:], *band_energies)
+        ],
         "scales": scales,
     }
 
@@ -235,6 +251,16 @@ def self_test(renderer: Path | None) -> None:
     same, different = score(target, target * 0.3), score(target, wrong)
     for name in ("log_magnitude_mae_db", "spectral_convergence", "chroma_cosine_distance"):
         assert same[name] < 1e-10 and different[name] > same[name] + 0.05, (name, same, different)
+    # A two-tone balance change must retain its sign and exact relative level
+    # after the shared whole-clip RMS normalization. It cannot be read as a
+    # louder-is-better score or disappear through per-band normalization.
+    low = np.sin(2 * np.pi * 110 * time)
+    high = np.sin(2 * np.pi * 3520 * time)
+    balance = score(low + high, low + 2 * high)["octave_bands"]
+    expected_low = 10 * np.log10(2 / 5)
+    expected_high = 10 * np.log10(8 / 5)
+    assert abs(balance[0]["model_minus_reference_db"] - expected_low) < 0.01
+    assert abs(balance[5]["model_minus_reference_db"] - expected_high) < 0.01
     edge = np.zeros(4096)
     edge[-1] = 1.0
     try:

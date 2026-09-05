@@ -126,6 +126,10 @@ spectral error, 0.903 spectral convergence and 0.312 chroma cosine distance.
 These expose substantial remaining mismatch. The recording uses a different
 body, microphone and room, and GuitarSet timing statistics previously informed
 the engine, so this is not an untouched holdout or a perceptual ranking.
+Signed octave-band diagnostics locate that mismatch: after whole-clip RMS
+matching, the baseline averages 16.2 dB less energy at 80–160 Hz and 9.5 dB
+less at 2560–5120 Hz, with excess energy in the intervening low-mid bands.
+These are spectral differences on these recordings, not additional score terms.
 
 [`BenchmarkPerformances.py`](Tools/BenchmarkPerformances.py) fixes the six
 excerpts before scoring, verifies the published archive checksums, preserves
@@ -133,6 +137,8 @@ annotated timing and quiet frames, and exports paired WAVs matched by whole-clip
 RMS. Its report retains input, executable and scorer hashes, individual metrics
 and listening trims. The committed report's `performance_benchmark_2026_09_05`
 entry retains this baseline without distributing the source recordings.
+The adjacent `performance_spectral_diagnostic_2026_09_05` entry uses exactly
+the same audio bytes and leaves all three baseline distances unchanged.
 
 ## How it works
 
