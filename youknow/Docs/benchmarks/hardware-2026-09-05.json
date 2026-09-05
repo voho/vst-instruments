@@ -1,0 +1,728 @@
+{
+  "date": "2026-09-05",
+  "scope": "Descriptive source and self-oscillation comparison of YouKnow against one serviced hardware Juno-106; not a market-wide fidelity ranking.",
+  "hardware": {
+    "unit": "Roland Juno-106 #439522, owner Lewis Francis",
+    "voice_cards": "Borish replacement VCF/VCA chips, installed and calibrated in 2022; original DCO chips",
+    "interface": "M-Audio M-Track 2x2 C-Series; recording gain, master tuning and clock calibration unspecified",
+    "owner_interface_and_card_source": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/41#issuecomment-4189199115"
+  },
+  "measurement": {
+    "channel": 0,
+    "window_duration_seconds": 1.3,
+    "common_band_hz": [
+      20,
+      20000
+    ],
+    "common_band_method": "DC-detrended rectangular-window periodogram; sum PSD bins within band times bin width, without resampling. Band-edge resolution is 1 / window duration.",
+    "versions": {
+      "python": "3.11.0",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1"
+    },
+    "limitations": [
+      "Full-band RMS is preserved for baseline reproduction; comparisons use the fixed common band.",
+      "All ratios cancel constant gain only within each recording, not card differences, noise trim or spectral coloration.",
+      "The hardware recordings are from one unit with replacement voice electronics; original-card generalization is not established.",
+      "Three subwindows measure local variation, not statistical confidence or a population of units.",
+      "The full calibration sweep uses noise-driven resonant peaks; these are excluded from the summary and do not qualify cents-accurate filter tuning.",
+      "The shipping profile selects the plugin numerical kernels at 4x; this DSP tool does not include the complete DAW wrapper or its ScopedNoDenormals context.",
+      "These chorus-Off steady windows cannot assess chorus response, switching, attack, release or MIDI serial timing."
+    ]
+  },
+  "build": {
+    "snapshot_utc": "2026-09-05T06:27:51.258104+00:00",
+    "git_head_at_snapshot": "3d0856d7324c1193bcef3c2ac6c0dde45da221b2",
+    "source_state": "C59 load correction and chorus bypass repair present at build time. Source files are fingerprinted independently of commit status.",
+    "renderer_sha256": "63af3df331176ab87fff1c0bf1938be244f2a1840ca530a62ecef48fa97128e3",
+    "renderer_copy": "out/hardware-validation/YouKnowRenderCalibrationEvents-final",
+    "source_sha256": {
+      "Source/DSP/YouKnowPanel.cpp": "6b6fed1494082ea143e3794fae37a40de086ab3bea5a1e72b6d69c8e4b96f81a",
+      "Source/DSP/YouKnowPresets.cpp": "4a422a8eca83b2b1255d1879b03a55035f9966477200d9dc87880f00c87fb3a9",
+      "Source/DSP/YouKnowSysEx.cpp": "ed2ab880d27ca8bbc2e3246c47f85f7f1d35a057d885f7d8e4eb4676c88ff28a",
+      "Source/DSP/YouKnowEngine.h": "b1e06dd74ff5ca7fee78397ff5f7fdb1d446569863293231f321c8364532b901",
+      "Source/DSP/YouKnowPresets.h": "9043896ddebd3288b488c2b991c4414442b7ee089f2041a972bd04dea81b47f2",
+      "Source/DSP/YouKnowChorus.cpp": "0f214d7fdcbd3fc6a4b4c9a388b8c55eb7a9b163c3670cd7d0fad58eed721417",
+      "Source/DSP/YouKnowPanel.h": "4c96f856b0c33ee4117d735def9351551fc205a20ad6f1e36fc77201ad378313",
+      "Source/DSP/YouKnowSysEx.h": "744f50be6b22cd0cf6a5db25cd72ee09c0d00fc6cc2a1611d0c38d7527e07e1e",
+      "Source/DSP/YouKnowChorus.h": "ca18f940aa4adf13ef88ce9856710080eaecd442923f1aae5d8a40776814a65d",
+      "Source/DSP/YouKnowEngine.cpp": "46ec0a77c956a404c81f1f779c2d2b54223069977c883a85664cd80c9426b5c1",
+      "Tools/RenderCalibrationEvents.cpp": "56a4aca4e158e2fd95caee41981ddecae8798bf09f0a03c551a3c31bbc47d4cd",
+      "Tools/RealismComparisonSupport.h": "f57efab3e28b7132a464153ab35789440df932500d373c30543963e8ab3059f4",
+      "Tools/RenderSupport.h": "bace9075d2d8fe1daa9b79de99a4a529c2c25e834cbe7cca7b0c5b49b0b9f464",
+      "Tools/AnalyzeHardwareCalibration.py": "b17ad6d6628d6c6e77d9bb71e3c3f270b45a7c42e4145bdf38370d35cc91b98e",
+      "Tools/AnalyzeHardwareIsolators.py": "147847eadafb0fcd88b8303854e93abc396f3bbe3604b0e2fb82a0907a9d1e43"
+    },
+    "platform": "Darwin 25.5.0 arm64",
+    "renderer_sha256_after_renders": "63af3df331176ab87fff1c0bf1938be244f2a1840ca530a62ecef48fa97128e3",
+    "build_configuration": {
+      "type": "Release",
+      "architectures": [
+        "arm64",
+        "x86_64"
+      ],
+      "deployment_target": "11.0",
+      "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)"
+    },
+    "git_head_after_renders": "5a8ec089c64bfa6658f1bc677a20984e5519f962",
+    "source_hashes_unchanged_after_renders": true
+  },
+  "profiles": {
+    "exact/nominal": {
+      "character": 0,
+      "tanh": "Exact",
+      "vcf_fast_early": "Hermite (unused with Exact)",
+      "vcf_integrator": "MersonHalfSteps"
+    },
+    "exact/character1": {
+      "character": 1,
+      "tanh": "Exact",
+      "vcf_fast_early": "Hermite (unused with Exact)",
+      "vcf_integrator": "MersonHalfSteps"
+    },
+    "shipping/character1": {
+      "character": 1,
+      "tanh": "PolyZoned",
+      "vcf_fast_early": "Cubic",
+      "vcf_integrator": "Rk4Single"
+    }
+  },
+  "common_renderer_settings": {
+    "sample_rate": 48000,
+    "oversampling": 4,
+    "voices": 6,
+    "volume": 1,
+    "converter_timing": "MeasuredChartGeometry",
+    "normalization": "none"
+  },
+  "references": {
+    "calibration": {
+      "source": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16#issuecomment-4184997000",
+      "audio_archive": "https://www.lewisfrancis.com/nwio/Juno-10-test-audio-96K.zip",
+      "archive_member": "Juno-10-test-audio-96K/106_calibration_bip.aif",
+      "original_aiff_sha256": "a9282c4a287e7adf1a8cf46879d037633225db6f0e56f16014c08373ffb683aa",
+      "midi_source": "https://kayrock.org/kr106/106_calibration.zip",
+      "midi_sha256": "c9727669f08ff27b3c1ccdd4faf4cf1d586537c156483d55d735d0b75dc855e3",
+      "event_sha256": "131f35a18792fb03b966f2611192fa7017e839340211ed55e4b9bc20ece8e972",
+      "identity": "Canonical PCM verified: Juno-106 #439522, Borish replacement voice cards, serviced 2022.",
+      "audio": {
+        "sha256": "3e5533d7b70964d69f780e84e73391ee7e4a7c514553d96f8c053f06dc7ccf2b",
+        "pcm_float64le_sha256": "3575d2e9dc6e42c6ca7cef0c1b017ed9e6b85a0f0db227ee646ad944146f4bb0",
+        "sample_rate": 96000,
+        "channels": 2,
+        "duration_seconds": 114.01866666666666,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "noise": 1.6014519028475078,
+          "saw": 0.0,
+          "pulse_pwm64": 1.6187077558607754,
+          "sub": 6.923290158934222
+        },
+        "source_common_band_relative_saw_db": {
+          "noise": 1.5226333791303261,
+          "saw": 0.0,
+          "pulse_pwm64": 1.619724279931198,
+          "sub": 6.926200457142855
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "noise": 0.13910475820674506,
+        "saw": 0.014702939835039786,
+        "pulse_pwm64": 0.04098378088533394,
+        "sub": 0.005455971741337606
+      },
+      "measurement_windows_seconds": {
+        "noise": [
+          10.5,
+          11.8
+        ],
+        "saw": [
+          2.5,
+          3.8
+        ],
+        "pulse_pwm64": [
+          4.5,
+          5.8
+        ],
+        "sub": [
+          6.5,
+          7.8
+        ]
+      },
+      "conditions": "Actual MIDI: 16-foot range, note60, VCA gate64, chorus Off, pulse manualPWM64. Initial noise is absent; repeat at10.5s measured."
+    },
+    "isolators": {
+      "source": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/44#issuecomment-4400136262",
+      "audio_source": "https://lewisfrancis.com/nwio/osc_calibrate_new_bip.aif",
+      "prefix_aiff_sha256": "3500df3f0b3c0cd64ab44a3a0eb57635233ab3378e8b94766c5765dabb16bfdf",
+      "artifact_scope": "HTTP bytes 0-13999999 only; WAV contains the first 11.5 seconds decoded without resampling. Hashes identify this prefix, not the complete remote AIFF.",
+      "midi_source": "https://kayrock.org/kr106/osc_calibrate_new.mid",
+      "midi_sha256": "48311413d82d4289b3c961575666739f4581b73baadaa8cbee65156dad29afad",
+      "event_sha256": "abcf7021c950930954f4c71a7a0c91b149a844c5c169e0e1467ccf0978b55d63",
+      "identity": "Canonical prefix PCM verified: Juno-106 #439522, original DCO chips, Borish replacement VCF/VCA cards.",
+      "audio": {
+        "sha256": "b4a20ff9dc9051e460f7b5d3edf78446ec1c6d3e7edfed2b77e0e7f219625535",
+        "pcm_float64le_sha256": "05d3817d991ba5178a41d9c063b6eefb0bb87cf15aff0a081835aa46a656ccee",
+        "sample_rate": 192000,
+        "channels": 2,
+        "duration_seconds": 11.5,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 3.288010256845592,
+          "sub": 6.980048258726065,
+          "noise": 0.611846027124674,
+          "selfosc": 4.156207961689967
+        },
+        "source_relative_selfosc_db": {
+          "saw": -4.156207961689967,
+          "pulse50": -0.8681977048443752,
+          "sub": 2.8238402970360976,
+          "noise": -3.544361934565293,
+          "selfosc": 0.0
+        },
+        "source_common_band_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 3.2887031821011448,
+          "sub": 6.975858366224889,
+          "noise": 0.5243992351566682,
+          "selfosc": 4.158238944018233
+        },
+        "source_common_band_relative_selfosc_db": {
+          "saw": -4.158238944018233,
+          "pulse50": -0.8695357619170885,
+          "sub": 2.817619422206656,
+          "noise": -3.633839708861565,
+          "selfosc": 0.0
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "saw": 0.04913059022799615,
+        "pulse50": 0.005484909259768855,
+        "sub": 0.017541380893563385,
+        "noise": 0.06774259214698475,
+        "selfosc": 0.04506526037464553
+      },
+      "measurement_windows_seconds": {
+        "saw": [
+          1.0,
+          2.3
+        ],
+        "pulse50": [
+          3.0,
+          4.3
+        ],
+        "sub": [
+          5.0,
+          6.3
+        ],
+        "noise": [
+          7.0,
+          8.3
+        ],
+        "selfosc": [
+          9.0,
+          10.3
+        ]
+      },
+      "conditions": "VCA gate64, HPF1, chorus Off, range16foot, note60; pulse PWM0/manual; selfosc cutoff49/res127/all sound sources off.",
+      "selfosc_peak_hz": 244.82780637143608
+    }
+  },
+  "baseline": [
+    {
+      "sequence": "calibration",
+      "render_profile": "exact/nominal",
+      "audio": {
+        "sha256": "a156eddb5fdb3a12331913cc9ac09ad37fc4bd3f0ebdba40e2456e18236b145e",
+        "pcm_float64le_sha256": "295b9299ea54bcd72c0a82e6d40636f4b4dc11ec955a7612d2a89b99c138b5a0",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 114.05,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "noise": -10.101975088927162,
+          "saw": 0.0,
+          "pulse_pwm64": 2.9204457376063857,
+          "sub": 6.6586863587682465
+        },
+        "source_common_band_relative_saw_db": {
+          "noise": -10.157250124634345,
+          "saw": 0.0,
+          "pulse_pwm64": 2.9210020843202997,
+          "sub": 6.65981363197308
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "noise": 0.1426654532600864,
+        "saw": 0.03620450299003153,
+        "pulse_pwm64": 0.044515169045723724,
+        "sub": 0.004131493273803244
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_db": {
+          "noise": -11.70342699177467,
+          "saw": 0.0,
+          "pulse_pwm64": 1.3017379817456103,
+          "sub": -0.2646038001659754
+        },
+        "source_ratio_common_band_error_db": {
+          "noise": -11.679883503764671,
+          "saw": 0.0,
+          "pulse_pwm64": 1.3012778043891018,
+          "sub": -0.26638682516977497
+        }
+      }
+    },
+    {
+      "sequence": "isolators",
+      "render_profile": "exact/nominal",
+      "audio": {
+        "sha256": "d5bbd6ab4a255cceef2e12c1ed99ca008b6e936a74e54d443052fce730504cda",
+        "pcm_float64le_sha256": "5cec1e106d9079558a065976cd11222e7b267dcee4b22fe19d74f5788c3651cc",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 12.5,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.7369606002321305,
+          "sub": 6.664905237653727,
+          "noise": -10.095687204573046,
+          "selfosc": 1.7773293322465662
+        },
+        "source_relative_selfosc_db": {
+          "saw": -1.7773293322465662,
+          "pulse50": 2.9596312679855643,
+          "sub": 4.887575905407161,
+          "noise": -11.873016536819613,
+          "selfosc": 0.0
+        },
+        "source_common_band_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.737066962331447,
+          "sub": 6.665330101443331,
+          "noise": -10.152120898029949,
+          "selfosc": 1.7788576985964255
+        },
+        "source_common_band_relative_selfosc_db": {
+          "saw": -1.7788576985964255,
+          "pulse50": 2.9582092637350215,
+          "sub": 4.8864724028469055,
+          "noise": -11.930978596626375,
+          "selfosc": 0.0
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "saw": 0.03806077522905582,
+        "pulse50": 0.0033387523633017224,
+        "sub": 0.009176339124081778,
+        "noise": 0.20477664992468192,
+        "selfosc": 0.0016404256019697527
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4489503433865387,
+          "sub": -0.3151430210723376,
+          "noise": -10.70753323169772,
+          "selfosc": -2.378878629443401
+        },
+        "source_ratio_error_selfosc_db": {
+          "saw": 2.378878629443401,
+          "pulse50": 3.8278289728299395,
+          "sub": 2.063735608371063,
+          "noise": -8.32865460225432,
+          "selfosc": 0.0
+        },
+        "source_common_band_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4483637802303022,
+          "sub": -0.31052826478155815,
+          "noise": -10.676520133186617,
+          "selfosc": -2.3793812454218077
+        },
+        "source_common_band_ratio_error_selfosc_db": {
+          "saw": 2.3793812454218077,
+          "pulse50": 3.82774502565211,
+          "sub": 2.0688529806402496,
+          "noise": -8.29713888776481,
+          "selfosc": 0.0
+        }
+      }
+    }
+  ],
+  "baseline_reproduction": {
+    "calibration_audio_sha256_at_start_of_run": "a156eddb5fdb3a12331913cc9ac09ad37fc4bd3f0ebdba40e2456e18236b145e",
+    "preserved_previous_calibration_audio_sha256": "a156eddb5fdb3a12331913cc9ac09ad37fc4bd3f0ebdba40e2456e18236b145e",
+    "identity": "Byte-identical newly rendered pre-change exact/nominal audio and previous retained nominal audio. Earlier isolator baseline is preserved audio with no source rebuild performed in this run."
+  },
+  "final": [
+    {
+      "sequence": "calibration",
+      "render_profile": "exact/nominal",
+      "analyzer_sha256": "b17ad6d6628d6c6e77d9bb71e3c3f270b45a7c42e4145bdf38370d35cc91b98e",
+      "raw_report_sha256": "389e2e7f2eee9ba9960e58f7710071563ac9a4304c9ee809e14e3b887a12c01a",
+      "audio": {
+        "sha256": "eec434d559ca906b849c4d30f0b0d8a8fa11c7cac7bbb39be9d1b88fb784e317",
+        "pcm_float64le_sha256": "95714c009feca38e7746d026ccbfe58db1ac24368ad50e818698f2673c3443ec",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 114.05,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "noise": -10.105094972125684,
+          "saw": 0.0,
+          "pulse_pwm64": 2.9218908607465863,
+          "sub": 6.674243804884252
+        },
+        "source_common_band_relative_saw_db": {
+          "noise": -10.160492316859376,
+          "saw": 0.0,
+          "pulse_pwm64": 2.922405186437892,
+          "sub": 6.6750815296739106
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "noise": 0.14284508092059411,
+        "saw": 0.0357560124577887,
+        "pulse_pwm64": 0.0492938039662576,
+        "sub": 0.002461507511270611
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_db": {
+          "noise": -11.706546874973192,
+          "saw": 0.0,
+          "pulse_pwm64": 1.303183104885811,
+          "sub": -0.24904635404996966
+        },
+        "source_ratio_common_band_error_db": {
+          "noise": -11.683125695989702,
+          "saw": 0.0,
+          "pulse_pwm64": 1.3026809065066942,
+          "sub": -0.25111892746894426
+        }
+      }
+    },
+    {
+      "sequence": "calibration",
+      "render_profile": "shipping/character1",
+      "analyzer_sha256": "b17ad6d6628d6c6e77d9bb71e3c3f270b45a7c42e4145bdf38370d35cc91b98e",
+      "raw_report_sha256": "837401727b9e62a98b878976d365bc2a485eef0193c04d77eb0f7ee6571af4f8",
+      "audio": {
+        "sha256": "97c467775a7de069476caf80438bb265249616395beddf0cde3aa5b232585cc8",
+        "pcm_float64le_sha256": "3d60616930b4de14e0611ba289b2858cfeeb0752d7c4c34a1bd87033b4f8a339",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 114.05,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "noise": -10.149238125921798,
+          "saw": 0.0,
+          "pulse_pwm64": 2.901330925006654,
+          "sub": 6.803899073631001
+        },
+        "source_common_band_relative_saw_db": {
+          "noise": -10.205504203022535,
+          "saw": 0.0,
+          "pulse_pwm64": 2.9017738594719944,
+          "sub": 6.804323450122812
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "noise": 0.14254855132405453,
+        "saw": 0.03573753714321981,
+        "pulse_pwm64": 0.0487099300567877,
+        "sub": 0.003356699808922059
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_db": {
+          "noise": -11.750690028769306,
+          "saw": 0.0,
+          "pulse_pwm64": 1.2826231691458787,
+          "sub": -0.11939108530322073
+        },
+        "source_ratio_common_band_error_db": {
+          "noise": -11.728137582152861,
+          "saw": 0.0,
+          "pulse_pwm64": 1.2820495795407965,
+          "sub": -0.12187700702004278
+        }
+      }
+    },
+    {
+      "sequence": "isolators",
+      "render_profile": "exact/nominal",
+      "analyzer_sha256": "147847eadafb0fcd88b8303854e93abc396f3bbe3604b0e2fb82a0907a9d1e43",
+      "raw_report_sha256": "c7b4fa949466ebe85c1ba71e1b467217b061104977e5c7c3dbf9e6b3b2e37c07",
+      "audio": {
+        "sha256": "9ad37f3ca9f68e0e33f50b364920e976440a34adf4d25efcad6f821af09b0a2a",
+        "pcm_float64le_sha256": "89bd9ef926ffa36903ac6d270d3fbd1be393e02ddcc3d689ade59758811d9931",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 12.5,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.737557921317666,
+          "sub": 6.679782349320547,
+          "noise": -10.092571371182345,
+          "selfosc": 1.7753089949516294
+        },
+        "source_relative_selfosc_db": {
+          "saw": -1.7753089949516294,
+          "pulse50": 2.962248926366037,
+          "sub": 4.904473354368918,
+          "noise": -11.867880366133974,
+          "selfosc": 0.0
+        },
+        "source_common_band_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.737620390182073,
+          "sub": 6.679609354493202,
+          "noise": -10.155821810127236,
+          "selfosc": 1.7768179076101305
+        },
+        "source_common_band_relative_selfosc_db": {
+          "saw": -1.7768179076101305,
+          "pulse50": 2.9608024825719426,
+          "sub": 4.902791446883072,
+          "noise": -11.932639717737366,
+          "selfosc": 0.0
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "saw": 0.0382008567470038,
+        "pulse50": 0.002313084076366323,
+        "sub": 0.007467432461158552,
+        "noise": 0.20473137797805663,
+        "selfosc": 0.0016764952546992617
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4495476644720746,
+          "sub": -0.30026590940551756,
+          "noise": -10.704417398307019,
+          "selfosc": -2.3808989667383376
+        },
+        "source_ratio_error_selfosc_db": {
+          "saw": 2.3808989667383376,
+          "pulse50": 3.830446631210412,
+          "sub": 2.08063305733282,
+          "noise": -8.323518431568681,
+          "selfosc": 0.0
+        },
+        "source_common_band_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4489172080809283,
+          "sub": -0.29624901173168716,
+          "noise": -10.680221045283904,
+          "selfosc": -2.3814210364081028
+        },
+        "source_common_band_ratio_error_selfosc_db": {
+          "saw": 2.3814210364081028,
+          "pulse50": 3.830338244489031,
+          "sub": 2.0851720246764156,
+          "noise": -8.298800008875801,
+          "selfosc": 0.0
+        }
+      },
+      "selfosc_peak_hz": 247.91532114032532
+    },
+    {
+      "sequence": "isolators",
+      "render_profile": "shipping/character1",
+      "analyzer_sha256": "147847eadafb0fcd88b8303854e93abc396f3bbe3604b0e2fb82a0907a9d1e43",
+      "raw_report_sha256": "66132f0032d507d899d618dff01fb5a030b08f030d3868bdb48b0f96e61deb17",
+      "audio": {
+        "sha256": "d101f1f782541e06f73d3e1a83d38653de20bb0cdf3c02d471331146f632567f",
+        "pcm_float64le_sha256": "9d74de15ab8cabc5f2f8df94bf48c8252337cb800024099442f5ba38a91e2234",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 12.5,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.68974555160748,
+          "sub": 6.809355376729648,
+          "noise": -10.12735950176161,
+          "selfosc": 0.8859249651518084
+        },
+        "source_relative_selfosc_db": {
+          "saw": -0.8859249651518084,
+          "pulse50": 3.8038205864556716,
+          "sub": 5.92343041157784,
+          "noise": -11.013284466913419,
+          "selfosc": 0.0
+        },
+        "source_common_band_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.689314308219192,
+          "sub": 6.809220162955867,
+          "noise": -10.199877013344945,
+          "selfosc": 0.8870886338671937
+        },
+        "source_common_band_relative_selfosc_db": {
+          "saw": -0.8870886338671937,
+          "pulse50": 3.802225674351998,
+          "sub": 5.922131529088674,
+          "noise": -11.08696564721214,
+          "selfosc": 0.0
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "saw": 0.03820101342414972,
+        "pulse50": 0.003236865730990246,
+        "sub": 0.007028778148441717,
+        "noise": 0.20412073072149184,
+        "selfosc": 0.002621209828369331
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4017352947618882,
+          "sub": -0.1706928819964162,
+          "noise": -10.739205528886284,
+          "selfosc": -3.2702829965381586
+        },
+        "source_ratio_error_selfosc_db": {
+          "saw": 3.2702829965381586,
+          "pulse50": 4.672018291300047,
+          "sub": 3.0995901145417424,
+          "noise": -7.468922532348126,
+          "selfosc": 0.0
+        },
+        "source_common_band_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4006111261180472,
+          "sub": -0.1666382032690219,
+          "noise": -10.724276248501614,
+          "selfosc": -3.2711503101510395
+        },
+        "source_common_band_ratio_error_selfosc_db": {
+          "saw": 3.2711503101510395,
+          "pulse50": 4.671761436269087,
+          "sub": 3.1045121068820176,
+          "noise": -7.453125938350574,
+          "selfosc": 0.0
+        }
+      },
+      "selfosc_peak_hz": 248.01807990856
+    },
+    {
+      "sequence": "isolators",
+      "render_profile": "exact/character1",
+      "analyzer_sha256": "147847eadafb0fcd88b8303854e93abc396f3bbe3604b0e2fb82a0907a9d1e43",
+      "raw_report_sha256": "bec929f71183a97408df68f5ab84cddacbcfdd4965a922e636335486d53eace2",
+      "audio": {
+        "sha256": "153067b0437db3e0ebb216f71a01aa0c54b22af6522b04c5b90f06a4177d00ae",
+        "pcm_float64le_sha256": "bbb0db47bd0bdb85eec8252a9d59c06d13f32eebe83daa8c55ed46d17b5fea8a",
+        "sample_rate": 48000,
+        "channels": 2,
+        "duration_seconds": 12.5,
+        "offset_seconds": 0
+      },
+      "source_ratios_channel0": {
+        "source_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.68897429004123,
+          "sub": 6.808824403043701,
+          "noise": -10.136757816939806,
+          "selfosc": 0.8828621093047815
+        },
+        "source_relative_selfosc_db": {
+          "saw": -0.8828621093047815,
+          "pulse50": 3.8061121807364486,
+          "sub": 5.92596229373892,
+          "noise": -11.019619926244587,
+          "selfosc": 0.0
+        },
+        "source_common_band_relative_saw_db": {
+          "saw": 0.0,
+          "pulse50": 4.689039695559586,
+          "sub": 6.808674366934099,
+          "noise": -10.201137196496,
+          "selfosc": 0.8843936450199905
+        },
+        "source_common_band_relative_selfosc_db": {
+          "saw": -0.8843936450199905,
+          "pulse50": 3.8046460505395956,
+          "sub": 5.9242807219141085,
+          "noise": -11.08553084151599,
+          "selfosc": 0.0
+        }
+      },
+      "source_full_band_rms_subwindow_span_db": {
+        "saw": 0.03819723570246225,
+        "pulse50": 0.002288023549802176,
+        "sub": 0.0074734861557317345,
+        "noise": 0.20465323297005256,
+        "selfosc": 0.002515635015932105
+      },
+      "model_minus_hardware_channel0": {
+        "source_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4009640331956383,
+          "sub": -0.17122385568236353,
+          "noise": -10.74860384406448,
+          "selfosc": -3.2733458523851855
+        },
+        "source_ratio_error_selfosc_db": {
+          "saw": 3.2733458523851855,
+          "pulse50": 4.674309885580824,
+          "sub": 3.102121996702822,
+          "noise": -7.475257991679294,
+          "selfosc": 0.0
+        },
+        "source_common_band_ratio_error_saw_db": {
+          "saw": 0.0,
+          "pulse50": 1.4003365134584413,
+          "sub": -0.1671839992907902,
+          "noise": -10.725536431652667,
+          "selfosc": -3.2738452989982427
+        },
+        "source_common_band_ratio_error_selfosc_db": {
+          "saw": 3.2738452989982427,
+          "pulse50": 4.674181812456684,
+          "sub": 3.1066612997074525,
+          "noise": -7.451691132654425,
+          "selfosc": 0.0
+        }
+      },
+      "selfosc_peak_hz": 248.01850175264144
+    }
+  ],
+  "reproduce": [
+    "python3 Tools/AnalyzeHardwareCalibration.py --midi out/hardware-validation/reference-106_calibration.mid --events out/hardware-validation/events.txt",
+    "python3 Tools/AnalyzeHardwareIsolators.py --midi out/hardware-validation/osc_calibrate_new.mid --events out/hardware-validation/isolator-events.txt",
+    "./build/YouKnowRenderCalibrationEvents out/hardware-validation/events.txt out/hardware-validation/model-final-exact-nominal.wav 0 exact",
+    "python3 Tools/AnalyzeHardwareCalibration.py --reference out/hardware-validation/reference-439522.wav --model out/hardware-validation/model-final-exact-nominal.wav --output out/hardware-validation/comparison-final-exact-nominal.json",
+    "./build/YouKnowRenderCalibrationEvents out/hardware-validation/events.txt out/hardware-validation/model-final-shipping-character1.wav 1 shipping",
+    "python3 Tools/AnalyzeHardwareCalibration.py --reference out/hardware-validation/reference-439522.wav --model out/hardware-validation/model-final-shipping-character1.wav --output out/hardware-validation/comparison-final-shipping-character1.json",
+    "./build/YouKnowRenderCalibrationEvents out/hardware-validation/isolator-events.txt out/hardware-validation/isolator-final-exact-nominal.wav 0 exact",
+    "python3 Tools/AnalyzeHardwareIsolators.py --reference out/hardware-validation/osc-calibrate-new-prefix.wav --model out/hardware-validation/isolator-final-exact-nominal.wav --output out/hardware-validation/isolator-final-exact-nominal.json",
+    "./build/YouKnowRenderCalibrationEvents out/hardware-validation/isolator-events.txt out/hardware-validation/isolator-final-shipping-character1.wav 1 shipping",
+    "python3 Tools/AnalyzeHardwareIsolators.py --reference out/hardware-validation/osc-calibrate-new-prefix.wav --model out/hardware-validation/isolator-final-shipping-character1.wav --output out/hardware-validation/isolator-final-shipping-character1.json",
+    "./build/YouKnowRenderCalibrationEvents out/hardware-validation/isolator-events.txt out/hardware-validation/isolator-final-exact-character1.wav 1 exact",
+    "python3 Tools/AnalyzeHardwareIsolators.py --reference out/hardware-validation/osc-calibrate-new-prefix.wav --model out/hardware-validation/isolator-final-exact-character1.wav --output out/hardware-validation/isolator-final-exact-character1.json",
+    "python3 Tools/AnalyzeHardwareCalibration.py --self-test",
+    "python3 Tools/AnalyzeHardwareIsolators.py --self-test"
+  ]
+}
