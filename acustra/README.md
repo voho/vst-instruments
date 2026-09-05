@@ -1109,16 +1109,23 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   chord still correlate 0.93 on a bass-first downstroke and 0.995 on a
   treble-first upstroke, because a pluck point moves a treble string's
   waveform far less than a bass string's.
-- What this session's audit measured, on the shipping build against the
-  corpus, and did not close. Velocity barely reaches the attack: from the
-  archtop's softest to its loudest layer the recordings' attack centroid
-  rises by about 1,900 cents and the model's by 96, and at the loudest layer
-  H4--H12 sit 12 to 21 dB short - about 4 dB of that at every velocity is the
-  residue tilt chosen by ear on 2026-08-31 (−1.0 against the fitted +1.86 dB
-  per octave), and the rest, 1.3 dB at the softest layer to 7.6 dB at the
-  loudest, grows with velocity and so is not the linear chain but the
-  excitation, blocked on a same-instrument controlled-pluck capture;
-  audio-rate tension modulation was built and
+- Velocity still barely reaches attack brightness with the selected
+  force/moment body. A fresh comparison uses all 54 already-opened Shinyguitar
+  training recordings: nine roots, MIDI layers 16/112 and three takes each,
+  against 18 deterministic model renders. On the shared finite same-root
+  loud/soft pairs, the recordings' median 12 ms power-centroid rise is 2,054
+  cents and the model's 76 cents; 60 of 81 round-robin combinations are
+  measurable. The median H5--H12 versus H1--H4 balance rise is 9.04 dB in the
+  recordings and 0.28 dB in the model, with all 81 combinations measurable.
+  These combinations reuse 54 recordings; they are not 81 independent
+  performances. Median paired model-minus-recording differences in normalized
+  attack energy are +4.91/+4.32 dB at the quiet layer and −9.02/−11.03 dB at
+  the loud layer in the 2.56--5.12 and 5.12--10 kHz bands, respectively.
+  These descriptors preserve their existing window-stability guards and
+  establish a velocity-response gap; they do not isolate its physical source
+  or make body effects cancel. This two-layer training comparison replaces the
+  obsolete current-build claim based on the older four-layer audit.
+  Earlier audio-rate tension modulation was built and
   is inert at the fitted displacement (the decision log says by how much). A
   finite plectrum release — the string held by a rounded tip of radius r
   advancing at the pick's speed, so the corner is spread over c·t_release of

@@ -81868,5 +81868,843 @@
     "12-capture-types.wav": "a4c9937f3ebf8491bf388a5fac1fe4b7b7fc852992db557f417bd7599f52beed"
    }
   }
+ },
+ "continuous_spatial_aperture_training_audit_2026_09_05": {
+  "status": "Training baseline refreshed; continuous spatial-aperture candidate qualified off-tree, not adopted. Selected stereo body remains shipping. Listening direction unresolved.",
+  "shipping_cpp": {
+   "path": "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/AcustraEngine.cpp",
+   "sha256": "bf3beb005feb9cd3dcbb7e65572b2829563f67cabb57b8022f03439e7adbc2e0"
+  },
+  "current_body_header": {
+   "path": "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/MeasuredBodyData.h",
+   "sha256": "7a7b9a48908c2f0bb3674f41134ce9af1003e02e13c7985ee4cecd5da7ab4301"
+  },
+  "fresh_training_baseline": {
+   "report": {
+    "path": "/tmp/acustra-selected-body-attack-baseline/report.json",
+    "sha256": "ec45054178b2e321c84553c414e2ff29e2aec7b6ba8ffcabc40185e668271d6b"
+   },
+   "summary": {
+    "path": "/tmp/acustra-selected-body-attack-baseline/summary.json",
+    "sha256": "191ea15f61559e9631396e9a410c17be49149c2ba40274aef98540bc6a327714"
+   },
+   "source_manifest": "/tmp/acustra-goal-reference/train.json",
+   "source_manifest_sha256": "ccfe4792124762422e556f8d4b993c2760eb77d4513a0064950f3da495f661b9",
+   "selection": {
+    "rows": 54,
+    "unique_model_cases": 18,
+    "roots": [
+     40,
+     45,
+     51,
+     57,
+     60,
+     66,
+     72,
+     78,
+     84
+    ],
+    "velocities": [
+     16,
+     112
+    ],
+    "round_robins": [
+     0,
+     1,
+     2
+    ],
+    "selection_rule": "All and only existing steel rows in train.json; no validation or other manifests read",
+    "current_revision": "42a94f2ec88186ebb518a2b4ca2c685e49393f99"
+   },
+   "protocol": {
+    "descriptors": "Unmodified frozen Tools/AuditAttackBands.py, exact constants/functions",
+    "bands_hz": [
+     80.0,
+     160.0,
+     320.0,
+     640.0,
+     1280.0,
+     2560.0,
+     5120.0,
+     10000.0
+    ],
+    "attack_seconds": 0.35,
+    "onset_fraction": 0.02,
+    "centroid_seconds": 0.012,
+    "balance_window": [
+     0.08,
+     0.25
+    ],
+    "balance_harmonics": "meanH5–H12 minusmeanH1–H4; README historicalH4–H12 wording is not thisdescriptor",
+    "band_window_stability_db": 1.0,
+    "centroid_window_stability_cents": 50.0,
+    "stability_length_multiplier": 1.05,
+    "layer_summary": "Original _layer_report including its one-third finite-admission rule",
+    "velocity_comparison": "Additional descriptive same-root loud/soft all3x3roundrobin pairs, commonfinite recording/oldA/currentB mask, same _median admission rule; these81pairs derive from54recordings, not81independent gestures",
+    "model_controls": {
+     "shape": "Dreadnought",
+     "body_material": "Spruce",
+     "string_material": "Steel",
+     "bridge_model": "Original",
+     "capture": "StereoMic",
+     "picking": "Finger",
+     "tuning": "Standard",
+     "string_age": 0.15,
+     "pluck_position": 0.28,
+     "touch": 0.58,
+     "body_amount": 0.82,
+     "stereo_width": 0.62,
+     "output_gain": 0.42,
+     "sympathetic_strings": true,
+     "block_size": 127,
+     "sample_rate": 48000,
+     "duration_s": 4.2,
+     "seed": "freshdefaultengineperMIDI/velocity"
+    },
+    "calibration_order": [
+     "bodyFrequencyScale",
+     "bodyQScale",
+     "bridgeMobilityScale",
+     "residueTiltDbPerOctave",
+     "directGain",
+     "nylon.fundamentalT60Scale",
+     "nylon.frequencyLossScale",
+     "nylon.apertureScale",
+     "nylon.transientScale",
+     "nylon.pluckDistanceScale",
+     "nylon.velocityBrightnessDepth",
+     "steel.stiffnessScale",
+     "steel.fundamentalT60Scale",
+     "steel.frequencyLossScale",
+     "steel.apertureScale",
+     "steel.transientScale",
+     "steel.pluckDistanceScale",
+     "steel.velocityBrightnessDepth",
+     "apertureRegisterExponent",
+     "lowBodyModeGain",
+     "steelDisplacementScaleMetres",
+     "steelFretT60Slope",
+     "highLossCutoffScale",
+     "bridgeConductanceFloor",
+     "bridgeConductanceCornerHz",
+     "bridgeTailLengthMetres",
+     "longitudinalGain",
+     "longitudinalQ",
+     "polarisationEndCorrectionMetres"
+    ],
+    "current_calibration_values": [
+     1.0,
+     1.0,
+     0.7546771764755249,
+     0.0,
+     0.0,
+     0.8648471832275391,
+     1.4036976099014282,
+     1.7688939571380615,
+     0.0,
+     1.1266714334487915,
+     0.03750000149011612,
+     0.7493554353713989,
+     1.5299999713897705,
+     0.5199999809265137,
+     0.6431243419647217,
+     0.49408644437789917,
+     0.8881950974464417,
+     1.185937523841858,
+     -0.07062900811433792,
+     1.0,
+     0.0077357785776257515,
+     -0.059785157442092896,
+     2.285860300064087,
+     0.010999999940395355,
+     2187.76025390625,
+     0.0032500000670552254,
+     0.0,
+     35.0,
+     0.0007999999797903001
+    ]
+   },
+   "shared_finite_velocity_response": {
+    "centroid_hz": {
+     "shared_finite_pairs": 60,
+     "possible_pairs": 81,
+     "median_loud_minus_soft": {
+      "recording": 2053.537310445251,
+      "legacy_A": 63.63284167521367,
+      "current_B": 76.21057195596418
+     },
+     "units": "cents"
+    },
+    "balance_db": {
+     "shared_finite_pairs": 81,
+     "possible_pairs": 81,
+     "median_loud_minus_soft": {
+      "recording": 9.044592641520072,
+      "legacy_A": 0.02929546275677808,
+      "current_B": 0.28486566625478105
+     },
+     "units": "dB"
+    },
+    "bands": {
+     "shared_finite_pairs": [
+      18,
+      81,
+      81,
+      81,
+      81,
+      81,
+      81
+     ],
+     "possible_pairs": 81,
+     "median_loud_minus_soft": {
+      "recording": [
+       null,
+       0.08525206037972238,
+       0.6856825660722898,
+       3.8106673637248587,
+       9.142399239446203,
+       15.268691358774163,
+       18.527721834913677
+      ],
+      "legacy_A": [
+       null,
+       -0.14510857371925368,
+       -0.015922590716066054,
+       0.22500141704396714,
+       1.302008151726307,
+       1.9340081325678078,
+       0.9318957231335254
+      ],
+      "current_B": [
+       null,
+       -0.5374108142216922,
+       0.09310985631669233,
+       0.480561166344156,
+       0.2867136022220347,
+       1.7283931248417836,
+       -0.6487443791562413
+      ]
+     },
+     "units": "dB"
+    }
+   },
+   "quiet_model_minus_recording_upper_bands_db": [
+    4.91142005813672,
+    4.317009016569564
+   ],
+   "loud_model_minus_recording_upper_bands_db": [
+    -9.01523972567097,
+    -11.027519333659775
+   ],
+   "upper_band_edges_hz": [
+    2560,
+    5120,
+    10000
+   ],
+   "all_27_rows_per_layer_admitted_in_each_upper_band": true,
+   "native_channel_peak": 0.17796324,
+   "limitations": [
+    "Training-only9roots/2layers/3takes; no validation48/80layers or protected/heldout audio opened. Cannot claim exact reproduction of historicalfour-layer audit or1900/96cents prose.",
+    "Cached targets are the pinned CC0Shiny acoustic recordings as PCM16 bankexports with a constant per-take playback gain and retained onset; the gain cancels from these shape descriptors. Original24bit/rawmic+magnetic archive cache is absent; ExtractExcitation whole-corpus/source-ratio audit was not rerun or called body-free here.",
+    "Band/centroid/partial-balance descriptors are not mechanical excitation measurements. A linear multi-input body can alter their apparentvelocityresponse when input spectral shapes or force/moment ratios differ. Growth of a normalizedband/centroid deficit withvelocity alone cannotprove a nonlinear source defect.",
+    "LegacyA caches are reported as historical context; currentB is an18-render freshbaseline, not an optimization or a preferredcandidate selection. Finite masks and perexample observations are retained for everydescriptor."
+   ],
+   "finding": "Velocity response remains far too weak. No source-identification or body-cancellation inference follows from these microphone descriptors. README replaces obsolete four-layer/current-build numbers and the incorrect H4-H12 label."
+  },
+  "spatial_kernel_audit": {
+   "report": {
+    "path": "/tmp/acustra-attack-source-review/report.json",
+    "sha256": "9f7481b56bd41afda72d89781c8a7f79447f617270f346a61233d34e019d61b3"
+   },
+   "native_states": 108,
+   "shipping_transfer": "cos(pi*k*a)^4 from five atoms [1,4,6,4,1]/16 at [-2a,-a,0,a,2a]; variance a^2, unit revivals when k*a is integer.",
+   "scope": "Ideal periodic initial-history slope-energy spectrum, excluding subsequent noise, loss, bridge and microphone rendering; not an acoustic-pressure score.",
+   "pick_thumb_initial_centroid_reversals": {
+    "shipping": 7,
+    "gaussian": 0,
+    "matched_pairs": 36
+   },
+   "native48k_nylon_lowE_centroids_hz": {
+    "shipping_pick": 268.39,
+    "shipping_thumb": 295.32,
+    "gaussian_pick": 201.97,
+    "gaussian_thumb": 191.82
+   },
+   "native48k_nylon_lowE_post_first_old_null_slope_energy_percent": {
+    "shipping_pick": 1.667,
+    "shipping_thumb": 3.646,
+    "gaussian_pick": 0.455,
+    "gaussian_thumb": 1.019
+   },
+   "erratum": "Earlier probe recomputed aperture from post-noteOn targetDelay, which can change when the steel attack-pitch observer reconfigures the voice. This matched probe uses currentDelay, the actual initialized delay before any process call. All108 old wave files remain byte-identical to the prior audit. Earlier cited nylon cases are unaffected; no source-code fix implied.",
+   "earlier_temporal_release_candidates": "Boxcar/half-cosine temporal unloading retained this spatial kernel; this experiment changes its spatial profile only."
+  },
+  "continuous_candidate": {
+   "replay_patch": {
+    "path": "/Users/vojta/Dev/vst-instruments/acustra/Tools/GaussianApertureExperiment.patch",
+    "sha256": "bf50add12ce281a67f87e5cb1452cc1ea3f94a4c10b0f2c98f80654c4b392046"
+   },
+   "replay_validation": {
+    "path": "/tmp/acustra-continuous-aperture-patch-replay/report.json",
+    "sha256": "9c55b4e03d17e18e82d7c9c6369bd833d0cbffb71b71293d5300d20d124f4eb9"
+   },
+   "source_manifest": {
+    "path": "/tmp/acustra-continuous-aperture-candidate/source-manifest.json",
+    "sha256": "ffa1a56c7d25634e6e147556afc8967c84c37710f8052f2599b0ceb053257d56"
+   },
+   "source": {
+    "path": "/tmp/acustra-continuous-aperture-candidate/pair/Source/DSP/AcustraEngine.cpp",
+    "sha256": "17dac87b3f43d2729518e802b98822ed3cd36058006402ce0ba953953935e4b7"
+   },
+   "report": {
+    "path": "/tmp/acustra-continuous-aperture-candidate/report.json",
+    "sha256": "8e06e0da6a5bb2da6ffa612348f077eec0fcf407c48f68fff44b78c40dd09f73"
+   },
+   "kernel": {
+    "profile": "periodic continuous Gaussian",
+    "sigma": "existing registered aperture a",
+    "variance": "a^2, matching (1,4,6,4,1)/16 atoms at(-2a,-a,0,a,2a)",
+    "analytic_modal_transfer": "exp(-2*pi^2*k^2*a^2)",
+    "corner_correction": "q(z)=a*phi(abs(z)/a)-abs(z)*Phi(-abs(z)/a); Tsm=T+[sum_n q(x-n)-q(x-p-n)]/[p*(1-p)]",
+    "image_tail_bound": "For R>=1: four omitted tails <=4*a*(1+a)*phi(R)/(p*(1-p)). Chosen R=sqrt(-2log(epsilon/[4*a*(1+a)/(p*(1-p))])) makes this <=epsilon/sqrt(2pi).",
+    "uniform_shortcut": "Return0.5 only when exp(-2*pi^2*a^2)/(6*p*(1-p)) <= double epsilon; bounded Fourier tail of the continuous triangle.",
+    "runtime": "O(N) note initialization, no allocations, no added work in steady-state sample processing; existing harmonic projection unchanged."
+   },
+   "validation": {
+    "preclip_grids": 28,
+    "samples_per_grid": 131072,
+    "max_complex_modal_coefficient_error": 1.0409031868123364e-08,
+    "max_resolved_complex_gain_error": 1.6321062984152373e-05,
+    "finite_sweep": "legal_sigma_bound 4.98636e-06 27.8536 finite_sweep 109005 range 7.96984e-06 0.99915 periodic_error 0",
+    "broad_precision_peak_to_peak_floor": 1.1920928955078125e-07,
+    "broad_precision_note": "Original float triangleAt evaluation plus double correction leaves an absolute float-quantization floor near sigma1, before the double-epsilon uniform shortcut. No source change; quantify separately from the continuous analytic transfer.",
+    "source_manifest_verified": true,
+    "independent_native108_report": "/tmp/acustra-gaussian-clamp-review/native-comparison.json",
+    "independent_native108_report_sha256": "4d0bce96bec77351e066a0f14582120b410e23d1e1fa7d0b2d8228ccdc02cf41",
+    "independent_results": "Pick/Thumb initial-state centroid reversals7/36→0/36; same amplitude/polarisation gains within7e-8; no amplitude/sign/phase-origin implementation defect. Remaining clipping tails measured separately by reviewer."
+   },
+   "independent_native_report": {
+    "path": "/tmp/acustra-gaussian-clamp-review/native-comparison.json",
+    "sha256": "4d0bce96bec77351e066a0f14582120b410e23d1e1fa7d0b2d8228ccdc02cf41"
+   },
+   "independent_dense_report": {
+    "path": "/tmp/acustra-gaussian-clamp-review/dense-report.json",
+    "sha256": "24b7bcb7749dd916ce5833110c8538e1d3a4f7ae0aae1ce067e53b0ac1d4c01e"
+   },
+   "independent_native_summary": {
+    "amplitude_ratio_min": 0.9999999400916394,
+    "amplitude_ratio_max": 1.0000000682369177,
+    "gaussian_profile_max_relative_peak_error": 1.852514889959664e-07,
+    "old_profile_max_relative_peak_error": 2.1407319335201617e-07,
+    "old_max_guarded_alias_error_db": 3.0640060077165114,
+    "gaussian_max_guarded_alias_error_db": 1.1151209063382626
+   },
+   "all_initial_metadata_equal": true,
+   "remaining_clamp_effect": "Existing max(releasedAt(phase)-releasedAt(0),0) recreates corners; Gaussian Pick/Thumb clipping removes about1.69%/3.80% of smoothed slope energy versus1.33%/2.98% before. Initial phase, endpoint subtraction, clipping and amplitude laws intentionally unchanged. Gaussian width is the existing variance, not a measured contact shape.",
+   "full_existing_qualification": {
+    "report": {
+     "path": "/tmp/acustra-continuous-aperture-qualification/qualification-report.json",
+     "sha256": "7b8d11b8f39a2cd3161f3f3b27206b6cd9814dbf8b487577401e12a9378e1e60"
+    },
+    "tests": [
+     {
+      "name": "Acustra.Engine",
+      "status": "passed",
+      "elapsed_seconds": 137.67
+     },
+     {
+      "name": "Acustra.Capture",
+      "status": "passed",
+      "elapsed_seconds": 7.29
+     },
+     {
+      "name": "Acustra.MeasuredSteelBridge",
+      "status": "passed",
+      "elapsed_seconds": 4.17
+     }
+    ],
+    "failure_count": 0,
+    "diagnostics": {
+     "six_string_realtime_ratio": 0.0658789,
+     "existing_realtime_gate": 0.25,
+     "isolated_lift_energy_worst_relative_error": 0.00652616,
+     "retained_tail_max_relative_wave_norm_error": 1.99025e-08,
+     "fylde_worst_isolated_H1_cents": 1.1073,
+     "fylde_worst_switch_peak_ratio": 1.42137
+    },
+    "commands": [
+     "cmake -S /tmp/acustra-continuous-aperture-qualification/source -B /tmp/acustra-continuous-aperture-qualification/build -DCMAKE_BUILD_TYPE=Release -DACUSTRA_BUILD_PLUGIN=OFF -DACUSTRA_BUILD_TOOLS=OFF -DACUSTRA_BUILD_UNIVERSAL=OFF",
+     "cmake --build /tmp/acustra-continuous-aperture-qualification/build --target AcustraEngineTests AcustraCaptureTests AcustraMeasuredSteelBridgeTests --parallel 6",
+     "ctest --test-dir /tmp/acustra-continuous-aperture-qualification/build --output-on-failure -R ^Acustra\\.(Engine|Capture|MeasuredSteelBridge)$"
+    ],
+    "interpretation": "Physical/state/finite-output and existing sound-behavior assertions all pass. The logged first-ms/prior-50ms nylon peak ratios remain descriptive after the previously committed test correction; they are not failed continuity assertions. Passing the six-string CPU test does not bound worst MIDI note-on callback work of the analytic exp/erfc implementation or prove that a Gaussian is measured finger contact."
+   },
+   "recording_comparison": {
+    "report": {
+     "path": "/tmp/acustra-continuous-aperture-benchmark/report-final.json",
+     "sha256": "d39cdb9d04b8878dfea8c341b7745d964ad6f5fe1ca183aac2d827ad4a82d1ef"
+    },
+    "summary": {
+     "path": "/tmp/acustra-continuous-aperture-benchmark/summary-final.json",
+     "sha256": "4ca40327a17f3274d52f053e0da118a7351cf0e61da4d292a5f114350bd3a751"
+    },
+    "script": {
+     "path": "/tmp/acustra-continuous-aperture-benchmark/analyze.py",
+     "sha256": "66e81f36f331622cc0693cbfe140c735a2f2da681a4135fc040f08e0c75c455e"
+    },
+    "protocol_erratum": "Inherited baseline mask/context wording and derived-unit labels corrected without changing numerical results. Original reports preserved; final masks use recording/shipping/candidate.",
+    "velocity_response": {
+     "centroid_hz": {
+      "shared_finite_pairs": 60,
+      "possible_pairs": 81,
+      "median_loud_minus_soft": {
+       "recording": 2053.537310445251,
+       "shipping": 76.21057195596418,
+       "candidate": 76.4522962238492
+      }
+     },
+     "balance_db": {
+      "shared_finite_pairs": 81,
+      "possible_pairs": 81,
+      "median_loud_minus_soft": {
+       "recording": 9.044592641520072,
+       "shipping": 0.28486566625478105,
+       "candidate": 0.15943514279961946
+      }
+     },
+     "bands": {
+      "shared_finite_pairs": [
+       18,
+       81,
+       81,
+       81,
+       81,
+       81,
+       81
+      ],
+      "possible_pairs": 81,
+      "median_loud_minus_soft": {
+       "recording": [
+        null,
+        0.08525206037972238,
+        0.6856825660722898,
+        3.8106673637248587,
+        9.142399239446203,
+        15.268691358774163,
+        18.527721834913677
+       ],
+       "shipping": [
+        null,
+        -0.5374108142216922,
+        0.09310985631669233,
+        0.480561166344156,
+        0.2867136022220347,
+        1.7283931248417836,
+        -0.6487443791562413
+       ],
+       "candidate": [
+        null,
+        -0.5406822674799416,
+        0.110617807576185,
+        0.4007213205969524,
+        0.13971927185308886,
+        2.1381586036725153,
+        2.313402102239408
+       ]
+      }
+     }
+    },
+    "paired_errors": {
+     "centroid_hz": {
+      "16": {
+       "shared_finite_rows": 23,
+       "possible_rows": 27,
+       "shipping": {
+        "median_signed_error": -20.55260303222602,
+        "median_absolute_error": 285.920555817647
+       },
+       "candidate": {
+        "median_signed_error": -23.22765994373686,
+        "median_absolute_error": 267.6702986706072
+       }
+      },
+      "112": {
+       "shared_finite_rows": 21,
+       "possible_rows": 27,
+       "shipping": {
+        "median_signed_error": -2128.899070421113,
+        "median_absolute_error": 2128.899070421113
+       },
+       "candidate": {
+        "median_signed_error": -2127.409020248255,
+        "median_absolute_error": 2127.409020248255
+       }
+      }
+     },
+     "balance_db": {
+      "16": {
+       "shared_finite_rows": 27,
+       "possible_rows": 27,
+       "shipping": {
+        "median_signed_error": -0.13885513803380434,
+        "median_absolute_error": 3.8878251622092392
+       },
+       "candidate": {
+        "median_signed_error": 0.12620333922438576,
+        "median_absolute_error": 4.064805070179286
+       }
+      },
+      "112": {
+       "shared_finite_rows": 27,
+       "possible_rows": 27,
+       "shipping": {
+        "median_signed_error": -9.801705008010373,
+        "median_absolute_error": 9.801705008010373
+       },
+       "candidate": {
+        "median_signed_error": -9.816846718162779,
+        "median_absolute_error": 9.816846718162779
+       }
+      }
+     },
+     "bands": {
+      "16": {
+       "shared_finite_rows": [
+        6,
+        27,
+        27,
+        27,
+        27,
+        27,
+        27
+       ],
+       "possible_rows": 27,
+       "shipping": {
+        "median_signed_error": [
+         null,
+         6.726704927315852,
+         2.37790439993951,
+         0.622506057386488,
+         7.605602501890729,
+         4.91142005813672,
+         4.317009016569564
+        ],
+        "median_absolute_error": [
+         null,
+         8.154138548380724,
+         2.5084045522398446,
+         4.5302124572246,
+         8.308793658364161,
+         4.91142005813672,
+         9.81435582903886
+        ]
+       },
+       "candidate": {
+        "median_signed_error": [
+         null,
+         6.739517561672775,
+         2.3600462979639554,
+         0.6898651304834047,
+         7.596808246147035,
+         4.841562581655637,
+         4.387767082098776
+        ],
+        "median_absolute_error": [
+         null,
+         8.327524924627546,
+         2.4951995802730655,
+         4.710250200960388,
+         8.28871394643376,
+         4.841562581655637,
+         9.867008049795203
+        ]
+       }
+      },
+      "112": {
+       "shared_finite_rows": [
+        7,
+        27,
+        27,
+        27,
+        27,
+        27,
+        27
+       ],
+       "possible_rows": 27,
+       "shipping": {
+        "median_signed_error": [
+         null,
+         2.137716262995146,
+         2.814573288071834,
+         -2.0206591961175153,
+         -2.1062375019365494,
+         -9.01523972567097,
+         -11.027519333659775
+        ],
+        "median_absolute_error": [
+         null,
+         4.174699465149452,
+         2.814573288071834,
+         2.40465799506568,
+         4.672602708545211,
+         10.752510063328598,
+         14.809812938046651
+        ]
+       },
+       "candidate": {
+        "median_signed_error": [
+         null,
+         2.1380482328346258,
+         2.814789127441405,
+         -2.0238667527270007,
+         -2.108797259775711,
+         -9.03790369553807,
+         -11.010688075088439
+        ],
+        "median_absolute_error": [
+         null,
+         4.171615480962277,
+         2.814789127441405,
+         2.46461046142484,
+         4.676913314710488,
+         10.769177809789804,
+         14.165570241922982
+        ]
+       }
+      }
+     }
+    },
+    "native_channel_peak": 0.17757020890712738,
+    "finding": "Mixed small differences, no velocity-gap closure: centroid rise76.21 to76.45cents versus2053.54recorded; H5-H12 balance rise0.285 to0.159dB versus9.045recorded. No fitting, normalization, target exclusions or held-out access."
+   },
+   "limitations": [
+    "Gaussian is a declared numerical profile candidate, not measured fingertip/plectrum geometry or a contact/release simulation.",
+    "Endpoint subtraction and clipping remain and can create spectral tails; eliminating the atom-kernel revival does not eliminate those tails.",
+    "The initial full-period triangle time origin is unchanged. No displacement, velocity, grip, or MIDI mapping was introduced.",
+    "Performance measured for initialization only. Auditory direction and matched real-recording evaluation belong to parent task.",
+    "Very wide apertures retain the existing float-triangle cancellation floor described above; no source adjustment was made after freeze."
+   ],
+   "fast_equivalent": {
+    "report": {
+     "path": "/tmp/acustra-continuous-aperture-fast/report.json",
+     "sha256": "ac31feca52b5bae81c67587ee47ab87228e797ed8c1266262c33530259726dc3"
+    },
+    "source_manifest": {
+     "path": "/tmp/acustra-continuous-aperture-fast/source-manifest.json",
+     "sha256": "4416ec9e5b8bf328076e7484a4ce564260eaf4363f9d47fef9a947bb7bdfa804"
+    },
+    "source": {
+     "path": "/tmp/acustra-continuous-aperture-fast/Source/DSP/AcustraEngine.cpp",
+     "sha256": "1a7ae8380f1cff6e9bc8578975286e6e6261c4841a1adc05cf20de89aa79502f"
+    },
+    "table": {
+     "path": "/tmp/acustra-continuous-aperture-fast/Source/DSP/GaussianApertureData.h",
+     "sha256": "b7603071f8847551db77eb1cbb50aba1564d02b9afbe43b67789975c0f09d08d"
+    },
+    "implementation": "641 constexpr pairs of unit Gaussian corner q and q derivative on z=0..10, spacing1/64, cubic Hermite;10256 data bytes, no runtime table generation/allocation.",
+    "equivalence": {
+     "protocol": "Numerical equivalence check of the frozen analytic and Hermite kernels.\nFinite grid checks supplement the analytic interpolation and omitted-tail bounds.\nNative comparison includes the unchanged endpoint subtraction and zero clipping.\n",
+     "unit_q_grid_samples": 2000001,
+     "unit_q_max_abs_error": 6.191758217255483e-11,
+     "unit_q_analytic_bound": 6.192399195107208e-11,
+     "largest_nonuniform_sigma": 1.3746218882091286,
+     "maximum_images_total": 52,
+     "conservative_whole_profile_abs_bound": 9.318627129566187e-08,
+     "omitted_z10_tail_bound": 2.115095951256687e-20,
+     "float_epsilon": 1.1920928955078125e-07,
+     "kernel_max_abs_error": 5.960464477539063e-08,
+     "native_metadata_exact": true,
+     "native_max_peak_relative_error": 0.0,
+     "native_changed_samples": 0,
+     "native_samples": 29484,
+     "native_cases_exact": 108
+    },
+    "native_states_bit_identical_to_analytic": 108,
+    "timing_protocol": "Six simultaneous public noteOn calls at velocity0.6 for open strings40,45,50,55,59,64, channels1..6 in string-per-channel mode, plus process64; assert six active voices and finite samples. Both materials and all three picking techniques. Default controls and calibration. Reset outside timer; ten warmups then100 observations per condition; sequential binaries on shared macOS host. Summary is maximum across material/technique conditions of each statistic, not a hard realtime guarantee.",
+    "timing_summary": [
+     {
+      "rate": 44100,
+      "deadline_us": 1451.2471655328798,
+      "shipping": {
+       "attack_median_us": 325.042,
+       "callback_median_us": 407.333,
+       "callback_p95_us": 568.2909999999999,
+       "callback_maximum_us": 6527.834
+      },
+      "fast": {
+       "attack_median_us": 351.25,
+       "callback_median_us": 432.791,
+       "callback_p95_us": 2238.459,
+       "callback_maximum_us": 20151.042
+      }
+     },
+     {
+      "rate": 48000,
+      "deadline_us": 1333.3333333333333,
+      "shipping": {
+       "attack_median_us": 190.334,
+       "callback_median_us": 270.625,
+       "callback_p95_us": 388.416,
+       "callback_maximum_us": 835.9580000000001
+      },
+      "fast": {
+       "attack_median_us": 207.375,
+       "callback_median_us": 286.083,
+       "callback_p95_us": 484.959,
+       "callback_maximum_us": 835.5
+      }
+     },
+     {
+      "rate": 96000,
+      "deadline_us": 666.6666666666666,
+      "shipping": {
+       "attack_median_us": 320.375,
+       "callback_median_us": 409.666,
+       "callback_p95_us": 562.917,
+       "callback_maximum_us": 3105.292
+      },
+      "fast": {
+       "attack_median_us": 353.5,
+       "callback_median_us": 436.708,
+       "callback_p95_us": 574.875,
+       "callback_maximum_us": 677.6669999999999
+      }
+     },
+     {
+      "rate": 384000,
+      "deadline_us": 166.66666666666666,
+      "shipping": {
+       "attack_median_us": 439.291,
+       "callback_median_us": 525,
+       "callback_p95_us": 1465,
+       "callback_maximum_us": 3314.416
+      },
+      "fast": {
+       "attack_median_us": 555.792,
+       "callback_median_us": 638.3330000000001,
+       "callback_p95_us": 1065.292,
+       "callback_maximum_us": 9719.833
+      }
+     }
+    ],
+    "limitations": [
+     "Table profile error includes an inherited float triangle evaluation floor at broad sigma; the physical Gaussian profile remains unmeasured.",
+     "The native108-state corpus is byte-identical; arbitrary controls can differ at float roundoff because the table is an approximation.",
+     "The original direct-initializer cost probe uses voice0 even when a requested note cannot play on that string; treat it only as loop-size microbenchmark. The public six-string measurements are the practical callback evidence.",
+     "Shipping and candidate both exceed the64-frame384k deadline in the checked public-call medians. Ordinary-rate shared-host scheduling tails are not bounded. No realtime-safety claim or runtime promotion is justified by these measurements."
+    ],
+    "runtime_status": "Off-tree only; full Engine/Capture/MeasuredSteelBridge qualification above applies to analytic implementation, not this table. Native-state equivalence does not assert every arbitrary control bit-identical."
+   }
+  },
+  "listening_comparison": {
+   "status": "Ready; user preference requested, no verdict. Both letters retain previously selected stereo body.",
+   "manifest": {
+    "path": "/tmp/acustra-continuous-aperture-audition/manifest.json",
+    "sha256": "396479c1594a36838f7194e29118e5fa945d25eedbb861db161024d3318b9cef"
+   },
+   "duration_seconds": 22,
+   "sample_rate": 48000,
+   "segments": [
+    {
+     "index": 0,
+     "label": "Steel Pick",
+     "start_seconds": 0.0,
+     "end_seconds": 5.5,
+     "quiet_gap_seconds": [
+      5.0,
+      5.5
+     ]
+    },
+    {
+     "index": 1,
+     "label": "Steel Thumb",
+     "start_seconds": 5.5,
+     "end_seconds": 11.0,
+     "quiet_gap_seconds": [
+      10.5,
+      11.0
+     ]
+    },
+    {
+     "index": 2,
+     "label": "Nylon Pick",
+     "start_seconds": 11.0,
+     "end_seconds": 16.5,
+     "quiet_gap_seconds": [
+      16.0,
+      16.5
+     ]
+    },
+    {
+     "index": 3,
+     "label": "Nylon Thumb",
+     "start_seconds": 16.5,
+     "end_seconds": 22.0,
+     "quiet_gap_seconds": [
+      21.5,
+      22.0
+     ]
+    }
+   ],
+   "controls": {
+    "shape": "Dreadnought",
+    "body_material": "Spruce",
+    "capture": "StereoMic",
+    "tuning": "Standard",
+    "bridge_model": "Original",
+    "string_age": 0.15,
+    "pluck_position": 0.28,
+    "touch": 0.58,
+    "body_amount": 0.82,
+    "stereo_width": 0.62,
+    "output_gain": 0.42,
+    "sympathetic_strings": true,
+    "legato": false,
+    "string_per_channel": false,
+    "midi_channel": 1,
+    "note_off_lift": 0,
+    "physical_calibration": "Exact shipping vector, no setter/override; longitudinalGain already0",
+    "randomization": "Fresh engine and prepare/reset persection; same native deterministic seed"
+   },
+   "level_matching": {
+    "measure": "sqrt(mean of squares over every frame and both channels of whole22sfile)",
+    "target_stereo_rms": 0.02200912037691158,
+    "common_headroom_attenuation": 1,
+    "per_section_normalization": false,
+    "encoded_rms_difference_db": 3.117670699310825e-10
+   },
+   "checks": {
+    "all_finite": true,
+    "nonclipping": true,
+    "minimum_final_headroom_db": 6.8157027995931605,
+    "all_four_half_second_gaps_exactly_silent": true,
+    "same_renderer_and_event_schedule": true,
+    "no_physical_calibration_override": true
+   },
+   "audio": {
+    "A": {
+     "path": "/private/tmp/acustra-continuous-aperture-audition/A.wav",
+     "trim_db": -0.022539791123589028,
+     "encoded_stereo_rms": 0.022009120418549466,
+     "encoded_peak": 0.45537447929382324,
+     "wav_sha256": "46cd78b6d809281f08a88436d37694a531511a39b4cd7719045ba797734ddd53"
+    },
+    "B": {
+     "path": "/private/tmp/acustra-continuous-aperture-audition/B.wav",
+     "trim_db": 0.0,
+     "encoded_stereo_rms": 0.022009120417759483,
+     "encoded_peak": 0.45626258850097656,
+     "wav_sha256": "72880c9ed08f84adc884bbe7cf401fe19d115aa12fc3652608a9c7b59b2ce917"
+    }
+   },
+   "key": "Separate key.md written and left unopened; listening files kept in working directory per repository convention."
+  },
+  "verification": {
+   "attack_descriptor_self_test": "passed",
+   "patch_replays_exact_qualified_cpp": true,
+   "prior_ledger_entries_preserved": 80,
+   "independent_recording_audit": "Pass: all54 rows,18 raw hashes/shapes/peaks,81 pair identities/deltas and finite masks; exact original helper reproduces all candidate descriptors, and README explicitly reports paired medians.",
+   "original_final_candidate_numerical_summary_identical": true
+  }
  }
 }

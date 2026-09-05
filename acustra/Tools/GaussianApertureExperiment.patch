@@ -1,0 +1,59 @@
+Gaussian spatial-aperture numerical candidate; not a measured finger/pick profile.
+Only the pre-existing smoothing kernel changes. Existing endpoint subtraction and clipping remain.
+
+--- a/Source/DSP/AcustraEngine.cpp
++++ b/Source/DSP/AcustraEngine.cpp
+@@ -2405,13 +2405,48 @@
+                 ? phase / localPosition
+                 : (1.0f - phase) / (1.0f - localPosition);
+         };
++        // Continuous periodic Gaussian contact profile, sigma=aperture:
++        // the same variance as the former [1,4,6,4,1]/16 spatial atoms.
++        // This is a numerical profile candidate, not a measured finger shape.
++        const double sigma = aperture;
++        const double gaussianPi = std::acos(-1.0);
++        const double cornerScale = 1.0
++            / (static_cast<double>(localPosition) * (1.0 - localPosition));
++        const double epsilon = std::numeric_limits<double>::epsilon();
++        const bool uniformToPrecision = std::exp(
++            -2.0 * gaussianPi * gaussianPi * sigma * sigma)
++            * cornerScale / 6.0 <= epsilon;
++        // q(z)=sigma*phi(|z|/sigma)-|z|*Phi(-|z|/sigma), q''=G-delta.
++        // For R>=1 the four omitted image tails sum to no more than
++        // 4*sigma*(1+sigma)*phi(R)*cornerScale. This R bounds that by epsilon.
++        const double radius = sigma * std::sqrt(-2.0 * std::log(
++            epsilon / (4.0 * sigma * (1.0 + sigma) * cornerScale)));
++        const double densityScale = sigma / std::sqrt(2.0 * gaussianPi);
++        const double inverseSigmaRootTwo = 1.0 / (sigma * std::sqrt(2.0));
++        const auto periodicCorner = [&] (double phase)
++        {
++            double sum = 0.0;
++            const int first = static_cast<int>(std::ceil(phase - radius));
++            const int last = static_cast<int>(std::floor(phase + radius));
++            for (int image = first; image <= last; ++image)
++            {
++                const double distance = std::abs(phase - image);
++                const double scaled = distance * inverseSigmaRootTwo;
++                sum += densityScale * std::exp(-scaled * scaled)
++                    - 0.5 * distance * std::erfc(scaled);
++            }
++            return sum;
++        };
+         const auto smoothedTriangleAt = [&] (float phase)
+         {
+-            return (triangleAt(phase - 2.0f * aperture)
+-                + 4.0f * triangleAt(phase - aperture)
+-                + 6.0f * triangleAt(phase)
+-                + 4.0f * triangleAt(phase + aperture)
+-                + triangleAt(phase + 2.0f * aperture)) / 16.0f;
++            // |T*G - 1/2| <= exp(-2*pi^2*sigma^2)/(6*p*(1-p)).
++            // This avoids long image sums for legal extreme-bend apertures.
++            if (uniformToPrecision)
++                return 0.5f;
++            const double wrapped = static_cast<double>(phase) - std::floor(phase);
++            return static_cast<float>(triangleAt(phase) + cornerScale
++                * (periodicCorner(wrapped)
++                   - periodicCorner(wrapped - localPosition)));
+         };
+         // A light touch at the nth node leaves exactly the modes that have a
+         // node there. Averaging the released shape over its n cyclic shifts is
