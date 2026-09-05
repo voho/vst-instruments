@@ -4515,7 +4515,9 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
             values[lane] = member(lanes[lane], point);
         return quadLoad(values);
     };
-    const auto polyTanhQuad = [&](Quad value) {
+    // Keep these small kernels in the RHS to avoid calls spilling its live SIMD
+    // state. The polynomial and fallback are unchanged.
+    const auto polyTanhQuad = [&](Quad value) __attribute__((always_inline)) {
         const Quad u = quadMultiply(value, value);
         const Quad uSquared = quadMultiply(u, u);
         const Quad top = quadMultiplyAddScalar(
@@ -4545,7 +4547,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         }
         return result;
     };
-    const auto cubicEarlyQuad = [&](Quad value) {
+    const auto cubicEarlyQuad = [&](Quad value) __attribute__((always_inline)) {
         const Quad scaled = quadMultiplyScalar(value, -(4.0f / 27.0f));
         const Quad factor = quadMultiplyAdd(quadSplat(1.0f), scaled, value);
         Quad result = quadMultiply(value, factor);
@@ -4608,7 +4610,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
                 return lane.drive[index];
             }, point);
 
-    const auto derivative = [&](const QuadState& value, Quad drive) {
+    // A value parameter lets the ARM ABI pass the four vectors in registers.
+    const auto derivative = [&](QuadState value, Quad drive) {
         const Quad feedbackArgument = quadMultiplyScalar(
             quadSubtract(value[3],
                          quadMultiply(resonanceCompensation, drive)),

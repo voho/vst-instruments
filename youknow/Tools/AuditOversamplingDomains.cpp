@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
@@ -572,6 +573,60 @@ int printFingerprints()
     return 0;
 }
 
+[[maybe_unused]] int printCpuTimingReport(int sampleRate, int requestedFactor)
+{
+    const CpuClock clock;
+    const double renderedSeconds = static_cast<double>(timingBlocks * blockSize)
+                                 / static_cast<double>(sampleRate);
+    std::cout << "protocol host_rate=" << sampleRate
+              << " requested_quality=" << requestedFactor << "x"
+              << " kernel=poly-zoned early=cubic solver=rk4-single"
+              << " block_size=" << blockSize
+              << " preroll_seconds=" << preRollSeconds
+              << " timed_blocks=" << timingBlocks
+              << " repetitions=" << timingRepetitions
+              << " snapshot_copy=outside-timer clock=" << clock.name()
+              << " comparison=external-a-b-a"
+              << " hash=fnv1a64-raw-interleaved-f32\n";
+    std::cout << "schema cpu_timing scenario quality fingerprint median_cpu_ms"
+                 " min_cpu_ms mad_cpu_ms median_cpu_x_realtime\n";
+    std::cout << "schema cpu_runs_cpu_ms scenario quality repetitions...\n";
+
+    for (const auto& scenario : tanhScenarios)
+    {
+        // Match PluginProcessor's shipping defaults. EngineParameters keeps
+        // Exact/Hermite/Merson defaults for the established reference tools.
+        const auto snapshot = prepareSnapshot(
+            scenario, sampleRate, requestedFactor, VcfTanhMode::PolyZoned,
+            VcfFastEarlyMode::Cubic, VcfSolverMode::Rk4Single);
+        const std::string quality = std::to_string(snapshot.factor) + "x";
+        std::vector<double> times;
+        std::vector<std::uint64_t> hashes;
+        times.reserve(timingRepetitions);
+        hashes.reserve(timingRepetitions);
+        for (int repetition = 0; repetition < timingRepetitions; ++repetition)
+        {
+            const auto run = renderTimed(snapshot, clock);
+            times.push_back(run.cpuSeconds);
+            hashes.push_back(run.fingerprint);
+        }
+        requireStableHash(hashes, scenario.name, quality);
+        const auto summary = summarize(times);
+        std::cout << "cpu_timing " << scenario.name << " " << quality << " "
+                  << hexHash(hashes.front()) << " " << std::fixed
+                  << std::setprecision(3)
+                  << summary.median * 1000.0 << " "
+                  << summary.minimum * 1000.0 << " "
+                  << summary.mad * 1000.0 << " "
+                  << summary.median / renderedSeconds << "\n";
+        std::cout << "cpu_runs_cpu_ms " << scenario.name << " " << quality;
+        for (const double seconds : times)
+            std::cout << " " << seconds * 1000.0;
+        std::cout << "\n";
+    }
+    return 0;
+}
+
 [[maybe_unused]] int printTanhTimingReport()
 {
     const CpuClock clock;
@@ -589,9 +644,8 @@ int printFingerprints()
     std::cout << "schema tanh_speedup scenario baseline_over_candidate"
                  " median min mad\n";
 
-    // The numerical-kernel ladder, in the order a player descends it. Mode 0
-    // is the shipping default, so every paired ratio below is reported against
-    // the engine as it stands rather than against an intermediate rung.
+    // The numerical-kernel ladder retains its established Exact/Merson
+    // reference. Use --cpu-benchmark to measure the shipping defaults.
     struct KernelMode
     {
         VcfTanhMode tanh;
@@ -1111,7 +1165,10 @@ void printUsage(const char* executable)
 {
     std::cout << "usage: " << executable
               << " [--fingerprint|--tanh-benchmark|--merson-benchmark"
-                 "|--self-test|--help]\n";
+                 "|--self-test|--help]\n"
+              << "       " << executable
+              << " --cpu-benchmark [sample-rate [factor]]\n"
+              << "CPU defaults: 48000 Hz, requested factor 4 (allowed: 1, 2, 4).\n";
 }
 
 } // namespace
@@ -1127,6 +1184,32 @@ int main(int argc, char** argv)
         }
         if (argc == 2 && std::string_view(argv[1]) == "--fingerprint")
             return printFingerprints();
+        if (argc >= 2 && argc <= 4
+            && std::string_view(argv[1]) == "--cpu-benchmark")
+        {
+#if defined(YOUKNOW_WORK_AUDIT)
+            std::cerr << "--cpu-benchmark requires YouKnowOversamplingAudit\n";
+            return 2;
+#else
+            const auto parseInteger = [](const char* argument) {
+                const std::string_view text(argument);
+                int value {};
+                const auto result = std::from_chars(
+                    text.data(), text.data() + text.size(), value);
+                if (result.ec != std::errc {}
+                    || result.ptr != text.data() + text.size())
+                    throw std::invalid_argument("expected an integer CPU benchmark argument");
+                return value;
+            };
+            const int sampleRate = argc >= 3 ? parseInteger(argv[2]) : 48000;
+            const int factor = argc >= 4 ? parseInteger(argv[3]) : 4;
+            if (sampleRate < YouKnowEngine::minimumSupportedSampleRate
+                || sampleRate > YouKnowEngine::maximumSupportedSampleRate
+                || (factor != 1 && factor != 2 && factor != 4))
+                throw std::invalid_argument("CPU benchmark rate or factor is unsupported");
+            return printCpuTimingReport(sampleRate, factor);
+#endif
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--tanh-benchmark")
         {
 #if defined(YOUKNOW_WORK_AUDIT)
