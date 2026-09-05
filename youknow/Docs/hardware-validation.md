@@ -1,9 +1,91 @@
-# Hardware validation — 2026-09-04
+# Hardware validation — updated 2026-09-05
 
-This pass fixes three demonstrated errors and compares the engine against an
+The September 4 pass fixes three demonstrated errors and compares the engine against an
 identified hardware recording. It does **not** establish that YouKnow is
 the most faithful emulation on the market. The largest measured mismatch in
-this recording remains the noise-source level.
+this recording remains the noise-source level. The original September 4
+results below are retained as the baseline.
+
+## September 5 circuit and benchmark review
+
+The [research assessment](modeling-research-2026-09.md) evaluates recent
+differentiable circuit, wave-digital, antialiasing and adaptive-solver methods.
+This pass makes two bounded DSP corrections without fitting either to audio:
+
+- **C59 voice coupling.** The
+  [module drawing, p. 13](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13)
+  prints C59 = 1 µF, VR27 = 50 kΩ and R108 = 82 kΩ. The latter is in
+  series after the capacitor, so the former 33 kΩ estimate was below the
+  physical minimum. The model now uses the conservative 82 kΩ endpoint:
+  82 ms time constant, 1.941 Hz maximum nominal corner. The installed trimmer,
+  source/input impedance and capacitance tolerance remain open. The analytic
+  gain change is +0.302 dB at 16.35 Hz, +0.078 dB at 32.70 Hz and only
+  +0.0014 dB at the 248 Hz service point. Independent continuous RC step and
+  frequency-response tests exercise the actual voice coupling path.
+- **Chorus bypass continuity.** The fast path now advances C16/C13 while
+  the wet audio is skipped, as their drive remains connected in the
+  [jack-board drawing, p. 15](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15).
+  Previously, after a one-second Off interval at 48 kHz, fast bypass opened
+  the return at 112.833 ms against the continuously processed model's
+  114.750 ms. The new regression matches the switch state sample by sample
+  at 48/192 kHz, including interrupted intervals and host-style wet-gain
+  denormal flushing. This validates control-state consistency; the existing
+  RC cascade, transistor threshold and JFET glide remain approximations,
+  not measured original-unit switching times.
+
+Both analyzers now also report **20 Hz–20 kHz band-limited RMS**. They sum
+the PSD bins of a DC-detrended rectangular-window periodogram without
+resampling, giving hardware and model the same measurement bandwidth.
+Full-band AC RMS is retained for continuity with the earlier report.
+Synthetic cross-rate checks distinguish the same audible signal from DC and
+ultrasonic energy. Neither this correction nor the C59 change explains the
+large noise-level residual.
+
+The later five-source take now has a retained analyzer,
+[`AnalyzeHardwareIsolators.py`](../Tools/AnalyzeHardwareIsolators.py), instead
+of relying on an ignored session script. It verifies the known 192 kHz PCM
+prefix, exports the hash-pinned MIDI prefix and reports source ratios,
+dominant frequencies and subwindow variability. Those subwindows describe
+local variation, not independent units or statistical confidence intervals.
+
+The calibration renderer accepts an optional `exact` or `shipping` argument.
+The latter selects the plug-in's Poly/Cubic/RK4 numerical kernels; `exact`
+preserves the historical default. It remains a JUCE-free engine render at
+48 kHz/4× and volume 1, with explicit Unit Character. It does not reproduce
+the host wrapper's floating-point denormal configuration or serial MIDI
+transmission timing. The measured steady source windows have chorus Off;
+the dedicated bypass test covers the host's mute-underflow condition.
+
+Final measurements and input, source, executable and audio hashes are retained
+in the [benchmark record](benchmarks/hardware-2026-09-05.json). The source
+hashes and copied renderer binary remained unchanged across the final renders.
+The baseline full calibration render also reproduces the previously saved
+nominal WAV byte for byte.
+
+The following are **model minus hardware ratio errors**, left channel,
+20 Hz–20 kHz. Each row compares sources within the same recording; the last
+row uses the later true-self-oscillation take, not an absolute level across
+sessions.
+
+| Measurement | Previous exact, character 0 | Current exact, character 0 | Current shipping, character 1 |
+| --- | ---: | ---: | ---: |
+| Noise / saw | −11.680 dB | −11.683 dB | −11.728 dB |
+| Pulse, PWM64 / saw | +1.301 dB | +1.303 dB | +1.282 dB |
+| Sub / saw | −0.266 dB | −0.251 dB | −0.122 dB |
+| Noise / true self-oscillation | −8.297 dB | −8.299 dB | −7.453 dB |
+
+The nominal-to-shipping column changes both Unit Character and the numerical
+kernels. A separate current Exact/character-1 render gives −7.45169 dB on
+the last row; selecting shipping kernels at that same character changes the
+ratio by only −0.001435 dB. The roughly 0.85 dB nominal/default difference
+there is therefore a character-profile effect, not evidence of solver error.
+
+The circuit regressions qualify the two corrections; the recording comparisons
+improve reproducibility but do not show a material reduction in the largest
+source-level mismatch.
+The source-level defaults remain provisional. Original-card captures with
+documented noise trim and TP8 voltage are still the highest-priority evidence,
+alongside original chorus captures. No market-wide ranking was performed.
 
 ## Hardware reference
 
@@ -36,7 +118,7 @@ instrument matches the saw RMS, preserving the other sources' relative
 differences. Its resampling and short fades are for listening only; measurements
 use the untouched recordings.
 
-## What changed
+## September 4 changes
 
 **Filter calibration now includes the complete voice.** The previous model
 added static capacitor mismatch, converter carry error and temperature offsets
@@ -82,7 +164,7 @@ recalibration. Reducing its VR1 position from 0.660 to 0.645 gives −28.622 dBF
 gated in a targeted full-score rerender; all 128 measured rows then meet the
 existing limits. Its original tone bytes are unchanged.
 
-## What the recording establishes
+## September 4 recording results
 
 The score isolates noise, saw, pulse and sub, then the four HPF positions and
 three resonance settings. Its actual bytes select 16-foot range, MIDI note
@@ -156,14 +238,31 @@ python3 Tools/AnalyzeHardwareCalibration.py \
   --model out/hardware-validation/model.wav \
   --output out/hardware-validation/comparison.json
 python3 Tools/AnalyzeHardwareCalibration.py --self-test
+python3 Tools/AnalyzeHardwareIsolators.py --self-test
 ctest --test-dir build-dsp --output-on-failure
 ```
 
 Use character `0` instead of `1` for the nominal comparison. The renderer
-uses 48 kHz, 4x processing, Exact/Merson, six voices and volume 1, with no
+uses 48 kHz, 4x processing, Exact/Merson by default, six voices and volume 1, with no
 normalization. It preserves MIDI timestamps and bytes; it does not simulate
 the serial transmission time of a complete SysEx message. These steady
 windows do not qualify hardware onset or switching timing.
+
+For the later noise/true-self-oscillation comparison, preserving the original
+11.5-second hardware prefix without resampling:
+
+```sh
+python3 Tools/AnalyzeHardwareIsolators.py \
+  --midi out/hardware-validation/osc_calibrate_new.mid \
+  --events out/hardware-validation/isolator-events.txt
+./build-dsp/YouKnowRenderCalibrationEvents \
+  out/hardware-validation/isolator-events.txt \
+  out/hardware-validation/isolator-shipping.wav 1 shipping
+python3 Tools/AnalyzeHardwareIsolators.py \
+  --reference out/hardware-validation/osc-calibrate-new-prefix.wav \
+  --model out/hardware-validation/isolator-shipping.wav \
+  --output out/hardware-validation/isolator-shipping.json
+```
 
 To record an original-card unit, regenerate the project's own capture set:
 `./build-dsp/YouKnowMakeCalibrationTakes out/calibration-takes`.

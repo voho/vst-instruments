@@ -5,6 +5,44 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-05 — Schematic coupling bound and preserved chorus control state
+
+The [research assessment](modeling-research-2026-09.md) reviews current
+virtual-analog methods through DAFx 2026. The strongest next direction is
+bounded identification of the existing circuit against held-out original-unit
+recordings. Neural residuals, generated wave-digital kernels and adaptive DAE
+solvers remain experiments with explicit admission criteria; none is added
+merely because it is recent.
+
+Roland's p. 13 module drawing resolves a previously unread resistor: C59's
+1 µF coupling feeds VR27's 50 kΩ rheostat and then R108 82 kΩ before pin 9.
+The former 33 kΩ load was below that series minimum. The conservative nominal
+endpoint is now 82 kΩ, reducing the corner from 4.823 to 1.941 Hz. VR27's
+setting, source/input impedance and capacitor tolerance remain unresolved.
+This corrects low-C/16′ attenuation by 0.302 dB while changing the 248 Hz
+service gain by only 0.0014 dB. Continuous RC oracles qualify the actual
+production step and frequency response. The SUB-step tail regression now uses
+the analytic three-RC response instead of its obsolete 33 ms assumption.
+
+The fast chorus bypass used to freeze C16/C13 after the wet gain reached zero.
+Its mute drive now uses the same update as continuous processing while the
+BBD audio is skipped. The old implementation reopened 1.917 ms early after a
+one-second Off interval at 48 kHz; the corrected switch state matches the
+reference on every tested sample at 48/192 kHz, including interrupted charge
+intervals. This preserves the existing approximate circuit equations and
+does not claim to measure a real unit's switching time.
+
+The [updated hardware benchmark](hardware-validation.md) uses shared
+20 Hz–20 kHz measurement bandwidth and retains a reproducible analyzer for
+the later noise/true-self-oscillation capture. The final nominal deficit is
+still 8.299 dB for that ratio; the nominal noise/saw deficit is 11.683 dB in
+the earlier calibration sequence. No gain correction was fitted to those
+results. The shipping kernels now have an explicit renderer mode; at the
+same character setting they change the later ratio by only 0.001435 dB.
+The [tracked record](benchmarks/hardware-2026-09-05.json) pins the input,
+source, renderer and output identities. One serviced replacement-card unit
+still cannot establish original-card fidelity or market leadership.
+
 ## 2026-09-04 — Identified hardware comparison and complete-voice calibration
 
 The [hardware validation report](hardware-validation.md) supersedes the noise
