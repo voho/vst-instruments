@@ -10,9 +10,14 @@ audit of one phrase, not coverage of all genres, players or commercial rivals.
 
 GuitarSet v1.1.0: Xi, Bittner, Pauwels, Ye and Bello, ISMIR 2018,
 https://zenodo.org/records/3371780 (CC BY 4.0). Recordings use nickel-wound steel
-strings and a Neumann U87 condenser about 30 cm from the 18th fret. Use the
-656.9 MB audio_mono-mic.zip and 39.1 MB annotation.zip, whose published MD5s are
-verified; no hex-pickup download is needed. Archives/audio are never committed.
+strings and a Neumann U87 condenser about 30 cm from the 18th fret. The optional
+magnetic reference is the simultaneous mono mix of six Ubertar single-coil
+pickups, not piezo or microphone audio. Their position, field response, loaded
+electronics and channel balance are not specified in the paper:
+https://guitarset.weebly.com/uploads/1/2/1/6/121620128/xi_ismir_2018.pdf
+Use annotation.zip and audio_mono-mic.zip (656.9 MB), or
+audio_mono-pickup_mix.zip (683.1 MB); published MD5s are verified for the selected
+archives. No six-channel download is needed. Archives/audio are never committed.
 
 JAMS note_midi events determine the actual string, onset, duration and mean
 pitch (fractional semitones retained as per-channel bend). Intersect each
@@ -42,6 +47,9 @@ terms in the distance. An exactly empty band on either side is reported as null.
 Usage (NumPy and SciPy, no JAMS/MIDI dependency):
   python3 Tools/BenchmarkPerformances.py --dataset /tmp/acustra-guitarset \
       --renderer /path/to/AcustraPerformanceRenderer --output /tmp/performance-audit
+  python3 Tools/BenchmarkPerformances.py --dataset /tmp/acustra-guitarset \
+      --renderer /path/to/AcustraPerformanceRenderer --output /tmp/pickup-audit \
+      --reference-capture magnetic_pickup --capture magnetic
   python3 Tools/BenchmarkPerformances.py --self-test --renderer /path/to/renderer
 """
 from __future__ import annotations
@@ -72,7 +80,8 @@ BAND_EDGES = (80, 160, 320, 640, 1280, 2560, 5120, 10000)
 TRACKS = tuple(f"{player:02d}_BN1-129-Eb_{'comp' if player % 2 == 0 else 'solo'}"
                for player in range(6))
 ARCHIVES = {"annotation.zip": "b39b78e63d3446f2e54ddb7a54df9b10",
-            "audio_mono-mic.zip": "275966d6610ac34999b58426beb119c3"}
+            "audio_mono-mic.zip": "275966d6610ac34999b58426beb119c3",
+            "audio_mono-pickup_mix.zip": "aecce79f425a44e2055e46f680e10f6a"}
 
 
 def digest(path: Path, algorithm: str = "sha256") -> str:
@@ -195,16 +204,21 @@ def archive_entry(archive: zipfile.ZipFile, filename: str) -> bytes:
 
 
 def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking: str,
-              bridge: str = "original") -> dict:
-    for filename, expected in ARCHIVES.items():
+              bridge: str = "original", reference_capture: str = "microphone") -> dict:
+    if reference_capture not in ("microphone", "magnetic_pickup"):
+        raise ValueError("unknown reference capture")
+    archive_name = "audio_mono-mic.zip" if reference_capture == "microphone" else "audio_mono-pickup_mix.zip"
+    audio_suffix = "_mic.wav" if reference_capture == "microphone" else "_mix.wav"
+    archives = {name: ARCHIVES[name] for name in ("annotation.zip", archive_name)}
+    for filename, expected in archives.items():
         if digest(dataset / filename, "md5") != expected:
             raise ValueError(f"{filename}: does not match the published GuitarSet v1.1.0 archive")
     output.mkdir()  # Never replace a prior audit or listening artefact.
     rows = []
-    with zipfile.ZipFile(dataset / "annotation.zip") as annotations, zipfile.ZipFile(dataset / "audio_mono-mic.zip") as audio:
+    with zipfile.ZipFile(dataset / "annotation.zip") as annotations, zipfile.ZipFile(dataset / archive_name) as audio:
         for track in TRACKS:
             annotation_bytes = archive_entry(annotations, track + ".jams")
-            recording_bytes = archive_entry(audio, track + "_mic.wav")
+            recording_bytes = archive_entry(audio, track + audio_suffix)
             events, note_count = events_from_jams(json.loads(annotation_bytes))
             event_path = output / (track + ".events")
             write_events(event_path, events)
@@ -212,7 +226,7 @@ def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking
             subprocess.run([str(renderer), str(event_path), str(model_path), capture, picking, bridge], check=True)
             source_rate, target = wavfile.read(io.BytesIO(recording_bytes))
             if target.ndim != 1 or len(target) < source_rate * SECONDS:
-                raise ValueError(f"{track}: expected at least 12 seconds of microphone mono audio")
+                raise ValueError(f"{track}: expected at least 12 seconds of {reference_capture} mono audio")
             if np.issubdtype(target.dtype, np.integer):
                 target = target.astype(float) / max(abs(np.iinfo(target.dtype).min), np.iinfo(target.dtype).max)
             target = _resample(target[:source_rate * SECONDS], source_rate, RATE)
@@ -223,6 +237,7 @@ def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking
             for label, signal in (("reference", normal_target), ("model", normal_model)):
                 wavfile.write(output / f"{track}-{label}.wav", RATE, (signal * audition_rms).astype(np.float32))
             rows.append({"track": track, "notes": note_count, "source_rate": source_rate,
+                         "source_audio_filename": track + audio_suffix,
                          "source_audio_sha256": hashlib.sha256(recording_bytes).hexdigest(),
                          "annotation_sha256": hashlib.sha256(annotation_bytes).hexdigest(),
                          "events_sha256": digest(event_path), "model_sha256": digest(model_path),
@@ -233,14 +248,18 @@ def benchmark(dataset: Path, renderer: Path, output: Path, capture: str, picking
     return {
         "dataset": "GuitarSet v1.1.0", "source": "https://zenodo.org/records/3371780",
         "attribution": "Qingyang Xi, Rachel M. Bittner, Johan Pauwels, Xuzhou Ye, Juan P. Bello, ISMIR 2018; CC BY 4.0",
-        "archive_md5": ARCHIVES, "renderer_sha256": digest(renderer),
+        "archive_md5": archives, "renderer_sha256": digest(renderer),
         "physical_scorer_sha256": digest(Path(FitPhysicalModel.__file__)),
         "scorer_sha256": digest(Path(__file__)),
         "numpy_version": np.__version__, "scipy_version": scipy.__version__,
         "analysis_rate": RATE, "start_seconds": 0, "duration_seconds": SECONDS,
         "velocity": VELOCITY, "capture": capture, "picking": picking, "bridge_model": bridge,
+        "reference_capture": reference_capture,
+        "reference_transducer": ("Neumann U87 condenser, about 30 cm from the 18th fret"
+                                 if reference_capture == "microphone" else
+                                 "Simultaneous mono mix of six Ubertar single-coil magnetic pickups"),
         "render_protocol": "shipping calibration/default controls; string-per-channel; 127-frame blocks; annotated mean pitch; zero release velocity",
-        "limitations": "One phrase, six players; timing/strum statistics previously informed engine. No measured note velocities, gesture labels, matched guitar body or matched microphone. Descriptor distances include those differences and do not establish perceptual equivalence or market rank.",
+        "limitations": "One phrase, six players; timing/strum statistics previously informed engine. No measured note velocities, gesture labels, matched guitar body or matched transducer. Pickup position, field response, loaded electronics and channel balance are undocumented. Descriptor distances include those differences and do not establish perceptual equivalence or market rank.",
         "mean": {name: float(np.mean([row["metrics"][name] for row in rows]))
                  for name in ("log_magnitude_mae_db", "spectral_convergence", "chroma_cosine_distance")},
         "performances": rows,
@@ -325,6 +344,7 @@ def main() -> None:
     parser.add_argument("--renderer", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--capture", default="stereo_mic", choices=("stereo_mic", "treble_mic", "bass_mic", "saddle_piezo", "magnetic"))
+    parser.add_argument("--reference-capture", default="microphone", choices=("microphone", "magnetic_pickup"))
     parser.add_argument("--picking", default="finger", choices=("finger", "pick", "thumb"))
     parser.add_argument("--bridge-model", default="original", choices=("original", "fylde"))
     parser.add_argument("--self-test", action="store_true")
@@ -335,7 +355,7 @@ def main() -> None:
         if args.dataset is None or args.renderer is None or args.output is None:
             parser.error("--dataset, --renderer and --output are required")
         report = benchmark(args.dataset, args.renderer.resolve(), args.output,
-                           args.capture, args.picking, args.bridge_model)
+                           args.capture, args.picking, args.bridge_model, args.reference_capture)
         (args.output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 

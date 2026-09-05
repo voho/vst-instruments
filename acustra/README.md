@@ -160,6 +160,21 @@ The performance log error rises slightly while the other descriptors improve.
 The report's `measured_steel_bridge_2026_09_05` entry retains the individual
 results, provenance and exact input/model hashes.
 
+The same six performances also have simultaneous magnetic recordings: a mono
+mix of six Ubertar single-coil pickups on nickel-wound steel strings. Against
+that reference, the Original bridge's magnetic output scores 17.591981 dB log
+error, 0.788438 spectral convergence and 0.268841 chroma distance. The Fylde
+bridge changes these to 17.433659, 0.805354 and 0.263927, respectively. After
+RMS matching, Original averages 3.95 dB less energy at 80–160 Hz and 12.44 dB
+more at 5120–10000 Hz. This identifies a substantial remaining pickup mismatch.
+Cross-capture controls disagree too: the microphone model has lower log error
+against the pickup recording, while the magnetic model has lower spectral
+convergence. These descriptors therefore cannot rank pickup realism by
+themselves. The committed `magnetic_performance_benchmark_2026_09_05` entry
+retains both bridges, the four microphone/pickup pairings and source hashes;
+no parameters were fitted to these results. Coil position, field response,
+loaded electronics and per-string gains are undocumented in GuitarSet.
+
 ## How it works
 
 ### Six-string performance model
@@ -900,8 +915,10 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
 
 - Capture choices provide measured microphone positions and ideal pickup
   observables. No measured piezo capacitance/load, magnetic field map, coil
-  resonance, or named microphone electronics is included. Simultaneous
-  microphone/pickup captures would calibrate their response and sensitivity.
+  resonance, or named microphone electronics is included. GuitarSet's
+  simultaneous microphone/magnetic audit exposes a response mismatch; captures
+  with documented pickup geometry, loading and channel gains are still needed
+  to identify the response and sensitivity. Piezo has no matched reference yet.
   Pick and Thumb are ranges of the existing fitted contact model, not separate
   measured finger dimensions or a beam/friction plectrum solver. Matched
   technique recordings are needed to benchmark these choices independently.
@@ -1664,9 +1681,14 @@ python3 Tools/BenchmarkPerformances.py \
   --output /tmp/acustra-performances
 ```
 
-The output directory must be new. `--bridge-model fylde`, `--capture` and `--picking` can evaluate
-explicit alternatives; scores against a microphone recording cannot validate
-a pickup's response. `--self-test --renderer ./build-dsp/AcustraPerformanceRenderer`
+The output directory must be new. `--bridge-model fylde`, `--capture` and
+`--picking` can evaluate explicit alternatives. To compare with the simultaneous
+magnetic recording, download `audio_mono-pickup_mix.zip` instead of the microphone
+archive and add `--reference-capture magnetic_pickup --capture magnetic`.
+The tool verifies only the selected audio archive plus the annotations and
+records both the reference transducer and model capture. Scores against a
+microphone recording cannot validate a pickup's response.
+`--self-test --renderer ./build-dsp/AcustraPerformanceRenderer`
 checks the scoring, string scheduling and renderer without downloading audio.
 For dry-note comparisons, add `--bridge-model fylde` after the optional
 `--models-only`/`--smoke` mode and before the output directory in
