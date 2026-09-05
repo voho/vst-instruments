@@ -1,4 +1,4 @@
-// Renders Acustra's ten committed demonstrations through AcustraEngine, the
+// Renders Acustra's twelve committed demonstrations through AcustraEngine, the
 // same JUCE-free signal path used by the plug-in. Every score and engine seed
 // is deterministic. The engine's strings, passive bridge, and modal body are
 // the source; no sample playback, convolution, room, or post-effect is used.
