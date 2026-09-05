@@ -62,6 +62,7 @@ private:
 
     std::array<juce::Label, 3> setupLabels;
     std::array<juce::ComboBox, 3> setupControls;
+    int displayedConstructionPresetId = 0;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         pickingAttachment;
     std::array<std::unique_ptr<juce::ParameterAttachment>, 2> captureAttachments;

@@ -78845,5 +78845,48 @@
    "final_raw_frames": 385875,
    "final_raw_sha256": "9c2c65e177dc6fad3b8ec1d1c62d2c942164f82080efa574dd824ded62f4b840"
   }
+ },
+ "guitar_preset_timer_2026_09_05": {
+  "baseline_revision": "b870c7ed",
+  "problem": "The12Hz editor timer wrote the construction-derived Guitar preset into ComboBox while its async user notification was pending, discarding the queued choice before application.",
+  "change": "Cache last construction-derived preset ID; an unchanged refresh preserves queued menu selection. An actual construction change updates the display unless a user selection is pending.",
+  "regression": "Set Guitar selection asynchronously, keep callback queued, observe actual timer execution through status-label sentinel, assert selection survives. Previous fixed110ms wait did not guarantee timer execution; Capture regression uses the same observed-timer helper now.",
+  "before": "Agent-observed native wrapper failure exactly at pending Guitar preset assertion; before-fix.log is a transcript of that observed failure, not a raw rerun log.",
+  "validation": {
+   "source_sha256": {
+    "Source/PluginEditor.cpp": "7eca6e9c9d19beb8b06d80a0bb00e35105b687053c29eee09af0ca73e5969239",
+    "Source/PluginEditor.h": "251c59f6521537ff27b5b6d48885f6ec44cb8abe271f197d771758a7fec7be6a",
+    "Tests/PluginProcessorTests.cpp": "2a98efb035b2adb4c79b426070710264a1224f12768c4394c4624054e4112c06"
+   },
+   "binary": "/tmp/acustra-goal-build/AcustraPluginProcessorTests",
+   "binary_sha256": "fecdfdc19f7ebb29966ea0e39eabd5e7e0aaf7bd45959b86f298e4320cb94016",
+   "build_command": "cmake --build /tmp/acustra-goal-build --target AcustraPluginProcessorTests --parallel 6",
+   "test_command": "/tmp/acustra-goal-build/AcustraPluginProcessorTests",
+   "exit_code": 0,
+   "logs": {
+    "before-fix.log": "6653306c1c0ed6e7b76b21f250ecbe79de85c1b722c08b70ecee333c6f35dcf8",
+    "final-test.log": "12cf1d22babf0fd2a175c628980d19f5cb7da050ee92107608959621d6968e5f"
+   },
+   "screenshots": {
+    "editor-maximum.png": "e407a15feebb8466593ed2f6ca1a3a76bdf06c4a72dc17e6a101350dbc7b0c54",
+    "editor-minimum.png": "f9b9c266b44dd7124cf234cf5bfdf3c77f3633309f0ed3fe358c38fc99ac5474",
+    "editor-nylon-magnetic.png": "387f552c730bb73a92f88851683bdf19fbaa034fd6b8efb7619ae026911111ae",
+    "editor-restored-nylon-upper.png": "2bd3014284c2827c5a4fc9a46940e73dd6020c5577e1ee264006abb5936e98dd",
+    "editor.png": "c66520f1c6ddc9bef6186cd7babf4eccaeb3295eaaeaa2d36700d7d238a1dcf8"
+   },
+   "peer_review": "benchmark_audit independently reviewed cache/lifecycle and timer-sentinel test, no blocking finding.",
+   "layout_review": "896x640,1120x800,1456x1040 all legible. Live serialized Classical nylon/Thumb/Upper mic state visibly restored. Minimum-size Magnetic needs steel warning legible."
+  },
+  "report": {
+   "path": "/tmp/acustra-gui-qa/report-final.json",
+   "sha256": "7a926babe59c9164011538efa07fc5830d576322dded3c295e8d536d8cdc9ce3"
+  },
+  "native_build": "arm64 Release VST3,AU,Standalone rebuilt successfully; no installation/universal-build claim.",
+  "build_log": {
+   "path": "/tmp/acustra-gui-qa/plugin-build.log",
+   "sha256": "6c866c3b0700418c0177368965f2333d4adec437bcafd58ae78fe95b78a1a12d"
+  },
+  "visual_review": "Five fresh native screenshots at896x640,1120x800,1456x1040 plus restoredClassicalNylon/Thumb/UpperMic and minimum-size nylon/magnetic warning reviewed. Root independently inspected minimum and restoredstate images. No layout changes or new visual assets needed.",
+  "preserved_behavior": "No parameter IDs, saved-state formats, DSP formulas or preset construction values changed. Live serialized state reload confirms Guitar,Picking,Capture,radio state and steel-only magnetic availability."
  }
 }

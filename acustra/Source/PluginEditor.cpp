@@ -535,7 +535,17 @@ void AcustraAudioProcessorEditor::updateConstructionControls()
             break;
         }
     }
-    setupControls[0].setSelectedId (presetId, juce::dontSendNotification);
+    // A user selection is queued until ComboBox delivers its callback. Only a
+    // changed construction should replace it; an unchanged display timer must
+    // not restore the previous preset before that callback can apply the new one.
+    if (presetId != displayedConstructionPresetId)
+    {
+        const bool selectionPending = setupControls[0].getSelectedId()
+            != displayedConstructionPresetId;
+        displayedConstructionPresetId = presetId;
+        if (! selectionPending)
+            setupControls[0].setSelectedId (presetId, juce::dontSendNotification);
+    }
     setupControls[2].setItemEnabled (
         5, state.stringMaterial == acustra::StringMaterial::Steel);
 }

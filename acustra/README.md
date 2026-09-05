@@ -1528,6 +1528,9 @@ git history rather than here.
 
 ### 2026-09-05
 
+- Guitar preset selections now survive an intervening display refresh, so the
+  timer cannot silently discard a queued menu choice. Restoring a saved state
+  into an open editor also verifies its guitar, picking and capture controls.
 - Added stereo and individual microphone capture, saddle piezo and steel-only
   magnetic pickup, with smooth switching during sustained notes.
 - Added Finger/Pick/Thumb contact ranges and construction presets for

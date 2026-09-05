@@ -1356,6 +1356,24 @@ void testEditorRendering()
 
     expect (setupMenus.size() == 3,
             "the guitar, picking and capture setup menus are missing");
+    const auto refreshDisplayTimer = [&]
+    {
+        expect (engineStatus != nullptr, "the visible engine status is missing");
+        if (engineStatus == nullptr)
+            return;
+        engineStatus->setText ("timer pending", juce::dontSendNotification);
+        // TimerThread may already be waiting for an older queued callback.
+        // Keep ComboBox notifications queued until an observed display refresh,
+        // rather than assuming one sleep made the editor's timer due.
+        for (int attempt = 0; attempt < 50; ++attempt)
+        {
+            juce::Thread::sleep (20);
+            juce::Timer::callPendingTimersSynchronously();
+            if (engineStatus->getText() != "timer pending")
+                return;
+        }
+        expect (false, "the editor display timer did not run");
+    };
     expect (choiceButtons.size() == 15,
             "the four compact choices do not expose all 15 options");
     expect (std::all_of (choiceButtons.begin(), choiceButtons.end(),
@@ -1414,6 +1432,15 @@ void testEditorRendering()
                 "a setup menu lacks keyboard focus or an accessible description");
         if (menu->getName() == "GUITAR")
         {
+            // Real ComboBox selections notify asynchronously. A due status
+            // timer must preserve the pending preset until its callback runs.
+            menu->setSelectedId (5, juce::sendNotificationAsync);
+            refreshDisplayTimer();
+            expect (menu->getSelectedId() == 5,
+                    "a display timer discarded the pending guitar preset");
+            // Drain the pending notification through a different synchronous
+            // selection before testing the resulting construction below.
+            menu->setSelectedId (2, juce::sendNotificationSync);
             setValue (processor, ids::tuning, 2.0f);
             setValue (processor, ids::output, -4.0f);
             setValue (processor, ids::capture, 4.0f);
@@ -1489,11 +1516,7 @@ void testEditorRendering()
                 // timer firing before that notification must not replace the
                 // user's pending selection with the old parameter value.
                 menu->setSelectedId (6, juce::sendNotificationAsync);
-                // Keep ComboBox delivery queued while the 12 Hz display timer
-                // becomes due; otherwise this race assertion can pass without
-                // running a timer callback at all.
-                juce::Thread::sleep (110);
-                juce::Timer::callPendingTimersSynchronously();
+                refreshDisplayTimer();
                 expect (menu->getSelectedId() == 6,
                         "a display timer discarded the pending upper-mic selection");
                 // Deliver a synchronous selection to drain the pending
@@ -1553,15 +1576,15 @@ void testEditorRendering()
         return image;
     };
 
-    renderAt (editorMinimumWidth, editorMinimumHeight);
-    renderAt (editorMaximumWidth, editorMaximumHeight);
-    auto image = renderAt (editorWidth, editorHeight);
-
     const auto path = juce::SystemStats::getEnvironmentVariable (
         "ACUSTRA_EDITOR_SNAPSHOT", {});
-    if (path.isNotEmpty())
+    const auto saveImage = [&] (const juce::Image& image, const juce::String& suffix)
     {
-        const juce::File destination { path };
+        if (path.isEmpty())
+            return;
+        const juce::File requested { path };
+        const auto destination = requested.getSiblingFile (
+            requested.getFileNameWithoutExtension() + suffix + requested.getFileExtension());
         destination.getParentDirectory().createDirectory();
         juce::FileOutputStream output { destination };
         juce::PNGImageFormat png;
@@ -1570,7 +1593,56 @@ void testEditorRendering()
         const bool written = ready && png.writeImageToStream (image, output);
         output.flush();
         expect (written, "the requested editor screenshot could not be written");
+    };
+
+    const auto findMenu = [&] (const char* name) -> juce::ComboBox*
+    {
+        for (auto* menu : setupMenus)
+            if (menu->getName() == name)
+                return menu;
+        return nullptr;
+    };
+    auto* guitarMenu = findMenu ("GUITAR");
+    auto* pickingMenu = findMenu ("PICKING");
+    auto* captureMenu = findMenu ("CAPTURE");
+    if (guitarMenu != nullptr && pickingMenu != nullptr && captureMenu != nullptr)
+    {
+        // Reload an actual serialized state into an already-open editor. The
+        // composite capture menu, preset caption and radio groups must all agree
+        // with the restored construction, not retain the intervening controls.
+        juce::MemoryBlock initialState, nylonState;
+        processor.getStateInformation (initialState);
+        guitarMenu->setSelectedId (5, juce::sendNotificationSync);
+        pickingMenu->setSelectedId (3, juce::sendNotificationSync);
+        captureMenu->setSelectedId (6, juce::sendNotificationSync);
+        processor.getStateInformation (nylonState);
+        guitarMenu->setSelectedId (2, juce::sendNotificationSync);
+        pickingMenu->setSelectedId (1, juce::sendNotificationSync);
+        captureMenu->setSelectedId (1, juce::sendNotificationSync);
+        processor.setStateInformation (nylonState.getData(),
+                                      static_cast<int> (nylonState.getSize()));
+        refreshDisplayTimer();
+        const auto nylon = std::find_if (choiceButtons.begin(), choiceButtons.end(),
+            [] (const auto* button) { return button->getName() == "STRINGS: Nylon"; });
+        expect (guitarMenu->getSelectedId() == 5 && pickingMenu->getSelectedId() == 3
+                    && captureMenu->getSelectedId() == 6 && ! captureMenu->isItemEnabled (5)
+                    && nylon != choiceButtons.end() && (*nylon)->getToggleState()
+                    && processor.snapshotEngineParameters().capture == acustra::CaptureType::UpperMic,
+                "live state reload left the editor showing a different guitar or capture");
+        saveImage (renderAt (editorWidth, editorHeight), "-restored-nylon-upper");
+
+        setValue (processor, acustra::parameters::capture, 4.0f);
+        setValue (processor, acustra::parameters::upperMic, 0.0f);
+        refreshDisplayTimer();
+        saveImage (renderAt (editorMinimumWidth, editorMinimumHeight), "-nylon-magnetic");
+        processor.setStateInformation (initialState.getData(),
+                                      static_cast<int> (initialState.getSize()));
+        refreshDisplayTimer();
     }
+
+    saveImage (renderAt (editorMinimumWidth, editorMinimumHeight), "-minimum");
+    saveImage (renderAt (editorMaximumWidth, editorMaximumHeight), "-maximum");
+    saveImage (renderAt (editorWidth, editorHeight), "");
 
     editor.reset();
     processor.releaseResources();
