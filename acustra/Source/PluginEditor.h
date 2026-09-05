@@ -65,8 +65,8 @@ private:
     int displayedConstructionPresetId = 0;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         pickingAttachment;
-    std::array<std::unique_ptr<juce::ParameterAttachment>, 2> captureAttachments;
-    std::array<float, 2> captureValues {};
+    std::array<std::unique_ptr<juce::ParameterAttachment>, 3> captureAttachments;
+    std::array<float, 3> captureValues {};
 
     std::array<juce::Label, 4> choiceLabels;
     std::array<std::unique_ptr<ChoiceButtonGroup>, 4> choiceControls;

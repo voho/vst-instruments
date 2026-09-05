@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -15,6 +16,14 @@ namespace acustra
 {
 struct AcustraEngineTestAccess
 {
+    static float loadedPiezo(AcustraEngine& engine, float force)
+    {
+        return engine.renderLoadedPiezo(force);
+    }
+    static std::array<float, 2> loadedPiezoState(const AcustraEngine& engine)
+    {
+        return { engine.piezoLoadInput_, engine.piezoLoadOutput_ };
+    }
     static std::array<float, 4> pickupFractions(const AcustraEngine& engine,
                                                int string)
     {
@@ -108,7 +117,8 @@ void testCaptureObservations()
            "bass capture is not the measured right microphone in mono");
     expect(treble.left != bass.left, "the two microphone paths are identical");
 
-    for (auto capture : { CaptureType::SaddlePiezo, CaptureType::Magnetic })
+    for (auto capture : { CaptureType::SaddlePiezo, CaptureType::Magnetic,
+                           CaptureType::LoadedPiezo })
     {
         parameters.capture = capture;
         const auto pickup = render(parameters);
@@ -121,6 +131,13 @@ void testCaptureObservations()
         expect(energy(pickup) > 1.0e-10, "a steel pickup is silent");
         expect(pickup.left != treble.left && pickup.left != bass.left,
                "a pickup duplicates a microphone signal");
+        if (capture == CaptureType::LoadedPiezo)
+        {
+            auto idealParameters = parameters;
+            idealParameters.capture = CaptureType::SaddlePiezo;
+            expect(pickup.left != render(idealParameters).left,
+                   "loaded piezo duplicates the unloaded saddle force");
+        }
         parameters.stringMaterial = acustra::StringMaterial::Nylon;
         const auto nylon = render(parameters);
         expect(capture == CaptureType::Magnetic ? energy(nylon) == 0.0
@@ -147,7 +164,7 @@ void testCaptureObservations()
 void testCaptureLifecycle()
 {
     for (int rate : { 44100, 48000, 96000 })
-        for (int type = 0; type < 6; ++type)
+        for (int type = 0; type < 7; ++type)
         {
             acustra::EngineParameters parameters;
             parameters.capture = static_cast<acustra::CaptureType>(type);
@@ -178,7 +195,7 @@ void testCaptureLifecycle()
     engine->noteOn(40, 0.8f);
     for (int i = 0; i < 200; ++i)
     {
-        parameters.capture = static_cast<acustra::CaptureType>(i % 6);
+        parameters.capture = static_cast<acustra::CaptureType>(i % 7);
         engine->setParameters(parameters);
         engine->process(left.data(), right.data(), 64);
         expect(engine->getActiveVoiceCount() == 1,
@@ -207,7 +224,7 @@ void testCaptureLifecycle()
     for (int block = 0; block < 600; ++block)
     {
         if (block < 100)
-            parameters.capture = static_cast<acustra::CaptureType>(block % 6);
+            parameters.capture = static_cast<acustra::CaptureType>(block % 7);
         else
             parameters.capture = acustra::CaptureType::StereoMic;
         engine->setParameters(parameters);
@@ -277,6 +294,111 @@ void testUpperMicrophone()
             }
             expect(left == referenceLeft && right == referenceRight,
                    "upper microphone observation changed the retained radiation state");
+        }
+}
+
+void testLoadedPiezoElectricalResponse()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    constexpr double pi = 3.14159265358979323846;
+    // Independent circuit reference: the measured 450 pF source capacitance
+    // and 2 MOhm load give H(s)=sRC/(1+sRC). Evaluate that analog transfer at
+    // the bilinear-warped frequency, rather than duplicating the recurrence.
+    constexpr double tau = 450.0e-12 * 2.0e6;
+    double maximumError = 0.0;
+    for (int rate : { 8000, 44100, 48000, 96000, 384000 })
+    {
+        auto engine = std::make_unique<acustra::AcustraEngine>();
+        engine->prepare(rate, 64);
+        std::vector<float> impulse(static_cast<std::size_t>(rate / 10));
+        double impulseEnergy = 0.0;
+        for (std::size_t i = 0; i < impulse.size(); ++i)
+        {
+            impulse[i] = Access::loadedPiezo(*engine, i == 0 ? 1.0f : 0.0f);
+            impulseEnergy += static_cast<double>(impulse[i]) * impulse[i];
+        }
+        expect(std::isfinite(impulseEnergy) && impulseEnergy <= 1.000001,
+               "piezo load increased the impulse's squared signal norm");
+        for (double frequency : { 0.0, 20.0, 82.406889, 1.0 / (2.0 * pi * tau),
+                                   329.627556, 1000.0, 0.2 * rate, 0.45 * rate,
+                                   0.5 * rate })
+        {
+            const auto step = std::polar(1.0, -2.0 * pi * frequency / rate);
+            std::complex<double> phase { 1.0, 0.0 }, actual {};
+            for (float sample : impulse)
+            {
+                actual += static_cast<double>(sample) * phase;
+                phase *= step;
+            }
+            const std::complex<double> s { 0.0,
+                2.0 * rate * std::tan(pi * frequency / rate) };
+            const auto expected = s * tau / (1.0 + s * tau);
+            const double error = std::abs(actual - expected);
+            maximumError = std::max(maximumError, error);
+            expect(error < 5.0e-5,
+                   "piezo complex response differs from the measured RC circuit");
+            expect(std::abs(actual) <= 1.000001,
+                   "piezo electrical loading has gain above unity");
+        }
+        engine->reset();
+        float dc = 0.0f;
+        for (int sample = 0; sample < rate / 10; ++sample)
+            dc = Access::loadedPiezo(*engine, 1.0f);
+        expect(std::abs(dc) < 1.0e-20f, "piezo load passed sustained DC");
+        // Dirty both histories. Each public hard reset must clear both: stale
+        // input produces a negative impulse even if output alone was cleared.
+        for (bool allSoundOff : { false, true })
+        {
+            Access::loadedPiezo(*engine, 0.37f);
+            if (allSoundOff)
+                engine->allSoundOff();
+            else
+                engine->reset();
+            expect(Access::loadedPiezo(*engine, 0.0f) == 0.0f,
+                   "hard reset retained piezo capacitor history");
+        }
+    }
+    std::cout << "Loaded piezo maximum complex RC error: " << maximumError << '\n';
+}
+
+void testLoadedPiezoStaysWarmWhileUnheard()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    for (auto material : { acustra::StringMaterial::Steel,
+                           acustra::StringMaterial::Nylon })
+        for (int rate : { 44100, 48000, 96000 })
+        {
+            acustra::EngineParameters parameters;
+            parameters.stringMaterial = material;
+            auto switched = std::make_unique<acustra::AcustraEngine>();
+            auto reference = std::make_unique<acustra::AcustraEngine>();
+            switched->setParameters(parameters);
+            parameters.capture = acustra::CaptureType::LoadedPiezo;
+            reference->setParameters(parameters);
+            for (auto* engine : { switched.get(), reference.get() })
+            {
+                engine->prepare(rate, 64);
+                engine->noteOn(45, 0.7f);
+            }
+            std::array<float, 64> left {}, right {}, referenceLeft {}, referenceRight {};
+            for (int block = 0; block < 600; ++block)
+            {
+                if (block == 40)
+                    switched->setParameters(parameters);
+                switched->process(left.data(), right.data(), 64);
+                reference->process(referenceLeft.data(), referenceRight.data(), 64);
+                expect(Access::loadedPiezoState(*switched)
+                           == Access::loadedPiezoState(*reference),
+                       "unheard piezo loading lost its capacitor history");
+                expect(Access::loadedPiezoState(*switched)[0]
+                           == switched->getLastBridgeReactionForce(),
+                       "piezo electrical load received a different saddle-force observable");
+                expect(switched->getLastBridgeBodyForce()
+                           == reference->getLastBridgeBodyForce(),
+                       "piezo electrical observation changed the mechanical bridge");
+            }
+            expect(left == right && left == referenceLeft && right == referenceRight,
+                   "switching to warmed piezo did not reach the continuously observed output");
         }
 }
 
@@ -384,6 +506,8 @@ int main()
     testCaptureObservations();
     testCaptureLifecycle();
     testUpperMicrophone();
+    testLoadedPiezoElectricalResponse();
+    testLoadedPiezoStaysWarmWhileUnheard();
     testScopedRemovalDoesNotStrikeTheMagneticPickup();
     testPickupPositionFollowsLengthAndNotTension();
     if (failures == 0)

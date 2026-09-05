@@ -554,7 +554,9 @@ Audio captureTypes()
                            acustra::CaptureType::TrebleMic,
                            acustra::CaptureType::BassMic,
                            acustra::CaptureType::SaddlePiezo,
-                           acustra::CaptureType::Magnetic })
+                           acustra::CaptureType::Magnetic,
+                           acustra::CaptureType::UpperMic,
+                           acustra::CaptureType::LoadedPiezo })
     {
         parameters.capture = capture;
         Take take(parameters);
@@ -611,7 +613,7 @@ constexpr std::array<Demo, 12> demos {{
       "Finger, pick and thumb on steel, then on nylon; same notes and velocity",
       pickingTechniques },
     { "12-capture-types.wav",
-      "Stereo, treble and bass microphones, saddle piezo, then steel magnetic",
+      "Stereo, treble, bass, ideal piezo, magnetic, upper mic, loaded piezo",
       captureTypes },
 }};
 

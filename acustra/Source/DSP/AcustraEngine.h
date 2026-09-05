@@ -53,7 +53,8 @@ enum class CaptureType
     BassMic,
     SaddlePiezo,
     Magnetic,
-    UpperMic
+    UpperMic,
+    LoadedPiezo
 };
 
 enum class Tuning
@@ -631,6 +632,7 @@ private:
                      float& longitudinalForce) noexcept;
     BodyOutput renderBody(float bridgeInput, float bodyMoment) noexcept;
     float renderMagneticPickup(bool crossingRelease) noexcept;
+    float renderLoadedPiezo(float force) noexcept;
     float nextNoise(Voice& voice) noexcept;
 
     EngineParameters targetParameters_ {};
@@ -639,10 +641,16 @@ private:
     std::array<Voice, stringCount> voices_ {};
     std::array<BodyMode, bodyModeCount> bodyModes_ {};
     std::array<BodyMode, bodyModeCount> fadingBodyModes_ {};
+    BodyShape configuredBodyShape_ { BodyShape::Dreadnought };
+    BodyMaterial configuredBodyMaterial_ { BodyMaterial::Spruce };
+    StringMaterial configuredBodyStringMaterial_ { StringMaterial::Steel };
+    bool bodyUpdatePending_ { false };
     BridgeLoad bridgeLoad_ {};
     FixedDerivative bridgeVelocityDerivative_ {};
     FixedDerivative magneticDerivative_ {};
-    std::array<float, 6> captureMix_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    std::array<float, 7> captureMix_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    float piezoLoadPole_ {}, piezoLoadGain_ {};
+    float piezoLoadInput_ {}, piezoLoadOutput_ {};
     bool magneticNeedsPriming_ { true };
     FixedDerivative bridgeRotationDerivative_ {};
     // The junction's power is the sum over both coordinates, so the moments

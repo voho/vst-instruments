@@ -26,6 +26,7 @@ enum ParameterSlot
     slotPicking,
     slotBridgeModel,
     slotUpperMic,
+    slotPiezoLoading,
     slotCount
 };
 
@@ -45,7 +46,8 @@ constexpr std::array<const char*, slotCount> parameterIds {
     ids::capture,
     ids::picking,
     ids::bridgeModel,
-    ids::upperMic
+    ids::upperMic,
+    ids::piezoLoading
 };
 
 std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
@@ -215,6 +217,8 @@ AcustraAudioProcessor::createParameterLayout()
     // independent override with the legacy choices into one Capture menu.
     result.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { ids::upperMic, 4 }, "Upper mic", false));
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { ids::piezoLoading, 5 }, "Piezo loading", false));
 
     return { result.begin(), result.end() };
 }
@@ -242,6 +246,9 @@ AcustraAudioProcessor::snapshotEngineParameters() const noexcept
     result.stereoWidth = 0.01f * value (slotStereoWidth);
     result.outputGain = juce::Decibels::decibelsToGain (value (slotOutput));
     result.capture = choiceValue<acustra::CaptureType> (value (slotCapture), 4);
+    if (result.capture == acustra::CaptureType::SaddlePiezo
+        && value (slotPiezoLoading) >= 0.5f)
+        result.capture = acustra::CaptureType::LoadedPiezo;
     if (value (slotUpperMic) >= 0.5f)
         result.capture = acustra::CaptureType::UpperMic;
     result.picking = choiceValue<acustra::PickingTechnique> (value (slotPicking), 2);

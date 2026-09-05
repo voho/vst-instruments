@@ -308,12 +308,10 @@ int wrapDelayIndex(int index) noexcept
     return index;
 }
 
-bool sameDiscreteConstruction(const EngineParameters& a,
-                              const EngineParameters& b) noexcept
+bool sameStringConstruction(const EngineParameters& a,
+                            const EngineParameters& b) noexcept
 {
-    return a.shape == b.shape
-        && a.bodyMaterial == b.bodyMaterial
-        && a.stringMaterial == b.stringMaterial
+    return a.stringMaterial == b.stringMaterial
         && (a.stringMaterial != StringMaterial::Steel
             || a.bridgeModel == b.bridgeModel)
         && a.tuning == b.tuning;
@@ -784,7 +782,7 @@ EngineParameters AcustraEngine::sanitise(const EngineParameters& source) noexcep
         static_cast<int>(source.stringMaterial), 1,
         static_cast<int>(EngineParameters {}.stringMaterial)));
     result.capture = static_cast<CaptureType>(enumOr(
-        static_cast<int>(source.capture), 5,
+        static_cast<int>(source.capture), 6,
         static_cast<int>(EngineParameters {}.capture)));
     result.tuning = static_cast<Tuning>(enumOr(
         static_cast<int>(source.tuning), 4,
@@ -1268,6 +1266,18 @@ void AcustraEngine::prepare(double sampleRate, int)
         sampleRate = 48000.0;
     sampleRate_ = std::clamp(sampleRate, 8000.0, 384000.0);
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
+    // Measured Adamas SMT piezo capacitance 450pF and installed preamp input 2MΩ:
+    // M. Zollner, Physics of the Electric Guitar, ch.6, p.6-13 (2005).
+    // https://www.gitec-forum-eng.de/wp-content/uploads/2019/03/poteg-6-piezo-pickups.pdf
+    // Only the electrical loading is used: H(s)=sRC/(1+sRC), ~177Hz corner.
+    // The measured mechanical response, preamp EQ and sensitivity are not
+    // identified here. Trapezoidal/bilinear discretization preserves passivity;
+    // its small frequency warping is retained, with no fitted corner correction.
+    constexpr double piezoTimeConstant = 450.0e-12 * 2.0e6;
+    const double piezoBilinear = 2.0 * sampleRate_ * piezoTimeConstant;
+    piezoLoadPole_ = static_cast<float>((piezoBilinear - 1.0)
+                                      / (piezoBilinear + 1.0));
+    piezoLoadGain_ = 0.5f * (1.0f + piezoLoadPole_);
     delaySmoothing_ = 1.0f - std::exp(-1.0f
         / (0.006f * static_cast<float>(sampleRate_)));
     parameterSmoothing_ = 1.0f - std::exp(-1.0f
@@ -1305,6 +1315,7 @@ void AcustraEngine::reset() noexcept
     captureMix_.fill(0.0f);
     captureMix_[static_cast<std::size_t>(parameters_.capture)] = 1.0f;
     bodyConfigured_ = false;
+    bodyUpdatePending_ = false;
     // Both banks follow the string material, which is only known here: prepare
     // runs before the pending parameters are adopted.
     configureBridge();
@@ -1338,6 +1349,7 @@ void AcustraEngine::reset() noexcept
 
 void AcustraEngine::resetSoundState() noexcept
 {
+    piezoLoadInput_ = piezoLoadOutput_ = 0.0f;
     magneticDerivative_.reset();
     magneticNeedsPriming_ = true;
     bridgeLoad_.reset();
@@ -1389,7 +1401,7 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
 {
     const auto next = sanitise(targetParameters_);
     const bool constructionChanged = force
-        || !sameDiscreteConstruction(next, parameters_);
+        || !sameStringConstruction(next, parameters_);
     const bool bodyChanged = force || next.shape != parameters_.shape
         || next.bodyMaterial != parameters_.bodyMaterial;
     const bool ageChanged = force
@@ -1437,9 +1449,9 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
     if (bridgeChanged || tuningChanged)
         bridgeDerivativesCrossRelease_ = true;
 
-    // A tail belongs to the construction it was taken from, and its loop is
-    // not redesigned by the passes below. Drop it rather than let a steel
-    // string ring on into a nylon instrument.
+    // A tail belongs to the string construction it was taken from, and its
+    // loop is not redesigned below. Body shape and wood only change radiation;
+    // they must preserve the tail and its still-connected junction port.
     if (constructionChanged || ageChanged || stringChanged || tuningChanged)
         for (auto& voice : voices_)
         {
@@ -1500,9 +1512,27 @@ void AcustraEngine::updateControlState() noexcept
 
 void AcustraEngine::configureBody() noexcept
 {
+    if (bodyConfigured_
+        && configuredBodyShape_ == parameters_.shape
+        && configuredBodyMaterial_ == parameters_.bodyMaterial
+        && configuredBodyStringMaterial_ == parameters_.stringMaterial)
+    {
+        bodyUpdatePending_ = false;
+        return;
+    }
+    // Preserve both sounding banks until this 40 ms fade finishes. Repeated
+    // host updates coalesce into the latest request, delayed by at most the
+    // remainder of that fade. At zero mix only the silent target is replaced.
+    if (bodyConfigured_ && bodyModelFade_ > 0.0f && bodyModelFade_ < 1.0f)
+    {
+        bodyUpdatePending_ = true;
+        return;
+    }
+    bodyUpdatePending_ = false;
     if (bodyConfigured_)
     {
-        fadingBodyModes_ = bodyModes_;
+        if (bodyModelFade_ >= 1.0f)
+            fadingBodyModes_ = bodyModes_;
         bodyModelFade_ = 0.0f;
     }
     else
@@ -1602,6 +1632,9 @@ void AcustraEngine::configureBody() noexcept
         if (bodyConfigured_)
             mode.reset();
     }
+    configuredBodyShape_ = parameters_.shape;
+    configuredBodyMaterial_ = parameters_.bodyMaterial;
+    configuredBodyStringMaterial_ = parameters_.stringMaterial;
     bodyConfigured_ = true;
 }
 
@@ -3780,7 +3813,19 @@ AcustraEngine::BodyOutput AcustraEngine::renderBody(float bridgeInput,
         result.upper = previous.upper + mix * (result.upper - previous.upper);
         bodyModelFade_ = std::min(1.0f, bodyModelFade_ + bodyModelFadeStep_);
     }
+    if (bodyUpdatePending_ && bodyModelFade_ >= 1.0f)
+        configureBody();
     return result;
+}
+
+float AcustraEngine::renderLoadedPiezo(float force) noexcept
+{
+    piezoLoadOutput_ = piezoLoadPole_ * piezoLoadOutput_
+        + piezoLoadGain_ * (force - piezoLoadInput_);
+    piezoLoadInput_ = force;
+    if (std::abs(piezoLoadOutput_) < 1.0e-30f)
+        piezoLoadOutput_ = 0.0f;
+    return piezoLoadOutput_;
 }
 
 float AcustraEngine::renderMagneticPickup(bool crossingRelease) noexcept
@@ -4085,6 +4130,9 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         // Capture is an observation: every route shares the unchanged
         // vibrating instrument, so switching sensors never resets a note.
         // Keep the default stereo path bit-for-bit, including its width law.
+        // Advance the electrical load even while unheard, so selecting it
+        // crossfades to the voltage of the already-ringing instrument.
+        const float loadedPiezo = renderLoadedPiezo(lastBridgeReactionForce_);
         if (parameters_.capture != CaptureType::StereoMic
             || captureMix_[0] != 1.0f)
         {
@@ -4106,7 +4154,8 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             // no microphone radiation filter belongs on this observation.
             // https://www.pcb.com/resources/technical-information/introduction-to-force-sensors
             // Pickup sensitivities are unit-normalised, not volts or SPL.
-            // No unmeasured piezo capacitance, preamp load or tonal EQ is added.
+            // The ideal SaddlePiezo remains unloaded; LoadedPiezo adds only
+            // the measured RC loading above. No sensor/preamp tonal EQ is added.
             const float mono = radiationReferenceGain * outputGain_
                 * (captureMix_[1]
                        * (bodyScale * body.left + directScale * directLeft)
@@ -4115,7 +4164,8 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
                    + captureMix_[3] * lastBridgeReactionForce_
                    + captureMix_[4] * magnetic
                    + captureMix_[5]
-                       * (bodyScale * body.upper + directScale * directMono));
+                       * (bodyScale * body.upper + directScale * directMono)
+                   + captureMix_[6] * loadedPiezo);
             outputLeft = captureMix_[0] * outputLeft + mono;
             outputRight = captureMix_[0] * outputRight + mono;
         }

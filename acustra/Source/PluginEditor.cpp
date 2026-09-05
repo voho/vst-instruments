@@ -389,7 +389,9 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
         "CC68 legato; note-off velocity controls finger lift.");
     configureSetupMenu (
         2, "CAPTURE", "Listen through body microphones, bridge-force saddle "
-        "piezo or a magnetic string pickup. Upper mic is a measured position "
+        "piezo or a magnetic string pickup. Loaded piezo models measured "
+        "pickup/preamp electrical loading, reducing low frequencies. "
+        "Upper mic is a measured position "
         "10 cm above the upper bout. Magnetic pickups require steel "
         "strings; a magnetic capture selected by automation is silent on nylon.");
     if (auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
@@ -405,10 +407,11 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
             audioProcessor.parameters.getParameter (acustra::parameters::capture)))
         setupControls[2].addItemList (parameter->choices, 1);
     setupControls[2].addItem ("Upper mic", 6);
+    setupControls[2].addItem ("Loaded piezo", 7);
     setupControls[2].onChange = [this]
     {
         const int selected = setupControls[2].getSelectedId();
-        if (selected < 1 || selected > 6)
+        if (selected < 1 || selected > 7)
             return;
         const auto set = [this] (const char* id, float value)
         {
@@ -420,11 +423,16 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
         // The appended override leaves the legacy Capture parameter's
         // normalized automation untouched. Both appear as one menu here.
         if (selected != 6)
-            set (acustra::parameters::capture, static_cast<float> (selected - 1));
+        {
+            set (acustra::parameters::capture,
+                 selected == 7 ? 3.0f : static_cast<float> (selected - 1));
+            set (acustra::parameters::piezoLoading, selected == 7 ? 1.0f : 0.0f);
+        }
         set (acustra::parameters::upperMic, selected == 6 ? 1.0f : 0.0f);
     };
     constexpr std::array captureIds {
-        acustra::parameters::capture, acustra::parameters::upperMic
+        acustra::parameters::capture, acustra::parameters::upperMic,
+        acustra::parameters::piezoLoading
     };
     for (std::size_t index = 0; index < captureIds.size(); ++index)
     {
@@ -440,6 +448,7 @@ AcustraAudioProcessorEditor::AcustraAudioProcessorEditor (
     }
     captureAttachments[0]->sendInitialUpdate();
     captureAttachments[1]->sendInitialUpdate();
+    captureAttachments[2]->sendInitialUpdate();
 
     configureChoice (
         0, "BODY SHAPE", acustra::parameters::shape,
@@ -558,7 +567,8 @@ void AcustraAudioProcessorEditor::updateCaptureControl()
 {
     auto& captureMenu = setupControls[2];
     const int captureId = captureValues[1] >= 0.5f
-        ? 6 : juce::roundToInt (captureValues[0]) + 1;
+        ? 6 : juce::roundToInt (captureValues[0]) == 3 && captureValues[2] >= 0.5f
+            ? 7 : juce::roundToInt (captureValues[0]) + 1;
     if (captureMenu.getSelectedId() != captureId)
     {
         captureMenu.setSelectedId (captureId, juce::dontSendNotification);

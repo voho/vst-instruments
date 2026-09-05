@@ -269,6 +269,18 @@ struct AcustraEngineTestAccess
 
     static constexpr int bodyModeCapacity = AcustraEngine::bodyModeCount;
 
+    static int retainedTailCount(const AcustraEngine& engine)
+    {
+        return static_cast<int>(std::count_if(engine.voices_.begin(),
+            engine.voices_.end(), [] (const auto& voice) { return voice.tailActive; }));
+    }
+
+    static float bodyFade(const AcustraEngine& engine) { return engine.bodyModelFade_; }
+    static bool bodyUpdatePending(const AcustraEngine& engine)
+    {
+        return engine.bodyUpdatePending_;
+    }
+
     static double playedDelay(PhysicalCalibration calibration)
     {
         AcustraEngine engine;
@@ -4785,6 +4797,135 @@ void testANoteOverASoundingInstrumentDoesNotClick()
 }
 
 
+Audio continueConstructionProbe(acustra::AcustraEngine& engine, int samples)
+{
+    Audio result { std::vector<float>(static_cast<std::size_t>(samples)),
+                   std::vector<float>(static_cast<std::size_t>(samples)) };
+    for (int offset = 0; offset < samples; offset += 64)
+        engine.process(result.left.data() + offset, result.right.data() + offset,
+                       std::min(64, samples - offset));
+    return result;
+}
+
+void testBodyChangesPreserveTheSoundingStrings()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    for (const auto capture : { acustra::CaptureType::SaddlePiezo,
+                               acustra::CaptureType::Magnetic })
+        for (const bool repluck : { false, true })
+            for (const bool wood : { false, true })
+            {
+                acustra::EngineParameters parameters;
+                parameters.outputGain = 0.04f;
+                parameters.capture = capture;
+                acustra::AcustraEngine held, changed;
+                for (auto* engine : { &held, &changed })
+                {
+                    engine->setParameters(parameters);
+                    engine->prepare(sampleRate, 64);
+                    engine->noteOn(52, 0.8f);
+                    continueConstructionProbe(*engine, 48000);
+                    if (repluck)
+                        engine->noteOn(52, 0.8f);
+                    continueConstructionProbe(*engine, 64);
+                }
+                expect(Access::retainedTailCount(changed) == (repluck ? 1 : 0),
+                       "the body-change probe did not establish its retained tail");
+                if (wood)
+                    parameters.bodyMaterial = acustra::BodyMaterial::Maple;
+                else
+                    parameters.shape = acustra::BodyShape::Parlor;
+                changed.setParameters(parameters);
+                expect(Access::retainedTailCount(changed)
+                           == Access::retainedTailCount(held),
+                       "a radiation-only body change deleted a connected string tail");
+                const auto expected = continueConstructionProbe(held, 480);
+                const auto actual = continueConstructionProbe(changed, 480);
+                // These observations bypass microphone radiation. A body-only
+                // change must preserve every sample, including the first one.
+                expect(actual.left == expected.left && actual.right == expected.right,
+                       "a body-only change altered the ideal pickup's ringing strings");
+            }
+}
+
+void testBodyChangesPreserveAnUnfinishedFade()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    acustra::EngineParameters parameters;
+    parameters.outputGain = 0.04f;
+    acustra::AcustraEngine reference, changed;
+    for (auto* engine : { &reference, &changed })
+    {
+        engine->setParameters(parameters);
+        engine->prepare(sampleRate, 64);
+        engine->noteOn(52, 0.8f);
+        continueConstructionProbe(*engine, 48000);
+    }
+    const auto compare = [&] (int samples, const char* message)
+    {
+        const auto expected = continueConstructionProbe(reference, samples);
+        const auto actual = continueConstructionProbe(changed, samples);
+        expect(actual.left == expected.left && actual.right == expected.right, message);
+    };
+
+    auto first = parameters;
+    first.shape = acustra::BodyShape::Parlor;
+    auto second = first;
+    second.bodyMaterial = acustra::BodyMaterial::Maple;
+    reference.setParameters(second);
+    changed.setParameters(first);
+    changed.setParameters(second);
+    compare(64, "same-tick body updates erased the sounding bank instead of replacing the silent target");
+
+    auto latest = second;
+    latest.bodyMaterial = acustra::BodyMaterial::Cedar;
+    changed.setParameters(parameters); // superseded before another audio sample
+    changed.setParameters(latest);
+    expect(Access::bodyUpdatePending(changed), "an interrupted body fade was not queued");
+    int remaining = 0;
+    bool waveformExact = true;
+    while (Access::bodyFade(reference) < 1.0f && remaining < 2000)
+    {
+        const auto expected = continueConstructionProbe(reference, 1);
+        const auto actual = continueConstructionProbe(changed, 1);
+        waveformExact &= actual.left == expected.left && actual.right == expected.right;
+        ++remaining;
+    }
+    expect(waveformExact, "a queued body change interrupted the existing microphone waveform");
+    expect(remaining > 0 && remaining < 2000,
+           "a pending body update exceeded the existing 40 ms fade");
+    expect(!Access::bodyUpdatePending(changed) && Access::bodyFade(changed) == 0.0f,
+           "the latest body request did not start at completion of the previous fade");
+    // Applying only the final request at this exact boundary must produce
+    // the same actual microphone waveform as the queued sequence.
+    reference.setParameters(latest);
+    compare(2000, "the queued body fade did not reach the final requested construction");
+    expect(Access::bodyFade(changed) == 1.0f,
+           "the queued body's own 40 ms fade did not finish");
+
+    reference.setParameters(first);
+    changed.setParameters(first);
+    compare(64, "the next body fade started inconsistently");
+    changed.setParameters(second);
+    changed.setParameters(first); // returning to the active target cancels the queue
+    expect(!Access::bodyUpdatePending(changed),
+           "returning to the active body left an obsolete queued construction");
+    compare(4000, "a cancelled body request restarted an unnecessary fade");
+
+    changed.setParameters(second);
+    continueConstructionProbe(changed, 64);
+    changed.setParameters(latest);
+    expect(Access::bodyUpdatePending(changed), "the reset probe had no pending body update");
+    changed.reset();
+    reference.setParameters(latest);
+    reference.reset();
+    expect(!Access::bodyUpdatePending(changed) && Access::bodyFade(changed) == 1.0f,
+           "reset retained an obsolete body fade or pending request");
+    for (int mode = 0; mode < Access::bodyModeCapacity; ++mode)
+        expect(Access::bodyResidueOf(changed, mode) == Access::bodyResidueOf(reference, mode),
+               "reset did not configure the latest requested body bank");
+}
+
 void testSwitchingStringsOrTuningUnderAChordDoesNotClick()
 {
     // Exchanging the string set or the tuning changes every string's
@@ -6710,6 +6851,8 @@ int main()
     testNaturalHarmonicsReachAboveTheFretboard();
     testHeldStringsDoNotLengthenANoteDecay();
     testANoteOverASoundingInstrumentDoesNotClick();
+    testBodyChangesPreserveTheSoundingStrings();
+    testBodyChangesPreserveAnUnfinishedFade();
     testSwitchingStringsOrTuningUnderAChordDoesNotClick();
     testLegatoHammersOnAndPullsOff();
     testLongitudinalModesGrowWithVelocity();

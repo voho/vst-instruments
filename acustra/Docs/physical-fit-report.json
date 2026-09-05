@@ -84203,5 +84203,256 @@
    "The existing non-rest source phase and zero filter/body startup remain approximations.",
    "No market ranking or subjective pleasantness result follows from the Fourier or recording descriptor checks."
   ]
+ },
+ "body_continuity_and_loaded_piezo_2026_09_05": {
+  "baseline_commit": "0774ffec973daf19522dc49b3573be2f43f0aed4",
+  "scope": "Preserve sounding strings and both modal banks during body control updates; append opt-in Loaded piezo observation. Wider stereo choice, pluck law and calibration remain unchanged.",
+  "loaded_piezo": {
+   "primary_source": {
+    "url": "https://www.gitec-forum-eng.de/wp-content/uploads/2019/03/poteg-6-piezo-pickups.pdf",
+    "title": "Physics of the Electric Guitar, chapter 6, Piezo pickup",
+    "author": "Manfred Zollner",
+    "copyright_year_on_pages": 2005,
+    "translator": "Tilmann Zwicker",
+    "section": "6.5, printed page 6-13, Figure 6.17",
+    "pdf_sha256": "15d6e8b0b073fb040530e5a134647243328c4037d1d94b2c89c201f6841effc3",
+    "visually_checked_page_png_sha256": "1cf42ec4a2a2387f483630dc48d0e3e1e3192e330f6f24a3d5fb571bd8b7711c",
+    "rights": "Public download; author copyright. No open redistribution license found. Numeric facts and independent derived code, not bundled book assets, are the proposed use."
+   },
+   "hardware": {
+    "instrument": "Ovation Adamas SMT steel-string acoustic",
+    "construction": "mid-depth Lyrachord bowl; laminated birch/carbon top",
+    "pickup": "built-in bridge piezo",
+    "preamp": "installed SMT FET preamp; exact part number/revision not specified",
+    "serial_and_manufacture_year": null
+   },
+   "reported_values": {
+    "pickup_capacitance_F": 4.5e-10,
+    "preamp_input_resistance_ohm": 2000000.0,
+    "reported_cutoff_hz": 177,
+    "tolerances_and_measurement_uncertainty": null
+   },
+   "source_boundaries": [
+    "Figure 6.17 sensor response has electrical high-pass computed out.",
+    "Mechanical upper-octave response is not flat.",
+    "The installed preamp also has an equalizer (page 6-15).",
+    "The preceding EA-68 Viper values describe a solid-body instrument and must not replace the SMT values."
+   ],
+   "transfer": "H(s)=sRC/(1+sRC); R=2e6 ohms; C=450e-12 F; tau=.0009 s; analog corner176.8388257 Hz.",
+   "discretization": "Bilinear, a=(2FsRC-1)/(2FsRC+1), b=(1+a)/2; y[n]=a*y[n-1]+b*(x[n]-x[n-1]). Frequency warping retained, no fitted correction. Input is ideal saddle reaction force; output unit sensitivity is uncalibrated.",
+   "lifecycle": "Always advanced, including while unheard; read-only observation; both histories cleared by hard reset.",
+   "parameter_contract": "Legacy Capture keeps five choices, index10 and existing normalized values. Upper mic stays index13/version4; Piezo loading appended index14/version5, defaultfalse. Loading only modifies SaddlePiezo; Upper mic retains priority. Single seven-choice GUI; missing state flags defaultfalse.",
+   "complex_frf": {
+    "sample_rates_hz": [
+     8000,
+     44100,
+     48000,
+     96000,
+     384000
+    ],
+    "reference": "H(s)=sRC/(1+sRC), s=j*2*Fs*tan(pi*f/Fs), R=2e6 Ohm and C=450e-12 F",
+    "frequencies_hz": [
+     "0",
+     "20",
+     "82.406889",
+     "1/(2*pi*R*C)",
+     "329.627556",
+     "1000",
+     "0.2*Fs",
+     "0.45*Fs",
+     "0.5*Fs"
+    ],
+    "native_impulse_seconds": 0.1,
+    "maximum_complex_absolute_error_printed": 1.15991e-06,
+    "error_bound": 5e-05,
+    "maximum_transfer_magnitude_bound": 1.000001,
+    "independence": "DTFT of native impulse response compared to warped analog circuit, not a second copy of the implementation recurrence."
+   },
+   "mutations": [
+    {
+     "mutation": "wrong_rc",
+     "exit": 1,
+     "failed_assertions": 35
+    },
+    {
+     "mutation": "cold_when_unheard",
+     "exit": 1,
+     "failed_assertions": 570
+    },
+    {
+     "mutation": "missing_hard_reset",
+     "exit": 1,
+     "failed_assertions": 10
+    }
+   ],
+   "evidence": [
+    {
+     "path": "/tmp/acustra-pickup-component-research/report.json",
+     "sha256": "baab4b1ffb20db430db4df1c73b4a4b81891e267824886e4c21ced1cd917b04a"
+    },
+    {
+     "path": "/tmp/acustra-loaded-piezo-capture-tests/report.json",
+     "sha256": "25a99010967eda5ae3497144c23ed57736f9135a8f4dce0f95a056aa32bac969"
+    }
+   ],
+   "limits": [
+    "No measured mechanical sensor response, named-device emulation, absolute volts or preamp EQ.",
+    "Component values were measured on steel hardware; selectable nylon loading has no separate measured nylon sensor response.",
+    "No matched piezo recording target is available; circuit agreement is not an end-to-end realism or pleasantness score."
+   ]
+  },
+  "construction_continuity": {
+   "scope": "Body shape/wood no longer count as string construction; preserve retained tail ports. Cache the three construction values of the configured radiation bank. At zero mix replace only the silent target; while both banks sound coalesce the latest request until the existing fade completes. Cancel a queued request when the active target is reselected. Full reset adopts latest parameters and clears pending.",
+   "timing": "A queued bank configuration waits at most the remaining existing 40 ms transition; its own crossfade uses the same existing 40 ms duration. No third bank, new calibration or smoothing constant.",
+   "native_protocol": "48 kHz, max block 64, steel note52 velocity0.8, outputGain0.04; 1 s sustain before events. With-tail cases repluck then advance64 frames. Read-only initial baseline probes from commit0774. Same unchanged probe linked to the fixed frozen source. No audio normalization or exclusions.",
+   "results": {
+    "ideal_pickup_comparisons": 8,
+    "all_waveforms_exact": true,
+    "same_tick_vs_combined_max_difference": 0,
+    "queued_vs_uninterrupted_fade_max_difference": 0,
+    "baseline_same_tick_event_difference": 0.000468847,
+    "baseline_interrupted_64_frame_fade_event_difference": 0.000527938
+   },
+   "mutation_failed_assertions": {
+    "tail-reset": 8,
+    "interrupt-fade": 7,
+    "erase-zero-mix-bank": 2
+   },
+   "evidence": {
+    "path": "/tmp/acustra-construction-transition-review/fixed-review.json",
+    "sha256": "e2853b68396db55772c710621337c929d1f259170d0f2152496662c0581703e7"
+   }
+  },
+  "static_initialization_audit": {
+   "status": "Read-only audit; no preload, loss, gauge or source-state change adopted.",
+   "finding": "Frozen scalar round trip P(z), incident a=P*(a-x), body-to-string velocityv gives Z_in=Z*(1+P)/(1-P). Allpass and loss shelves have unity DC gain; P(1)=g=loopGain<1. Therefore Y_in(0)=(1-g)/(Z*(1+g))>0, a finite viscous/creep floor. Initial filter values cannot change this transfer-function limit.",
+   "further_limit": "Finite-band body/radiation fits do not identify static acoustic pressure or complete finger-loaded equilibrium. Periodic histories and ideal triangle phase alone cannot close this.",
+   "sample_48000_configs": [
+    {
+     "variant": "nylon_Original",
+     "normal_string_DC_mobility_m_per_Ns_range": [
+      0.016491609327783412,
+      0.023008116783172366
+     ],
+     "DC_floor_over_ideal_elastic_mobility_crossover_Hz_range": [
+      0.3206411926482357,
+      0.33512745666366023
+     ]
+    },
+    {
+     "variant": "steel_Original",
+     "normal_string_DC_mobility_m_per_Ns_range": [
+      0.0044826032029705015,
+      0.006264098514399311
+     ],
+     "DC_floor_over_ideal_elastic_mobility_crossover_Hz_range": [
+      0.14162192104757337,
+      0.1601416718365859
+     ]
+    },
+    {
+     "variant": "steel_Fylde",
+     "normal_string_DC_mobility_m_per_Ns_range": [
+      0.0044826032029705015,
+      0.006264098514399311
+     ],
+     "DC_floor_over_ideal_elastic_mobility_crossover_Hz_range": [
+      0.14162192104757337,
+      0.1601416718365859
+     ]
+    }
+   ],
+   "primary_sources": [
+    {
+     "url": "https://www.dsprelated.com/freebooks/pasp/Terminated_String_Impedance.html",
+     "use": "Derivation of terminated-string impedance Z*(1+exp(-sD))/(1-exp(-sD))."
+    },
+    {
+     "url": "https://www.dsprelated.com/freebooks/pasp/Frequency_Dependent_Damping.html",
+     "use": "Physical damping and the explicit optional low-frequency condition G(0)=1."
+    },
+    {
+     "url": "https://www.dsprelated.com/freebooks/pasp/Pluck_Modeling.html",
+     "use": "Force balance and integrated point-force input for displacement waves, Eq10.26."
+    },
+    {
+     "url": "https://www.dsprelated.com/freebooks/pasp/Converting_Any_String_State.html",
+     "use": "Initial displacement/velocity conversion into traveling-wave components; this ideal conversion alone does not specify the coupled filter/body state."
+    }
+   ],
+   "evidence": {
+    "path": "/tmp/acustra-static-initialization-audit/report.json",
+    "sha256": "0b14e09a15774010d8365741f8a0f6805d2bf744b08b0ba075f7ed2d438e2bb1"
+   }
+  },
+  "recording_benchmark_limit": "No new fitting or reference-target reads. Exact native render comparison, when verified below, carries forward previous already-opened training descriptors only; it does not improve them or establish a market ranking.",
+  "final_qualification": {
+   "path": "/tmp/acustra-loaded-piezo-shipping/qualification-report.json",
+   "sha256": "784e189e7325b55d26a0e49477574ef31248cf809bdd3280923c95a669ceb156",
+   "tests": {
+    "Acustra.Engine": 127.63,
+    "Acustra.Capture": 7.66,
+    "Acustra.MeasuredSteelBridge": 3.59,
+    "Acustra.RenderDemos": 0.39,
+    "Acustra.PluginProcessor": 8.53
+   },
+   "result": "5/5 passed; VST3/AU/Standalone built; minimum/default editor visually inspected; all12 canonical demos regenerated, only seven-capture demo changed against0774."
+  },
+  "production_source_sha256": {
+   "Source/DSP/AcustraEngine.cpp": "5d4b45148b61a90fb175ea80aff5d83ee53939ab8514c5e645b00110909298d8",
+   "Source/DSP/AcustraEngine.h": "0d7bc71d09e61d2e0be1c145c8999a2f909e2503aeda079d11a37e250c4b2f18",
+   "Source/PluginProcessor.cpp": "690e40b216b781458eec9299a6049150bcc40b7c95a9fafc6cb2ebfdc3f40286",
+   "Source/PluginEditor.cpp": "615ebd70534cb013114f7dcb400dba09e330fa6e43d25415e9cf23dd59b2867b"
+  },
+  "legacy_compatibility": {
+   "legacy": {
+    "native_phrases": 36,
+    "capture_indices": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "string_materials": [
+     "steel",
+     "nylon"
+    ],
+    "sample_rates_hz": [
+     44100,
+     48000,
+     96000
+    ],
+    "duration_s": 2,
+    "all_byte_identical": true,
+    "compared_bytes_per_variant": 36115200,
+    "maximum_absolute_sample_difference": 0
+   },
+   "carried_forward_attack_benchmark": {
+    "existing_baseline_directory": "/tmp/acustra-unclipped-pluck-candidate",
+    "existing_baseline_report_sha256": "d259ebdf61ef4fea423a7249f89ea8fb3d1739de2251ef557a48abd458b93f72",
+    "native_renders": 47,
+    "steel_renders": 18,
+    "nylon_renders": 29,
+    "sample_rate_hz": 48000,
+    "frames_per_render": 201600,
+    "all_byte_identical": true,
+    "compared_bytes_per_variant": 75801600,
+    "maximum_absolute_sample_difference": 0,
+    "baseline_provenance": "Existing unclip candidate corresponds to 0774: all six compiled DSP source/header files have identical noncomment tokens; only Engine.cpp comments differ. Source-bank files also match but are not linked by this native renderer. The two original renderers and case lists are reused unchanged."
+   },
+   "boundaries": [
+    "Fixed Dreadnought/Spruce construction and original bridge throughout each phrase. Intentional construction-transition changes are excluded.",
+    "Six legacy captures are compared; the additive LoadedPiezo output is tested separately against its circuit.",
+    "The 47 deterministic native renders correspond to the previously opened83TRAIN recording rows through model reuse. No reference audio, protected split, fitting, normalization or descriptors were used here.",
+    "Only focused native rendering and byte comparisons; no full DSP/plugin suite."
+   ],
+   "evidence": {
+    "path": "/tmp/acustra-loaded-piezo-legacy-compatibility/report.json",
+    "sha256": "476b2449457d4f55c2b792239e7c78d07af6ddba876c29674e2a9f9a355a6420"
+   }
+  },
+  "preserved_prior_ledger_sha256": "586b6a9c445507d2c86646e0ebfd24a18b167078b90456b0d94f2aca8709be22"
  }
 }
