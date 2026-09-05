@@ -192,6 +192,29 @@ improvement or regression. All 86 nylon renders remain identical. The report's
 descriptors, availability counts and source/model hashes; these are descriptive
 results on another guitar, not controlled technique validation or a realism rank.
 
+The [AG-PT-set](https://zenodo.org/records/10159492) hammer-on audit adds a
+Taylor 114CE recorded through its LR Baggs Anthem system. Its hammer-on files
+have technique labels but no authored event times. The fixed first ten seconds
+of the piano and forte high-E recordings contain 11 and 14 confidently inferred
+upward semitone pairs when lag correlation agrees with a harmonic-aware FFT
+estimate. Trimmed plateau RMS falls by a median 4.64 and 6.27 dB respectively.
+These are recorded level ratios, not finger velocities or injected energy.
+Requiring agreement with only the strongest FFT peak keeps just five forte
+pairs and changes that median to 4.10 dB; detector selection matters.
+[`BenchmarkHammerOnNotes.py`](Tools/BenchmarkHammerOnNotes.py) verifies the
+published file hashes and retains both masks, exact measurement windows and
+rejected candidates. No piano/forte-to-MIDI mapping is assumed.
+
+An accompanying engine audit compares those same 25 inferred pairs before
+and after the fretting-state correction, across 18 declared timing/velocity
+assumptions and two captures (1,800 renders). Each assumption set reduces the
+piezo's median absolute level-ratio difference by 0.71–2.32 dB; microphone
+changes range from a 1.08 dB reduction to a 0.63 dB increase. These are
+conditional comparisons: the recording's blended pickup, actual finger motion
+and event times are unknown. No best setting is selected or fitted. The
+`agpt_hammer_plateau_audit_2026_09_05` report entry retains the protocol,
+per-setting results and source hashes.
+
 A private listening reference compares both Acustra bridges with the installed
 NI Strummed Acoustic 1.1.0 library in Kontakt 7.10.6: four bars of C major at
 120 BPM, eighth-note strums, stereo capture, and EQ, compression, reverb and
@@ -321,8 +344,9 @@ and the displacement triangle carried unintended initial velocity. Combining
 those profiles added an unwanted energy cross term. Reconstructing the
 corrected displacement and velocity on an ideal string verifies their separate
 energies add without that cross term. This verifies the state conversion,
-not a complete finger-contact simulation: existing vibration still changes length through
-the model's delay slew, and the finger-speed map remains unmeasured.
+not a complete finger-contact simulation: existing vibration still changes
+length through the model's delay slew, and the finger-speed map remains
+unmeasured.
 
 A chord that arrives on one sample, which is what a sequencer sends and no
 hand can play, is swept as a strum: newly assigned strings are fretted at
@@ -1830,6 +1854,19 @@ python3 Tools/BenchmarkTechniqueNotes.py \
 Add `--bridge-model fylde` for the alternative. The output must be new;
 `--self-test` checks selection, fingering and missing-feature accounting without
 the recordings. Keep the downloaded archive and emitted audio out of git.
+
+The recording-only hammer-on audit uses the two Taylor high-E hammer-on WAVs
+from AG-PT-set. Its tool docstring lists the exact names and protocol:
+
+```sh
+python3 Tools/BenchmarkHammerOnNotes.py \
+  --audio-dir /path/to/agpt/audio \
+  --output /tmp/acustra-hammer-report.json
+```
+
+`--self-test` checks octave ambiguity, plateau selection and level measurement
+without downloading recordings. The report's inferred times are not authored
+MIDI events; timing, finger dynamics and capture remain uncertain.
 
 An optional host renders installed VST3 instruments from their normal saved
 states. Enable it in a JUCE/plugin build and build its target:

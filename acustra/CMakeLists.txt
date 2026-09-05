@@ -290,6 +290,11 @@ if(BUILD_TESTING)
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkTechniqueNotes.py"
                                  --self-test)
                 set_tests_properties(Acustra.TechniqueBenchmark PROPERTIES TIMEOUT 180)
+                add_test(NAME Acustra.HammerOnBenchmark
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/BenchmarkHammerOnNotes.py"
+                                 --self-test)
+                set_tests_properties(Acustra.HammerOnBenchmark PROPERTIES TIMEOUT 180)
                 add_test(NAME Acustra.MeasuredSteelFit
                          COMMAND "${Python3_EXECUTABLE}"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/GenerateMeasuredSteelBridge.py"

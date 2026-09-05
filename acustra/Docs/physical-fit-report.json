@@ -77935,5 +77935,915 @@
    },
    "conclusion": "Physical-state conversion bug removed. No real-recording similarity or market-rank claim follows from these regressions."
   }
+ },
+ "agpt_hammer_plateau_audit_2026_09_05": {
+  "status": "New real-acoustic articulation evidence and conditional engine sensitivity audit. No fitting, calibrated MIDI dynamics, subjective verdict or market-rank claim.",
+  "source": {
+   "url": "https://zenodo.org/records/10159492",
+   "license": "CC-BY-4.0",
+   "paper": "https://doi.org/10.1145/3678299.3678325",
+   "authors": "Domenico Stefani, Gabriele A. Giudici, Luca Turchet; Audio Mostly2024.",
+   "selection": "Taylor114CE, guitar2/player3, LRBaggsAnthem,2020-08-14; exact high-E hammeron piano/forte filenames selected before audio inspection; first10s selected before scoring.",
+   "capture": "Internal condenser/piezo50/50 according primary protocol; actual relative gains, transfer, placement and load are uncalibrated.",
+   "published_hammer_note_labels": 0,
+   "hammer_protocol": "Upward semitone legato. General exercise starts open and advances chromatically, three repeats per key/dynamic. No hammer-specific sheet, duration, exact onsets or finger dynamics are published.",
+   "string_identity": "Companion soundhole-pick published annotations establish allstring1 as highE4 MIDI64; paper string-index prose conflicts. Each control has63labels MIDI64..84,3perpitch. Do not transfer that exact event count/timing to unlabeled hammer files.",
+   "download_verification": "Four selected complete WAVs match files.csv SHA256 and nested ZIP CRC32. HTTP range extraction avoided downloading full6.75GBarchive; whole archive MD5 not verified. No source audio committed.",
+   "verified_files": [
+    {
+     "path": "/tmp/acustra-agpt-audit/audio/acoustic_guitar_pitched_allstring1_hammeron_p_GiaFer_20200814.wav",
+     "bytes": 6210730,
+     "sha256": "7db78e20ec91b762f247ba587622ed09ccc14a6748a71c57ca307c222b912cc6",
+     "published_sha256_verified": true,
+     "zip_crc32_verified": true,
+     "duration_seconds": 43.128333,
+     "playing_dynamics": "piano",
+     "wave_parameters": {
+      "channels": 1,
+      "sample_rate": 48000,
+      "bits_per_sample": 24,
+      "frames": 2070160,
+      "duration_seconds": 43.12833333333333
+     },
+     "published_note_label_count": 0,
+     "published_pitch_midi_range": [],
+     "published_note_counts_by_pitch": {},
+     "published_string_number": [],
+     "published_string_openpitch_midi": []
+    },
+    {
+     "path": "/tmp/acustra-agpt-audit/audio/acoustic_guitar_pitched_allstring1_hammeron_f_GiaFer_20200814.wav",
+     "bytes": 6279274,
+     "sha256": "d590ba319e44c363a19a12be93da43120c32f265becd2854ad6d23df5c15c51c",
+     "published_sha256_verified": true,
+     "zip_crc32_verified": true,
+     "duration_seconds": 43.604333,
+     "playing_dynamics": "forte",
+     "wave_parameters": {
+      "channels": 1,
+      "sample_rate": 48000,
+      "bits_per_sample": 24,
+      "frames": 2093008,
+      "duration_seconds": 43.60433333333334
+     },
+     "published_note_label_count": 0,
+     "published_pitch_midi_range": [],
+     "published_note_counts_by_pitch": {},
+     "published_string_number": [],
+     "published_string_openpitch_midi": []
+    },
+    {
+     "path": "/tmp/acustra-agpt-audit/audio/acoustic_guitar_pitched_allstring1_soundholepick_p_GiaFer_20200814.wav",
+     "bytes": 18319228,
+     "sha256": "4f90878ffff95086f9567b1c6c3cef568a5525fb33141818596e5619b3de4da5",
+     "published_sha256_verified": true,
+     "zip_crc32_verified": true,
+     "duration_seconds": 127.215021,
+     "playing_dynamics": "piano",
+     "wave_parameters": {
+      "channels": 1,
+      "sample_rate": 48000,
+      "bits_per_sample": 24,
+      "frames": 6106321,
+      "duration_seconds": 127.21502083333333
+     },
+     "published_note_label_count": 63,
+     "published_pitch_midi_range": [
+      64,
+      84
+     ],
+     "published_note_counts_by_pitch": {
+      "64": 3,
+      "65": 3,
+      "66": 3,
+      "67": 3,
+      "68": 3,
+      "69": 3,
+      "70": 3,
+      "71": 3,
+      "72": 3,
+      "73": 3,
+      "74": 3,
+      "75": 3,
+      "76": 3,
+      "77": 3,
+      "78": 3,
+      "79": 3,
+      "80": 3,
+      "81": 3,
+      "82": 3,
+      "83": 3,
+      "84": 3
+     },
+     "published_string_number": [
+      "1"
+     ],
+     "published_string_openpitch_midi": [
+      "64"
+     ]
+    },
+    {
+     "path": "/tmp/acustra-agpt-audit/audio/acoustic_guitar_pitched_allstring1_soundholepick_f_GiaFer_20200814.wav",
+     "bytes": 22160088,
+     "sha256": "8c4828168836d708abdcc0404e7765ebc7cde7ad5752ee9e0c7f2a1ccdc77c46",
+     "published_sha256_verified": true,
+     "zip_crc32_verified": true,
+     "duration_seconds": 153.887667,
+     "playing_dynamics": "forte",
+     "wave_parameters": {
+      "channels": 1,
+      "sample_rate": 48000,
+      "bits_per_sample": 24,
+      "frames": 7386608,
+      "duration_seconds": 153.88766666666666
+     },
+     "published_note_label_count": 63,
+     "published_pitch_midi_range": [
+      64,
+      84
+     ],
+     "published_note_counts_by_pitch": {
+      "64": 3,
+      "65": 3,
+      "66": 3,
+      "67": 3,
+      "68": 3,
+      "69": 3,
+      "70": 3,
+      "71": 3,
+      "72": 3,
+      "73": 3,
+      "74": 3,
+      "75": 3,
+      "76": 3,
+      "77": 3,
+      "78": 3,
+      "79": 3,
+      "80": 3,
+      "81": 3,
+      "82": 3,
+      "83": 3,
+      "84": 3
+     },
+     "published_string_number": [
+      "1"
+     ],
+     "published_string_openpitch_midi": [
+      "64"
+     ]
+    }
+   ]
+  },
+  "recording_protocol": {
+   "duration_per_file_seconds": 10,
+   "analysis_window_seconds": 0.042666666666666665,
+   "hop_seconds": 0.002,
+   "required_trim_each_end_seconds": 0.021333333333333333,
+   "maximum_plateau_gap_seconds": 0.042666666666666665,
+   "protocol": "All adjacent ascending one-semitone confident plateaus in each preselected first10s excerpt. Correlation >=.85, RMS within45dB of excerpt peak, independent FFT agreement <=35cents, pitch within25cents of semitone, plateau >=25ms. No missing plateaus bridged. Both dominant-only and harmonic-energy FFT agreement masks retained. Raw PCM RMS with no normalization, noise gate, spectral weighting, or DC subtraction.",
+   "limitations": [
+    "These are inferred pitch plateaus within technique-labelled files, not authored hammer events or exact onset times.",
+    "FFT agreement preferentially retains stable harmonic signals; the dominant-peak mask excludes fundamentals when an overtone dominates. Both masks are reported to expose that selection effect.",
+    "No claim that retained pairs represent all gestures; first10s truncation and confidence gaps leave incomplete coverage.",
+    "Unequal-duration trimmed windows summarize recorded level, not injected mechanical energy, attack energy, or physical finger velocity.",
+    "Piano/forte labels are ordinal. Capture gain and pickup blend are not calibrated between recordings.",
+    "No matching synthesizer, event schedule, fixed MIDI velocity, or model fitting has been used."
+   ]
+  },
+  "recording_results": [
+   {
+    "file": "acoustic_guitar_pitched_allstring1_hammeron_p_GiaFer_20200814.wav",
+    "sha256": "7db78e20ec91b762f247ba587622ed09ccc14a6748a71c57ca307c222b912cc6",
+    "published_sha256_verified": true,
+    "dynamic_label": "p",
+    "analyses": {
+     "dominant_fft_agreement": {
+      "coverage": {
+       "total_analysis_frames": 4979,
+       "correlation_voiced_frames": 2696,
+       "method_agreement_frames": 2638,
+       "method_agreement_fraction_of_all_frames": 0.5298252661176943,
+       "semitone_agreement_frames": 2567,
+       "retained_plateau_frames": 2505,
+       "retained_plateaus": 24,
+       "adjacent_upward_semitone_candidates": 11,
+       "retained_pairs": 11,
+       "rejected_upward_candidates": 0,
+       "measured_before_duration_seconds": 1.102645833333333,
+       "measured_after_duration_seconds": 2.7605416666666662
+      },
+      "summary_db": {
+       "median": -4.6376195919145715,
+       "mean": -4.851088456597362,
+       "minimum": -9.296368134375857,
+       "maximum": -0.6476128371213374
+      }
+     },
+     "six_harmonic_sum_fft_agreement": {
+      "coverage": {
+       "total_analysis_frames": 4979,
+       "correlation_voiced_frames": 2696,
+       "method_agreement_frames": 2678,
+       "method_agreement_fraction_of_all_frames": 0.5378590078328982,
+       "semitone_agreement_frames": 2608,
+       "retained_plateau_frames": 2558,
+       "retained_plateaus": 25,
+       "adjacent_upward_semitone_candidates": 12,
+       "retained_pairs": 11,
+       "rejected_upward_candidates": 1,
+       "measured_before_duration_seconds": 1.102645833333333,
+       "measured_after_duration_seconds": 2.7605416666666662
+      },
+      "summary_db": {
+       "median": -4.6376195919145715,
+       "mean": -4.851088456597362,
+       "minimum": -9.296368134375857,
+       "maximum": -0.6476128371213374
+      }
+     }
+    }
+   },
+   {
+    "file": "acoustic_guitar_pitched_allstring1_hammeron_f_GiaFer_20200814.wav",
+    "sha256": "d590ba319e44c363a19a12be93da43120c32f265becd2854ad6d23df5c15c51c",
+    "published_sha256_verified": true,
+    "dynamic_label": "f",
+    "analyses": {
+     "dominant_fft_agreement": {
+      "coverage": {
+       "total_analysis_frames": 4979,
+       "correlation_voiced_frames": 4263,
+       "method_agreement_frames": 2395,
+       "method_agreement_fraction_of_all_frames": 0.4810202851978309,
+       "semitone_agreement_frames": 2316,
+       "retained_plateau_frames": 2300,
+       "retained_plateaus": 16,
+       "adjacent_upward_semitone_candidates": 6,
+       "retained_pairs": 5,
+       "rejected_upward_candidates": 1,
+       "measured_before_duration_seconds": 0.6086666666666667,
+       "measured_after_duration_seconds": 1.4906458333333334
+      },
+      "summary_db": {
+       "median": -4.095253997902388,
+       "mean": -4.383138205720292,
+       "minimum": -6.332473327111691,
+       "maximum": -2.9291282037645368
+      }
+     },
+     "six_harmonic_sum_fft_agreement": {
+      "coverage": {
+       "total_analysis_frames": 4979,
+       "correlation_voiced_frames": 4263,
+       "method_agreement_frames": 4064,
+       "method_agreement_fraction_of_all_frames": 0.8162281582647118,
+       "semitone_agreement_frames": 3994,
+       "retained_plateau_frames": 3984,
+       "retained_plateaus": 28,
+       "adjacent_upward_semitone_candidates": 14,
+       "retained_pairs": 14,
+       "rejected_upward_candidates": 0,
+       "measured_before_duration_seconds": 1.9766666666666666,
+       "measured_after_duration_seconds": 4.740583333333333
+      },
+      "summary_db": {
+       "median": -6.266831725545603,
+       "mean": -7.34909464609524,
+       "minimum": -15.037004824654899,
+       "maximum": -2.9291282037645368
+      }
+     }
+    }
+   }
+  ],
+  "recording_report": {
+   "path": "/tmp/acustra-agpt-audit/plateau-rms-ratios.json",
+   "sha256": "fed1c9719e220b7f1e84ceb220311181c3fc27deb3e2acd81bab8e4130e198f6"
+  },
+  "independent_measurement_check": "Stdlib signed-24-bit reader reproduces all41pair instances across both masks exactly. Separate recomputation matches RMS ratios within2.7e-15dB. Float ceil/floor may trim one extra sample inward; exact-integer alternative changes any ratio by at most.00201dB. Historical measured bounds preserved.",
+  "engine_sensitivity": {
+   "baseline_revision": "40cf9044",
+   "corrected_revision": "6fd8f715",
+   "committed_object_equivalence": {
+    "prototype_sha256": "b74221abc597e830b3e3d1634cba930c4ed746b45adfa481e17f215262dcd0ac",
+    "committed_revision": "6fd8f715",
+    "committed_cpp_sha256": "714e9eb8f781564b2ac271f3e8a3abe33a5e5b92e0136021f248d23fedb38250",
+    "prototype_object_sha256": "92ae06a08c67ba0078216c64caa667a28eee4fdb6233a5eefc0417626639a10c",
+    "committed_object_sha256": "92ae06a08c67ba0078216c64caa667a28eee4fdb6233a5eefc0417626639a10c",
+    "objects_byte_identical": true,
+    "compiler_flags": [
+     "-O3",
+     "-std=c++20",
+     "-mmacosx-version-min=11.0",
+     "-c"
+    ],
+    "final_report_sha256": "c7847178e03f35757130445423ecbd59a7308fd344b5f289939d5e16802de5ac",
+    "final_report_observations_and_summaries_equal_original": true
+   },
+   "sample_rate": 48000,
+   "block_size": 127,
+   "controls": {
+    "shape": "Auditorium",
+    "bodyMaterial": "Spruce",
+    "stringMaterial": "Steel",
+    "picking": "Pick",
+    "bridgeModel": "Original",
+    "tuning": "Standard",
+    "stringAge": 0.15,
+    "pluckPosition": 0.28,
+    "touch": 0.58,
+    "bodyAmount": 0.82,
+    "stereoWidth": 0.62,
+    "outputGain": 0.42,
+    "capture": [
+     "StereoMic (arithmetic midpoint of L/R)",
+     "SaddlePiezo (arithmetic midpoint of identical L/R)"
+    ],
+    "string_per_channel_mode": true,
+    "midi_channel": 6,
+    "zero_based_string": 5,
+    "legato": true,
+    "midi_note_offs": false,
+    "physical_calibration_values_in_declaration_order_including_fixed_polarization_end_correction": [
+     1.04,
+     0.0534179688,
+     0.754677154,
+     -1.0,
+     0.0,
+     1.0,
+     0.86484718,
+     1.40369766,
+     1.7688939,
+     0.0,
+     1.12667139,
+     0.0375,
+     0.749355465,
+     1.53,
+     0.52,
+     0.643124355,
+     0.494086432,
+     0.88819512,
+     1.1859375,
+     -0.0706290118,
+     7.5,
+     0.00773577847,
+     -0.0597851562,
+     2.28586032,
+     0.011,
+     2187.76023,
+     0.00325,
+     0.0,
+     35.0,
+     0.0008
+    ],
+    "sympathetic_strings_enabled": true,
+    "bridge_coupling_enabled": true,
+    "pitch_bend_semitones": 0,
+    "palm_mute_pressure": 0,
+    "vibrato": 0,
+    "sustain_pedal": false,
+    "mpe_lower_zone_members": 0,
+    "strum_member": false,
+    "pluck_delay_samples": 0,
+    "randomization": "new engine and prepare/reset per case; default deterministic seed"
+   },
+   "protocol": "Reset engine per pair/assumption/capture. Base note at render sample0. Hold it while issuing semitone-higher note on channel6 in legato mode. No note-off, strum, fitting, loudness normalization or audio gating. Use exactly the real trimmed sample windows shifted to assumed pluck origin; leave windows fixed as hammer timing varies. Render only until the after-window endpoint. All assumptions frozen before synthetic audio inspection.",
+   "assumptions": {
+    "base_pluck_lead_before_before_plateau_first_window_center": [
+     0.042666666666666665,
+     0.128
+    ],
+    "hammer_shift_about_estimated_transition_center": [
+     -0.021333333333333333,
+     0,
+     0.021333333333333333
+    ],
+    "equal_base_and_hammer_velocities": [
+     0.3,
+     0.6,
+     0.9
+    ]
+   },
+   "limitations": [
+    "Unknown actual pluck and hammer timings, finger dynamics, damping, fretting position, and pickup transfer. p/f labels are NOT mapped to velocity.",
+    "No claim of microphone/piezo blend equivalence to the Taylor LR Baggs Anthem capture. Stereo midpoint and pure model piezo are separate assumptions.",
+    "Pitch plateaus are confidence-selected estimates, not authored event labels. Real ratios use unequal-duration plateau windows, not attack or injected energy.",
+    "This is a sensitivity diagnostic; no fitted parameters, best-variant selection, ranking, listener preference or realism score."
+   ],
+   "case_count_per_engine": 900,
+   "total_render_count": 1800,
+   "validation": {
+    "identical_pre_hammer_audio_cases": 900,
+    "all_1800_events_verified_on_held_high_e": true,
+    "all_stereo_piezo_channels_identical": true,
+    "all_audio_finite": true,
+    "excluded_measurements": []
+   },
+   "paired_summary_ranges": {
+    "stereo_midpoint": {
+     "baseline_median_absolute_difference_db_range": [
+      1.5037650691043059,
+      3.7307901282430262
+     ],
+     "corrected_median_absolute_difference_db_range": [
+      1.5177173732384968,
+      3.2494027603869866
+     ],
+     "paired_after_minus_before_median_absolute_difference_db_range": [
+      -1.0838417589783447,
+      0.62861032388281
+     ],
+     "definition": "Each value summarizes the same25pairs under one of18assumption sets. Delta is difference of pooled medians, not the median paired per-note error change."
+    },
+    "saddle_piezo": {
+     "baseline_median_absolute_difference_db_range": [
+      2.7292301204771467,
+      8.373426056392356
+     ],
+     "corrected_median_absolute_difference_db_range": [
+      1.9930267947842681,
+      6.049823979222268
+     ],
+     "paired_after_minus_before_median_absolute_difference_db_range": [
+      -2.3236020771700883,
+      -0.7132864689549998
+     ],
+     "definition": "Each value summarizes the same25pairs under one of18assumption sets. Delta is difference of pooled medians, not the median paired per-note error change."
+    }
+   },
+   "variant_columns": [
+    "capture",
+    "pluck_lead_analysis_windows",
+    "hammer_offset_samples",
+    "equal_base_and_hammer_velocity",
+    "baseline_median_absolute_ratio_difference_db",
+    "corrected_median_absolute_ratio_difference_db",
+    "paired_change_db",
+    "baseline_median_model_after_minus_before_db",
+    "corrected_median_model_after_minus_before_db"
+   ],
+   "variant_rows": [
+    [
+     "stereo_midpoint",
+     1,
+     -1024,
+     0.3,
+     2.8642720023325463,
+     2.6249454923187643,
+     -0.23932651001378202,
+     -3.2663405936893106,
+     -3.6744669230259475
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     -1024,
+     0.6,
+     1.9899474877941863,
+     1.8818448705537598,
+     -0.10810261724042647,
+     -3.7080526280608668,
+     -3.590789337660458
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     -1024,
+     0.9,
+     1.5037650691043059,
+     1.8774951950722512,
+     0.3737301259679453,
+     -4.0155199788658145,
+     -4.180613794203972
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     0,
+     0.3,
+     3.1674385509493606,
+     2.637452855856653,
+     -0.5299856950927078,
+     -2.9452776225798116,
+     -3.6024677016996023
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     0,
+     0.6,
+     1.9510278789185396,
+     2.357825937602799,
+     0.40679805868425944,
+     -3.296873177817741,
+     -4.029803531725596
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     0,
+     0.9,
+     1.568947286610423,
+     2.197557610493233,
+     0.62861032388281,
+     -3.747569357051982,
+     -3.9014371490026454
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     1024,
+     0.3,
+     3.1972307751335127,
+     2.4023572186135356,
+     -0.7948735565199772,
+     -2.338697185270118,
+     -3.49938395941291
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     1024,
+     0.6,
+     3.114381524480055,
+     2.0929138603794692,
+     -1.0214676641005855,
+     -3.0585799410769132,
+     -4.005919989560853
+    ],
+    [
+     "stereo_midpoint",
+     1,
+     1024,
+     0.9,
+     2.4054663860267835,
+     1.5177173732384968,
+     -0.8877490127882868,
+     -3.411267494709869,
+     -4.061613995045224
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     -1024,
+     0.3,
+     3.7307901282430262,
+     2.7650963718602313,
+     -0.965693756382795,
+     -1.5969695132091657,
+     -3.388243661520454
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     -1024,
+     0.6,
+     2.7122356855095107,
+     2.2745709043543663,
+     -0.4376647811551444,
+     -2.899396506658625,
+     -3.846198109552175
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     -1024,
+     0.9,
+     2.6759245485079197,
+     1.592082789529575,
+     -1.0838417589783447,
+     -3.3905191508825165,
+     -3.834077707285395
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     0,
+     0.3,
+     3.403952299992802,
+     2.7162714676884114,
+     -0.6876808323043906,
+     -1.985857300191922,
+     -3.2072039825491743
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     0,
+     0.6,
+     2.8412635910787976,
+     2.136268275848915,
+     -0.7049953152298825,
+     -2.8239374370918426,
+     -3.3645804232942886
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     0,
+     0.9,
+     2.7509671219526095,
+     1.8788667410254059,
+     -0.8721003809272037,
+     -3.1139941216689753,
+     -3.6559767817012476
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     1024,
+     0.3,
+     3.653463781653133,
+     3.2061857850121505,
+     -0.44727799664098233,
+     -1.800949963884384,
+     -2.712516111241015
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     1024,
+     0.6,
+     2.9076612121129757,
+     3.2494027603869866,
+     0.34174154827401093,
+     -2.8634344613507157,
+     -3.26511202084665
+    ],
+    [
+     "stereo_midpoint",
+     3,
+     1024,
+     0.9,
+     2.458688025582047,
+     2.1988200274770824,
+     -0.25986799810496475,
+     -3.0789903575440074,
+     -3.3239512479758075
+    ],
+    [
+     "saddle_piezo",
+     1,
+     -1024,
+     0.3,
+     5.858758717855501,
+     4.183382542270673,
+     -1.6753761755848284,
+     0.6456278922785701,
+     -1.6846208777713259
+    ],
+    [
+     "saddle_piezo",
+     1,
+     -1024,
+     0.6,
+     3.770638349779595,
+     2.670808034674014,
+     -1.099830315105581,
+     -1.5852215981503572,
+     -3.032680712150622
+    ],
+    [
+     "saddle_piezo",
+     1,
+     -1024,
+     0.9,
+     2.7292301204771467,
+     1.9930267947842681,
+     -0.7362033256928786,
+     -2.5299404221297603,
+     -3.3992980138744806
+    ],
+    [
+     "saddle_piezo",
+     1,
+     0,
+     0.3,
+     6.329271938466091,
+     4.389232302626869,
+     -1.9400396358392218,
+     1.0362768554599924,
+     -1.266103399638257
+    ],
+    [
+     "saddle_piezo",
+     1,
+     0,
+     0.6,
+     4.061933326669591,
+     3.0304365539232334,
+     -1.0314967727463573,
+     -1.0313651171840046,
+     -2.7580189034110165
+    ],
+    [
+     "saddle_piezo",
+     1,
+     0,
+     0.9,
+     3.18008678123793,
+     2.4668003122829303,
+     -0.7132864689549998,
+     -2.094343148961539,
+     -3.2768810199818796
+    ],
+    [
+     "saddle_piezo",
+     1,
+     1024,
+     0.3,
+     6.985764836733713,
+     4.903387883035923,
+     -2.08237695369779,
+     1.7668821344168084,
+     -0.6932583971234514
+    ],
+    [
+     "saddle_piezo",
+     1,
+     1024,
+     0.6,
+     4.432740667258825,
+     3.1424982897884846,
+     -1.2902423774703404,
+     -0.4646316264356879,
+     -2.468467345385619
+    ],
+    [
+     "saddle_piezo",
+     1,
+     1024,
+     0.9,
+     3.4984252184429563,
+     2.440462933577212,
+     -1.0579622848657442,
+     -1.796681940355029,
+     -3.0160254627810046
+    ],
+    [
+     "saddle_piezo",
+     3,
+     -1024,
+     0.3,
+     6.926030683780918,
+     5.234055438060599,
+     -1.691975245720319,
+     2.051647872168807,
+     0.10739703740275211
+    ],
+    [
+     "saddle_piezo",
+     3,
+     -1024,
+     0.6,
+     4.715797473349572,
+     3.2985353157669706,
+     -1.4172621575826017,
+     -0.2874424890781933,
+     -1.998895473572346
+    ],
+    [
+     "saddle_piezo",
+     3,
+     -1024,
+     0.9,
+     3.5045818924610823,
+     2.787496428630294,
+     -0.7170854638307884,
+     -1.5575433220204253,
+     -2.707694759965369
+    ],
+    [
+     "saddle_piezo",
+     3,
+     0,
+     0.3,
+     7.695404211946277,
+     5.383354749725311,
+     -2.3120494622209664,
+     2.660026175870276,
+     0.19823906772551464
+    ],
+    [
+     "saddle_piezo",
+     3,
+     0,
+     0.6,
+     5.4158280873380304,
+     3.4921871969018694,
+     -1.923640890436161,
+     0.22257713394196774,
+     -1.6547746776527326
+    ],
+    [
+     "saddle_piezo",
+     3,
+     0,
+     0.9,
+     4.527958805937503,
+     2.878809711950785,
+     -1.6491490939867184,
+     -0.9005014144537516,
+     -2.51712203809105
+    ],
+    [
+     "saddle_piezo",
+     3,
+     1024,
+     0.3,
+     8.373426056392356,
+     6.049823979222268,
+     -2.3236020771700883,
+     3.368496479851579,
+     0.6596900483222783
+    ],
+    [
+     "saddle_piezo",
+     3,
+     1024,
+     0.6,
+     5.998646989070881,
+     3.9310200800560713,
+     -2.06762690901481,
+     0.8939399050920744,
+     -1.2673534074025894
+    ],
+    [
+     "saddle_piezo",
+     3,
+     1024,
+     0.9,
+     4.380895564753326,
+     2.9682648709222264,
+     -1.4126306938310993,
+     -0.7448762820683539,
+     -2.3061650592772427
+    ]
+   ],
+   "raw_channel_peak": {
+    "stereo_midpoint": {
+     "before": 0.14290037751197815,
+     "corrected": 0.14290037751197815
+    },
+    "saddle_piezo": {
+     "before": 0.12280809134244919,
+     "corrected": 0.09645835310220718
+    }
+   },
+   "audio_files": {
+    "before": {
+     "raw_frames": 25518924,
+     "raw_bytes": 204151392,
+     "raw_sha256": "e208ad03a75f3d23119281f637dfc2852b1c215ca88c231d7847491affd7d29c"
+    },
+    "corrected": {
+     "raw_frames": 25518924,
+     "raw_bytes": 204151392,
+     "raw_sha256": "bf91c57dd8406b9a68273c089be6a3c3ca57c9a272b79c7d705ba55ccd3e0705"
+    }
+   },
+   "artifacts_sha256": {
+    "manifest.json": "2876e6fe7b9ffa3843957d97b71897356ebc976be53d9bb1a5b22334364c9539",
+    "cases.txt": "d89c65d2aa8a4c0094a3677daeb90cd6bc78576e99822980439e72c45b911682",
+    "prepare.py": "e2d93d439078f250381b7b14b6e8c89cb2a016b80ee230fb722c31ba846b2da3",
+    "render_pairs.cpp": "cc809b67d39577e1104719154fe092118950411cd857c4877a5c3fbde3e181ad",
+    "score.py": "2675358ce53432db0a8b35617cb3d738990015468f9b1403d63ef949233e7836",
+    "render-before": "d3e13ddfb4d735651853c214c517a6083091d46b81097fd9c4866fbc6da8e5ad",
+    "render-corrected": "ad8c5c0e95fbe30f345f898849892d3b7a6fb621a5a983fea83f870e643aced0",
+    "before-status.csv": "752171d0dc5b485652961a3273e1d127e227748741d9fd16c08a180e6d95e294",
+    "corrected-status.csv": "e0befd4250c5050268f553bd2933c93cb4947753958fdb19dd6837c552f22627",
+    "before.log": "ec23bf3f4e32e8ac25bc8e1c08b16a9f18cfebdde588f671605b559039e90aa8",
+    "corrected.log": "ec23bf3f4e32e8ac25bc8e1c08b16a9f18cfebdde588f671605b559039e90aa8",
+    "reproduce.sh": "1f81b623056541a64879429a9a26005283514e6274fe27b55a730e3d7b344c53"
+   },
+   "report": {
+    "path": "/tmp/acustra-agpt-engine-sensitivity/report-final.json",
+    "sha256": "c7847178e03f35757130445423ecbd59a7308fd344b5f289939d5e16802de5ac"
+   },
+   "reproduce_command": "sh /private/tmp/acustra-agpt-engine-sensitivity/reproduce.sh /tmp/acustra-agpt-replay",
+   "reproduce_protocol": "The shell helper contains the exact two compile and two renderer CLI commands, followed by this analyzer. It refuses an existing destination. Uses frozen sources/data/schedules, not a live library. All 900 deterministic schedule rows are in cases.txt; manifest cases retain source sample windows and timing assumptions.",
+   "interpretation": "Piezo pooled median absolute level-ratio difference improves under all18assumption sets; microphone changes have both signs. This is not a per-note-uniform improvement, spectral/timbre match, calibrated LRBaggs model, or perceptual ranking. Full per-note/per-dynamic results remain in hashed report.",
+   "independent_review": "All900event schedules retain valid ordered windows; nearest measurement edge is240samples/5ms from assumed hammer. All216reported medians recompute from1800observations; source/artifact hashes match. Sensitivity ranges are not confidence intervals or1800independent real gestures."
+  },
+  "committed_tool": {
+   "path": "Tools/BenchmarkHammerOnNotes.py",
+   "test": "Acustra.HammerOnBenchmark; meaningful octave-ambiguity, known-semitone/half-amplitude, silence-gap and PCM24 decoding self-tests.",
+   "test_log": {
+    "path": "/tmp/acustra-agpt-final-test.log",
+    "sha256": "6a9debaa89b97d6f383b693c0616e3a92a3b3ac719ed9826487f3cdc09c05893"
+   },
+   "sha256": "bb7f989911d676fbfa8c68ac5b01838f34896124fad292398bc5069add6c2c5e",
+   "report": {
+    "path": "/tmp/acustra-agpt-audit/reproducible-hammer-report-final.json",
+    "sha256": "297ff67b07d67a35690aae4747e3077f0692339f1e7375dd07e8cb4cf13328f2"
+   },
+   "reproduction": "All historical summary values, coverage counts, retained pairs, rejections, plateaus and finite trace estimates reproduce exactly. Selected recording PCM24 decoding unchanged. Silent/flat estimates invalid rather than NaN JSON; report serializes missing values as null.",
+   "input_validation": "Same-size one-byte source corruption rejected without creating a report; existing output preserved."
+  },
+  "additional_validation": {
+   "final_fretting_demo_raw_bytes_match_scored_prototype": true,
+   "final_raw_frames": 385875,
+   "final_raw_sha256": "9c2c65e177dc6fad3b8ec1d1c62d2c942164f82080efa574dd824ded62f4b840"
+  }
  }
 }
