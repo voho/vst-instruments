@@ -80166,5 +80166,518 @@
    "The rendering controls remove noise, attack-tension modulation and longitudinal radiation for stationary linear analysis; this is not unchanged shipping audio or a real-guitar realism score.",
    "No data here validates the assumed saddle rotation axis, arbitrary horizontal-force radiation, or steel body microphone response."
   ]
+ },
+ "joint_complex_body_fit_and_native_loads_2026_09_05": {
+  "status": "Offline raw-complex matrix fit; no shipping coefficients or audible defaults replaced.",
+  "source": "https://zenodo.org/records/4604577",
+  "raw_md5": "733cb10baf5ce36d8bf333610ffbb260",
+  "protocol": "Joint prominence-ordered measured pole candidates from bass/treble normal impact x upper/treble/bass mic, fitting six endpoints directly with existing weighted residue solver. Derive Hh=(Ht+Hb)/2 and Hr=(Ht-Hb)/2 from rounded endpoint residues, preserving complex phase. Primary fits use zero explicit delay. Every earlier prefix has a recorded actual gate rejection; no modeled-note loads entered fitting.",
+  "conditions_summary": [
+   {
+    "stage": "joint-measured-prefix",
+    "guitar": 21,
+    "delay_samples": 0,
+    "count": 127,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.21511499296010364,
+     "unmasked_magnitude_abs_median_db": 0.9269228062160737,
+     "unmasked_magnitude_abs_p90_db": 3.613158377162032,
+     "erb_level_abs_max_db": 0.4788772532287913
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.25496951952482516,
+     "unmasked_magnitude_abs_median_db": 1.0502807493179867,
+     "unmasked_magnitude_abs_p90_db": 3.473164176085561,
+     "erb_level_abs_max_db": 0.6954567067496197
+    },
+    "endpoint_capture_balance_p90_max_db": 4.9250397304492255,
+    "pair_phase_p90_deg": {
+     "upper": 32.486460139834136,
+     "treble": 31.787586550301793,
+     "bass": 26.888562445887903
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 30.14644315470945,
+     "treble": 28.917195752479287,
+     "bass": 25.462891634752246
+    }
+   },
+   {
+    "stage": "joint-measured-prefix",
+    "guitar": 21,
+    "delay_samples": 16,
+    "count": 126,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.20992739675233157,
+     "unmasked_magnitude_abs_median_db": 0.934459919032467,
+     "unmasked_magnitude_abs_p90_db": 3.540741328508516,
+     "erb_level_abs_max_db": 0.48168837589199087
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.25272137668452815,
+     "unmasked_magnitude_abs_median_db": 1.0668788931386137,
+     "unmasked_magnitude_abs_p90_db": 3.681223598546468,
+     "erb_level_abs_max_db": 0.7791244465503748
+    },
+    "endpoint_capture_balance_p90_max_db": 4.951568343066385,
+    "pair_phase_p90_deg": {
+     "upper": 34.522633116249,
+     "treble": 32.21946812029946,
+     "bass": 27.785171523338217
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 31.755300748239073,
+     "treble": 29.76100301606722,
+     "bass": 24.53483090663442
+    }
+   },
+   {
+    "stage": "joint-measured-prefix",
+    "guitar": 34,
+    "delay_samples": 0,
+    "count": 135,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.20575801382451336,
+     "unmasked_magnitude_abs_median_db": 1.0385853565134475,
+     "unmasked_magnitude_abs_p90_db": 3.385114800808903,
+     "erb_level_abs_max_db": 0.765370780682836
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.20918211540846907,
+     "unmasked_magnitude_abs_median_db": 1.0950042980208818,
+     "unmasked_magnitude_abs_p90_db": 3.996235292386103,
+     "erb_level_abs_max_db": 1.7979008504628193
+    },
+    "endpoint_capture_balance_p90_max_db": 4.996848184875049,
+    "pair_phase_p90_deg": {
+     "upper": 33.77413045299575,
+     "treble": 33.172322593837436,
+     "bass": 25.896001177580978
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 28.17134573901205,
+     "treble": 26.29223129211985,
+     "bass": 21.41590906219566
+    }
+   },
+   {
+    "stage": "joint-measured-prefix",
+    "guitar": 34,
+    "delay_samples": 16,
+    "count": 130,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.20870083553448077,
+     "unmasked_magnitude_abs_median_db": 1.07996312237765,
+     "unmasked_magnitude_abs_p90_db": 3.610320305641014,
+     "erb_level_abs_max_db": 0.8331208371083141
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.21681803244006548,
+     "unmasked_magnitude_abs_median_db": 1.1149072445386925,
+     "unmasked_magnitude_abs_p90_db": 3.8106839745600922,
+     "erb_level_abs_max_db": 1.469534503448833
+    },
+    "endpoint_capture_balance_p90_max_db": 4.97199065198619,
+    "pair_phase_p90_deg": {
+     "upper": 33.56579277667234,
+     "treble": 34.859423800450045,
+     "bass": 27.14003132093693
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 28.550937751435534,
+     "treble": 28.93916172461129,
+     "bass": 21.739270662777443
+    }
+   },
+   {
+    "stage": "joint-measured-pair-gates",
+    "guitar": 21,
+    "delay_samples": 0,
+    "count": 127,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.21511499296010364,
+     "unmasked_magnitude_abs_median_db": 0.9269228062160737,
+     "unmasked_magnitude_abs_p90_db": 3.613158377162032,
+     "erb_level_abs_max_db": 0.4788772532287913
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.25496951952482516,
+     "unmasked_magnitude_abs_median_db": 1.0502807493179867,
+     "unmasked_magnitude_abs_p90_db": 3.473164176085561,
+     "erb_level_abs_max_db": 0.6954567067496197
+    },
+    "endpoint_capture_balance_p90_max_db": 4.9250397304492255,
+    "pair_phase_p90_deg": {
+     "upper": 32.486460139834136,
+     "treble": 31.787586550301793,
+     "bass": 26.888562445887903
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 30.14644315470945,
+     "treble": 28.917195752479287,
+     "bass": 25.462891634752246
+    }
+   },
+   {
+    "stage": "joint-measured-pair-gates",
+    "guitar": 21,
+    "delay_samples": 16,
+    "count": 126,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.20992739675233157,
+     "unmasked_magnitude_abs_median_db": 0.934459919032467,
+     "unmasked_magnitude_abs_p90_db": 3.540741328508516,
+     "erb_level_abs_max_db": 0.48168837589199087
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.25272137668452815,
+     "unmasked_magnitude_abs_median_db": 1.0668788931386137,
+     "unmasked_magnitude_abs_p90_db": 3.681223598546468,
+     "erb_level_abs_max_db": 0.7791244465503748
+    },
+    "endpoint_capture_balance_p90_max_db": 4.951568343066385,
+    "pair_phase_p90_deg": {
+     "upper": 34.522633116249,
+     "treble": 32.21946812029946,
+     "bass": 27.785171523338217
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 31.755300748239073,
+     "treble": 29.76100301606722,
+     "bass": 24.53483090663442
+    }
+   },
+   {
+    "stage": "joint-measured-pair-gates",
+    "guitar": 34,
+    "delay_samples": 0,
+    "count": 141,
+    "passed": true,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.1869332618632504,
+     "unmasked_magnitude_abs_median_db": 0.9397142680388019,
+     "unmasked_magnitude_abs_p90_db": 3.1503134641537796,
+     "erb_level_abs_max_db": 0.3448100883552403
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.18912477155857924,
+     "unmasked_magnitude_abs_median_db": 0.9119577915300962,
+     "unmasked_magnitude_abs_p90_db": 3.5662857257632283,
+     "erb_level_abs_max_db": 0.8582165083387349
+    },
+    "endpoint_capture_balance_p90_max_db": 4.425677101161486,
+    "pair_phase_p90_deg": {
+     "upper": 29.575951352716338,
+     "treble": 30.869941436967448,
+     "bass": 24.253270301022457
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 24.522626372018273,
+     "treble": 25.38974838317638,
+     "bass": 20.268771160026994
+    }
+   },
+   {
+    "stage": "joint-measured-pair-gates",
+    "guitar": 34,
+    "delay_samples": 16,
+    "count": 169,
+    "passed": false,
+    "endpoint_maxima": {
+     "complex_relative_l2": 0.16685622637350705,
+     "unmasked_magnitude_abs_median_db": 0.7228099811081072,
+     "unmasked_magnitude_abs_p90_db": 2.7461825129878026,
+     "erb_level_abs_max_db": 0.4902921408607297
+    },
+    "derived_pair_maxima": {
+     "complex_relative_l2": 0.16612667256600694,
+     "unmasked_magnitude_abs_median_db": 0.7604479470305278,
+     "unmasked_magnitude_abs_p90_db": 3.0052755166280942,
+     "erb_level_abs_max_db": 1.0513209172305469
+    },
+    "endpoint_capture_balance_p90_max_db": 3.738254674394169,
+    "pair_phase_p90_deg": {
+     "upper": 23.859510101894102,
+     "treble": 24.9907077003783,
+     "bass": 18.771336561818583
+    },
+    "endpoint_phase_p90_deg": {
+     "upper": 20.24173152960452,
+     "treble": 22.130320087463407,
+     "bass": 16.705624462784996
+    }
+   }
+  ],
+  "validation": {
+   "checked_path_metrics": 96,
+   "maximum_generator_metric_difference": 1.554312234475219e-14,
+   "maximum_endpoint_and_pair_reconstruction_relative_l2": 7.647050966401349e-16
+  },
+  "native_load_diagnostic": {
+   "protocol": "Evaluate frozen raw-complex body approximations under native modeled loads.\n\n72 held notes, two seconds each: 48 kHz, velocity .8, default public controls,\nsteel/nylon x six forced strings x open/12th fret x finger/pick/thumb. No fitting\nuses these forces. They weight approximation error on the already-measured\nnormal body-force pair, not error against real plucked recordings. The force\nunits are the engine's waveguide convention, so no absolute Pa/SPL is claimed.\nThe steel control uses the g21 nylon recording as in the shipping adaptation.\n\nUse actual two-way body-branch force F and normalized moment T=M/a; capture\none-way sympathetic/longitudinal additions separately but omit them from this\nspatial diagnostic because their moment placement is unresolved. Compare\nHh*F+Hr*T with the fitted equivalent, retaining every 80--10000 Hz bin, gain and\nphase. Full 96000-frame loads are zero-padded to 131072. Zero-pad the finite\nmeasured response from 65536 and evaluate IIR poles analytically on the finer\ngrid. No taper, alignment, level matching, fitted latency or pressure preview.\nNorm errors are sampled frequency integrals; no new pass/fail threshold.\n\nAlso compare reconstructed endpoint loading Hb*(F-T)/2+Ht*(F+T)/2 independently.\nA cancellation ratio is pressure norm divided by the sum of its two component\nnorms. It is a load-specific interference diagnostic, not mechanical energy.\n",
+   "cases": "72 held notes,48kHz,velocity0.8,all six forced strings,open/12th fret,Finger/Pick/Thumb,steel/nylon; default controls and active nonlinear attack/noise/idle loading.",
+   "observers": "Read copies of already-updated derivative histories. Every sample reproduces native body force and body power identity exactly; no engine state mutation. Separate legacy sympathy observer is zero; shared body force already includes idle reactions. Longitudinal one-way addition recorded separately and excluded from matrix approximation because its force/moment projection is unmeasured.",
+   "validation": {
+    "protocol": "Validate frozen load manifests and all432 rows per stage; reject corrupt load bytes, missing case even after manifest entry removal, and existing output. Compare every final-stage row on131072 vs262144 frequency grids; primary comparison uses zero-delay only. No fitting or physical runtime changes.",
+    "script_sha256": "4408d441c86e9c50ecc4eb2d38247a62a3eece4d3c3ffabfaf56c81045cefc3b",
+    "validation_script_sha256": "7e6118bc6db2ccff176e69fd81a79a1006bd76aaa9b042b188d1ec5bc938b227",
+    "guards": [
+     {
+      "condition": "bad_raw_hash",
+      "rejected": true,
+      "message": "render input hash mismatch: renders/nylon-s0-f0-t0.f32"
+     },
+     {
+      "condition": "missing_case",
+      "rejected": true,
+      "message": "render case coverage mismatch"
+     },
+     {
+      "condition": "existing_output",
+      "rejected": true,
+      "message": "output must be new in an existing directory"
+     }
+    ],
+    "report_sha256": {
+     "fixed-load-final.json": "6c3fe03f54e616901db295f2b4a63450b1243be2b06514d905664d7597bb575f",
+     "endpoint-prefix-load-final.json": "71165d02f48d793d8c270e9a7cebfc75e109585213f292da20e72bc100ba028f",
+     "pair-gates-load-final.json": "f471604483bed930b4a17c5a3baf85312099d0aae3d2991bb8c72b3434e05178"
+    },
+    "render_manifest_sha256": "7aed5e8a7214b585f1026bdf1d1973d5a1f044c24f720d86f9f3b1debe968a11",
+    "all_final_stage_rows_grid_doubling_max_abs_l2_change": 2.5538217498094484e-05,
+    "summary": [
+     {
+      "material": "nylon",
+      "delay_samples": 0,
+      "fixed_poles": {
+       "minimum": 0.0743759113784649,
+       "median": 0.20979993048475737,
+       "p90": 0.32682312046018624,
+       "maximum": 0.35614471489370836
+      },
+      "measured_joint_poles": {
+       "minimum": 0.06877239763380964,
+       "median": 0.16575773693639717,
+       "p90": 0.24905715060705583,
+       "maximum": 0.34037780235821175
+      },
+      "relative_median_error_reduction": 0.20992472898631398,
+      "measured_joint_level_error_db_range": [
+       -1.4819014480284154,
+       1.944891000055295
+      ]
+     },
+     {
+      "material": "steel",
+      "delay_samples": 0,
+      "fixed_poles": {
+       "minimum": 0.17621309615107925,
+       "median": 0.32537332081363046,
+       "p90": 0.4953423589954264,
+       "maximum": 0.5400573957030443
+      },
+      "measured_joint_poles": {
+       "minimum": 0.0832877263641407,
+       "median": 0.26145438055265224,
+       "p90": 0.4143931136733318,
+       "maximum": 0.5142648975218338
+      },
+      "relative_median_error_reduction": 0.19644800655795058,
+      "measured_joint_level_error_db_range": [
+       -1.5249008374611848,
+       2.4692468591931362
+      ]
+     }
+    ]
+   },
+   "basis_reconstruction_maximum_relative_l2": 1.9755141493114456e-16
+  },
+  "artifacts": {
+   "/tmp/acustra-force-pair-modal-prototype/refine.py": "36118da3f1e6e1abb6f5157da501dca04ad449fd26cec57da467d1fea66dcf00",
+   "/tmp/acustra-force-pair-modal-prototype/refine_pair.py": "a3f3536d517e55eed2f2fb7934d861620fd37562074b51b8459981784b7fb17a",
+   "/tmp/acustra-force-pair-modal-prototype/joint-measured-prefix/report.json": "0f936e2835bfc7799aa7df386e09f88bfd51cab81e57c99fdc883fac7a326008",
+   "/tmp/acustra-force-pair-modal-prototype/joint-measured-pair-gates/report.json": "2c9ce4df8be8142fde403ada36e962f544b70113b238368feba8cf61ab68ed73",
+   "/tmp/acustra-force-pair-modal-prototype/joint-measured-pair-gates/refined-complex.npz": "a6fa1af6a6e9cc7760be42391ccb4a011c3793f647af395decaf7a0841a8a8a7",
+   "/tmp/acustra-force-pair-modal-prototype/refinement-validation.json": "4ab3a9b15f21e78be79e2fb2bc9318676ba0cb147d911f55829552a5edb46d22",
+   "/tmp/acustra-body-load-grid/render-manifest.json": "7aed5e8a7214b585f1026bdf1d1973d5a1f044c24f720d86f9f3b1debe968a11",
+   "/tmp/acustra-body-load-grid/score-verified.py": "4408d441c86e9c50ecc4eb2d38247a62a3eece4d3c3ffabfaf56c81045cefc3b",
+   "/tmp/acustra-body-load-grid/validation-final.json": "8a7cc1851e5dcea99575769ba9f24dba75b7c86b97170b193dfb91a2524aa787",
+   "/tmp/acustra-body-load-grid/fixed-load-final.json": "6c3fe03f54e616901db295f2b4a63450b1243be2b06514d905664d7597bb575f",
+   "/tmp/acustra-body-load-grid/endpoint-prefix-load-final.json": "71165d02f48d793d8c270e9a7cebfc75e109585213f292da20e72bc100ba028f",
+   "/tmp/acustra-body-load-grid/pair-gates-load-final.json": "f471604483bed930b4a17c5a3baf85312099d0aae3d2991bb8c72b3434e05178"
+  },
+  "rerun_commands": [
+   "OPENBLAS_NUM_THREADS=1 /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 /tmp/acustra-force-pair-modal-prototype/refine.py --output /tmp/acustra-joint-endpoint-replay",
+   "OPENBLAS_NUM_THREADS=1 /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 /tmp/acustra-force-pair-modal-prototype/refine_pair.py --output /tmp/acustra-joint-pair-replay",
+   "OPENBLAS_NUM_THREADS=1 python3 /tmp/acustra-body-load-grid/score-verified.py --stage joint-measured-pair-gates --output /new/report.json --fft-size 262144"
+  ],
+  "limits": [
+   "Both measured bodies are nylon. The steel loading diagnosis uses g21 as the existing adaptation; it does not add measured steel microphone radiation.",
+   "All path gates apply to training FRFs, not independent acoustic realism. Relative pair phase p90 remains about24-32degrees, and actual-load errors can be larger than unweighted filter errors.",
+   "The16sample g34 sensitivity exhausts169candidatepoles and fails the1dBERB gate; it is not selected. No pure acoustic latency was identified or added.",
+   "Current spatial interpolation has locally poor held-out center agreement and extrapolates outer strings. Adding the measured force pair does not validate arbitrary horizontal forcing or the existing approximate mobility matrix.",
+   "Load errors use the unmodified measured coordinate frame without the shipping authored body frequency/Q/gain/shape morphs. Native default output must be validated separately.",
+   "Norm error reductions compare two approximations of the same measured transfer functions under modeled loads; they are not a20percent increase in guitar realism."
+  ]
+ },
+ "capture_dependent_modal_tuning_2026_09_05": {
+  "status": "Off-tree sensitivity assessment only; no automatic tuning rule promoted.",
+  "physical_correction": "For a specified damped pole, use implicit derivative of coupled pole frequency vs one common delay, then shift both polarizations equally. Preserve the existing physical difference between their lengths. No fitted pitch constant.",
+  "result": "No capture/time-independent automatic correction demonstrated. A local implicit common-delay step is valid for a specified mode, but mode selection remains dependent on observation and time, and some useful modes are weakly/nonlinearly sensitive to string delay.",
+  "checks": {
+   "all_variant_delays_stationary": true,
+   "all_variant_delays_equal_frozen_baseline": true,
+   "magnetic_vs_stereo_body_and12loop_samples_bit_identical": true
+  },
+  "findings": [
+   "Same prototype steel76 stationary state: microphone0.5--2.5s peak+5.523c; magnetic−3.614c. All15 stored noncapture signals bit-identical.",
+   "Prototype nylon60 common shift−0.662179samples centers lateH-derived pole to+0.014c but moves earlyV-derived pole to+12.475c. Common+0.755697samples centers earlyV to+0.081c but lateH becomes−14.461c. Both axis delays receive exactly one common shift.",
+   "A single Newton step for shipping steel76 dominant pole+5.345c moves it only to+3.821c; prototype+5.543c only to+3.673c. Mode tracking at32/64 continuation steps agrees within2e-11c for demonstrated shifts.",
+   "Velocity0.2/.95 with nonlinear glide disabled did not switch dominant branches in the two checked notes; early-window shift difference<=0.024c. Velocity dependence cannot be claimed as an observed branch switch here. Ordinary enabled attack pitch is velocity-dependent and was intentionally excluded.",
+   "A capture-specific automatic retune would conflict with the current observation-only capture invariant; a cached note correction would require a chosen capture, time window, excitation and string-loading scenario. None was introduced."
+  ],
+  "test_semantics": {
+   "Tests/AcustraEngineTests.cpp:1396": "spectralPeakFrequency maximizes finite-window mono Hann DFT power by golden search in a note-centered interval. This is not a damped-pole or perceived-pitch estimator; it assumes an effectively unimodal search. No new counterexample to its existing limited gates was asserted.",
+   "Tests/AcustraEngineTests.cpp:2214": "Steady pitch gate tests steel MIDI40/45/52/64,0.55--0.92s,1.5c bound. Loaded sustain uses0.82--1.32s and admits6.5c physical coupling shifts; disabling sympathetic strings changes the physical loading, not just observation.",
+   "Tools/FitPhysicalModel.py:316": "Pitch-trajectory metric compares early harmonics with the recording own settled partials, so it does not independently require absolute equal-tempered centering."
+  },
+  "independent_phase_review": {
+   "report": "/tmp/acustra-coupled-phase-review/independent-review.json",
+   "sha256": "2a075b4f65a05dc4f657144e7a1708abb00c10a258f240b8d7d80a344e3a042a",
+   "script": "/tmp/acustra-coupled-phase-review/independent-check.py",
+   "script_sha256": "a2326e22329128ffb4cf5bb5f6967412d9c4b6edf02c5fc9cf1c1cdadb89a678"
+  },
+  "assessment_report": "/tmp/acustra-coupled-phase-review/runtime/dominance-assessment.json",
+  "assessment_report_sha256": "2ca06006498aba963536476bff7550db0c8149d8482f549bcc4023ee6e695ba9",
+  "limits": [
+   "Only a specified mode can be centered by this correction. Which mode dominates depends on observation and time; no capture-independent target was identified.",
+   "Capture equality refers to all15 stored noncapture observables in the compared renders, not a serialized proof of every internal state variable.",
+   "Velocity0.2/0.95 did not switch branches in the two probed stationary notes; ordinary nonlinear attack was intentionally disabled and cannot be inferred from that result.",
+   "Retuning when capture changes would violate the observation-only capture design. No new note/capture/window-dependent calibration was introduced."
+  ]
+ },
+ "reproducible_body_force_pair_generator_2026_09_05": {
+  "status": "Reusable offline generator committed; shipping modal coefficient header unchanged.",
+  "tool": "Tools/GenerateBodyForcePair.py",
+  "tool_sha256": "2574f5cce6f45f353fc4ffa1e65df886979888d9edb99ebf9a3cf47c52f27824",
+  "full_source_regeneration": {
+   "source_md5": "733cb10baf5ce36d8bf333610ffbb260",
+   "report_sha256": "671c7992e93a11aeb184d7bdea6770a41e2c18f8600a702670690d9f36f632d1",
+   "coefficient_response_npz_sha256": "e5bd3d18a6eaba56849431561bc82ed48d39e13b592a60b3a938f4fbd261cc66",
+   "banks": [
+    {
+     "guitar": 21,
+     "keep_samples": 3000,
+     "candidate_count": 169,
+     "mode_count": 127
+    },
+    {
+     "guitar": 34,
+     "keep_samples": 12000,
+     "candidate_count": 169,
+     "mode_count": 141
+    }
+   ]
+  },
+  "validation": {
+   "tool_sha256": "2574f5cce6f45f353fc4ffa1e65df886979888d9edb99ebf9a3cf47c52f27824",
+   "report_sha256": "671c7992e93a11aeb184d7bdea6770a41e2c18f8600a702670690d9f36f632d1",
+   "npz_sha256": "e5bd3d18a6eaba56849431561bc82ed48d39e13b592a60b3a938f4fbd261cc66",
+   "counts": {
+    "21": 127,
+    "34": 141
+   },
+   "array_comparisons": [
+    {
+     "guitar": 21,
+     "array": "endpoint_residues",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 21,
+     "array": "target_endpoint",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 21,
+     "array": "target_pair",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 21,
+     "array": "model_endpoint",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 21,
+     "array": "model_pair",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 34,
+     "array": "endpoint_residues",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 34,
+     "array": "target_endpoint",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 34,
+     "array": "target_pair",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 34,
+     "array": "model_endpoint",
+     "exact": true,
+     "relative_error": 0.0
+    },
+    {
+     "guitar": 34,
+     "array": "model_pair",
+     "exact": true,
+     "relative_error": 0.0
+    }
+   ],
+   "maximum_frozen_metric_difference": 1.554312234475219e-14,
+   "overwrite_guard": true,
+   "invalid_source_guard": true,
+   "selftest_mutation_rejection": "a phase-inverted equal-magnitude model escaped the complex gate",
+   "selftest_seconds": 0.035205041989684105,
+   "original_fixed_report_sha256": "430b8fbd34bc99b27c322aa85ce96d9f4194df87f4376e2105aa26e6c55bec58",
+   "combined_reference_sha256": "2c9ce4df8be8142fde403ada36e962f544b70113b238368feba8cf61ab68ed73"
+  },
+  "ctest": {
+   "log": "/tmp/acustra-body-load-grid/body-force-pair-ctest-final.log",
+   "log_sha256": "89ebf45f79d3d2079ee737060428e0d934e707be972a53aeaf519d55106938d0",
+   "tests": [
+    "Acustra.BodyForcePair",
+    "Acustra.GenerateBodyForcePair"
+   ],
+   "result": "2/2 passed using installed Python3.11 with NumPy/SciPy. CMake initially selected Python3.14 without dependencies and omitted Python tests; reconfigured explicit available interpreter before final run."
+  },
+  "independent_review": "Final tool source, modal realization, endpoint/basis ordering, twelve path gates, six capture-balance gates, phase-sensitive self-test, bad raw checksum and fresh output guards reviewed independently with no findings.",
+  "limits": [
+   "No shipping engine or generated runtime header changes. This writes a new JSON+NPZ directory only.",
+   "The source gives two measured normal input templates and three microphones, with both instruments nylon-strung. Horizontal response and brand-specific steel body measurements remain unprovided.",
+   "Final runtime float recurrence, inherited construction/calibration morphs, real recording benchmarks and audible judgment remain separate from passing source-domain fit gates.",
+   "Endpoint cross-product phase diagnostics use a product-peak mask; they do not replace earlier per-input phase/cancellation diagnostics."
+  ]
  }
 }

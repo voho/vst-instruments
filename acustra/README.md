@@ -1288,6 +1288,15 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   filter-error limits on only two of six generalized-force paths per guitar.
   A common 16-sample onset offset does not resolve that failure and is not an
   identified acoustic delay; it must not become an automatic runtime latency.
+  Joint pole selection from the six measured endpoint paths does better:
+  [`GenerateBodyForcePair.py`](Tools/GenerateBodyForcePair.py) fits their raw
+  complex responses and checks both endpoint and generalized-force bases.
+  The zero-delay candidates pass the existing filter and capture-balance
+  limits at 127/141 poles for g21/g34. On forces from 72 native modeled notes,
+  median pressure-approximation error falls about 20% against the fixed-pole
+  refit, but the largest relative errors remain 0.51/0.34. These are offline
+  approximation checks; real-performance validation and the unmeasured spatial
+  behavior remain separate requirements for a shipping model.
   Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference

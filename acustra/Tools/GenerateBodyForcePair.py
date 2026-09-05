@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Fit two measured normal-force inputs to three microphones, preserving phase.
+
+Use the verified Mores g21/g34 archive, authors' SI calibration and raw complex
+H1 extraction from AuditBridgeSpatialMap. Apply the existing common causal
+windows: g21 3000 samples, g34 12000, each with the final tenth cosine-tapered.
+There is no minimum-phase conversion, delay alignment, gain fit or engine-data
+calibration. Both measured instruments were nylon-strung. These windows discard
+late/circular-end terms; this is an approximation of the retained responses.
+
+Generate measured frequency/Q candidates jointly from all six bass/treble
+impact x upper/treble/bass microphone paths. Search every prominence-ordered
+prefix, starting with one mode. Fit endpoints with the existing residue solver,
+round frequency/Q and residue components to float32, and apply the unchanged
+complex, magnitude, ERB and microphone-balance gates. The first prefix passing
+all endpoint AND derived heave/rock path gates is the selected bank. This is the
+smallest prefix in that measured ordering, not an optimal arbitrary pole bank.
+
+For endpoint forces Fb,Ft, define F=Fb+Ft and T=Ft-Fb. Then Hh=(Ht+Hb)/2,
+Hr=(Ht-Hb)/2 and pressure=Hh*F+Hr*T. T=M/a requires impact half-spacing a;
+interpreting this pair as a complete saddle model additionally assumes rigidity.
+No horizontal transfer or saddle rotation axis is identified. Existing scalar
+path gates do not bound every coherent force combination near cancellation;
+phase and actual-load checks remain necessary before runtime use. No shipping
+coefficients are changed. Outputs are an offline JSON report and coefficient/
+response NPZ, with axes and Pa/N units recorded in the report. Cross-product
+diagnostics compare Ht*conj(Hb), with the existing 1%-of-product-peak mask.
+
+    python3 Tools/GenerateBodyForcePair.py --self-test
+    python3 Tools/GenerateBodyForcePair.py --raw-mat /path/qualified_selected_impulses.mat --output /new/fit-directory
+"""
+from __future__ import annotations
+
+import argparse
+from itertools import combinations
+import json
+from pathlib import Path
+import sys
+
+import numpy as np
+import scipy
+
+import AuditBodyForcePair as pair
+
+spatial, body = pair.spatial, pair.spatial.body
+MICROPHONES = ("upper", "treble", "bass")
+FREQUENCY = np.fft.rfftfreq(body.FFT_SIZE, 1 / body.SAMPLE_RATE)
+
+
+def rounded(values: np.ndarray) -> np.ndarray:
+    return values.real.astype(np.float32).astype(float) + 1j * values.imag.astype(np.float32).astype(float)
+
+
+def response(modes: list, residues: np.ndarray) -> np.ndarray:
+    """H(z)=sum R/(1-p/z)+conj(R)/(1-conj(p)/z), with h[0]=2 Re(sum R)."""
+    z = np.exp(-2j * np.pi * FREQUENCY / body.SAMPLE_RATE)
+    result = np.zeros(len(z), dtype=complex)
+    for (frequency, q, _), residue in zip(modes, residues):
+        pole = np.exp(-np.pi * frequency / (q * body.SAMPLE_RATE)
+                      + 2j * np.pi * frequency / body.SAMPLE_RATE)
+        result += residue / (1 - pole*z) + np.conj(residue) / (1 - np.conj(pole)*z)
+    return result
+
+
+def path_check(target: np.ndarray, modes: list, residues: np.ndarray) -> dict:
+    # The existing evaluator accepts multiple paths. Repeating one path gives
+    # its original complex/magnitude/ERB gates without adding a ratio condition.
+    errors, _, band = body.fit_errors([target, target], modes, [residues, residues])
+    return dict(complex_relative_l2=errors[0][0], magnitude_abs_median_db=errors[0][1],
+                magnitude_abs_p90_db=errors[0][2], erb_level_abs_max_db=band,
+                passed=body.within_limits(errors, 0.0, band))
+
+
+def paired(values: np.ndarray) -> np.ndarray:
+    return np.array([pair.force_pair(mic[0], mic[1]) for mic in values])
+
+
+def fit_bank(guitar: int, keep: int, responses: dict) -> tuple[dict, dict]:
+    targets = np.array([[spatial.windowed(responses[guitar, impact, channel], keep)
+                         for impact in (0, 2)] for channel in (3, 4, 5)])
+    derived = paired(targets)
+    candidates = sorted(body.candidate_poles(list(targets.reshape(6, -1))),
+                        key=lambda item: (-item[2], item[0]))
+    trials = []
+    for count in range(1, len(candidates) + 1):
+        modes = [(float(np.float32(f)), float(np.float32(q)), prominence)
+                 for f, q, prominence in sorted(candidates[:count], key=lambda item: item[0])]
+        residues = np.zeros((3, 2, count), dtype=complex)
+        checks, balances, failed = [], [], None
+        for mic in range(3):
+            for impact in range(2):
+                residues[mic, impact] = rounded(body.fit_residues(targets[mic, impact], modes))
+                check = dict(basis="endpoint", microphone=MICROPHONES[mic],
+                             input=("bass", "treble")[impact],
+                             **path_check(targets[mic, impact], modes, residues[mic, impact]))
+                checks.append(check)
+                if not check["passed"]:
+                    failed = check
+                    break
+            if failed:
+                break
+        if failed is None:
+            pair_residues = paired(residues)
+            for mic in range(3):
+                for axis in range(2):
+                    check = dict(basis="force_pair", microphone=MICROPHONES[mic],
+                                 input=("heave", "rock")[axis],
+                                 **path_check(derived[mic, axis], modes, pair_residues[mic, axis]))
+                    checks.append(check)
+                    if not check["passed"]:
+                        failed = check
+                        break
+                if failed:
+                    break
+        if failed is None:
+            for impact in range(2):
+                for first, second in combinations(range(3), 2):
+                    _, ratio, _ = body.fit_errors([targets[first, impact], targets[second, impact]],
+                        modes, [residues[first, impact], residues[second, impact]])
+                    balance = dict(input=("bass", "treble")[impact],
+                                   microphones=[MICROPHONES[first], MICROPHONES[second]],
+                                   magnitude_ratio_p90_error_db=ratio)
+                    balances.append(balance)
+                    if ratio > body.MAX_STEREO_RATIO_P90_ERROR_DB and failed is None:
+                        failed = dict(basis="endpoint_capture_balance", **balance)
+        trials.append(dict(count=count, passed=failed is None, first_failure=failed))
+        if failed is not None:
+            continue
+        models = np.array([[response(modes, residue) for residue in mic] for mic in residues])
+        band = (FREQUENCY >= body.MINIMUM_FREQUENCY) & (FREQUENCY <= body.MAXIMUM_FREQUENCY)
+        phase = [dict(microphone=name, **spatial.metrics(targets[mic, 1, band]
+                     * np.conj(targets[mic, 0, band]), models[mic, 1, band]
+                     * np.conj(models[mic, 0, band]))) for mic, name in enumerate(MICROPHONES)]
+        report = dict(guitar=guitar, instrument=body.GUITAR_DESCRIPTION[guitar], keep_samples=keep,
+            candidate_count=len(candidates), candidates_in_prefix_order=candidates,
+            mode_count=count, modes=modes, trials=trials, path_checks=checks,
+            endpoint_microphone_balance=balances,
+            endpoint_cross_product_diagnostics=phase)
+        arrays = {f"g{guitar}_frequency_q": np.array(modes)[:, :2],
+                  f"g{guitar}_endpoint_residues": residues,
+                  f"g{guitar}_target_endpoint": targets, f"g{guitar}_target_pair": derived,
+                  f"g{guitar}_model_endpoint": models, f"g{guitar}_model_pair": paired(models)}
+        return report, arrays
+    raise ValueError(f"g{guitar}: all {len(candidates)} measured prefixes failed; last {trials[-1] if trials else None}")
+
+
+def self_test() -> None:
+    pair.self_test()
+    modes = [(300.0, 4.0, 1.0), (900.0, 8.0, 1.0)]
+    residues = np.array([0.002+0.001j, -0.003+0.005j])
+    model = response(modes, residues)
+    samples = np.arange(body.FFT_SIZE)
+    impulse = np.zeros(body.FFT_SIZE)
+    for (frequency, q, _), residue in zip(modes, residues):
+        pole = np.exp(-np.pi*frequency/(q*body.SAMPLE_RATE) + 2j*np.pi*frequency/body.SAMPLE_RATE)
+        impulse += 2*np.real(residue * pole**samples)
+    if abs(impulse[0] - 2*residues.real.sum()) > 1e-14:
+        raise AssertionError("modal impulse origin is incorrect")
+    if np.linalg.norm(np.fft.rfft(impulse)-model)/np.linalg.norm(model) > 1e-12:
+        raise AssertionError("complex residues and causal modal realization disagree")
+    if not path_check(model, modes, residues)["passed"]:
+        raise AssertionError("exact synthetic response failed unchanged gates")
+    wrong = path_check(model, modes, -residues)
+    if wrong["passed"] or wrong["complex_relative_l2"] < 1.99 or wrong["magnitude_abs_p90_db"] > 1e-10:
+        raise AssertionError("a phase-inverted equal-magnitude model escaped the complex gate")
+    bass, treble = residues, residues * np.array([0.8, -0.4])
+    heave, rock = pair.force_pair(bass, treble)
+    if (not np.allclose(response(modes, heave-rock), response(modes, bass), atol=1e-12, rtol=0)
+        or not np.allclose(response(modes, heave+rock), response(modes, treble), atol=1e-12, rtol=0)):
+        raise AssertionError("residue basis did not reconstruct measured endpoints")
+    print("Body force-pair generator self-test passed")
+
+
+def run(raw: Path, output: Path) -> None:
+    if output.exists() or not output.parent.is_dir():
+        raise ValueError("output must be a new directory inside an existing parent")
+    responses, quality = spatial.extract(spatial.bridge.load_matrix(raw))
+    banks, arrays = [], {"frequency": FREQUENCY}
+    for guitar, keep in ((21, 3000), (34, 12000)):
+        bank, values = fit_bank(guitar, keep, responses)
+        banks.append(bank)
+        arrays.update(values)
+        print(f"g{guitar}: first passing measured prefix {bank['mode_count']}/{bank['candidate_count']}", flush=True)
+    report = dict(protocol=__doc__, source=str(raw.resolve()),
+        source_url="https://zenodo.org/records/4604577", source_license="CC BY 4.0",
+        raw_md5=spatial.bridge.digest(raw), raw_sha256=spatial.sha256(raw),
+        tool_sha256=spatial.sha256(Path(__file__)),
+        helper_sha256={name: spatial.sha256(Path(__file__).with_name(name)) for name in
+            ("GenerateMeasuredBody.py", "GenerateMeasuredBridge.py", "AuditBridgeSpatialMap.py", "AuditBodyForcePair.py")},
+        versions=dict(python=sys.version.split()[0], numpy=np.__version__, scipy=scipy.__version__),
+        sample_rate=body.SAMPLE_RATE, fft_size=body.FFT_SIZE,
+        response_units="Pa/N for endpoint forces and normalized moment T=M/a",
+        realization="H(z)=sum R/(1-p*z^-1)+conj(R)/(1-conj(p)*z^-1); p=exp(-pi*f/(Q*Fs)+2j*pi*f/Fs); no added delay",
+        rounding="frequency/Q and residue components float32, pole exponential and gate evaluation float64",
+        array_axes=dict(endpoint=["microphone:upper,treble,bass", "impact:bass,treble", "frequency"],
+                        pair=["microphone:upper,treble,bass", "input:heave,rock", "frequency"],
+                        endpoint_residues=["microphone:upper,treble,bass", "impact:bass,treble", "mode"],
+                        frequency_q=["mode", "frequency_Hz,Q"]),
+        gates=dict(complex_relative_l2=body.MAX_COMPLEX_RELATIVE_ERROR,
+            magnitude_median_db=body.MAX_MEDIAN_MAGNITUDE_ERROR_DB,
+            magnitude_p90_db=body.MAX_P90_MAGNITUDE_ERROR_DB,
+            endpoint_mic_balance_p90_db=body.MAX_STEREO_RATIO_P90_ERROR_DB,
+            erb_5k_to_10k_level_abs_db=body.MAX_BAND_MAGNITUDE_ERROR_DB),
+        force_quality=quality, banks=banks)
+    json.dumps(report, allow_nan=False)
+    output.mkdir()
+    np.savez(output / "body-force-pair.npz", **arrays)
+    report["coefficient_response_npz_sha256"] = spatial.sha256(output / "body-force-pair.npz")
+    (output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False)+"\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--raw-mat", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    try:
+        if args.self_test:
+            if args.raw_mat or args.output:
+                parser.error("--self-test does not take input/output paths")
+            self_test()
+        else:
+            if args.raw_mat is None or args.output is None:
+                parser.error("--raw-mat and --output are required")
+            run(args.raw_mat, args.output)
+        return 0
+    except (OSError, ValueError, AssertionError) as error:
+        parser.exit(1, f"{error}\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

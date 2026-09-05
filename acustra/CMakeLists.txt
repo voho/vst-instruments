@@ -300,6 +300,11 @@ if(BUILD_TESTING)
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AuditBodyForcePair.py"
                                  --self-test)
                 set_tests_properties(Acustra.BodyForcePair PROPERTIES TIMEOUT 180)
+                add_test(NAME Acustra.GenerateBodyForcePair
+                         COMMAND "${Python3_EXECUTABLE}"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/GenerateBodyForcePair.py"
+                                 --self-test)
+                set_tests_properties(Acustra.GenerateBodyForcePair PROPERTIES TIMEOUT 180)
                 add_test(NAME Acustra.MeasuredSteelFit
                          COMMAND "${Python3_EXECUTABLE}"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/Tools/GenerateMeasuredSteelBridge.py"
