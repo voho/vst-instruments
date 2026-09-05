@@ -66,24 +66,29 @@ NAMES = (
     "longitudinalGain",
     "longitudinalQ",
     "polarisationEndCorrectionMetres",
+    "steelSaddleBreakSine",
+    "nylonSaddleBreakSine",
 )
 LOWER = np.asarray((
     0.96, 0.05, 0.25, -6.0, 0.0,
     0.4, 0.35, 0.35, 0.0, 0.7, 0.0,
     0.25, 0.4, 0.35, 0.35, 0.0, 0.7, 0.0,
     -1.0, 0.25, 0.0, -0.06, 0.5, 0.0, 100.0, 0.00325, 0.0, 10.0, 0.0,
+    0.139173, 0.139173,
 ))
 UPPER = np.asarray((
     1.04, 1.8, 4.0, 6.0, 0.12,
     2.0, 3.0, 2.5, 3.0, 1.3, 1.2,
     4.0, 2.0, 3.0, 2.5, 3.0, 1.3, 1.2,
     1.0, 32.0, 0.04, 0.05, 4.0, 0.02, 8000.0, 0.060, 0.5, 400.0, 0.82e-3,
+    0.707107, 0.707107,
 ))
 INITIAL = np.asarray((
     1.0, 1.0, 1.0, 0.0, 0.0,
     1.0, 1.0, 1.0, 1.0, 1.0, 0.0,
     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0,
     1.0, 1.0, 0.0061, -0.030, 1.30, 0.0, 1000.0, 0.020, 0.0, 80.0, 0.0008,
+    0.216440, 0.422618,
 ))
 # The bridge-local direct path is deliberately fixed off. Its score direction
 # was flat (and slightly worse on validation), so fitting it only lets a
@@ -128,8 +133,8 @@ def _free(indices: np.ndarray) -> np.ndarray:
 
 
 GLOBAL = _free(np.asarray((0, 1, 2, 3, 18, 19, 22, 23, 24, 25, 26, 27, 28)))
-NYLON = _free(np.arange(5, 11))
-STEEL = _free(np.append(np.arange(11, 18), (20, 21)))
+NYLON = _free(np.append(np.arange(5, 11), 30))
+STEEL = _free(np.append(np.arange(11, 18), (20, 21, 29)))
 
 
 def _command(renderer: Path, directory: Path, values: np.ndarray,

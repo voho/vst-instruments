@@ -844,7 +844,14 @@ PhysicalCalibration AcustraEngine::sanitise(
         bounded(source.longitudinalQ, 10.0f, 400.0f,
                 fittedPhysicalCalibration.longitudinalQ),
         bounded(source.polarisationEndCorrectionMetres, 0.0f, 0.82e-3f,
-                fittedPhysicalCalibration.polarisationEndCorrectionMetres)
+                fittedPhysicalCalibration.polarisationEndCorrectionMetres),
+        // Zero is admitted so the mechanism has an exact off, but the fit
+        // searches only sin 8 to sin 45 degrees: see steelSaddleBreakSine in
+        // FittedPhysicalData.h for why the angle is fitted at all.
+        bounded(source.steelSaddleBreakSine, 0.0f, 0.707107f,
+                fittedPhysicalCalibration.steelSaddleBreakSine),
+        bounded(source.nylonSaddleBreakSine, 0.0f, 0.707107f,
+                fittedPhysicalCalibration.nylonSaddleBreakSine)
     };
 }
 
@@ -1982,6 +1989,15 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
             ? youngsModulus * axialArea * displacement * displacement
                 / (2.0f * soundingLength * soundingLength)
             : 0.0f;
+        // Same exclusion, same reason: a string whose axial stiffness the
+        // tables do not fix has no tension rise to press on the saddle.
+        voice.saddleBreakSine = axialKnown
+            ? (steel ? physicalCalibration_.steelSaddleBreakSine
+                     : physicalCalibration_.nylonSaddleBreakSine)
+            : 0.0f;
+        // Bounds the leaky integral in finishVoice; see the comment there for
+        // why it is a guard rather than the high pass.
+        voice.saddleTensionLeak = std::exp(-twoPi / std::max(rawDelay, 1.0f));
     }
     const float measuredBridgeDelay = bridgePhaseDelay(frequency, stringIndex);
     const float desiredPeriodGain = std::pow(0.001f,
@@ -2386,6 +2402,7 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
     voice.observedSlopeEnergy = 0.0f;
     voice.longitudinalY1.fill(0.0f);
     voice.longitudinalY2.fill(0.0f);
+    voice.saddleTensionImpulse = 0.0f;
     voice.harmonic = 1;
     voice.releaseDamping = 1.0f;
     voice.fingerLift = 0.0f;
@@ -3468,6 +3485,58 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
     const float slopeH = voice.loops[1].currentDelay
                        * referenceRate48 * horizontalVelocity;
     const float slopeEnergy = slopeV * slopeV + slopeH * slopeH;
+    // longitudinalDrive * slopeEnergy is Bank and Sujbert's quasi-static
+    // tension rise, dT = ES/(2L) * integral of the squared slope, in newtons
+    // (JASA 117(4) 2005, 2268-2278, Eq. (A1) in the appendix "Uniform tension
+    // as a special case"; Sec. II gives the coupled Eqs. (6)/(7) this is the
+    // uniform-tension limit of). Woodhouse's Sec. 4.3, quoted at
+    // steelSaddleBreakSine, says how that rise reaches the body: it acts at
+    // the top of the saddle, so the part of it that drives the bridge is its
+    // component across the break, dT sin(theta). That is a force on the
+    // junction like a string's own - the bridge moves under it and every
+    // string reads the motion - not the one-way radiation term below.
+    //
+    // What drives it is the FLUCTUATION of that rise, not the rise itself.
+    // dT never changes sign; its slowly varying part is a preload the neck
+    // and the top carry without radiating, and the engine has already spent
+    // it - updateAttackPitch reads the same slope energy through the same
+    // one-period follower and turns it into the attack's pitch. Passing it
+    // here too would spend it twice.
+    //
+    // Subtracting observedSlopeEnergy, the follower already maintained a few
+    // lines below, is what removes it, and the reason is its INITIAL
+    // CONDITION rather than its pole: a pluck is modelled as an instantaneous
+    // initial displacement, so slopeEnergy steps up from nothing, but a real
+    // pull raises the tension quasi-statically before release and the string
+    // is let go about a mean already established. The follower is preloaded
+    // at the pluck with exactly that mean (see the assignment beside
+    // updateAttackPitch), so the difference starts near zero and carries only
+    // the oscillation - the content at twice each transverse partial, which
+    // is what Woodhouse measures. Feeding the raw energy instead injects the
+    // step's edge into the junction as an onset transient.
+    //
+    // (Subtracting a follower that started from zero would achieve nothing:
+    // integrating x - lowpass(x) is the same transfer function as leaking the
+    // integral of x at the same corner. The preload is the whole of it.)
+    {
+        const float displacementScale = std::max(
+            physicalCalibration_.steelDisplacementScaleMetres, 1.0e-4f);
+        // Signed: the fluctuation swings either side of the mean rise.
+        const float fluctuation = slopeEnergy - voice.observedSlopeEnergy;
+        const float force = (voice.played ? 1.0f : 0.0f)
+            * voice.saddleBreakSine * voice.longitudinalDrive * fluctuation
+            / displacementScale;
+        // dt, in seconds: a string's own member is Z*(2a - x), which is the
+        // time integral of the force Z*(2a' - x') in SI seconds, so this
+        // integral is in the same seconds and not in samples of any rate.
+        // The leak is a numerical guard, not the high pass - the preloaded
+        // follower above is. Its corner is the string's own fundamental, so
+        // it bounds the accumulator against float drift over a long ring
+        // while costing about 1 dB at 2*f1 and less above it.
+        const float impulse = voice.saddleTensionLeak * voice.saddleTensionImpulse
+            + force * inverseSampleRate_;
+        voice.saddleTensionImpulse = std::isfinite(impulse) ? impulse : 0.0f;
+    }
     if (physicalCalibration_.longitudinalGain > 0.0f && voice.played)
     {
         // Stretching the string adds tension, and that tension is a
@@ -3654,6 +3723,16 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             // the saddle, so the six enter as the three moments of a
             // stiffness matrix rather than as one sum.
             const float arm = saddleLeverArm(string);
+            // The tension force this string put on the saddle top last
+            // sample, as a member of the junction. It is the previous
+            // sample's because the force is a function of the same bridge
+            // motion the junction is solving for; at 48 kHz that is a 21
+            // microsecond delay on a force whose content is at twice a
+            // string partial. It presses the string down onto the saddle,
+            // which is against the direction a positive incident wave
+            // pushes, so it enters negative.
+            drive.incidentHeave -= voice.saddleTensionImpulse;
+            drive.incidentRock -= arm * voice.saddleTensionImpulse;
             drive.stiffness0 += voice.bridgeTailStiffness;
             drive.stiffness1 += arm * voice.bridgeTailStiffness;
             drive.stiffness2 += arm * arm * voice.bridgeTailStiffness;

@@ -101,6 +101,30 @@ struct PhysicalCalibration
     // the order of the string diameter - taken as the 0.82 mm B string the
     // 0.8 mm was measured on (nylonDiameterMetres in AcustraEngine.cpp).
     float polarisationEndCorrectionMetres { 0.0008f };
+    // Sine of the string's break angle over the saddle: the fraction of a
+    // tension change that presses down on the saddle top rather than pulling
+    // along the string. Woodhouse, Acta Acustica 90 (2004) 945-965, Sec. 4.3,
+    // names this route for the frequency-doubled peaks he measures - "tension
+    // variations in the string acting at the top of the bridge saddle cause
+    // some rotation of the bridge about its long axis" - but gives no angle,
+    // and the same section doubts the quasi-static tension rise for exactly
+    // this measurement: "it is not clear that this last approximation would
+    // be appropriate for a study of the phenomenon shown here".
+    //
+    // No published break angle exists for either measured guitar. The
+    // archive's Method.pdf and Comments.pdf carry no bridge geometry, and
+    // DAFx-26's 3.25 mm stub is a length along the string with no saddle
+    // height, so nothing here derives the angle. The trade figures in
+    // circulation are wide and not attributable to a publication - 8 to 15
+    // degrees for a steel pin bridge, 20 to 35 for a classical tie block, 10
+    // to 45 in luthier threads - so these are FITTED, not chosen: the bound
+    // is sin 8 to sin 45 degrees, the full span those figures cover, and the
+    // corpus picks inside it. The mechanism's form is derived (Bank and
+    // Sujbert's tension rise, Woodhouse's route to the bridge); only this
+    // coupling strength is fitted, and it is the only thing the angle sets,
+    // since it multiplies the force linearly.
+    float steelSaddleBreakSine { 0.0f };
+    float nylonSaddleBreakSine { 0.0f };
 };
 
 // Refit on 2026-09-04 around the two-way junction and the saddle anchor, by a

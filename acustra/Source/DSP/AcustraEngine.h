@@ -446,6 +446,13 @@ private:
         std::array<float, longitudinalModeCount> longitudinalA2 {};
         std::array<float, longitudinalModeCount> longitudinalB0 {};
         float longitudinalDrive { 0.0f };
+        // The quasi-static tension rise pushes down on the saddle top through
+        // the string's break angle. The junction's members are integrated
+        // forces, so what is handed to it is that force's leaky integral: see
+        // saddleBreakSine and finishVoice.
+        float saddleTensionImpulse { 0.0f };
+        float saddleTensionLeak { 0.0f };
+        float saddleBreakSine { 0.0f };
         float observedSlopeEnergy { 0.0f };
         float dispersionDesignFrequency { 0.0f };
         float dispersionDesignInharmonicity { -1.0f };
