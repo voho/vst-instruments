@@ -4,6 +4,29 @@ Directions chosen by ear, recorded per the A–Z listening-test convention in
 the repository's `CLAUDE.md`. A choice made by ear is recorded as made by ear,
 never written up as though a measurement had settled it.
 
+## 2026-09-05 — B preferred for its stereo presentation
+
+On the 16-second body-radiation A/B, the user said: **“i like B since it is
+more stereo”**. This verdict was recorded before opening the separate key.
+A is the shipping single-input body with its fitted calibration; B is the
+measured, phase-preserving normal-force/normalized-moment body with four body
+calibration fields neutralised (frequency and Q scales 1, residue tilt 0 dB
+per octave, low-mode gain 1). The remaining construction morphs, string and
+bridge calibration, MIDI, seed and controls are shared. Each file contains
+four seconds each of steel pick, steel thumb, nylon pick and nylon thumb.
+Whole-file stereo RMS was matched: A 0 dB, B −0.484944 dB.
+
+The choice licenses B's stereo presentation as the direction to preserve
+while qualifying the model for integration. It does not establish a general
+realism preference, validate individual constants, or waive engine and plugin
+regressions. The six already-opened GuitarSet clips remain a mixed result:
+log-spectral error improves, while spectral convergence and chroma distance
+worsen. No shipping sound changes merely from recording this verdict.
+
+The frozen files are `/tmp/acustra-body-pair-direction-neutral/audition/A.wav`
+and `B.wav`, SHA256 `74e7bd6bbb0e46fde54b968b2677523d34379cc7b619c287e1636ab9d6669a54`
+and `4681ab8b51124d2d2d336ddbf94be36eb5f580f45becf3959e136a5fe4368490`.
+
 ## 2026-09-04 — the refit chosen by ear, with two values pinned back
 
 An A/B was rendered for the calibration a converged bounded pattern search
