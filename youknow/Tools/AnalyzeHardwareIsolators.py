@@ -32,6 +32,31 @@ AUDIO_SOURCE = "https://lewisfrancis.com/nwio/osc_calibrate_new_bip.aif"
 MIDI_SOURCE = "https://kayrock.org/kr106/osc_calibrate_new.mid"
 WINDOWS = {"saw": (1.0, 2.3), "pulse50": (3.0, 4.3), "sub": (5.0, 6.3),
            "noise": (7.0, 8.3), "selfosc": (9.0, 10.3)}
+FUNDAMENTAL_BANDS_HZ = {"saw": (100, 170), "pulse50": (100, 170),
+                        "sub": (50, 85), "selfosc": (200, 300)}
+
+
+def harmonic_ratios(samples, rate, fundamental):
+    # Coherent Hann projections at each file's own estimated pitch: no shared
+    # phase, clock, gain, or integer number of periods is required. Nearby
+    # projections expose contamination; they are not a calibrated noise floor.
+    time = np.arange(len(samples)) / rate
+    windowed = (samples - np.mean(samples)) * np.hanning(len(samples))
+
+    def amplitude(frequency):
+        return float(abs(np.sum(windowed * np.exp(-2j * np.pi * frequency * time))))
+
+    first = amplitude(fundamental)
+    spacing = 5 * rate / len(samples)
+    rows = []
+    for harmonic in range(2, 9):
+        frequency = harmonic * fundamental
+        line = amplitude(frequency)
+        adjacent = max(amplitude(frequency - spacing), amplitude(frequency + spacing))
+        rows.append({"harmonic": harmonic, "relative_fundamental_db": db(line / first),
+                     "adjacent_level_relative_fundamental_db": db(adjacent / first),
+                     "resolved_above_adjacent_bins": line > 10 ** (10 / 20) * adjacent})
+    return {"fundamental_hz": fundamental, "harmonics": rows}
 
 
 def measure_channels(audio, rate, offset):
@@ -52,6 +77,14 @@ def measure_channels(audio, rate, offset):
                            "window_common_band_rms_range_dbfs": [min(band_values), max(band_values)]}
             if name != "noise":
                 measurement.update(peak_measurement(samples, rate, low=30, high=1000))
+                low, high = FUNDAMENTAL_BANDS_HZ[name]
+                frequency = measurement["peak_hz"]
+                identified = (low <= frequency <= high
+                              and measurement["peak_band_power_fraction"] >= .75)
+                measurement["harmonic_analysis"] = (
+                    {"fundamental_identified": True, **harmonic_ratios(samples, rate, frequency)}
+                    if identified else {"fundamental_identified": False,
+                        "reason": "Dominant peak outside the fixed patch's expected band or insufficiently concentrated; harmonic ratios omitted."})
             sources[name] = measurement
         channels.append({"sources": sources, **{
             label: {name: source[field] - sources[anchor][field]
@@ -81,9 +114,22 @@ def self_test():
         first, last = round(start * rate), round(end * rate)
         audio[first:last, 0] = .01 * (i + 1) * np.sin(2 * np.pi * 250 * np.arange(last - first) / rate)
     result = measure_channels(audio, rate, 0)[0]
+    json.dumps(result, allow_nan=False)
     assert abs(result["source_relative_saw_db"]["pulse50"] - db(2)) < 1e-9
     assert abs(result["source_common_band_relative_selfosc_db"]["noise"] - db(4 / 5)) < 1e-9
     assert abs(result["sources"]["selfosc"]["peak_hz"] - 250) < .02
+    assert not result["sources"]["saw"]["harmonic_analysis"]["fundamental_identified"]
+    for sample_rate, frequency, gain, phase in [(48000, 130.123, .1, .4),
+                                                (192000, 131.987, .7, 1.8)]:
+        time = np.arange(round(1.3 * sample_rate)) / sample_rate
+        signal = gain * (np.sin(2 * np.pi * frequency * time + phase)
+                         + .3 * np.sin(4 * np.pi * frequency * time - .9)
+                         + .07 * np.sin(6 * np.pi * frequency * time + 2.1)) + .2
+        estimated = peak_measurement(signal, sample_rate, low=100, high=170)["peak_hz"]
+        harmonics = harmonic_ratios(signal, sample_rate, estimated)["harmonics"]
+        for row, ratio in zip(harmonics, [.3, .07]):
+            assert abs(row["relative_fundamental_db"] - db(ratio)) < .002
+            assert row["resolved_above_adjacent_bins"]
     try:
         measure_channels(audio[:10 * rate], rate, 0)
     except ValueError:
@@ -130,6 +176,7 @@ def main():
               "shared_analyzer_sha256": sha256(Path(__file__).with_name("AnalyzeHardwareCalibration.py")),
               "versions": {"python": platform.python_version(), "numpy": np.__version__, "scipy": scipy.__version__},
               "measurement_windows_seconds": WINDOWS, "common_band_hz": COMMON_BAND_HZ,
+              "harmonic_method": "Hann-windowed coherent projections H2..H8 at each recording's estimated fundamental. Dominant peak must fall in the fixed patch band and contain >=75% of local power within +/-5%. Adjacent projections +/-5/window-duration Hz mark lines resolved by >10 dB; unresolved ratios include leakage/noise and are not distortion estimates. No waveform-null or missing-fundamental identification is claimed.",
               "common_band_method": "DC-detrended rectangular-window periodogram; sum in-band PSD bins times bin width, without resampling.",
               "conditions": "VCA gate64, HPF1, chorus Off, range16foot, note60; pulse PWM0/manual; selfosc cutoff49/res127/all sound sources off.",
               "limitations": ["One serviced unit; replacement-card gain and noise trim are not original-card calibration evidence.",
