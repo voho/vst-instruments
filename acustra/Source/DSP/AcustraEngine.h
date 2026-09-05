@@ -438,6 +438,9 @@ private:
         // polarisation is kept.
         StringLoop tailLoop {};
         float tailDamping { 1.0f };
+        // The retained virtual-string branch keeps the port it had at capture,
+        // including its applied member bend, while the main voice is retuned.
+        float tailCharacteristicImpedance { 0.0f };
         float tailLevel { 0.0f };
         int tailQuietSamples { 0 };
         bool tailActive { false };
@@ -517,6 +520,8 @@ private:
         int returnSamples { 0 };
         // Samples until a scheduled pluck is released; zero when none waits.
         int pluckDelay { 0 };
+        // A held string keeps its wave until this scheduled re-pluck fires.
+        bool repluckPending { false };
         // Where this pluck landed, as a fraction of the sounding length.
         float pluckPoint { 0.0f };
         // Set by noteOn's strumMember argument and read once by

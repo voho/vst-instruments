@@ -77474,5 +77474,277 @@
    "plugin_tests": "Acustra.PluginProcessor passed in 4.60s after final native rebuild, including deterministic queued-selection timer race, host-automation updates and status, state migration, and min/default/max editor snapshots",
    "native_formats": "VST3,AudioUnit,Standalone; arm64 Release; no installation or universal-build claim"
   }
+ },
+ "repluck_scheduling_and_retained_wave_balance_2026_09_05": {
+  "date": "2026-09-05",
+  "baseline_revision": "755eb2466bdcb380365e3563baeca5b695a418c4",
+  "status": "shipped objective scheduling and junction-accounting corrections; no perceptual realism or market-lead claim",
+  "source_sha256": {
+   "Source/DSP/AcustraEngine.cpp": "4bb333d74837b10e2e7aeac68ad4b2a9b8ec341c8be93c03b11d85c41bad3f86",
+   "Source/DSP/AcustraEngine.h": "b279bba0dc738148c0d6f7619e44c7a00b43c8c98d772c3a24cffc97da020f86",
+   "Tests/AcustraEngineTests.cpp": "b8d1868c3d73db0ff06e2f96db36015b7f0b0a91764c9922d5818e4a74bb1918",
+   "Tests/PluginProcessorTests.cpp": "89eb787a6c36d7ef2d9020c01f6814f47817a734006532f1f32c4ce3f5faf679"
+  },
+  "held_note_scheduling": {
+   "change": "Held notes keep their preceding wave until the scheduled pluck, including stroke-wide speed scaling. A due held pluck fires before the control update on boundary samples, matching an external note-on issued then.",
+   "actual_stereo_cases": 60,
+   "sample_rates": [
+    44100,
+    48000,
+    96000
+   ],
+   "materials": [
+    "steel",
+    "nylon"
+   ],
+   "modes": [
+    "note",
+    "strum"
+   ],
+   "delays_samples": [
+    1,
+    31,
+    97,
+    480,
+    2000
+   ],
+   "assertions": "Pre-fire wave identical to un-replucked continuation; post-fire wave identical to a fresh note-on issued at the due sample.",
+   "immediate_only_regression": {
+    "immediate_clips": 36,
+    "immediate_bytes": 7741440,
+    "immediate_byte_identical": true,
+    "before_sha256": "97cc69fe284947023d5a283450c0b47e9b512c036f6a2f987366c3e310778049",
+    "after_sha256": "97cc69fe284947023d5a283450c0b47e9b512c036f6a2f987366c3e310778049"
+   },
+   "restored_immediate_fire_mutation_failures": 120,
+   "cancellation": "All Notes Off cancels fresh/held scheduled attacks even under sustain; normal final note-off and sounding legato pitch release cancel the queued attack before fallback; open-string reset clears pending state.",
+   "cancellation_checks": {
+    "focused_suite_passed": true,
+    "removed_cancellation_mutation_failures": 36,
+    "sample_rates": [
+     44100,
+     48000,
+     96000
+    ],
+    "scope": "fresh/held All Notes Off and later pedal release, sounding legato fallback and empty held stack, pedal up/down; actual future stereo waves compared with matching no-queued-attack references",
+    "private_source_sha256": "ca380e6dc116fe259cb8a98b172b4842915210c3648586b4f85f9465196d2d92",
+    "corrected_binary_sha256": "45f2af15c0c0f463a1d32134ef04eee453a2d0568fe7c88a9eb2a8d0e5e69adc",
+    "mutation_binary_sha256": "8d3c71e1c2ec6550c2e63972e7d48adf4ad6e3cf5210229c66a0a8c1f8419f9f"
+   },
+   "plugin_waveform_regression": {
+    "full_candidate_processor_suite_exit": 0,
+    "candidate_held_down_median_ms": 13,
+    "candidate_held_up_median_ms": 0,
+    "baseline_mutation_held_down_median_ms": 0,
+    "baseline_mutation_held_up_median_ms": 0,
+    "baseline_mutation_failure_count": 1,
+    "measurement": "Matched no-new-MIDI continuation subtraction followed by the existing 5 ms C6 heterodyne onset measurement; all keys remain held.",
+    "baseline_mutation_processor_suite_exit": 1
+   },
+   "preview": {
+    "manifest": {
+     "path": "/tmp/acustra-held-chord-plugin-review/manifest.json",
+     "sha256": "b9c4c89198221d26c12b7c6abf1f34a4519efb6ca4afcb40d771d2f217f5df4f"
+    },
+    "duration_seconds": 4,
+    "sample_rate": 48000,
+    "block_size": 256,
+    "midi": "Eight identical six-note groups at 0.4-second intervals, all keys remain held, velocity102, fresh factory state.",
+    "normalisation": "One scalar attenuation per entire file, matching RMS across all frames and both channels to the quieter raw render; no per-stroke matching or spectral processing.",
+    "files": {
+     "before": {
+      "unmatched_rms": 0.102249934581896,
+      "gain": 0.8226438206382681,
+      "trim_db": -1.6957632037454689,
+      "matched_rms": 0.08411527644015966,
+      "peak": 0.5879382491111755,
+      "wav_sha256": "52b1aab8e120c5b6d1e316516dcc6fa1d0ac4f0a3874e5585ae1cdb49ec85efe",
+      "raw_sha256": "de6423826f47818c427d1a5910b8acad3f74732fbe78c2d38e0db7ab50539328"
+     },
+     "after": {
+      "unmatched_rms": 0.0841152768444639,
+      "gain": 1.0,
+      "trim_db": 0.0,
+      "matched_rms": 0.0841152768444639,
+      "peak": 0.5808085203170776,
+      "wav_sha256": "99d1acfd37f0eacc6c2fab1ecbe456682b6269ea76516c473858611ae485117c",
+      "raw_sha256": "80d74b7ffe7a175000e4771265e915aa13db81a83b92d285344a2b24db5521bf"
+     }
+    },
+    "scope": "Both variants retain the SAME pre-captured-impedance continuation implementation and current repluckPending header ABI. Before restores only noteOn/firePluck from 755eb246; after includes held-delay and control-boundary fixes. No new captured-tail-Z correction is included."
+   }
+  },
+  "retained_wave_bridge": {
+   "change": "Each independently returned loop contributes its own characteristic impedance to all three heave/rock load moments. Old impedance includes the applied bend at capture and is retained alongside the old wave. Six physical anchor springs remain counted once each.",
+   "identity": "sum Z*(a^2-c^2) = x*mainIntegratedForce + r*mainIntegratedMoment; this is a displacement-wave norm identity, not calibrated joules or complete string-energy conservation.",
+   "prior_error": "Two independently emitted c=a-x waves were supplied by one impedance. For equal impedances the bridge-side excess is sum Z_tail*x_string^2.",
+   "audit_protocol": "54 cases: 44.1/48/96kHz x Original steel/Original nylon/Fylde steel x same-note/refret x lone held string/held E4 neighbour/dense six-string chord. Incidents read from advanced copies, emitted waves from actual process(); frozen matching headers used for every binary.",
+   "baseline_relative_wave_norm_error_range": [
+    3.276520562013758e-06,
+    0.00012891108744622105
+   ],
+   "corrected_relative_wave_norm_error_range": [
+    1.3624572193588462e-08,
+    2.3428982593423787e-08
+   ],
+   "baseline_tail_active_lifetime_seconds_range": [
+    1.406,
+    5.137333333333333
+   ],
+   "corrected_tail_active_lifetime_seconds_range": [
+    1.3946485260770976,
+    4.972
+   ],
+   "mpe_protocol": "18 additional cases change +/-2 semitones of MPE bend before a refret; retained wave weighted by its independently observed old impedance.",
+   "mpe_corrected_relative_wave_norm_error_range": [
+    2.1364084797261892e-08,
+    2.313596094766418e-08
+   ],
+   "regression": {
+    "cases": 27,
+    "maximum_relative_error": 2.32064e-08,
+    "threshold": 1e-07,
+    "missing_load_mutation_failures": 27,
+    "new_impedance_for_old_wave_mutation_failures": 18,
+    "report": {
+     "path": "/tmp/acustra-tail-wave-norm-mutations/report.json",
+     "sha256": "52490bbe83a7ed958eecc8b4f733b3257cb5fb1bc9d9f2085cac880edffe89f7"
+    }
+   },
+   "limitations": "Two simultaneous loop states remain a provisional refret/repluck surrogate. Existing nominal10ms post-release T60 and force-threshold retirement are unchanged; bridge back-drive can keep the virtual old port active for seconds. A physical finger/contact boundary on one continuing string is not implemented.",
+   "source_correction": {
+    "Laurson_2001": "Loop-gain ramp to zero over about10ms BEFORE repluck, not a measured post-release T60. https://aaltodoc.aalto.fi/bitstreams/768dbe9c-526c-414a-b2ce-0742574b8064/download",
+    "Erkut_AES5114_section3_2": "Measured20-60ms finger-contact interval, not a decay constant. https://aaltodoc.aalto.fi/server/api/core/bitstreams/a290c5f2-9a62-4d17-ba32-160615a9c670/content"
+   },
+   "audit_reports": [
+    {
+     "path": "/tmp/acustra-tail-junction-baseline-frozen.json",
+     "sha256": "6cd36956048e76e6a964cd893cb82d64a1619b992d908057b0f464c02c68b795"
+    },
+    {
+     "path": "/tmp/acustra-overlap-ports-frozen-z-prototype/junction-audit.json",
+     "sha256": "dba8519e821f3b545630c12534eacdafbfbdaf2f6b35b4540f5c4673a66c1342"
+    },
+    {
+     "path": "/tmp/acustra-overlap-ports-frozen-z-prototype/mpe-captured-z.json",
+     "sha256": "124d44cdfe31ba1f8b623135918b84a612adef1957dd72b1d25f0e59ff829bae"
+    }
+   ]
+  },
+  "recording_benchmarks": {
+   "dry_notes": {
+    "unique_models": 79,
+    "bytes": 127411200,
+    "all_byte_identical": true,
+    "report": {
+     "path": "/tmp/acustra-overlap-ports-dry/comparison.json",
+     "sha256": "10d5879511d81f4e153beaaca7e8bffa6b76c15ace958ce953d4992a6be2330b"
+    },
+    "interpretation": "No change to the isolated dry-note calibration recordings or their descriptor distances."
+   },
+   "GuitarSet": {
+    "protocol": "Same fixed six12-second performances and315 annotated notes, finger, stereo mic,48kHz, whole-clip RMS matching, no fitting; actual string/timing/mean pitch, fixed velocity91. Automatic same-sample chord sweep is not used in this benchmark.",
+    "comparisons": {
+     "original": {
+      "before_mean": {
+       "log_magnitude_mae_db": 14.875728857784772,
+       "spectral_convergence": 0.9031206948660145,
+       "chroma_cosine_distance": 0.3119508057014604
+      },
+      "after_mean": {
+       "log_magnitude_mae_db": 14.919740744440176,
+       "spectral_convergence": 0.9020631701083962,
+       "chroma_cosine_distance": 0.30986956373323443
+      },
+      "relative_change_percent": {
+       "log_magnitude_mae_db": 0.29586373263568166,
+       "spectral_convergence": -0.117096725125454,
+       "chroma_cosine_distance": -0.6671699287796429
+      },
+      "same_sources_annotations_events": true,
+      "raw_peak_maximum": 0.48056942224502563,
+      "report": {
+       "path": "/tmp/acustra-overlap-ports-frozen-z-performance/report.json",
+       "sha256": "08159b1e3746c135a90b4377e06626073bf4d5734ff4f7e2f8b4c6da9aa3ddb8"
+      }
+     },
+     "fylde": {
+      "before_mean": {
+       "log_magnitude_mae_db": 14.903526126661772,
+       "spectral_convergence": 0.8485857628359099,
+       "chroma_cosine_distance": 0.24476550298133684
+      },
+      "after_mean": {
+       "log_magnitude_mae_db": 14.917077048248034,
+       "spectral_convergence": 0.8479253790711031,
+       "chroma_cosine_distance": 0.24448891350130456
+      },
+      "relative_change_percent": {
+       "log_magnitude_mae_db": 0.09092426497658845,
+       "spectral_convergence": -0.0778216880047422,
+       "chroma_cosine_distance": -0.11300182283178195
+      },
+      "same_sources_annotations_events": true,
+      "raw_peak_maximum": 0.5092474818229675,
+      "report": {
+       "path": "/tmp/acustra-overlap-ports-frozen-z-fylde-performance/report.json",
+       "sha256": "32b220a3656c33ffab85bae44d876738daa428350906215eecc24fbe4142cfa5"
+      }
+     }
+    },
+    "final_combined_renderer_verification": {
+     "clips": 12,
+     "bytes": 55296000,
+     "all_byte_identical_to_scored_prototypes": true,
+     "renderer_sha256": "16d5bf9f1383c1d60f26e8edf4dc8cf9b99cc33f20410ba65656ac9b232c6afc",
+     "report": {
+      "path": "/tmp/acustra-repluck-final-performance-verification/report.json",
+      "sha256": "f97a2061ee408bf9ed289033e51eee33e52b2531fb819702a497928f3751cbe7"
+     }
+    },
+    "interpretation": "Small mixed descriptor changes in both banks. Unmatched guitar/capture, unmeasured velocity and absent gesture labels limit conclusions. No blind preference or market-rank conclusion."
+   }
+  },
+  "validation": {
+   "tools_tests": "Acustra.Engine,Capture,MeasuredSteelBridge,RenderDemos,PhysicalFitRenderer,PerformanceBenchmark:6/6passed in103.35s.",
+   "plugin_tests": "Acustra.PluginProcessor:passed in5.26s after fresh header-dependent native rebuild.",
+   "runtime_ratio": 0.0602614,
+   "runtime_ratio_limit": 0.25,
+   "runtime_ratio_note": "Observed during this combined validation run; not an isolated CPU comparison.",
+   "build": "Native arm64 Release VST3,AU,Standalone rebuilt; no installation or universal-build claim.",
+   "logs": [
+    {
+     "path": "/tmp/acustra-repluck-final-tests.log",
+     "sha256": "70218ee1702b0f7b4ab6dba33400aae1bc0e3b0b1e4281aff2b9ca7915a3827f"
+    },
+    {
+     "path": "/tmp/acustra-repluck-final-plugin-tests.log",
+     "sha256": "a518a2d60f50a8b56cc6f0695f9def84ee8f9d897ca46f77088ece2fbf2c7436"
+    },
+    {
+     "path": "/tmp/acustra-repluck-final-tools-build.log",
+     "sha256": "688780cecc512e01e842b485297efff55daeae02fe1dd2db61681445665ed5f8"
+    },
+    {
+     "path": "/tmp/acustra-repluck-final-plugin-build.log",
+     "sha256": "8758327d5556a73e18ed61db8c77494cc08ee9f9bc3b7fa665cf214ae9cb4d95"
+    }
+   ],
+   "canonical_demos": "All12current demos refreshed through AcustraRenderDemos; every raw peak passed0.04..0.89125094 gate before whole-file peak normalization. Renderer updated README peak table. Historical per-fix/listening-test files unchanged.",
+   "canonical_demo_sha256": {
+    "01-steel-sustain-range.wav": "5a58295887e4cde15a4d86a6d44c2d90f253f7d7edef1656c44b413b27f77e66",
+    "02-nylon-fingerstyle.wav": "00a68b1246708c5190d7a37e00c81204f9d74d0779d40985f633f06c6e48852d",
+    "03-shape-material-anchors.wav": "4af6f1a96ac70cd77c00855f841212d7ed4bd6061ffbe35d464cf0b6c7ec85a9",
+    "04-string-age.wav": "412afe318ea8ba580fc63a2d827ed1f9193dbaa63ef897388552f9fe9b068995",
+    "05-alternate-tunings.wav": "1175b6532a810daa0c97dbda2ca1d746ce2e42ab45f74257ac3bc686de38e192",
+    "06-playing-behaviours.wav": "52940750e13819f6a8ca2ed31bb0f0a8534cb89792738200f20154849af02fd3",
+    "07-fretting-hand.wav": "6c8f1f09900c62d127446c5e5b6f0cf85f75d6a75e01015350b7d360383d7e6a",
+    "08-strummed-chords.wav": "542531a80c988461109e588c35c1d98d46e11bffcfdee6345f74f9a94d4d6f8f",
+    "09-recuerdos-de-la-alhambra.wav": "6d035c61254f6da03ff25b16ae2f49638809917fd166f99e621b4a51cd7c4d9f",
+    "10-lagrima.wav": "89a570b015f16fcc7f7649ff1de9d08039c6fff536cbe3a088e123361d94d8c2",
+    "11-picking-techniques.wav": "f0c6ae7bb08935f263bb1a0b352e122f4bd783eee1a98ebc9c356ef549f8d22b",
+    "12-capture-types.wav": "9939b21433ff3b3326cc90d32b2fd6ed46a4fd2a1a9e83c2c969787a1c8dcd99"
+   }
+  }
  }
 }

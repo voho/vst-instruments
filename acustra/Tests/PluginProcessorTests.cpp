@@ -331,6 +331,43 @@ void testSameSampleChordOrderIsCanonical()
             "the chord determinism check rendered silence");
 }
 
+double upperRegisterRise (const std::vector<float>& mono)
+{
+    // Five-millisecond heterodyne windows locate the rise around C6,
+    // relative to first sound, to one millisecond. Use a clip-relative
+    // level so the measured per-string dynamics do not set the threshold.
+    std::size_t first = 0;
+    while (first < mono.size() && std::abs (mono[first]) < 1.0e-5f)
+        ++first;
+    const double frequency = 440.0 * std::exp2 ((84.0 - 69.0) / 12.0);
+    const auto window = static_cast<std::size_t> (0.005 * sampleRate);
+    const auto hop = static_cast<std::size_t> (0.001 * sampleRate);
+    const auto extent = static_cast<std::size_t> (0.08 * sampleRate);
+    std::vector<double> level;
+    for (std::size_t start = first; start + window <= mono.size()
+                                    && start - first < extent; start += hop)
+    {
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (std::size_t index = 0; index < window; ++index)
+        {
+            const double angle = 2.0 * juce::MathConstants<double>::pi
+                * frequency * static_cast<double> (index) / sampleRate;
+            real += mono[start + index] * std::cos (angle);
+            imaginary += mono[start + index] * std::sin (angle);
+        }
+        level.push_back (std::hypot (real, imaginary));
+    }
+    expect (! level.empty(), "the strum direction probe rendered silence");
+    if (level.empty())
+        return 1.0;
+    const double top = *std::max_element (level.begin(), level.end());
+    for (std::size_t index = 0; index < level.size(); ++index)
+        if (level[index] > 0.2 * top)
+            return static_cast<double> (index) * 0.001;
+    return 1.0;
+}
+
 void testSameSampleChordsAreStrummedAndAlternate()
 {
     // Listen to upper-register energy in the rendered stereo output. C6 on
@@ -366,39 +403,7 @@ void testSameSampleChordsAreStrummedAndAlternate()
             juce::MidiBuffer empty;
             processor.processBlock (audio, block == 0 ? off : empty);
         }
-        // Five-millisecond heterodyne windows locate the rise around C6,
-        // relative to first sound, to one millisecond. Use a clip-relative
-        // level so the measured per-string dynamics do not set the threshold.
-        std::size_t first = 0;
-        while (first < mono.size() && std::abs (mono[first]) < 1.0e-5f)
-            ++first;
-        const double frequency = 440.0 * std::exp2 ((84.0 - 69.0) / 12.0);
-        const auto window = static_cast<std::size_t> (0.005 * sampleRate);
-        const auto hop = static_cast<std::size_t> (0.001 * sampleRate);
-        const auto extent = static_cast<std::size_t> (0.08 * sampleRate);
-        std::vector<double> level;
-        for (std::size_t start = first; start + window <= mono.size()
-                                        && start - first < extent; start += hop)
-        {
-            double real = 0.0;
-            double imaginary = 0.0;
-            for (std::size_t index = 0; index < window; ++index)
-            {
-                const double angle = 2.0 * juce::MathConstants<double>::pi
-                    * frequency * static_cast<double> (index) / sampleRate;
-                real += mono[start + index] * std::cos (angle);
-                imaginary += mono[start + index] * std::sin (angle);
-            }
-            level.push_back (std::hypot (real, imaginary));
-        }
-        expect (! level.empty(), "the strum direction probe rendered silence");
-        if (level.empty())
-            return 1.0;
-        const double top = *std::max_element (level.begin(), level.end());
-        for (std::size_t index = 0; index < level.size(); ++index)
-            if (level[index] > 0.2 * top)
-                return static_cast<double> (index) * 0.001;
-        return 1.0;
+        return upperRegisterRise (mono);
     };
     const auto median = [] (std::vector<double> values)
     {
@@ -440,6 +445,63 @@ void testSameSampleChordsAreStrummedAndAlternate()
               << " ms, up " << up * 1000.0 << " ms, down again "
               << downAgain * 1000.0 << " ms, restart " << restarted * 1000.0
               << " ms, legato " << hammered * 1000.0 << " ms\n";
+}
+
+void testRepeatedHeldChordsKeepTheirAudibleSweep()
+{
+    // Subtract a processor with identical preceding strokes but no new MIDI.
+    // This removes the still-ringing chord from the onset measurement without
+    // releasing any key or inspecting the engine's scheduling state.
+    std::vector<double> downs, ups;
+    for (int previousStrokes = 1; previousStrokes <= 6; ++previousStrokes)
+    {
+        AcustraAudioProcessor repeated, continuation;
+        repeated.prepareToPlay (sampleRate, blockSize);
+        continuation.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> audio { 2, blockSize };
+        juce::AudioBuffer<float> held { 2, blockSize };
+        const auto chord = []
+        {
+            juce::MidiBuffer midi;
+            for (int note : { 41, 46, 51, 56, 61, 84 })
+                midi.addEvent (juce::MidiMessage::noteOn (1, note, 0.8f), 0);
+            return midi;
+        };
+        for (int stroke = 0; stroke < previousStrokes; ++stroke)
+            for (int block = 0; block < 60; ++block)
+            {
+                auto midi = block == 0 ? chord() : juce::MidiBuffer {};
+                auto matched = midi;
+                repeated.processBlock (audio, midi);
+                continuation.processBlock (held, matched);
+            }
+        expect (flattened (audio) == flattened (held),
+                "held-chord continuation did not match before the repeated stroke");
+        expect (repeated.getActiveVoiceCount() == 6,
+                "the repeated-chord probe lost a held string");
+        std::vector<float> difference;
+        for (int block = 0; block < 18; ++block)
+        {
+            auto midi = block == 0 ? chord() : juce::MidiBuffer {};
+            juce::MidiBuffer empty;
+            repeated.processBlock (audio, midi);
+            continuation.processBlock (held, empty);
+            for (int sample = 0; sample < blockSize; ++sample)
+                difference.push_back (0.5f * (
+                    audio.getSample (0, sample) - held.getSample (0, sample)
+                    + audio.getSample (1, sample) - held.getSample (1, sample)));
+        }
+        (previousStrokes % 2 == 0 ? downs : ups)
+            .push_back (upperRegisterRise (difference));
+    }
+    std::sort (downs.begin(), downs.end());
+    std::sort (ups.begin(), ups.end());
+    const double down = downs[downs.size() / 2];
+    const double up = ups[ups.size() / 2];
+    expect (down > 0.006 && down > 2.0 * up,
+            "repeated held chords struck together instead of sweeping in alternate directions");
+    std::cout << "Acustra held-chord sweep medians: down " << down * 1000.0
+              << " ms, up " << up * 1000.0 << " ms\n";
 }
 
 void testSameSampleNoteOnOffDoesNotStick()
@@ -1638,6 +1700,7 @@ int main()
     testSameSampleChordOrderIsCanonical();
     testSameSampleNoteOnOffDoesNotStick();
     testSameSampleChordsAreStrummedAndAlternate();
+    testRepeatedHeldChordsKeepTheirAudibleSweep();
     testBridgeHandControllerReachesTheEngine();
     testTheModulationWheelReachesTheEngineAsVibrato();
     testMpeTimbreReachesTheEngineOnMemberChannelOnly();

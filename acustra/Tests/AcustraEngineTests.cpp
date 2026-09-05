@@ -687,6 +687,106 @@ struct AcustraEngineTestAccess
         return total;
     }
 
+    struct TailPortBalance
+    {
+        double relativeError;
+        bool capturedImpedance;
+        int measuredFrames;
+    };
+
+    static TailPortBalance tailPortBalance(double rate, EngineParameters parameters,
+                                           int bendChange)
+    {
+        AcustraEngine engine;
+        engine.setParameters(parameters);
+        engine.prepare(rate, 1);
+        engine.setStringPerChannelMode(true);
+        engine.setLowerZoneMemberCount(6);
+        const int string = bendChange == 0 ? 0 : 5;
+        const int note = bendChange == 0 ? 40 : 64;
+        const int channel = string + 1;
+        engine.setPitchBend(bendChange < 0 ? 2.0f : 0.0f, channel);
+        engine.noteOn(note, 0.7f, channel);
+        const auto removeExtraSources = [&]
+        {
+            for (auto& voice : engine.voices_)
+            {
+                voice.excitationEnvelope = 0.0f;
+                voice.attackPitchCents = voice.attackSlopeEnergy = 0.0f;
+                voice.observedSlopeEnergy = 0.0f;
+            }
+            engine.updateControlState();
+        };
+        removeExtraSources();
+        float left = 0.0f, right = 0.0f;
+        for (int sample = 0; sample < static_cast<int>(0.3 * rate); ++sample)
+            engine.process(&left, &right, 1);
+        const auto& retained = engine.voices_[static_cast<std::size_t>(string)];
+        const float expectedTailZ = retained.characteristicImpedance
+                                 * retained.appliedBendImpedanceScale;
+        engine.setPitchBend(bendChange > 0 ? 2.0f : 0.0f, channel);
+        engine.noteOn(bendChange == 0 ? note : note + 3, 0.7f, channel);
+        removeExtraSources();
+        const bool captured = retained.tailActive
+            && retained.tailCharacteristicImpedance == expectedTailZ;
+
+        double error = 0.0, norm = 0.0;
+        int measured = 0;
+        for (int sample = 0; sample < 2048; ++sample)
+        {
+            // Let the real engine perform control updates. Audit samples
+            // between them so copies see exactly the same loop coefficients.
+            if (engine.controlCounter_ + 1 >= AcustraEngine::controlPeriod)
+            {
+                engine.process(&left, &right, 1);
+                continue;
+            }
+            std::array<double, 12> incoming {}, impedance {};
+            for (int i = 0; i < 6; ++i)
+            {
+                const auto& voice = engine.voices_[static_cast<std::size_t>(i)];
+                auto copy = voice.loops[0];
+                incoming[2 * i] = copy.advance(engine.delaySmoothing_, 1.0f);
+                impedance[2 * i] = voice.characteristicImpedance
+                                * voice.appliedBendImpedanceScale;
+                if (voice.tailActive)
+                {
+                    copy = voice.tailLoop;
+                    incoming[2 * i + 1] = copy.advance(engine.delaySmoothing_,
+                                                       voice.tailDamping);
+                    // Weight the retained state by its independently observed
+                    // pre-capture port, not the new note's or a copied field.
+                    impedance[2 * i + 1] = expectedTailZ;
+                }
+            }
+            engine.process(&left, &right, 1);
+            if (!retained.tailActive)
+                break;
+            double waveFlux = 0.0;
+            for (int port = 0; port < 12; ++port)
+            {
+                if (impedance[port] == 0.0)
+                    continue;
+                const auto& voice = engine.voices_[static_cast<std::size_t>(port / 2)];
+                const auto& loop = port % 2 == 0 ? voice.loops[0] : voice.tailLoop;
+                const double outgoing = loop.delay[static_cast<std::size_t>(
+                    (loop.writeIndex + AcustraEngine::maximumDelaySamples - 1)
+                    % AcustraEngine::maximumDelaySamples)];
+                const double a2 = incoming[port] * incoming[port];
+                const double c2 = outgoing * outgoing;
+                waveFlux += impedance[port] * (a2 - c2);
+                norm += impedance[port] * (a2 + c2);
+            }
+            const auto& bridge = engine.bridgeLoad_;
+            const double bridgeFlux = static_cast<double>(bridge.displacement)
+                    * bridge.mainIntegratedForce
+                + static_cast<double>(bridge.rotation) * bridge.mainIntegratedMoment;
+            error += std::abs(waveFlux - bridgeFlux);
+            ++measured;
+        }
+        return { error / std::max(norm, 1.0e-30), captured, measured };
+    }
+
     static StolenStringSnapshot stealStringTail(double rate)
     {
         AcustraEngine engine;
@@ -1869,6 +1969,41 @@ void testPassiveBridgeBranchesBalance()
         expect(maximumSympatheticForce == 0.0,
                name + " an idle string radiated outside the junction");
     }
+}
+
+void testRetainedTailClosesTheWaveNormBalance()
+{
+    // The collapsed loops hold displacement waves, so this is a wave-norm
+    // identity, not calibrated joules or a complete string-energy ledger:
+    // sum Z*(a^2-c^2) = [x,r] dot [integrated force, integrated moment].
+    // Reading incidents from copies and actual emitted delay samples catches
+    // a tail receiving a full return while its impedance is absent from G.
+    // With one impedance counted for two loops, the discrepancy is Z*x_u^2.
+    double worst = 0.0;
+    for (int bank = 0; bank < 3; ++bank)
+        for (double rate : { 44100.0, 48000.0, 96000.0 })
+            for (int bendChange : { -1, 0, 1 })
+            {
+                acustra::EngineParameters parameters;
+                parameters.stringMaterial = bank == 1
+                    ? acustra::StringMaterial::Nylon : acustra::StringMaterial::Steel;
+                parameters.bridgeModel = bank == 2
+                    ? acustra::BridgeModel::FyldeSteel : acustra::BridgeModel::Original;
+                const auto result = acustra::AcustraEngineTestAccess::tailPortBalance(
+                    rate, parameters, bendChange);
+                const std::string name = "tail bank " + std::to_string(bank)
+                    + " rate " + std::to_string(static_cast<int>(rate))
+                    + " bend direction " + std::to_string(bendChange);
+                expect(result.capturedImpedance,
+                       name + " did not preserve the retained branch's old impedance");
+                expect(result.measuredFrames > 1900,
+                       name + " supplied too few fixed-membership overlap samples");
+                expect(result.relativeError < 1.0e-7,
+                       name + " did not close the actual incoming/outgoing wave-norm balance");
+                worst = std::max(worst, result.relativeError);
+            }
+    std::cout << "Acustra retained-tail maximum relative wave-norm error: "
+              << worst << '\n';
 }
 
 void testConstructionControlsChangeTheModel()
@@ -5034,6 +5169,56 @@ void testAScheduledPluckIsANoteOnIssuedThen()
         expect(a == b, "a scheduled pluck differed from the note-on issued then");
     }
 
+    // A repeated stroke must also wait for the pick to reach an already held
+    // string. Until then its old wave keeps ringing unchanged; at the release
+    // it must become the same audible re-pluck issued at that sample. Vary
+    // velocity so resetting the attack or pluck shape early cannot hide.
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+        for (const auto material : { acustra::StringMaterial::Steel,
+                                     acustra::StringMaterial::Nylon })
+            for (const bool strumming : { false, true })
+                for (const int delay : { 1, 31, 97, 480, 2000 })
+                {
+                    acustra::EngineParameters parameters;
+                    parameters.stringMaterial = material;
+                    acustra::AcustraEngine scheduled;
+                    acustra::AcustraEngine issued;
+                    scheduled.setParameters(parameters);
+                    issued.setParameters(parameters);
+                    scheduled.prepare(rate, blockSize);
+                    issued.prepare(rate, blockSize);
+                    const int warmup = static_cast<int>(0.05 * rate);
+                    const int after = static_cast<int>(0.04 * rate);
+                    const int size = std::max({ warmup, delay, after });
+                    std::vector<float> a(size), b(size), rightA(size), rightB(size);
+                    scheduled.noteOn(52, 0.35f);
+                    issued.noteOn(52, 0.35f);
+                    scheduled.process(a.data(), rightA.data(), warmup);
+                    issued.process(b.data(), rightB.data(), warmup);
+                    scheduled.noteOn(52, 0.85f, 1, delay, strumming);
+                    scheduled.process(a.data(), rightA.data(), delay);
+                    issued.process(b.data(), rightB.data(), delay);
+                    const std::string at = " at " + std::to_string(rate)
+                        + " Hz, delay " + std::to_string(delay)
+                        + (material == acustra::StringMaterial::Steel
+                            ? ", steel" : ", nylon")
+                        + (strumming ? ", strum" : ", note");
+                    expect(std::equal(a.begin(), a.begin() + delay, b.begin())
+                               && std::equal(rightA.begin(), rightA.begin() + delay,
+                                             rightB.begin()),
+                           "a delayed held re-pluck changed the preceding wave" + at);
+                    expect(std::any_of(b.begin(), b.begin() + delay,
+                                       [] (float value) { return value != 0.0f; }),
+                           "the held re-pluck timing reference was silent" + at);
+                    issued.noteOn(52, 0.85f, 1, 0, strumming);
+                    scheduled.process(a.data(), rightA.data(), after);
+                    issued.process(b.data(), rightB.data(), after);
+                    expect(std::equal(a.begin(), a.begin() + after, b.begin())
+                               && std::equal(rightA.begin(), rightA.begin() + after,
+                                             rightB.begin()),
+                           "a delayed held re-pluck differed from one issued then" + at);
+                }
+
     // The hand leaving before the pick arrives means the string never sounds.
     acustra::AcustraEngine cancelled;
     cancelled.prepare(sampleRate, blockSize);
@@ -5053,6 +5238,98 @@ void testAScheduledPluckIsANoteOnIssuedThen()
     silenced.process(left.data(), right.data(), static_cast<int>(sampleRate));
     expect(std::all_of(left.begin(), left.end(), [] (float v) { return v == 0.0f; }),
            "All Sound Off left a scheduled pluck waiting");
+}
+
+void testCancelledScheduledAttacksKeepOnlyTheExistingWave()
+{
+    constexpr int delay = 2400;
+    constexpr int after = delay + 1024;
+    std::vector<float> left(after), right(after), referenceLeft(after), referenceRight(after);
+    const auto compare = [&](acustra::AcustraEngine& engine,
+                             acustra::AcustraEngine& reference,
+                             const std::string& message)
+    {
+        engine.process(left.data(), right.data(), after);
+        reference.process(referenceLeft.data(), referenceRight.data(), after);
+        expect(left == referenceLeft && right == referenceRight, message);
+    };
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const std::string at = " at " + std::to_string(rate) + " Hz";
+        for (const bool held : { false, true })
+            for (const bool sustain : { false, true })
+            {
+                acustra::AcustraEngine engine;
+                acustra::AcustraEngine reference;
+                for (auto* instrument : { &engine, &reference })
+                {
+                    instrument->prepare(rate, blockSize);
+                    if (held)
+                    {
+                        instrument->noteOn(52, 0.35f);
+                        instrument->process(left.data(), right.data(), 2400);
+                    }
+                    instrument->setSustainPedal(sustain);
+                }
+                engine.noteOn(52, 0.85f, 1, delay);
+                if (!held)
+                {
+                    // The established single-note cancellation is an
+                    // independent reference for a not-yet-sounding string.
+                    reference.noteOn(52, 0.85f, 1, delay);
+                    reference.noteOff(52);
+                }
+                else
+                    reference.allNotesOff();
+                engine.allNotesOff();
+                compare(engine, reference,
+                        "All Notes Off retained a queued attack" + at
+                            + (held ? ", held" : ", fresh")
+                            + (sustain ? ", pedal down" : ", pedal up"));
+                if (held)
+                    expect(std::any_of(referenceLeft.begin(), referenceLeft.end(),
+                                       [](float sample) { return sample != 0.0f; }),
+                           "the cancellation reference lost its existing vibration" + at);
+                else
+                    expect(std::all_of(left.begin(), left.end(),
+                                      [](float sample) { return sample == 0.0f; }),
+                           "a cancelled fresh attack sounded" + at);
+                if (sustain)
+                {
+                    engine.setSustainPedal(false);
+                    reference.setSustainPedal(false);
+                    compare(engine, reference,
+                            "pedal release revived a cancelled attack" + at);
+                }
+            }
+
+        for (const bool releaseAll : { false, true })
+            for (const bool sustain : { false, true })
+            {
+                acustra::AcustraEngine engine;
+                acustra::AcustraEngine reference;
+                for (auto* instrument : { &engine, &reference })
+                {
+                    instrument->prepare(rate, blockSize);
+                    instrument->noteOn(52, 0.35f);
+                    instrument->process(left.data(), right.data(), 2400);
+                    instrument->setLegato(true);
+                    instrument->noteOn(54, 0.4f);
+                    instrument->setSustainPedal(sustain);
+                }
+                engine.noteOn(54, 0.85f, 1, delay);
+                for (auto* instrument : { &engine, &reference })
+                {
+                    instrument->noteOff(54);
+                    if (releaseAll)
+                        instrument->noteOff(52);
+                }
+                compare(engine, reference,
+                        "a released legato pitch fired its queued attack" + at
+                            + (releaseAll ? ", empty stack" : ", fallback held")
+                            + (sustain ? ", pedal down" : ", pedal up"));
+            }
+    }
 }
 
 void testStrumTimingFollowsThePickAcrossTheStrings()
@@ -5837,6 +6114,7 @@ int main()
     testSharedBodyExcitesIdleStrings();
     testSympatheticStringsAreAudibleButBounded();
     testPassiveBridgeBranchesBalance();
+    testRetainedTailClosesTheWaveNormBalance();
     testConstructionControlsChangeTheModel();
     testAgeRemovesUpperStringEnergy();
     testMaterialSpecificAttackPitchIsBoundedAndVelocityResponsive();
@@ -5883,6 +6161,7 @@ int main()
     testOrdinaryOutputIsLinearAndPathologicalOutputIsBounded();
     testNoteOffOnlyRemovesEnergy();
     testAScheduledPluckIsANoteOnIssuedThen();
+    testCancelledScheduledAttacksKeepOnlyTheExistingWave();
     testStrumTimingFollowsThePickAcrossTheStrings();
     testRepeatedStrumsCrossTheStringsLikeRepeatedRealStrums();
     testRepeatedStrumsVaryLikeRepeatedRealStrums();

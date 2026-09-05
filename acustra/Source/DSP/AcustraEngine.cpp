@@ -1450,6 +1450,7 @@ void AcustraEngine::applyDiscreteParameters(bool force) noexcept
             if (!voice.tailActive)
                 continue;
             voice.tailActive = false;
+            voice.tailCharacteristicImpedance = 0.0f;
             voice.tailLevel = 0.0f;
             voice.tailQuietSamples = 0;
             voice.tailLoop.reset();
@@ -2514,7 +2515,9 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
     voice.touchSamples = 0;
     voice.returnSamples = 0;
     voice.pluckDelay = 0;
+    voice.repluckPending = false;
     voice.tailActive = false;
+    voice.tailCharacteristicImpedance = 0.0f;
     voice.tailLevel = 0.0f;
     voice.tailQuietSamples = 0;
     voice.tailLoop.reset();
@@ -2523,26 +2526,27 @@ void AcustraEngine::returnToOpenString(Voice& voice, int stringIndex,
 
 void AcustraEngine::captureTail(Voice& voice) noexcept
 {
-    // A string is only taken or replucked while the plucking hand is on it:
-    // the picking hand landing to repluck or cut a note short, not the
-    // fretting finger beginRelease's 0.16 s models. Laurson, Erkut, Valimaki
-    // and Kuuskankare (CMJ 25(3), 2001, "Simulation of Playing Styles") give
-    // the loop gain driven to zero in about 10 ms before a re-pluck, and that
-    // is the value used directly. Erkut, Valimaki, Karjalainen and Laurson
-    // (AES 108th Convention, Paris, Feb 2000, preprint 5114, Sec. 3.2
-    // "Repeated Plucks") independently measure the finger-on-string contact
-    // regime for a repeated pluck at 20-60 ms - a different quantity (a
-    // contact-regime duration, not a decay time) that brackets the same
-    // mechanism at tens of milliseconds, consistent with the 10 ms figure.
+    // The retained wave overlaps the newly released pluck as a second virtual
+    // string state. Its nominal 10 ms post-release T60 is provisional.
+    // Laurson, Erkut, Valimaki and Kuuskankare (CMJ 25(3), 2001,
+    // "Simulation of Playing Styles") instead drive the loop gain toward
+    // zero over about 10 ms BEFORE replucking; that gain ramp does not measure
+    // this T60. Erkut et al. (AES 108, 2000, preprint 5114, Sec. 3.2) report a
+    // 20-60 ms finger-contact regime, also distinct from a decay constant.
+    // Bridge backreaction can keep this branch active after its initial wave
+    // has damped; the existing reaction-force threshold decides retirement.
     if (!(voice.level > 2.0e-7f))
     {
         voice.tailActive = false;
+        voice.tailCharacteristicImpedance = 0.0f;
         return;
     }
     voice.tailLoop = voice.loops[0];
-    constexpr float contactSeconds = 0.010f;
+    voice.tailCharacteristicImpedance = voice.characteristicImpedance
+        * voice.appliedBendImpedanceScale;
+    constexpr float tailT60Seconds = 0.010f;
     voice.tailDamping = std::pow(0.001f,
-        1.0f / std::max(contactSeconds * midiFrequency(voice.midiNote), 1.0f));
+        1.0f / std::max(tailT60Seconds * midiFrequency(voice.midiNote), 1.0f));
     voice.tailLevel = voice.level;
     voice.tailQuietSamples = 0;
     voice.tailActive = true;
@@ -3036,6 +3040,15 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
         || midiChannel < 1 || midiChannel > midiChannelCount)
         return;
 
+    int delaySamples = pluckDelaySamples;
+    if (strumMember)
+    {
+        // One speed draw belongs to the entire stroke, including strings
+        // already held from the preceding stroke (see beginStrum).
+        delaySamples = std::max(0, static_cast<int>(
+            std::round(static_cast<float>(pluckDelaySamples) * strumSpeedScale_)));
+    }
+
     for (int string = 0; string < stringCount; ++string)
     {
         auto& voice = voices_[static_cast<std::size_t>(string)];
@@ -3044,35 +3057,13 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
         {
             ++voice.ownerCount;
             voice.startOrder = ++noteOrder_;
-            const float v = clamp(velocity, 0.001f, 1.0f);
-            voice.velocity = v;
-            if (parameters_.stringMaterial == StringMaterial::Steel)
-            {
-                voice.attackPitchCents = 0.0f;
-                voice.attackPitchDecay = 1.0f;
-            }
-            else
-            {
-                voice.attackPitchCents = 3.0f * v * v
-                    * (0.72f + 0.28f * effectiveTouch(voice.velocity));
-                voice.attackPitchDecay = std::exp(
-                    -static_cast<float>(controlPeriod)
-                    / (0.075f * static_cast<float>(sampleRate_)));
-            }
-            // The picking hand lands on a sounding string before it plucks it
-            // again, which is the contact a taken string already goes through:
-            // its vibration carries on in the tail under the hand while the
-            // new pluck is released from rest. Projecting the stored shape onto
-            // the modes with a node at the contact instead, in one sample,
-            // clicked into the limiter and let the near-node modes pile up
-            // pluck after pluck.
-            if (voice.level > 2.0e-7f)
-                captureTail(voice);
-            configureVoice(voice, string, midiNote, true);
+            voice.velocity = clamp(velocity, 0.001f, 1.0f);
             voice.strumming = strumMember;
-            initialisePluck(voice, string, velocity);
-            bridgeDerivativesCrossRelease_ = true;
-            configureVoice(voice, string, midiNote, false);
+            voice.repluckPending = true;
+            if (delaySamples > 0)
+                voice.pluckDelay = delaySamples + 1;
+            else
+                firePluck(voice, string);
             return;
         }
     }
@@ -3167,21 +3158,7 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
     }
     configureVoice(voice, string, midiNote, true);
     voice.strumming = strumMember;
-    int delaySamples = pluckDelaySamples;
-    if (strumMember)
-    {
-        // The pick's own speed varies stroke to stroke even at one nominal
-        // strum velocity (GuitarSet's comping tracks, Tools/MeasureStrums.py
-        // -- see beginStrum, which draws strumSpeedScale_ once per stroke
-        // and shares it across every string). Scaling the deterministic
-        // delay by that one shared factor, instead of jittering each
-        // string's release time independently, is what keeps the strings
-        // of a stroke in the pick's own order: a slower or faster draw
-        // stretches or compresses the whole stroke together, it never lets
-        // a later string catch up with an earlier one.
-        delaySamples = std::max(0, static_cast<int>(
-            std::round(static_cast<float>(pluckDelaySamples) * strumSpeedScale_)));
-    }
+    voice.repluckPending = false;
     if (delaySamples > 0)
     {
         // Fretted and waiting: a junction member with nothing on it until
@@ -3197,6 +3174,29 @@ void AcustraEngine::noteOn(int midiNote, float velocity, int midiChannel,
 void AcustraEngine::firePluck(Voice& voice, int stringIndex) noexcept
 {
     voice.pluckDelay = 0;
+    if (voice.repluckPending)
+    {
+        voice.repluckPending = false;
+        if (parameters_.stringMaterial == StringMaterial::Steel)
+        {
+            voice.attackPitchCents = 0.0f;
+            voice.attackPitchDecay = 1.0f;
+        }
+        else
+        {
+            voice.attackPitchCents = 3.0f * voice.velocity * voice.velocity
+                * (0.72f + 0.28f * effectiveTouch(voice.velocity));
+            voice.attackPitchDecay = std::exp(
+                -static_cast<float>(controlPeriod)
+                / (0.075f * static_cast<float>(sampleRate_)));
+        }
+        // The pick reaches this held string now. Keep its preceding wave
+        // intact until then, and carry it under the hand while the new pluck
+        // is released from rest, exactly as for an immediate re-pluck.
+        if (voice.level > 2.0e-7f)
+            captureTail(voice);
+        configureVoice(voice, stringIndex, voice.midiNote, true);
+    }
     initialisePluck(voice, stringIndex, voice.velocity);
     bridgeDerivativesCrossRelease_ = true;
     configureVoice(voice, stringIndex, voice.midiNote, false);
@@ -3257,6 +3257,7 @@ void AcustraEngine::noteOff(int midiNote, int midiChannel,
         return;
     candidate.ownerCount = 0;
     candidate.pluckDelay = 0;
+    candidate.repluckPending = false;
     freezeMemberPitchBend(candidate);
     candidate.keyDown = false;
     candidate.fingerLift = lift;
@@ -3360,6 +3361,14 @@ bool AcustraEngine::releaseLegatoNote(int midiNote, int midiChannel,
                 = voice.legatoHeld[static_cast<std::size_t>(index + 1)];
         --voice.legatoHeldCount;
         voice.ownerCount = voice.legatoHeldCount;
+        // A queued pick belongs to the sounding pitch. Lifting that pitch
+        // cancels its attack before falling back to the note underneath;
+        // lifting only an underlying note leaves the queued pick intact.
+        if (wasSounding || voice.legatoHeldCount <= 0)
+        {
+            voice.pluckDelay = 0;
+            voice.repluckPending = false;
+        }
         if (voice.legatoHeldCount <= 0)
         {
             voice.ownerCount = 0;
@@ -3469,6 +3478,8 @@ void AcustraEngine::allNotesOff(int midiChannel) noexcept
             continue;
         voice.ownerCount = 0;
         voice.legatoHeldCount = 0;
+        voice.pluckDelay = 0;
+        voice.repluckPending = false;
         freezeMemberPitchBend(voice);
         voice.keyDown = false;
         voice.fingerLift = 0.0f;
@@ -3637,13 +3648,12 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
                           * voice.appliedBendImpedanceScale;
     if (voice.tailActive)
     {
-        // The taken string keeps sounding while the hand damps it; its wave
-        // is in the junction with the new note's, so its force reaches the
-        // body through the bridge like any other string's.
+        // This independently retained branch receives a full bridge return
+        // and contributes its own captured impedance to the junction.
         voice.tailLoop.write(tailIncident - bridgeDisplacement);
         const float tailVelocity = voice.tailLoop.bridgeVelocity(
             tailIncident, sampleRateRatio);
-        const float tailForce = impedance
+        const float tailForce = voice.tailCharacteristicImpedance
             * (2.0f * tailVelocity - bridgeVelocity);
         voice.tailLevel += levelSmoothing_
             * (std::abs(tailForce) - voice.tailLevel);
@@ -3654,6 +3664,7 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
         if (voice.tailQuietSamples > static_cast<int>(0.08 * sampleRate_))
         {
             voice.tailActive = false;
+            voice.tailCharacteristicImpedance = 0.0f;
             voice.tailLevel = 0.0f;
             voice.tailQuietSamples = 0;
             voice.tailLoop.reset();
@@ -3756,6 +3767,15 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
     {
         if (++controlCounter_ >= controlPeriod)
         {
+            // External note-ons arrive before this sample's control update.
+            // A held re-pluck due now must reset its attack in that same
+            // order, including when its release lands on this boundary.
+            for (int string = 0; string < stringCount; ++string)
+            {
+                auto& voice = voices_[static_cast<std::size_t>(string)];
+                if (voice.repluckPending && voice.pluckDelay == 1)
+                    firePluck(voice, string);
+            }
             controlCounter_ = 0;
             updateControlState();
         }
@@ -3820,19 +3840,32 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
             // characteristic impedance, which is what pins a real bridge
             // there and bounds the sympathetic energy. Driving idle strings
             // from the bridge while leaving them out of the sum let their
-            // reaction grow without limit. A taken string's tail is a second
-            // wave on the same string, so it adds to the incident with the
-            // string's impedance counted once.
+            // reaction grow without limit. The retained tail evolves in a
+            // separate loop and receives its own full bridge return, so it
+            // also supplies a port. Counting its incident wave without its
+            // impedance breaks the wave-norm balance by Z_tail*x_string^2.
+            // The six physical anchor stubs above are unchanged.
             if (voice.played || sympatheticStringsEnabled_)
             {
                 const float port = voice.characteristicImpedance
                                  * voice.appliedBendImpedanceScale;
-                const float incident = 2.0f * port
+                const float tailPort = voice.tailActive
+                    ? voice.tailCharacteristicImpedance : 0.0f;
+                const float branchImpedance = port + tailPort;
+                // Keep the existing summed-incident arithmetic when both
+                // branches have the same impedance, as ordinary unbent
+                // re-plucks do. A changed member bend needs separate weights.
+                float incident = 2.0f * port
                     * (verticalIncident[static_cast<std::size_t>(string)]
                        + tailIncident[static_cast<std::size_t>(string)]);
-                drive.impedance0 += port;
-                drive.impedance1 += arm * port;
-                drive.impedance2 += arm * arm * port;
+                if (voice.tailActive && tailPort != port)
+                    incident = 2.0f * port
+                        * verticalIncident[static_cast<std::size_t>(string)]
+                        + 2.0f * tailPort
+                        * tailIncident[static_cast<std::size_t>(string)];
+                drive.impedance0 += branchImpedance;
+                drive.impedance1 += arm * branchImpedance;
+                drive.impedance2 += arm * arm * branchImpedance;
                 drive.incidentHeave += incident;
                 drive.incidentRock += arm * incident;
             }
