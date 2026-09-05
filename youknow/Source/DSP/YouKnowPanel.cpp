@@ -309,9 +309,10 @@ Layout buildLayout() noexcept
 
         const bool isMode = placement.section == 1;
         const float labelY = section.y + headerHeight + (isMode ? 1.0f : 7.0f);
-        const float controlTop = isMode ? section.y + headerHeight + 2.0f
+        const float controlTop = isMode ? programmerKeyTop
                                         : labelY + controlLabelHeight + 4.0f;
-        const float controlHeight = section.y + section.height - 8.0f - controlTop;
+        const float controlHeight = isMode ? programmerKeyHeight
+            : section.y + section.height - 8.0f - controlTop;
         float controlX = x;
         float y = controlTop;
         float height = controlHeight;

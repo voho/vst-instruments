@@ -5,6 +5,15 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-05 — Release defaults: Quality 1× and Aging 50%
+
+At the product owner's request, new plug-in instances use Quality 1× and
+Aging 50%. This replaces the August 28 choice of 4× as the opening quality
+setting. The lower factor reduces CPU use; 2× and 4× remain available, and
+the existing numerical quality gates remain unchanged. Saved sessions retain
+their choices. Aging remains an instrument setting preserved by preset recall
+and INIT; the raw DSP defaults and reference audit fixtures are unchanged.
+
 ## 2026-09-05 — Schematic coupling bound and preserved chorus control state
 
 The [research assessment](modeling-research-2026-09.md) reviews current

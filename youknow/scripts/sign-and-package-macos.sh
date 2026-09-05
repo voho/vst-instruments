@@ -17,7 +17,8 @@ PACKAGE_ROOT="${BUILD_DIR}/package-root"
 CACHE_FILE="${BUILD_DIR}/CMakeCache.txt"
 CMAKE_FILE="${PROJECT_DIR}/CMakeLists.txt"
 RELEASE_NOTES_FILE="${PROJECT_DIR}/README.md"
-CUSTOMER_LICENSE_FILE="${PROJECT_DIR}/EULA.md"
+USER_GUIDE_FILE="${PROJECT_DIR}/USER_GUIDE.md"
+CUSTOMER_LICENSE_FILE="${PROJECT_DIR}/LICENSE"
 PRODUCT_NAME="YouKnow"
 VENDOR_NAME="Protocodus"
 PRODUCT_WEBSITE="https://protocodus.cz"
@@ -33,6 +34,16 @@ VST3_PROCESSOR_CID="ABCDEF019182FAEB596B6E6F596B3036"
 VST3_CONTROLLER_CID="ABCDEF011234ABCD596B6E6F596B3036"
 PRODUCT_COPYRIGHT="Copyright (c) 2026 ${VENDOR_NAME}"
 MINIMUM_MACOS="11.0"
+PREFLIGHT_ONLY=0
+case "${1:-}" in
+    --preflight) PREFLIGHT_ONLY=1; shift ;;
+    "") ;;
+    *) echo "usage: $0 [--preflight]" >&2; exit 1 ;;
+esac
+if [[ "$#" -ne 0 ]]; then
+    echo "usage: $0 [--preflight]" >&2
+    exit 1
+fi
 
 clear_distribution_artifacts() {
     case "${DIST_DIR}" in
@@ -60,11 +71,20 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-for tool in cmake codesign ditto lipo mktemp pkgbuild plutil shasum xattr xcrun; do
+for tool in awk cmake cmp codesign ditto grep lipo mktemp pkgbuild plutil productbuild sed shasum xattr xcrun; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "error: required tool '${tool}' was not found" >&2
         exit 1
     }
+done
+
+for document in "${CUSTOMER_LICENSE_FILE}" "${RELEASE_NOTES_FILE}" "${USER_GUIDE_FILE}" \
+    "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+    "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" "${PROJECT_DIR}/PRIVACY.md"; do
+    if [[ ! -s "${document}" ]]; then
+        echo "error: missing or empty distribution document: ${document}" >&2
+        exit 1
+    fi
 done
 
 if [[ "${RELEASE_MODE}" == "1" ]]; then
@@ -102,11 +122,6 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         echo "error: missing ${RELEASE_NOTES_FILE}" >&2
         exit 1
     fi
-    if [[ ! -f "${CUSTOMER_LICENSE_FILE}" ]]; then
-        echo "error: add the approved customer licence at ${CUSTOMER_LICENSE_FILE}" >&2
-        exit 1
-    fi
-
     PROJECT_VERSION="$(awk '
         /^[[:space:]]*project\(YouKnow[[:space:]]+VERSION[[:space:]]+/ {
             for (field = 1; field <= NF; ++field) {
@@ -121,12 +136,16 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         echo "error: could not read the YouKnow version from CMakeLists.txt" >&2
         exit 1
     fi
+    if [[ -n "${VERSION_OVERRIDE}" && "${VERSION_OVERRIDE}" != "${PROJECT_VERSION}" ]]; then
+        echo "error: VERSION=${VERSION_OVERRIDE} does not match CMake version ${PROJECT_VERSION}" >&2
+        exit 1
+    fi
     # The release history lives in the instrument README, under a per-version
     # heading. A release may only be cut once that heading carries a real date
     # instead of "unreleased", so the shipped notes can never describe a version as
     # unreleased while it is being packaged.
     RELEASE_DATE="$(awk -v version="${PROJECT_VERSION}" '
-        index($0, "### " version " ") == 1 {
+        index($0, "### " version " ") == 1 && $0 !~ /unreleased/ {
             if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
                 print substr($0, RSTART, RLENGTH)
             exit
@@ -140,9 +159,9 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         echo "error: commercial releases must be built from a git worktree" >&2
         exit 1
     fi
-    SOURCE_CHANGES="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=normal)"
+    SOURCE_CHANGES="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=normal -- .)"
     if [[ -n "${SOURCE_CHANGES}" ]]; then
-        echo "error: commercial releases require a clean source tree" >&2
+        echo "error: commercial releases require a clean YouKnow source tree" >&2
         printf '%s\n' "${SOURCE_CHANGES}" >&2
         exit 1
     fi
@@ -155,16 +174,17 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         exit 1
     fi
 
-    # Once a valid release source is selected, remove prior dev/nightly output
-    # before any credential or build failure can leave it looking publishable.
-    clear_distribution_artifacts
-
-    for tool in pkgutil plutil productsign security spctl xcrun; do
+    for tool in ctest pkgutil productsign security spctl xcodebuild; do
         command -v "${tool}" >/dev/null 2>&1 || {
             echo "error: release tool '${tool}' was not found" >&2
             exit 1
         }
     done
+    if ! xcodebuild -version >/dev/null 2>&1 \
+        || ! xcrun --sdk macosx --show-sdk-version >/dev/null 2>&1; then
+        echo "error: release mode requires a full Xcode installation and macOS SDK" >&2
+        exit 1
+    fi
 
     SIGNING_IDENTITIES="$(security find-identity -v 2>/dev/null || true)"
     if ! grep -F -- "${APP_SIGN_IDENTITY}" <<< "${SIGNING_IDENTITIES}" \
@@ -182,6 +202,11 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         echo "error: NOTARY_PROFILE is missing, invalid, or cannot authenticate" >&2
         exit 1
     fi
+fi
+
+if [[ "${PREFLIGHT_ONLY}" == "1" ]]; then
+    echo "Packaging preflight passed; build artifacts have not been checked."
+    exit 0
 fi
 
 if [[ ! -f "${CACHE_FILE}" ]]; then
@@ -244,6 +269,12 @@ if [[ "${RELEASE_MODE}" == "1" && -n "${LOCAL_JUCE_OVERRIDE}" ]]; then
     exit 1
 fi
 if [[ "${RELEASE_MODE}" == "1" ]]; then
+    CACHE_SOURCE_DIR="$(sed -n 's/^CMAKE_HOME_DIRECTORY:[^=]*=//p' "${CACHE_FILE}")"
+    if [[ ! -d "${CACHE_SOURCE_DIR}" ]] \
+        || [[ "$(cd "${CACHE_SOURCE_DIR}" && pwd -P)" != "$(cd "${PROJECT_DIR}" && pwd -P)" ]]; then
+        echo "error: release cache was configured from a different source directory" >&2
+        exit 1
+    fi
     EXPECTED_JUCE_SOURCE_DIR="${BUILD_DIR}/_deps/juce-src"
     if [[ ! -d "${EXPECTED_JUCE_SOURCE_DIR}" ]]; then
         echo "error: release build is missing fetched JUCE at ${EXPECTED_JUCE_SOURCE_DIR}" >&2
@@ -461,13 +492,10 @@ REQUIRED_DOCUMENTS=(
     "${PROJECT_DIR}/LICENSE"
     "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md"
     "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md"
-    "${PROJECT_DIR}/README.md"
+    "${USER_GUIDE_FILE}"
     "${PROJECT_DIR}/PRIVACY.md"
     "${JUCE_LICENSE_INDEX}"
 )
-if [[ "${RELEASE_MODE}" == "1" ]]; then
-    REQUIRED_DOCUMENTS+=("${CUSTOMER_LICENSE_FILE}")
-fi
 for document in "${REQUIRED_DOCUMENTS[@]}"; do
     if [[ ! -f "${document}" ]]; then
         echo "error: missing distribution document: ${document}" >&2
@@ -489,17 +517,13 @@ stage_documentation() {
     local destination="$1"
     local relative_path
 
-    mkdir -p "${destination}/ThirdParty/JUCE" "${destination}/Docs"
+    mkdir -p "${destination}/ThirdParty/JUCE"
     ditto "${PROJECT_DIR}/LICENSE" "${destination}/LICENSE"
     ditto "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
         "${destination}/THIRD_PARTY_NOTICES.md"
-    # One document: the README carries the instrument description, how it
-    # works, its known gaps and its release history.
-    ditto "${PROJECT_DIR}/README.md" "${destination}/README.md"
+    # Ship the self-contained customer guide; developer notes stay in the repo.
+    ditto "${USER_GUIDE_FILE}" "${destination}/README.md"
     ditto "${PROJECT_DIR}/PRIVACY.md" "${destination}/PRIVACY.md"
-    if [[ -f "${CUSTOMER_LICENSE_FILE}" ]]; then
-        ditto "${CUSTOMER_LICENSE_FILE}" "${destination}/EULA.md"
-    fi
     ditto "${JUCE_LICENSE_INDEX}" "${destination}/ThirdParty/JUCE/LICENSE.md"
 
     for relative_path in "${JUCE_DEPENDENCY_LICENSES[@]}"; do
@@ -557,6 +581,7 @@ cleanup() {
 trap cleanup EXIT
 
 PKG_UNSIGNED="${PACKAGE_WORK_DIR}/YouKnow-unsigned.pkg"
+PKG_COMPONENT="${PACKAGE_WORK_DIR}/YouKnow-component.pkg"
 PKG_WORK="${PACKAGE_WORK_DIR}/YouKnow.pkg"
 COMPONENT_PLIST="${PACKAGE_WORK_DIR}/components.plist"
 pkgbuild --analyze --root "${PACKAGE_ROOT}" "${COMPONENT_PLIST}"
@@ -580,6 +605,18 @@ COPYFILE_DISABLE=1 pkgbuild \
     --identifier "${PACKAGE_IDENTIFIER}" \
     --version "${VERSION}" \
     --install-location / \
+    "${PKG_COMPONENT}"
+
+# A product archive lets Installer enforce the same OS/CPU requirements as
+# the binaries, including native Installer execution on Apple Silicon.
+REQUIREMENTS_PLIST="${PACKAGE_WORK_DIR}/requirements.plist"
+"${PLIST_BUDDY}" -c "Clear dict" -c "Add :os array" \
+    -c "Add :os:0 string ${DEPLOYMENT_TARGET}" -c "Add :arch array" \
+    -c "Add :home bool false" "${REQUIREMENTS_PLIST}" >/dev/null
+for architecture in ${APP_ARCHS}; do
+    "${PLIST_BUDDY}" -c "Add :arch: string ${architecture}" "${REQUIREMENTS_PLIST}"
+done
+productbuild --product "${REQUIREMENTS_PLIST}" --package "${PKG_COMPONENT}" \
     "${PKG_UNSIGNED}"
 
 if [[ -n "${INSTALLER_SIGN_IDENTITY}" ]]; then
@@ -642,7 +679,7 @@ fi
 SOURCE_COMMIT="$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 SOURCE_STATE="unavailable"
 if git -C "${PROJECT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    if [[ -n "$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=normal)" ]]; then
+    if [[ -n "$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=normal -- .)" ]]; then
         SOURCE_STATE="dirty"
     else
         SOURCE_STATE="clean"
@@ -679,6 +716,7 @@ fi
     printf 'Source commit: %s\n' "${SOURCE_COMMIT}"
     printf 'Source tree: %s\n' "${SOURCE_STATE}"
     printf 'Customer licence SHA-256: %s\n' "${CUSTOMER_LICENSE_SHA256}"
+    printf 'JUCE licensing basis: JUCE 8 Starter (publisher-declared)\n'
     printf 'JUCE LICENSE.md SHA-256: %s\n' "${JUCE_LICENSE_SHA256}"
     printf 'JUCE dependency license files:\n'
     for relative_path in "${JUCE_DEPENDENCY_LICENSES[@]}"; do

@@ -17,6 +17,10 @@ command -v cmake >/dev/null 2>&1 || {
     echo "error: cmake 3.22 or newer is required" >&2
     exit 1
 }
+command -v ctest >/dev/null 2>&1 || {
+    echo "error: ctest is required" >&2
+    exit 1
+}
 command -v xcodebuild >/dev/null 2>&1 || {
     echo "error: full Xcode is required" >&2
     exit 1

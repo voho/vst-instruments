@@ -9,7 +9,7 @@ On an Apple M1 Max, the sixteen-voice full-mixer/Chorus-II cases used
 **10.32–13.24% less engine CPU at 1×/2×**. The six-voice equivalent at
 44.1 kHz/2× measured **about 5%** (5.09%, with a candidate timing MAD of
 0.720 ms, so this result is borderline); at 48 kHz it saved 3.79–4.16%, below
-the requested 5% threshold. No 5% gain was established for the default 4× setting,
+the requested 5% threshold. No 5% gain was established for the then-default 4× setting,
 dry patches,
 single voices or idle. These results apply to Poly/Cubic/Normal when the
 filter needs the deeper Merson solve and four adjacent voices are active.

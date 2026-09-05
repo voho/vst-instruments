@@ -78,8 +78,9 @@ int main (int argc, char** argv)
 
     passed &= expect (instance->acceptsMidi() && ! instance->producesMidi(),
                       "VST3 MIDI capabilities are wrong");
-    passed &= expect (instance->getNumPrograms() == 129,
-                      "VST3 factory-program count is wrong");
+    // INIT, the unchanged 128 hardware slots, then 16 original basses/pads.
+    passed &= expect (instance->getNumPrograms() == 145,
+                      "VST3 factory/original-program count is wrong");
     const auto& hostedParameters = instance->getParameters();
     juce::AudioProcessorParameter* bypassParameter = nullptr;
     passed &= expect (hostedParameters.size()

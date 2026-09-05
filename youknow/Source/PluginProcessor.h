@@ -62,8 +62,8 @@ public:
         return std::numeric_limits<double>::infinity();
     }
 
-    // The factory bank is exposed as host programs, numbered the way the
-    // modelled instrument numbers its patches.
+    // The 128 hardware tones retain host slots 1..128 after INIT. Original
+    // YouKnow programs are appended, preserving saved and MIDI program numbers.
     int getNumPrograms() override;
     int getCurrentProgram() override;
     void setCurrentProgram (int index) override;
@@ -185,6 +185,7 @@ public:
     // restating it, so a rung added there appears on the panel by itself.
     static constexpr int qualityChoiceCount = static_cast<int> (
         youknow::YouKnowEngine::oversampleFactors.size());
+    static constexpr int qualityDefaultChoice = 0;
     static constexpr int vcfTanhChoiceCount = 3;
     static constexpr int vcfFastEarlyChoiceCount = 2;
     // The rung a new instance starts on: the appended PolyZoned kernel with
@@ -399,6 +400,11 @@ private:
     // thread. Incoming patch MIDI overlays only its stored-tone fields on this
     // base, so volume, bend, assign mode and product controls remain live.
     youknow::EngineParameters audioBaseParameters {};
+    // Full panel recalls supersede MIDI still waiting for timer reflection.
+    // The audio thread adopts this only with a stable parameter snapshot, so
+    // events from an in-flight block keep the generation of its panel image.
+    std::atomic<std::uint64_t> toneRecallGeneration { 0 };
+    std::uint64_t audioBaseToneRecallGeneration { 0 };
     // Incoming MIDI changes which need to write parameters or select a host
     // program. Neither operation belongs in the audio callback -- it may notify
     // the host or allocate -- so the event is handed to the message thread.
@@ -503,7 +509,6 @@ private:
     void drainPendingMidiQueue();
     // Applies one tone parameter to the parameters it actually names, and to
     // no others.
-    void applyToneParameter (int parameter, int value);
     void applyToneParameterValues (int parameter, int value);
 
     enum class PendingMidiEventKind
@@ -520,6 +525,7 @@ private:
         // only after the matching APVTS/host writes are complete; until then
         // the audio-owned shadow remains authoritative over stale reflections.
         std::uint64_t sequence { 0 };
+        std::uint64_t recallGeneration { 0 };
         // FullPatch: the eighteen tone bytes as they arrived, which are already
         // the message's own representation and so lose nothing in transit.
         std::array<std::uint8_t, youknow::sysex::toneByteCount> bytes {};
@@ -543,7 +549,10 @@ private:
     void stageAndApplyPendingMidiEvent (PendingMidiEvent event) noexcept;
     void tryStagePendingMidiResync() noexcept;
     void publishPendingMidiResyncMailbox() noexcept;
-    bool readPendingMidiResyncMailbox (PendingMidiEvent&) const noexcept;
+    bool readPendingMidiResyncMailbox (
+        PendingMidiEvent&,
+        std::array<std::uint64_t, youknow::sysex::toneByteCount>*
+            toneByteSequences = nullptr) const noexcept;
     void reflectPendingMidiEvent (const PendingMidiEvent&);
     void applyPendingMidiEventToEngine (const PendingMidiEvent& event) noexcept;
     static youknow::sysex::Patch patchFromEngineParameters (
@@ -593,6 +602,11 @@ private:
     youknow::sysex::Patch pendingMidiToneShadow {};
     bool pendingMidiToneShadowActive { false };
     std::uint64_t pendingMidiToneShadowSequence { 0 };
+    // State saves overlay only MIDI-owned fields not yet reflected to APVTS.
+    // A single-parameter event must not restore unrelated old shadow values.
+    std::array<std::uint64_t, youknow::sysex::toneByteCount>
+        pendingMidiToneByteSequences {};
+    std::uint64_t publishedMidiToneSequence { 0 };
     std::uint64_t nextPendingMidiSequence { 0 };
     std::atomic<std::uint64_t> reflectedMidiSequence { 0 };
     // Once the event-history FIFO fills, the audio thread continues applying
@@ -610,16 +624,21 @@ private:
     // A stopped transport may never call processBlock again after the message
     // thread frees a FIFO slot. This single overwriteable atomic mailbox makes
     // the latest complete coalesced snapshot available to the timer anyway.
+    // Every block with new tone MIDI also publishes here for immediate host
+    // state saves, which must not consume the message thread's FIFO.
     // Atomic fields plus the generation seqlock avoid both allocation and any
     // reader/writer data race while the audio thread republishes a newer tone.
     std::array<std::atomic<std::uint32_t>, 16>
         pendingMidiResyncContinuous {};
+    std::array<std::atomic<std::uint64_t>, youknow::sysex::toneByteCount>
+        pendingMidiResyncToneByteSequences {};
     std::atomic<std::uint32_t> pendingMidiResyncSwitches { 0 };
     std::atomic<std::uint32_t> pendingMidiResyncMailboxFlags { 0 };
     std::atomic<std::uint32_t> pendingMidiResyncMailboxTouchedToneBytes { 0 };
     std::atomic<int> pendingMidiResyncMailboxProgramIndex { -1 };
     std::atomic<std::uint64_t> pendingMidiResyncMailboxProgramSequence { 0 };
     std::atomic<std::uint64_t> pendingMidiResyncMailboxSequence { 0 };
+    std::atomic<std::uint64_t> pendingMidiResyncMailboxRecallGeneration { 0 };
     std::atomic<std::uint64_t> pendingMidiResyncMailboxGeneration { 0 };
     std::uint64_t reflectedMidiProgramSequence { 0 }; // message-thread-owned
 

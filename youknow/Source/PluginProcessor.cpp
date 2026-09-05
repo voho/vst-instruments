@@ -323,6 +323,46 @@ void setStoredParameterValue (juce::ValueTree& state, const char* parameterId,
     state.appendChild (added, nullptr);
 }
 
+void overlayPendingMidiTone (
+    juce::ValueTree& state, const youknow::sysex::Patch& patch,
+    const std::array<std::uint64_t, youknow::sysex::toneByteCount>& sequences,
+    std::uint64_t reflectedSequence)
+{
+    using namespace youknow::parameters;
+    constexpr const char* continuousIds[] = {
+        lfoRate, lfoDelay, dcoLfo, pwm, noise, cutoff, resonance, vcfEnv,
+        vcfLfo, keyFollow, vcaLevel, attack, decay, sustain, release, sub
+    };
+    const float continuous[] = {
+        patch.lfoRate, patch.lfoDelay, patch.dcoLfo, patch.pwm,
+        patch.noise, patch.cutoff, patch.resonance, patch.vcfEnv,
+        patch.vcfLfo, patch.keyFollow, patch.vcaLevel, patch.attack,
+        patch.decay, patch.sustain, patch.release, patch.sub
+    };
+    for (std::size_t index = 0; index < std::size (continuous); ++index)
+        if (sequences[index] > reflectedSequence)
+            setStoredParameterValue (state, continuousIds[index], continuous[index]);
+
+    const auto set = [&state] (const char* id, float value) {
+        setStoredParameterValue (state, id, value);
+    };
+    if (sequences[16] > reflectedSequence)
+    {
+        set (range, static_cast<float> (patch.range));
+        set (saw, patch.saw ? 1.0f : 0.0f);
+        set (pulse, patch.pulse ? 1.0f : 0.0f);
+        set (chorusI, youknow::chorusOneEngaged (patch.chorus) ? 1.0f : 0.0f);
+        set (chorusII, youknow::chorusTwoEngaged (patch.chorus) ? 1.0f : 0.0f);
+    }
+    if (sequences[17] > reflectedSequence)
+    {
+        set (pwmMode, static_cast<float> (patch.pwmSource));
+        set (vcaMode, static_cast<float> (patch.vcaMode));
+        set (envPolarity, static_cast<float> (patch.envPolarity));
+        set (highPass, static_cast<float> (patch.highPass));
+    }
+}
+
 // The owner's MIDI implementation chart lists five channel-mode rows under
 // RECOGNIZED RECEIVE DATA -- ALL NOTES OFF, OMNI OFF, OMNI ON, MONO ON and
 // POLY ON -- and then prints, in the notes below them, "Mode messages
@@ -612,14 +652,12 @@ YouKnowAudioProcessor::createParameterLayout()
     // internal work. Version 3 follows every parameter shipped by the two
     // earlier public layouts.
     //
-    // New instances start on the deepest rung: unlike the DCO, the BBD and VCF
-    // domains pass their absolute numerical-quality gates only at 4x for common
-    // host rates. Existing sessions keep their stored choice, and the selection
-    // remains a ceiling, so a 176.4 kHz-or-higher host still resolves to 1x.
+    // New instances start at 1x. The deeper rungs remain available for more
+    // oversampling; existing sessions keep their stored choice.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { quality, 3 }, "Quality",
         juce::StringArray { "1x", "2x", "4x" },
-        qualityChoiceCount - 1,
+        qualityDefaultChoice,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // This is an engine policy, not a patch control. Keep published ordinals
@@ -669,13 +707,12 @@ YouKnowAudioProcessor::createParameterLayout()
 
     // Time since the modelled unit's last service, beside Unit Character on
     // the panel but appended after every shipped parameter, with a later
-    // version hint, so no historical Audio Unit index moves. Zero -- the
-    // default -- is the freshly calibrated instrument every other mechanism
-    // describes; see EngineParameters::aging for the documented recalibration
-    // the full travel applies.
+    // version hint, so no historical Audio Unit index moves. New instances
+    // start halfway along its 0..1 travel; zero retains the freshly calibrated
+    // reference. See EngineParameters::aging for the documented full travel.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { aging, 7 }, "Aging",
-        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, 0.0f,
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, 0.5f,
         percentAttributes()));
 
     // Performance automation is session state, separate from patch memory.
@@ -943,11 +980,13 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
         parameterWriteGeneration.load (std::memory_order_acquire);
     if ((parameterGeneration & 1u) != 0u)
         return false;
-    // Reflection publishes this only after its matching APVTS writes. Sampling
-    // it on both sides of the parameter gather catches even a one-parameter
-    // reflection, which intentionally does not open a multi-write generation.
+    // Reflection publishes this after its matching APVTS writes, within the
+    // same generation. Sample it on both sides so shadow retirement belongs
+    // to the exact parameter snapshot accepted below.
     const auto reflectedBeforeSnapshot =
         reflectedMidiSequence.load (std::memory_order_acquire);
+    const auto recallGeneration =
+        toneRecallGeneration.load (std::memory_order_acquire);
 
     EngineParameters engineParameters;
     engineParameters.volume = valueOf (P::volume);
@@ -1084,6 +1123,18 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     keyModeBridge = nextKeyModeBridge;
     chorusBridge = nextChorusBridge;
     audioBaseParameters = engineParameters;
+
+    if (recallGeneration != audioBaseToneRecallGeneration)
+    {
+        audioBaseToneRecallGeneration = recallGeneration;
+        pendingMidiToneShadowActive = false;
+        pendingMidiNeedsResync = false;
+        pendingMidiResyncReplacesTone = false;
+        pendingMidiResyncTouchedToneBytes = 0;
+        pendingMidiLatestProgramIndex = -1;
+        pendingMidiLatestProgramSequence = 0;
+        pendingMidiToneByteSequences.fill (0);
+    }
 
     // The message thread may currently be reflecting an older event from the
     // same queue. Do not let that intermediate APVTS state pull the DSP back
@@ -1329,8 +1380,12 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // A second attempt lets an offline render which ends on the overflow block
     // publish its final coalesced state without waiting for another MIDI event.
     tryStagePendingMidiResync();
-    if (pendingMidiNeedsResync)
+    if (pendingMidiToneShadowActive
+        && pendingMidiToneShadowSequence != publishedMidiToneSequence)
+    {
         publishPendingMidiResyncMailbox();
+        publishedMidiToneSequence = pendingMidiToneShadowSequence;
+    }
 
     // The lamps, the meters and the trace below all describe the instrument's
     // output, and under bypass there is none: the render behind the mute keeps
@@ -1743,13 +1798,30 @@ void YouKnowAudioProcessor::getStateInformation (juce::MemoryBlock& destinationD
             continue;
         }
 
+        const auto reflected = reflectedMidiSequence.load (std::memory_order_acquire);
+        const auto recall = toneRecallGeneration.load (std::memory_order_acquire);
         auto state = parameters.copyState();
-        const int program = currentProgram.load (std::memory_order_relaxed);
+        int program = currentProgram.load (std::memory_order_relaxed);
+        PendingMidiEvent pending;
+        std::array<std::uint64_t, youknow::sysex::toneByteCount> toneSequences {};
+        const bool hasPending = readPendingMidiResyncMailbox (pending, &toneSequences);
+        // The timer may retry next tick; a state save cannot silently omit an
+        // existing snapshot just because the audio thread is replacing it.
+        if (! hasPending
+            && pendingMidiResyncMailboxSequence.load (std::memory_order_acquire) != 0)
+            continue;
         const unsigned after =
             parameterWriteGeneration.load (std::memory_order_acquire);
         if (before != after || (after & 1u) != 0u)
             continue;
 
+        if (hasPending && pending.recallGeneration == recall
+            && pending.sequence > reflected)
+        {
+            overlayPendingMidiTone (state, pending.snapshot, toneSequences, reflected);
+            if (pending.programIndex >= 0 && pending.programSequence > reflected)
+                program = pending.programIndex;
+        }
         serialiseStateSnapshot (std::move (state), program, destinationData);
         return;
     }
@@ -1805,6 +1877,15 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
 
     migrateSplitModeParameters (state);
 
+    // Missing entries describe older sessions, whose implicit settings were
+    // 4x and a freshly calibrated unit. New-instance defaults must not change
+    // those sessions; the legacy HQ migration above still owns its endpoints.
+    if (! containsParameterState (state, youknow::parameters::quality))
+        setStoredParameterValue (state, youknow::parameters::quality,
+                                 static_cast<float> (qualityChoiceCount - 1));
+    if (! containsParameterState (state, youknow::parameters::aging))
+        setStoredParameterValue (state, youknow::parameters::aging, 0.0f);
+
     // A state written by an earlier build will not carry parameters added
     // since. Filling them with their defaults keeps the rest of the patch
     // rather than discarding the whole thing.
@@ -1825,6 +1906,7 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
     // processBlock picks the restored patch up on the thread that owns them.
     ScopedParameterWrite write { *this };
     parameters.replaceState (state);
+    toneRecallGeneration.fetch_add (1, std::memory_order_release);
     queuePitchBend (valueOf (ParameterIndex::pitchBend));
     queueModulation (valueOf (ParameterIndex::modulation));
 
@@ -1882,10 +1964,10 @@ int YouKnowAudioProcessor::hostProgramIndexForMidiProgram (
 // Program 0 is the init patch -- the layout's own defaults, which is what a
 // freshly constructed processor actually holds. Without it, a new instance
 // would report "A11 Brass Set 1" while sounding like nothing of the sort.
-// The factory bank follows from index 1.
+// The factory bank follows from index 1; original product programs follow 128.
 int YouKnowAudioProcessor::getNumPrograms()
 {
-    return youknow::presets::presetCount + 1;
+    return youknow::presets::presetCount + youknow::presets::productPresetCount + 1;
 }
 
 int YouKnowAudioProcessor::getCurrentProgram()
@@ -1902,6 +1984,7 @@ void YouKnowAudioProcessor::setCurrentProgram (int index)
     // visible control as one stable generation so a concurrent state save can
     // retry instead of serialising half of each program.
     ScopedParameterWrite write { *this };
+    toneRecallGeneration.fetch_add (1, std::memory_order_release);
     if (index == 0)
     {
         applyProgramValues (youknow::sysex::Patch {},
@@ -1909,8 +1992,7 @@ void YouKnowAudioProcessor::setCurrentProgram (int index)
     }
     else
     {
-        const auto& bank = youknow::presets::factoryBank();
-        const auto& preset = bank[static_cast<std::size_t> (index - 1)];
+        const auto& preset = *youknow::presets::programPreset (index);
         applyProgramValues (preset.patch, preset.controls);
     }
     currentProgram.store (index, std::memory_order_relaxed);
@@ -1918,7 +2000,7 @@ void YouKnowAudioProcessor::setCurrentProgram (int index)
 
 void YouKnowAudioProcessor::applyMidiProgramSelection (int index)
 {
-    if (index <= 0 || index >= getNumPrograms())
+    if (index <= 0 || index > youknow::presets::presetCount)
         return;
 
     // Incoming Program Change models the JUNO's own patch selector. Its
@@ -1931,9 +2013,9 @@ void YouKnowAudioProcessor::applyMidiProgramSelection (int index)
 
 youknow::sysex::Patch YouKnowAudioProcessor::programPatch (int index) const
 {
-    if (index <= 0 || index >= youknow::presets::presetCount + 1)
-        return {};
-    return youknow::presets::factoryBank()[static_cast<std::size_t> (index - 1)].patch;
+    if (const auto* preset = youknow::presets::programPreset (index))
+        return preset->patch;
+    return {};
 }
 
 bool YouKnowAudioProcessor::currentProgramIsEdited() const
@@ -1950,9 +2032,9 @@ bool YouKnowAudioProcessor::currentProgramIsEdited() const
     if (panel != program || panelPatch.chorus != selectedPatch.chorus)
         return true;
 
-    const auto expected = selectedIndex > 0
-        ? youknow::presets::factoryBank()[static_cast<std::size_t> (
-              selectedIndex - 1)].controls
+    const auto* selectedPreset = youknow::presets::programPreset (selectedIndex);
+    const auto expected = selectedPreset != nullptr
+        ? selectedPreset->controls
         : youknow::presets::Preset::Controls {};
     const auto differs = [] (float first, float second)
     {
@@ -1984,8 +2066,7 @@ const juce::String YouKnowAudioProcessor::getProgramName (int index)
         return {};
     if (index == 0)
         return "INIT";
-    const auto& preset =
-        youknow::presets::factoryBank()[static_cast<std::size_t> (index - 1)];
+    const auto& preset = *youknow::presets::programPreset (index);
     juce::String name = juce::String (preset.number) + " " + preset.name;
     return name;
 }
@@ -1993,6 +2074,7 @@ const juce::String YouKnowAudioProcessor::getProgramName (int index)
 void YouKnowAudioProcessor::applyPatch (const youknow::sysex::Patch& patch)
 {
     ScopedParameterWrite write { *this };
+    toneRecallGeneration.fetch_add (1, std::memory_order_release);
     applyPatchValues (patch);
 }
 
@@ -2247,10 +2329,15 @@ bool YouKnowAudioProcessor::importPatchSysExBytes (const void* data,
         }
 
         std::size_t end = index + 1;
-        while (end < size && bytes[end] != 0xf7)
+        while (end < size && bytes[end] != 0xf7 && bytes[end] != 0xf0)
             ++end;
         if (end == size)
             break;
+        if (bytes[end] == 0xf0)
+        {
+            index = end;
+            continue;
+        }
 
         youknow::sysex::Patch patch {};
         int channel = 0;
@@ -2301,6 +2388,7 @@ void YouKnowAudioProcessor::stageAndApplyPendingMidiEvent (
     PendingMidiEvent event) noexcept
 {
     event.sequence = nextPendingMidiSequence + 1;
+    event.recallGeneration = audioBaseToneRecallGeneration;
     nextPendingMidiSequence = event.sequence;
     if (event.kind == PendingMidiEventKind::ProgramChange)
     {
@@ -2311,6 +2399,11 @@ void YouKnowAudioProcessor::stageAndApplyPendingMidiEvent (
     // DSP timing is independent of message-thread capacity. Even if APVTS
     // reflection is already behind, this event belongs at its MIDI sample.
     applyPendingMidiEventToEngine (event);
+    if (event.kind == PendingMidiEventKind::SingleParameter)
+        pendingMidiToneByteSequences[static_cast<std::size_t> (event.parameter)] =
+            event.sequence;
+    else
+        pendingMidiToneByteSequences.fill (event.sequence);
 
     const auto includeInResync = [this, &event]
     {
@@ -2359,6 +2452,7 @@ void YouKnowAudioProcessor::tryStagePendingMidiResync() noexcept
     PendingMidiEvent event;
     event.kind = PendingMidiEventKind::ResyncSnapshot;
     event.sequence = pendingMidiToneShadowSequence;
+    event.recallGeneration = audioBaseToneRecallGeneration;
     event.snapshot = pendingMidiToneShadow;
     event.programIndex = pendingMidiLatestProgramIndex;
     event.programSequence = pendingMidiLatestProgramSequence;
@@ -2395,6 +2489,9 @@ void YouKnowAudioProcessor::publishPendingMidiResyncMailbox() noexcept
         pendingMidiResyncContinuous[index].store (
             std::bit_cast<std::uint32_t> (continuous[index]),
             std::memory_order_seq_cst);
+    for (std::size_t index = 0; index < pendingMidiToneByteSequences.size(); ++index)
+        pendingMidiResyncToneByteSequences[index].store (
+            pendingMidiToneByteSequences[index], std::memory_order_seq_cst);
 
     const std::uint32_t switches =
           (static_cast<std::uint32_t> (patch.range) & 0x3u)
@@ -2417,6 +2514,8 @@ void YouKnowAudioProcessor::publishPendingMidiResyncMailbox() noexcept
         pendingMidiLatestProgramSequence, std::memory_order_seq_cst);
     pendingMidiResyncMailboxSequence.store (
         pendingMidiToneShadowSequence, std::memory_order_seq_cst);
+    pendingMidiResyncMailboxRecallGeneration.store (
+        audioBaseToneRecallGeneration, std::memory_order_seq_cst);
 
     // The even release publishes one coherent snapshot. Every payload field is
     // itself atomic, so a reader which detects a concurrent rewrite can safely
@@ -2426,7 +2525,8 @@ void YouKnowAudioProcessor::publishPendingMidiResyncMailbox() noexcept
 }
 
 bool YouKnowAudioProcessor::readPendingMidiResyncMailbox (
-    PendingMidiEvent& event) const noexcept
+    PendingMidiEvent& event,
+    std::array<std::uint64_t, youknow::sysex::toneByteCount>* toneByteSequences) const noexcept
 {
     // Never wait on the audio thread. If it is pre-empted midway through a
     // publication, the 20 ms timer can simply try again on its next tick.
@@ -2458,6 +2558,13 @@ bool YouKnowAudioProcessor::readPendingMidiResyncMailbox (
                 std::memory_order_seq_cst);
         const auto sequence = pendingMidiResyncMailboxSequence.load (
             std::memory_order_seq_cst);
+        const auto recallGeneration = pendingMidiResyncMailboxRecallGeneration.load (
+            std::memory_order_seq_cst);
+        std::array<std::uint64_t, youknow::sysex::toneByteCount> sequences {};
+        if (toneByteSequences != nullptr)
+            for (std::size_t index = 0; index < sequences.size(); ++index)
+                sequences[index] = pendingMidiResyncToneByteSequences[index].load (
+                    std::memory_order_seq_cst);
 
         const auto after =
             pendingMidiResyncMailboxGeneration.load (std::memory_order_seq_cst);
@@ -2499,11 +2606,14 @@ bool YouKnowAudioProcessor::readPendingMidiResyncMailbox (
         event = {};
         event.kind = PendingMidiEventKind::ResyncSnapshot;
         event.sequence = sequence;
+        event.recallGeneration = recallGeneration;
         event.snapshot = patch;
         event.programIndex = programIndex;
         event.programSequence = programSequence;
         event.replacesTone = (flags & 0x1u) != 0;
         event.touchedToneBytes = touchedToneBytes;
+        if (toneByteSequences != nullptr)
+            *toneByteSequences = sequences;
         return true;
     }
     return false;
@@ -2632,31 +2742,34 @@ void YouKnowAudioProcessor::forwardLegacyModeParameters()
 void YouKnowAudioProcessor::reflectPendingMidiEvent (
     const PendingMidiEvent& event)
 {
-    if (event.kind == PendingMidiEventKind::FullPatch)
-        applyPatch (youknow::sysex::patchFromToneBytes (event.bytes.data()));
-    else if (event.kind == PendingMidiEventKind::SingleParameter)
-        applyToneParameter (event.parameter, event.value);
-    else if (event.kind == PendingMidiEventKind::ProgramChange)
+    bool programChanged = false;
     {
-        applyMidiProgramSelection (event.programIndex);
-        reflectedMidiProgramSequence = event.sequence;
-        // This is a host/UI state change, distinct from transmitting a MIDI
-        // Program Change. No MIDI output event is generated.
-        updateHostDisplay (
-            juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
-    }
-    else
-    {
-        // Granular history overflowed. A patch/program event in the gap owns
-        // the complete tone; an all-parameter-message gap owns only the bytes
-        // it touched, so delayed reflection cannot overwrite unrelated newer
-        // UI automation. Never call setCurrentProgram here: a later hardware
-        // edit may have made that selected program intentionally edited.
-        const bool hasNewProgram =
-            event.programIndex >= 0
-            && event.programSequence > reflectedMidiProgramSequence;
+        // Check under the same writer scope as the parameter changes: a host
+        // recall must not slip between the check and reflection.
+        ScopedParameterWrite write { *this };
+        if (event.recallGeneration
+            != toneRecallGeneration.load (std::memory_order_acquire))
         {
-            ScopedParameterWrite write { *this };
+            reflectedMidiSequence.store (event.sequence, std::memory_order_release);
+            return;
+        }
+
+        if (event.kind == PendingMidiEventKind::FullPatch)
+            applyPatchValues (youknow::sysex::patchFromToneBytes (event.bytes.data()));
+        else if (event.kind == PendingMidiEventKind::SingleParameter)
+            applyToneParameterValues (event.parameter, event.value);
+        else if (event.kind == PendingMidiEventKind::ProgramChange)
+        {
+            applyMidiProgramSelection (event.programIndex);
+            reflectedMidiProgramSequence = event.sequence;
+            programChanged = true;
+        }
+        else
+        {
+            // A full dump owns the tone; a gap of single-parameter messages
+            // owns only its touched bytes. Retain unrelated later UI edits.
+            programChanged = event.programIndex >= 0
+                && event.programSequence > reflectedMidiProgramSequence;
             if (event.replacesTone)
                 applyPatchValues (event.snapshot);
             else
@@ -2667,19 +2780,21 @@ void YouKnowAudioProcessor::reflectPendingMidiEvent (
                         applyToneParameterValues (
                             parameter, youknow::sysex::parameterValue (
                                            event.snapshot, parameter));
-            if (hasNewProgram)
+            if (programChanged)
+            {
                 currentProgram.store (event.programIndex,
                                       std::memory_order_relaxed);
+                reflectedMidiProgramSequence = event.programSequence;
+            }
         }
-
-        if (hasNewProgram)
-        {
-            reflectedMidiProgramSequence = event.programSequence;
-            updateHostDisplay (
-                juce::AudioProcessorListener::ChangeDetails()
-                    .withProgramChanged (true));
-        }
+        // Commit APVTS, program and acknowledgement in the same generation.
+        // State saves must never overlay an already-reflected MIDI event onto
+        // a later edit made from the host's program-change notification.
+        reflectedMidiSequence.store (event.sequence, std::memory_order_release);
     }
+    if (programChanged)
+        updateHostDisplay (
+            juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
 }
 
 void YouKnowAudioProcessor::drainPendingMidiQueue()
@@ -2705,11 +2820,6 @@ void YouKnowAudioProcessor::drainPendingMidiQueue()
             continue;
 
         reflectPendingMidiEvent (event);
-
-        // Only now does APVTS/currentProgram contain this event. The audio
-        // thread may stop overlaying its shadow once it observes an
-        // acknowledgement at least as new as the shadow it is rendering.
-        reflectedMidiSequence.store (event.sequence, std::memory_order_release);
     }
 
     // Do not jump a mailbox snapshot over FIFO entries which arrived while
@@ -2734,7 +2844,6 @@ void YouKnowAudioProcessor::drainPendingMidiQueue()
         return;
 
     reflectPendingMidiEvent (resync);
-    reflectedMidiSequence.store (resync.sequence, std::memory_order_release);
 }
 
 // One tone parameter, applied to the controls it names and to nothing else.
@@ -2743,15 +2852,6 @@ void YouKnowAudioProcessor::drainPendingMidiQueue()
 // message never mentioned, and would race automation: a lane moving another
 // control between the read and the write would be reverted by the stale value
 // that came back with it.
-void YouKnowAudioProcessor::applyToneParameter (int parameter, int value)
-{
-    if (parameter < 0 || parameter >= youknow::sysex::toneByteCount)
-        return;
-
-    ScopedParameterWrite write { *this };
-    applyToneParameterValues (parameter, value);
-}
-
 void YouKnowAudioProcessor::applyToneParameterValues (int parameter, int value)
 {
     using namespace youknow::parameters;

@@ -173,8 +173,7 @@ public:
     void showFor (juce::Component* component, juce::String value = {});
     void showIdle();
     // A transient status line -- a completed patch-file load or save -- that
-    // holds the idle strip for a few seconds and then yields. Hover help
-    // still wins while it is up.
+    // remains visible for a few seconds before hover or keyboard help resumes.
     void showNotice (juce::String title, juce::String text);
 
     // Where the strip's three columns land and what they are set in. The body
@@ -268,6 +267,7 @@ private:
     void buildUtilityStrip();
     void buildPresetBar();
     void buildHardwareProgrammer();
+    void showProductInfo (bool quickStart);
     // Loads a program and brings the bar's own display back in step with it.
     void selectProgram (int index);
     // Steps by one, stopping at the ends rather than wrapping: a bank has a
@@ -357,15 +357,15 @@ private:
     int lastTransposeSemitones = 12;
 
     // The original programmer tier. The immutable factory bank maps directly
-    // to GROUP A/B, BANK 1..8 and PATCH 1..8; unsupported write/verify
-    // operations remain present and honestly disabled.
+    // to GROUP A/B, BANK 1..8 and PATCH 1..8. Product help shares the data keys.
     std::array<juce::TextButton, 2> groupButtons {};
     std::array<juce::TextButton, 8> bankButtons {};
     std::array<juce::TextButton, 8> patchButtons {};
     juce::Label hardwarePatchDisplay;
     juce::TextButton manualButton { "MANUAL" };
-    juce::TextButton writeButton { "WRITE" };
-    juce::TextButton verifyButton { "VERIFY" };
+    juce::TextButton aboutButton { "ABOUT" };
+    juce::TextButton helpButton { "HELP" };
+    juce::ScopedMessageBox productInfoDialog;
     int selectedHardwareGroup = 0;
     int selectedHardwareBank = 0;
     int selectedHardwarePatch = 0;

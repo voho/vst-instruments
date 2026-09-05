@@ -142,6 +142,8 @@ inline constexpr float soundRowHeight = 244.0f;
 inline constexpr float performanceDeckTop = 268.0f;
 inline constexpr float performanceDeckHeight = 328.0f;
 inline constexpr float programmerHeight = 104.0f;
+inline constexpr float programmerKeyTop = performanceDeckTop + 36.0f;
+inline constexpr float programmerKeyHeight = 68.0f;
 // The host navigator is an add-on rail directly below the programmer: close
 // enough to support the bank keys, but clearly outside the original controls.
 inline constexpr float presetTop = 382.0f;

@@ -7385,8 +7385,6 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
         YouKnowTestAccess::cutoffTarget(engine, slot);
     const float resonanceHeldBefore =
         YouKnowTestAccess::resonanceHeld(engine);
-    const float resonanceTargetBefore =
-        YouKnowTestAccess::resonanceTarget(engine);
     float left = 0.0f;
     float right = 0.0f;
     engine.process(&left, &right, 1);

@@ -1,7 +1,8 @@
-// Audits the byte-exact factory bank through the same JUCE-free engine used by
-// the plug-in, and renders a small fixed preview set without per-file loudness
-// normalisation. This is deliberately a reporting tool: overload and level
-// differences are evidence, not reasons to rewrite the historical tone bytes.
+// Audits the byte-exact factory bank and original YouKnow presets through the
+// same JUCE-free engine used by the plug-in, without per-file normalisation.
+// Factory measurements never rewrite the historical tone bytes. Original
+// presets use separate musical scores, metrics and previews, retaining the
+// factory bank's absolute peak and gated-level ceilings.
 
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowPresets.h"
@@ -39,6 +40,10 @@ constexpr int renderBlockSize = 256;
 // The deepest rung of the quality ladder, which at 48 kHz is a 192 kHz
 // internal grid.
 constexpr int auditOversampleFactor = 4;
+// Fresh plug-in defaults; the historical factory audit above keeps its
+// original reference rate and zero-aging model.
+constexpr int productOversampleFactor = 1;
+constexpr float productAging = 0.5f;
 
 // The shipping bank's two level contracts, as absolute figures rather than as
 // offsets from a median the audit itself computes -- a self-referential gate
@@ -171,18 +176,30 @@ struct Audio
 class ScoreRenderer
 {
 public:
-    ScoreRenderer (const Preset& preset, bool muteChorusNoise)
+    ScoreRenderer (const Preset& preset, bool muteChorusNoise,
+                   bool shippingDefaults = false)
     {
-        // Quality is a machine setting rather than preset data, so the audit
-        // fixes it at the deepest rung: the levels it publishes then describe
-        // the tone, not whatever the auditing machine could afford.
-        engine.prepare (sampleRate, renderBlockSize, auditOversampleFactor);
-        engine.setParameters (parametersFor (preset, muteChorusNoise));
+        // Original presets exercise a fresh plug-in; the immutable factory
+        // corpus retains its established 4x reference measurements.
+        if (shippingDefaults)
+            engine.selectConverterTimingProfile (
+                YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+        engine.prepare (sampleRate, renderBlockSize,
+                        shippingDefaults ? productOversampleFactor : auditOversampleFactor);
+        auto parameters = parametersFor (preset, muteChorusNoise);
+        if (shippingDefaults)
+        {
+            parameters.aging = productAging;
+            parameters.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
+            parameters.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
+            parameters.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
+        }
+        engine.setParameters (parameters);
     }
 
-    bool isHq() const noexcept
+    int oversamplingFactor() const noexcept
     {
-        return engine.getOversamplingFactor() > 1;
+        return engine.getOversamplingFactor();
     }
 
     void noteOn (int note) { engine.noteOn (note, 1.0f); }
@@ -218,7 +235,7 @@ private:
 bool renderAuditScore (const Preset& preset, bool smoke, Audio& audio)
 {
     ScoreRenderer renderer (preset, true); // signal metrics exclude BBD hiss
-    if (! renderer.isHq())
+    if (renderer.oversamplingFactor() <= 1)
         return false;
 
     if (smoke)
@@ -260,7 +277,7 @@ bool renderAuditScore (const Preset& preset, bool smoke, Audio& audio)
 bool renderPreviewScore (const Preset& preset, bool smoke, Audio& audio)
 {
     ScoreRenderer renderer (preset, false); // exact product chorus-noise control
-    if (! renderer.isHq())
+    if (renderer.oversamplingFactor() <= 1)
         return false;
 
     renderer.renderSeconds (smoke ? 0.05 : 0.250);
@@ -271,6 +288,48 @@ bool renderPreviewScore (const Preset& preset, bool smoke, Audio& audio)
     for (const int note : chord)
         renderer.noteOff (note);
     renderer.renderSeconds (smoke ? 0.20 : 2.0);
+    audio = renderer.takeAudio();
+    return true;
+}
+
+bool renderProductScore (const Preset& preset, bool smoke,
+                         bool muteChorusNoise, Audio& audio)
+{
+    ScoreRenderer renderer (preset, muteChorusNoise, true);
+    if (renderer.oversamplingFactor() != productOversampleFactor)
+        return false;
+    renderer.renderSeconds (0.05);
+    if (preset.category == Preset::Category::Bass)
+    {
+        const std::array notes { 36, 36, 43, 46, 48, 43, 39, 34 };
+        const int noteCount = smoke ? 2 : static_cast<int> (notes.size());
+        for (int index = 0; index < noteCount; ++index)
+        {
+            renderer.noteOn (notes[static_cast<std::size_t> (index)]);
+            renderer.renderSeconds (0.24);
+            renderer.noteOff (notes[static_cast<std::size_t> (index)]);
+            renderer.renderSeconds (0.06);
+        }
+        renderer.noteOn (36);
+        renderer.renderSeconds (smoke ? 0.3 : 1.2);
+        renderer.noteOff (36);
+    }
+    else
+    {
+        const std::array<std::array<int, 5>, 2> chords {{
+            { 48, 55, 60, 64, 67 }, { 41, 53, 57, 60, 64 }
+        }};
+        for (int chord = 0; chord < (smoke ? 1 : 2); ++chord)
+        {
+            for (const int note : chords[static_cast<std::size_t> (chord)])
+                renderer.noteOn (note);
+            renderer.renderSeconds (smoke ? 0.8 : 3.5);
+            for (const int note : chords[static_cast<std::size_t> (chord)])
+                renderer.noteOff (note);
+            renderer.renderSeconds (smoke ? 0.2 : 0.9);
+        }
+    }
+    renderer.renderSeconds (smoke ? 0.15 : 1.5);
     audio = renderer.takeAudio();
     return true;
 }
@@ -421,7 +480,8 @@ std::string warningsFor (const Metrics& metrics, double corpusMedianDb,
 }
 
 std::string makeCsv (const std::vector<AuditRow>& rows, double corpusMedianDb,
-                     bool includeCorpusLevel)
+                     bool includeCorpusLevel,
+                     int oversampleFactor = auditOversampleFactor)
 {
     std::ostringstream csv;
     csv << "slot,name,tone_bytes_hex,volume,bender_dco,bender_vcf,bender_lfo,"
@@ -446,7 +506,7 @@ std::string makeCsv (const std::vector<AuditRow>& rows, double corpusMedianDb,
             << controls.transpose << ',' << controls.masterTune << ','
             << controls.velocity << ',' << controls.calibration << ','
             << controls.chorusNoise << ',' << controls.polyphony << ','
-            << auditOversampleFactor << ',' << metrics.frames << ','
+            << oversampleFactor << ',' << metrics.frames << ','
             << metrics.samplePeak << ',' << toDb (metrics.samplePeak) << ','
             << metrics.samplesOverZeroDbfs << ',' << metrics.maximumRms << ','
             << toDb (metrics.maximumRms) << ',' << toDb (metrics.gateThreshold)
@@ -848,11 +908,83 @@ int run (bool smoke, const std::filesystem::path& directory,
     return (levelFailure
             || numericalFailure.load (std::memory_order_relaxed)) ? 1 : 0;
 }
+
+int runProductAudit (bool smoke, const std::filesystem::path& directory)
+{
+    if (! ensureOwnedDirectory (directory))
+        return 1;
+    const auto& bank = youknow::presets::productBank();
+    std::vector<AuditRow> rows;
+    std::vector<AuditRow> previewRows;
+    std::vector<Audio> previews (bank.size());
+    double previewPeak = 0.0;
+    bool failed = false;
+    for (std::size_t index = 0; index < bank.size(); ++index)
+    {
+        const auto& preset = bank[index];
+        Audio signal;
+        if (! renderProductScore (preset, smoke, true, signal)
+            || ! renderProductScore (preset, smoke, false, previews[index]))
+            return 1;
+        const auto metrics = analyse (signal);
+        const auto previewMetrics = analyse (previews[index]);
+        rows.push_back ({ static_cast<int> (index), &preset, metrics });
+        previewRows.push_back ({ static_cast<int> (index), &preset, previewMetrics });
+        previewPeak = std::max (previewPeak, previewMetrics.samplePeak);
+        std::printf ("Original %s %-25s peak %7.2f, gated %7.2f dBFS\n",
+                     preset.number, preset.name, toDb (metrics.samplePeak),
+                     toDb (metrics.gatedRms));
+        if (! metrics.finite || ! previewMetrics.finite
+            || toDb (metrics.maximumRms) < -60.0
+            || toDb (std::max (metrics.samplePeak, previewMetrics.samplePeak))
+                   > factoryPeakCeilingDbfs
+            || toDb (metrics.gatedRms) > factoryGatedCeilingDbfs)
+        {
+            std::fprintf (stderr,
+                          "%s original preset failed finite/signal/level checks: "
+                          "max RMS %.2f, preview peak %.2f dBFS\n",
+                          preset.number, toDb (metrics.maximumRms),
+                          toDb (previewMetrics.samplePeak));
+            failed = true;
+        }
+    }
+
+    // Separate files keep the original-tone corpus median, reference render,
+    // level gates and fixed preview gain unchanged when the product bank grows.
+    if (! writeText (directory / "product-metrics.csv",
+                     makeCsv (rows, corpusMedianGatedDb (rows), false,
+                              productOversampleFactor))
+        || ! writeText (directory / "product-preview-metrics.csv",
+                        makeCsv (previewRows, corpusMedianGatedDb (previewRows), false,
+                                 productOversampleFactor)))
+        return 1;
+    const double commonGain = previewPeak > previewCeiling
+        ? previewCeiling / previewPeak : 1.0;
+    std::error_code error;
+    const auto previewDirectory = directory / "product-previews";
+    std::filesystem::create_directories (previewDirectory, error);
+    if (error)
+        return 1;
+    for (std::size_t index = 0; index < bank.size(); ++index)
+        if (! writeWav16 (previewDirectory / (std::string (bank[index].number) + ".wav"),
+                          previews[index], commonGain))
+            return 1;
+
+    std::printf ("%s original-preset %s: %zu presets, shipping Poly/Cubic/Normal "
+                 "at %dx, Aging %.0f%%; %.1f dBFS peak / %.1f dBFS gated ceilings; "
+                 "common preview gain %.6f. Wrote %s\n",
+                 failed ? "Failed" : "Passed", smoke ? "smoke audit" : "audit",
+                 bank.size(), productOversampleFactor, 100.0 * productAging,
+                 factoryPeakCeilingDbfs, factoryGatedCeilingDbfs,
+                 commonGain, directory.string().c_str());
+    return failed ? 1 : 0;
+}
 } // namespace
 
 int main (int argc, char** argv)
 {
     bool smoke = false;
+    bool productsOnly = false;
     bool pathWasProvided = false;
     std::filesystem::path directory = YOUKNOW_FACTORY_AUDIT_DEFAULT_OUTPUT;
     for (int argument = 1; argument < argc; ++argument)
@@ -860,9 +992,11 @@ int main (int argc, char** argv)
         const std::string_view value = argv[argument];
         if (value == "--smoke")
             smoke = true;
+        else if (value == "--products-only")
+            productsOnly = true;
         else if (value == "--help" || value == "-h")
         {
-            std::printf ("usage: YouKnowAuditFactoryPresets [--smoke] "
+            std::printf ("usage: YouKnowAuditFactoryPresets [--smoke] [--products-only] "
                          "[output-directory]\n");
             return 0;
         }
@@ -887,5 +1021,8 @@ int main (int argc, char** argv)
     // The repository's default output belongs under the instrument's one
     // canonical README, which already explains this audit. Explicit/smoke
     // destinations remain self-describing standalone bundles.
-    return run (smoke, directory, pathWasProvided || smoke);
+    const int factoryResult = productsOnly
+        ? 0 : run (smoke, directory, pathWasProvided || smoke);
+    const int productResult = runProductAudit (smoke, directory);
+    return factoryResult != 0 || productResult != 0 ? 1 : 0;
 }

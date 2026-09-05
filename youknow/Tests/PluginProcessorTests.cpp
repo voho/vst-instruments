@@ -129,9 +129,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::chorusNoise, Chorus::defaultNoiseScale, 1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
-    { parameters::quality,
-      static_cast<float> (YouKnowAudioProcessor::qualityChoiceCount - 1),
-      1.0e-5f },
+    { parameters::quality,     0.0f,   1.0e-5f },
     { parameters::vcfTanhMode,
       static_cast<float> (YouKnowAudioProcessor::vcfTanhDefaultChoice),
       1.0e-5f },
@@ -142,7 +140,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::vcfSolverMode,
       static_cast<float> (YouKnowAudioProcessor::vcfSolverDefaultChoice),
       1.0e-5f },
-    { parameters::aging,       0.0f,   1.0e-5f },
+    { parameters::aging,       0.5f,   1.0e-5f },
     { parameters::pitchBend,   0.0f,   1.0e-5f },
     { parameters::modulation,  0.0f,   1.0e-5f },
 });
@@ -737,6 +735,10 @@ void testParameterContract()
     }
     if (const auto* aging = processor.parameters.getParameter (parameters::aging))
     {
+        const auto& range = aging->getNormalisableRange();
+        expect (std::abs (aging->convertFrom0to1 (aging->getDefaultValue())
+                         - (range.start + range.end) * 0.5f) < 1.0e-6f,
+                "Aging no longer defaults to the midpoint of its actual range");
         expect (aging->getVersionHint() == 7,
                 "Aging was not appended after every shipped AU layout");
         expect (auParameters.size() >= 3
@@ -1982,6 +1984,8 @@ void testStateRoundTripAndMigration()
     setParameterValue (source, parameters::calibration, 0.17f);
     setParameterValue (source, parameters::vcfTanhMode, 1.0f);
     setParameterValue (source, parameters::vcfFastEarlyMode, 1.0f);
+    setParameterValue (source, parameters::quality, 2.0f);
+    setParameterValue (source, parameters::aging, 0.0f);
 
     const auto removeParameter = [] (juce::ValueTree& state, const char* id)
     {
@@ -2026,6 +2030,28 @@ void testStateRoundTripAndMigration()
                          destination, parameters::vcfFastEarlyMode) - 1.0f)
                 < 1.0e-4f,
             "the VCF Fast Early choice did not survive a state round trip");
+    expect (juce::roundToInt (parameterValue (destination, parameters::quality)) == 2
+                && parameterValue (destination, parameters::aging) == 0.0f,
+            "new-instance defaults replaced explicit saved Quality or Aging");
+
+    auto preQualityAndAging = source.parameters.copyState();
+    removeParameter (preQualityAndAging, parameters::quality);
+    removeParameter (preQualityAndAging, parameters::legacyHq);
+    removeParameter (preQualityAndAging, parameters::aging);
+    juce::MemoryBlock historicalSettings;
+    if (serialise (preQualityAndAging, historicalSettings))
+    {
+        YouKnowAudioProcessor migrated;
+        migrated.setStateInformation (historicalSettings.getData(),
+                                      static_cast<int> (historicalSettings.getSize()));
+        expect (juce::roundToInt (parameterValue (migrated, parameters::quality)) == 2
+                    && parameterValue (migrated, parameters::aging) == 0.0f,
+                "new-instance defaults changed missing historical Quality or Aging");
+    }
+    else
+    {
+        expect (false, "could not serialise historical Quality/Aging settings");
+    }
 
     // A host may write any normalised float even to a switch. Keep the public
     // parameter value on a legal endpoint so saving and restoring an unchanged
@@ -3287,7 +3313,93 @@ void testPatchFileImportAppliesFirstPatchAndCountsTheRest()
             "a foreign-only file claimed to import");
     expect (nothingFound == 0, "a foreign-only file counted patches");
 
+    // A new F0 abandons an incomplete message in a MIDI stream. A damaged
+    // prefix must not consume the first valid patch's terminating F7.
+    file.insert (file.begin(), { 0xf0, 0x41, 0x31, 0x00 });
+    file.insert (file.begin() + 10, { 0xf0, 0x41 });
+    patchesFound = 0;
+    expect (processor.importPatchSysExBytes (file.data(), file.size(),
+                                             patchesFound)
+                && patchesFound == 2,
+            "an interrupted SysEx prefix swallowed a later valid patch");
+
     processor.releaseResources();
+}
+
+void testLaterRecallSupersedesPendingMidi()
+{
+    for (const int recallKind : { 0, 1, 2 })
+        for (const int eventCount : { 1, 70 })
+        {
+            YouKnowAudioProcessor pending, reference, selected;
+            selected.setCurrentProgram (9);
+            juce::MemoryBlock saved;
+            selected.getStateInformation (saved);
+            for (auto* processor : { &pending, &reference })
+                processor->prepareToPlay (sampleRate, blockSize);
+
+            // The second case also leaves a coalesced overflow mailbox. No
+            // message-loop tick runs before the later explicit recall.
+            juce::AudioBuffer<float> zero (2, 0);
+            for (auto* processor : { &pending, &reference })
+            {
+                juce::MidiBuffer midi;
+                for (int event = 0; event < eventCount; ++event)
+                    midi.addEvent (juce::MidiMessage::programChange (1, 2), 0);
+                processor->processBlock (zero, midi);
+            }
+            reference.flushPendingMidiEvents();
+            for (auto* processor : { &pending, &reference })
+            {
+                if (recallKind == 0)
+                    processor->setCurrentProgram (9);
+                else if (recallKind == 1)
+                    processor->setStateInformation (
+                        saved.getData(), static_cast<int> (saved.getSize()));
+                else
+                    processor->applyPatch (selected.currentPatch());
+            }
+            const int selectedProgram = pending.getCurrentProgram();
+            const auto expectedPatch = pending.currentPatch();
+            if (eventCount > 1)
+                pending.flushPendingMidiEvents();
+            juce::AudioBuffer<float> actual (2, blockSize), expected (2, blockSize);
+            for (auto* processor : { &pending, &reference })
+            {
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+                processor->processBlock (processor == &pending ? actual : expected,
+                                         midi);
+            }
+            expect (maximumBufferDifference (actual, expected) < 2.0e-5f,
+                    "a pending MIDI shadow overrode a later explicit recall");
+
+            pending.flushPendingMidiEvents();
+            std::array<std::uint8_t, sysex::toneByteCount> actualTone {}, expectedTone {};
+            sysex::toneBytesFromPatch (pending.currentPatch(), actualTone.data());
+            sysex::toneBytesFromPatch (expectedPatch, expectedTone.data());
+            expect (actualTone == expectedTone
+                        && pending.getCurrentProgram() == selectedProgram,
+                    "deferred MIDI reflection overwrote a later explicit recall");
+
+            // New MIDI remains authoritative, including an all-parameter
+            // overflow that must not resurrect the preceding program index.
+            std::array<std::uint8_t, sysex::parameterMessageBytes> raw {};
+            const auto written = sysex::writeParameterMessage (
+                static_cast<int> (sysex::ToneParameter::VcfFreq), 23, 0,
+                raw.data(), raw.size());
+            juce::MidiBuffer later;
+            for (int event = 0; event < 70; ++event)
+                later.addEvent (juce::MidiMessage::createSysExMessage (
+                    raw.data() + 1, static_cast<int> (written) - 2), 0);
+            pending.processBlock (zero, later);
+            pending.flushPendingMidiEvents();
+            expect (std::abs (parameterValue (pending, parameters::cutoff)
+                             - 23.0f / 127.0f) < 1.0e-5f,
+                    "an explicit recall discarded newer MIDI parameter changes");
+            expect (pending.getCurrentProgram() == selectedProgram,
+                    "a later MIDI overflow resurrected a superseded program index");
+        }
 }
 
 // SysEx has the same timing obligation as notes and Program Change. A full
@@ -3830,6 +3942,122 @@ void testSingleParameterOverflowResyncPreservesLaterUnrelatedEdit()
             "single-parameter overflow was reported as a hard drop");
 
     processor.releaseResources();
+}
+
+void testStateSaveIncludesUnreflectedMidiTone()
+{
+    for (const bool fullDump : { false, true })
+        for (const int eventCount : { 1, 70 })
+        {
+            YouKnowAudioProcessor source;
+            source.setCurrentProgram (7);
+            constexpr float volume = 0.4321f;
+            setParameterValue (source, parameters::volume, volume);
+            source.prepareToPlay (sampleRate, blockSize);
+            const auto oldCutoff = parameterValue (source, parameters::cutoff);
+            const auto wanted = source.programPatch (3);
+            std::array<std::uint8_t, sysex::patchMessageBytes> dump {};
+            const auto written = sysex::writePatchMessage (
+                wanted, 0, dump.data(), dump.size());
+            juce::MidiBuffer midi;
+            for (int event = 0; event < eventCount; ++event)
+                midi.addEvent (
+                    fullDump ? juce::MidiMessage::createSysExMessage (
+                                   dump.data() + 1, static_cast<int> (written) - 2)
+                             : juce::MidiMessage::programChange (1, 2),
+                    event);
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            source.processBlock (buffer, midi);
+
+            juce::MemoryBlock state;
+            std::thread hostSave ([&] { source.getStateInformation (state); });
+            hostSave.join();
+            expect (source.getCurrentProgram() == 7
+                        && std::abs (parameterValue (source, parameters::cutoff)
+                                     - oldCutoff) < 1.0e-6f,
+                    "state save consumed MIDI reflection or changed live parameters");
+            YouKnowAudioProcessor restored;
+            restored.setStateInformation (state.getData(),
+                                          static_cast<int> (state.getSize()));
+            std::array<std::uint8_t, sysex::toneByteCount> expectedTone {}, savedTone {};
+            sysex::toneBytesFromPatch (wanted, expectedTone.data());
+            sysex::toneBytesFromPatch (restored.currentPatch(), savedTone.data());
+            expect (savedTone == expectedTone
+                        && restored.getCurrentProgram() == (fullDump ? 7 : 3),
+                    "immediate host save omitted queued or overflowed MIDI tone/program");
+            expect (std::abs (parameterValue (restored, parameters::volume) - volume)
+                        < 1.0e-5f,
+                    "saving a MIDI tone replaced a live performance control");
+
+            // A complete UI/host recall is newer than the published MIDI tone,
+            // even if no audio block or message-thread reflection follows it.
+            source.setCurrentProgram (9);
+            source.getStateInformation (state);
+            restored.setStateInformation (state.getData(),
+                                          static_cast<int> (state.getSize()));
+            expect (restored.getCurrentProgram() == 9
+                        && ! restored.currentProgramIsEdited(),
+                    "state save resurrected MIDI superseded by a later host recall");
+            source.flushPendingMidiEvents();
+            expect (source.getCurrentProgram() == 9 && ! source.currentProgramIsEdited(),
+                    "saving MIDI changed subsequent stale-event retirement");
+            source.releaseResources();
+        }
+}
+
+void testStateSavePreservesEditsAfterMidiReflection()
+{
+    YouKnowAudioProcessor source;
+    source.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::programChange (1, 2), 0);
+    source.processBlock (buffer, midi);
+
+    // Hosts can edit and save synchronously from the reflected program-change
+    // notification. The MIDI acknowledgement must already belong to APVTS.
+    struct SaveAfterProgramNotification final : juce::AudioProcessorListener
+    {
+        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+        void audioProcessorChanged (juce::AudioProcessor* processor,
+                                     const ChangeDetails& details) override
+        {
+            if (! details.programChanged)
+                return;
+            auto& source = *static_cast<YouKnowAudioProcessor*> (processor);
+            setParameterValue (source, parameters::release, 0.8123f);
+            source.getStateInformation (state);
+        }
+        juce::MemoryBlock state;
+    } listener;
+    source.addListener (&listener);
+    source.flushPendingMidiEvents();
+    source.removeListener (&listener);
+    expect (! listener.state.isEmpty(), "MIDI reflection sent no program notification");
+    YouKnowAudioProcessor restored;
+    restored.setStateInformation (listener.state.getData(),
+                                  static_cast<int> (listener.state.getSize()));
+    expect (std::abs (parameterValue (restored, parameters::release) - 0.8123f) < 1.0e-5f,
+            "state save overlaid acknowledged MIDI onto a later host edit");
+
+    std::array<std::uint8_t, sysex::parameterMessageBytes> message {};
+    const auto written = sysex::writeParameterMessage (
+        static_cast<int> (sysex::ToneParameter::VcfFreq), 17, 0,
+        message.data(), message.size());
+    for (int event = 0; event < 70; ++event)
+        midi.addEvent (juce::MidiMessage::createSysExMessage (
+                           message.data() + 1, static_cast<int> (written) - 2), event);
+    source.processBlock (buffer, midi);
+    setParameterValue (source, parameters::release, 0.7345f);
+    juce::MemoryBlock state;
+    source.getStateInformation (state);
+    restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    expect (std::abs (parameterValue (restored, parameters::cutoff) - 17.0f / 127.0f)
+                < 1.0e-5f
+                && std::abs (parameterValue (restored, parameters::release) - 0.7345f)
+                       < 1.0e-5f,
+            "saving pending single-parameter MIDI reverted unrelated later automation");
+    source.releaseResources();
 }
 
 // A saved program index has to come back, or the host's selector and the sound
@@ -4629,8 +4857,9 @@ void testFactoryProgramsLoad()
 {
     YouKnowAudioProcessor processor;
     // Program 0 is the init patch, so the bank sits at 1..N.
-    expect (processor.getNumPrograms() == presets::presetCount + 1,
-            "the host does not see the whole factory bank");
+    expect (processor.getNumPrograms()
+                == presets::presetCount + presets::productPresetCount + 1,
+            "the host does not see the factory and original product banks");
     expect (processor.getProgramName (0) == "INIT",
             "program 0 is not the init patch");
     // A freshly constructed processor holds the layout defaults, so the program
@@ -4719,11 +4948,68 @@ void testFactoryProgramsLoad()
     // carry it through the 18-byte patch format.
     for (int index = 1; index < processor.getNumPrograms(); ++index)
     {
-        expect (presets::factoryBank()[static_cast<std::size_t> (index - 1)]
-                    .exportsLosslessly(),
+        expect (presets::programPreset (index)->exportsLosslessly(),
                 "a factory preset does not survive patch memory");
         expect (! processor.getProgramName (index).contains ("I+II"),
                 "a factory preset advertises an unstorable I+II chorus mode");
+    }
+}
+
+void testOriginalProductProgramsPreserveFactorySlotsAndState()
+{
+    using Category = presets::Preset::Category;
+    YouKnowAudioProcessor processor;
+    std::set<std::array<std::uint8_t, sysex::toneByteCount>> tones;
+    for (int index = 0; index < presets::presetCount; ++index)
+    {
+        const auto* preset = presets::programPreset (index + 1);
+        expect (preset == &presets::factoryBank()[static_cast<std::size_t> (index)],
+                "original collection displaced an archival factory slot");
+        std::array<std::uint8_t, sysex::toneByteCount> bytes {};
+        sysex::toneBytesFromPatch (preset->patch, bytes.data());
+        tones.insert (bytes);
+    }
+    expect (presets::programPreset (0) == nullptr
+                && presets::programPreset (-1) == nullptr
+                && presets::programPreset (processor.getNumPrograms()) == nullptr,
+            "preset lookup accepted INIT or an invalid bank index");
+
+    for (int index = 0; index < presets::productPresetCount; ++index)
+    {
+        const int program = presets::presetCount + index + 1;
+        const auto& preset = presets::productBank()[static_cast<std::size_t> (index)];
+        expect (presets::programPreset (program) == &preset
+                    && presets::findByNumber (preset.number) == &preset,
+                "original program cannot be found by its stable index or number");
+        expect (preset.category == (index < 8 ? Category::Bass : Category::Pad),
+                "original collection lost its eight basses/eight pads partition");
+        std::array<std::uint8_t, sysex::toneByteCount> bytes {};
+        sysex::toneBytesFromPatch (preset.patch, bytes.data());
+        expect (tones.insert (bytes).second,
+                "an original program duplicates another bank's tone bytes");
+        processor.setCurrentProgram (program);
+        expect (! processor.currentProgramIsEdited(),
+                "an original program was marked edited immediately after recall");
+        juce::MemoryBlock state;
+        processor.getStateInformation (state);
+        YouKnowAudioProcessor restored;
+        restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+        expect (restored.getCurrentProgram() == program
+                    && ! restored.currentProgramIsEdited(),
+                "an appended original program did not survive a session round trip");
+    }
+
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> zero (2, 0);
+    for (const int midiProgram : { 0, 127 })
+    {
+        processor.setCurrentProgram (processor.getNumPrograms() - 1);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::programChange (1, midiProgram), 0);
+        processor.processBlock (zero, midi);
+        processor.flushPendingMidiEvents();
+        expect (processor.getCurrentProgram() == midiProgram + 1,
+                "the original collection changed hardware MIDI bank addressing");
     }
 }
 
@@ -4741,8 +5027,33 @@ void testHardwareProgrammerAddressesCompleteFactoryBank()
     auto* selector = dynamic_cast<juce::ComboBox*> (
         findDescendantNamed (*editor, "Patch selector"));
     expect (selector != nullptr
-                && selector->getNumItems() == presets::presetCount + 1,
-            "the host preset rail does not contain INIT plus all 128 tones");
+                && selector->getNumItems() == processor.getNumPrograms(),
+            "the preset menu does not contain every program exactly once");
+    if (selector != nullptr)
+    {
+        std::vector<bool> present (static_cast<std::size_t> (processor.getNumPrograms()));
+        for (int item = 0; item < selector->getNumItems(); ++item)
+        {
+            const int program = selector->getItemId (item) - 1;
+            expect (program >= 0 && program < processor.getNumPrograms(),
+                    "the sound-family menu has an invalid program ID");
+            if (program < 0 || program >= processor.getNumPrograms())
+                continue;
+            expect (! present[static_cast<std::size_t> (program)],
+                    "the sound-family menu lists a program twice");
+            present[static_cast<std::size_t> (program)] = true;
+            expect (selector->getItemText (item) == processor.getProgramName (program),
+                    "the sound-family menu changed a saved program's identity");
+        }
+        for (const auto* name : { "Basses", "Brass", "Strings", "Pads" })
+        {
+            int sounds = 0;
+            for (juce::PopupMenu::MenuItemIterator item (*selector->getRootMenu()); item.next();)
+                if (item.getItem().text == name && item.getItem().subMenu != nullptr)
+                    sounds = item.getItem().subMenu->getNumItems();
+            expect (sounds >= 8, std::string (name) + " has too few choices in its menu");
+        }
+    }
 
     std::array<juce::Button*, 2> groups {};
     std::array<juce::Button*, 8> banks {};
@@ -4789,6 +5100,19 @@ void testHardwareProgrammerAddressesCompleteFactoryBank()
                             .startsWith (expectedNumber + " "),
                         "a hardware key combination addressed the wrong factory slot");
             }
+
+    if (selector != nullptr)
+    {
+        selector->setSelectedId (processor.getNumPrograms(), juce::sendNotificationSync);
+        expect (processor.getCurrentProgram() == processor.getNumPrograms() - 1,
+                "the categorized menu cannot recall the final product preset");
+        for (auto* group : groups)
+            expect (! group->getToggleState(),
+                    "a product preset incorrectly lights a hardware memory group");
+        groups[0]->onClick();
+        expect (processor.getCurrentProgram() == 64,
+                "returning from a product preset lost the last hardware bank and patch");
+    }
 }
 
 void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
@@ -5136,8 +5460,7 @@ void testQualitySelectorDrivesTheEngine()
                 "the engine emitted a non-finite sample at " + where);
     }
 
-    // And back up again, so the ladder is exercised in both directions rather
-    // than only downwards from its default.
+    // And back up again, so the ladder is exercised in both directions.
     box->setSelectedItemIndex (YouKnowAudioProcessor::qualityChoiceCount - 1,
                                juce::sendNotificationSync);
     for (int block = 0; block < 400; ++block)
@@ -5594,6 +5917,16 @@ void testPersistentContextHelpAndValueBubbles()
         slider->mouseUp (mouseEventFor (*slider, centre, {}));
         slider->setValue (previous, juce::sendNotificationSync);
     }
+
+    help->showNotice ("PATCH SAVED", "Saved the current tone.");
+    help->showFor (patchBox);
+    expect (help->getHelpTitle() == "PATCH SAVED"
+                && help->getHelpText() == "Saved the current tone."
+                && help->getHelpValue().isEmpty(),
+            "hover polling hid the patch-file result before it could be read");
+    help->showIdle();
+    expect (help->getHelpTitle() == "PATCH SAVED",
+            "idle polling hid the patch-file result before it could be read");
 }
 
 void testEditorContrastAndFocusContract()
@@ -6214,7 +6547,7 @@ void testProgrammerRowKeysShareOneKeyFace()
     static constexpr const char* rowKeys[] {
         "POLY 1", "POLY 2", "UNISON", "Group A", "Group B",
         "Bank 1", "Bank 8", "Patch 1", "Patch 8",
-        "Manual mode", "Write memory", "Save patch file", "Verify tape data",
+        "Manual mode", "About YouKnow", "Save patch file", "Quick start",
         "Load patch file",
     };
 
@@ -6227,6 +6560,10 @@ void testProgrammerRowKeysShareOneKeyFace()
                 std::string ("the programmer row is missing ") + name);
         if (key == nullptr)
             continue;
+
+        if (key->getName() == "About YouKnow" || key->getName() == "Quick start")
+            expect (key->isEnabled() && static_cast<bool> (key->onClick),
+                    key->getName().toStdString() + " has no working action");
 
         const auto area = editor->getLocalArea (key, key->getLocalBounds());
         if (rowArea.isEmpty())
@@ -6256,7 +6593,7 @@ void testPerformanceLeverKeepsTheAxisStillHeld()
             "the lever does not rest when no arrow key is held");
     expect (axes (false, true, false).bend == 1.0f,
             "holding Right does not bend up");
-    expect (axes (true, false, false).bend == -1.0f,
+    expect (std::abs (axes (true, false, false).bend + 1.0f) < 1.0e-6f,
             "holding Left does not bend down");
     // The defect: Right still held, Up just released.
     expect (axes (false, true, false).bend == 1.0f
@@ -7190,6 +7527,30 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
+    if (std::getenv ("YOUKNOW_PRESET_TEST_ONLY") != nullptr)
+    {
+        testFactoryProgramsLoad();
+        testOriginalProductProgramsPreserveFactorySlotsAndState();
+        testEveryProductProgramRestoresEveryParameter();
+        testEditedFlagFollowsTheCompleteProgram();
+        testSelectedProgramSurvivesAStateRoundTrip();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
+    if (std::getenv ("YOUKNOW_HOST_RECALL_TEST_ONLY") != nullptr)
+    {
+        testStateSaveIncludesUnreflectedMidiTone();
+        testStateSavePreservesEditsAfterMidiReflection();
+        testPatchFileImportAppliesFirstPatchAndCountsTheRest();
+        testLaterRecallSupersedesPendingMidi();
+        testOrderedSysExAffectsAudioWithoutTheMessageThread();
+        testReflectionAckCannotRetireShadowAgainstAStaleSnapshot();
+        testOverflowedMidiReflectionCoalescesWithoutDroppingAudioEvents();
+        testSingleParameterOverflowResyncPreservesLaterUnrelatedEdit();
+        testReentrantStateSaveReturnsThePreRecallSnapshot();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     testPublicParameterOrderMatchesTheSharedList();
     testParameterContract();
     testParameterTextRoundTrips();
@@ -7231,6 +7592,7 @@ int main()
     testSysExPatchRoundTripsThroughTheParameters();
     testHardwarePatchFramingReachesLiveAndFilePaths();
     testPatchFileImportAppliesFirstPatchAndCountsTheRest();
+    testLaterRecallSupersedesPendingMidi();
     testOrderedSysExAffectsAudioWithoutTheMessageThread();
     testReflectionAckCannotRetireShadowAgainstAStaleSnapshot();
     testSingleParameterSysExDoesNotDisturbAnythingElse();
@@ -7239,6 +7601,8 @@ int main()
     testSingleParameterOverflowResyncPreservesLaterUnrelatedEdit();
     testSelectedProgramSurvivesAStateRoundTrip();
     testConcurrentProgramRecallSavesACoherentState();
+    testStateSaveIncludesUnreflectedMidiTone();
+    testStateSavePreservesEditsAfterMidiReflection();
     testReentrantStateSaveReturnsThePreRecallSnapshot();
     testForeignSysExLeavesThePatchAlone();
     testLegacyAutomationIdsStillReachTheSwitches();
@@ -7254,6 +7618,7 @@ int main()
     testEditedFlagFollowsTheCompleteProgram();
     testColdStartProgramAndEditorAreInSync();
     testFactoryProgramsLoad();
+    testOriginalProductProgramsPreserveFactorySlotsAndState();
     testHardwareProgrammerAddressesCompleteFactoryBank();
     testDerivedOriginalPanelSwitchesDriveTheirExistingParameters();
     testEveryProductProgramRestoresEveryParameter();

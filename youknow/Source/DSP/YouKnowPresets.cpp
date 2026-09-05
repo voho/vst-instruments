@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <string_view>
 
 namespace youknow::presets
@@ -435,10 +436,164 @@ struct BankStorage
                 controls
             };
         }
+
+        // Browsing metadata only; keep the archival order and tone bytes.
+        const auto tag = [this](Preset::Category category,
+                                std::initializer_list<const char*> slots) {
+            for (const auto* slot : slots)
+            {
+                const auto index = static_cast<std::size_t>(
+                    (slot[0] - 'A') * 64 + (slot[1] - '1') * 8 + slot[2] - '1');
+                presets[index].category = category;
+            }
+        };
+        tag(Preset::Category::Bass, { "A48", "A55", "B38", "B68" });
+        tag(Preset::Category::Brass, {
+            "A11", "A12", "A13", "A16", "A34", "A35", "A43",
+            "B31", "B55", "B73", "B82" });
+        tag(Preset::Category::Strings, {
+            "A15", "A36", "A37", "A38", "B11", "B12", "B74", "B81",
+            "B83", "B84" });
+        tag(Preset::Category::Pad, {
+            "A17", "A68", "A77", "B23", "B43", "B47", "B56" });
     }
 };
 
 const BankStorage bankStorage;
+
+// Original product sounds, not archival hardware programs. Each is a normal
+// panel patch with its visible performance setup; no private DSP or gain path.
+const std::array<Preset, productPresetCount> productPresets = [] {
+    Preset::Controls bass;
+    bass.volume = 0.50f;
+    bass.keyMode = KeyMode::Unison;
+    bass.polyphony = 1;
+    auto octaveBass = bass;
+    octaveBass.polyphony = 2;
+    auto glideBass = bass;
+    glideBass.portamento = 0.18f;
+    Preset::Controls pad;
+    pad.volume = 0.48f;
+    using Category = Preset::Category;
+    auto result = std::array<Preset, productPresetCount> {{
+        { "YB1", "Round Sub", {
+            .cutoff = 0.27f, .resonance = 0.02f, .vcfEnv = 0.14f,
+            .vcaLevel = 0.74f, .decay = 0.26f, .sustain = 0.78f,
+            .release = 0.14f, .sub = 0.85f, .range = DcoRange::Sixteen,
+            .saw = false, .pulse = true, .highPass = HighPassMode::Boost
+        }, bass, Category::Bass },
+        { "YB2", "Pulse Pluck", {
+            .pwm = 0.24f, .cutoff = 0.23f, .resonance = 0.13f, .vcfEnv = 0.55f,
+            .vcaLevel = 0.78f, .decay = 0.24f, .sustain = 0.12f,
+            .release = 0.12f, .sub = 0.42f, .saw = false, .pulse = true,
+            .highPass = HighPassMode::Boost
+        }, bass, Category::Bass },
+        { "YB3", "Solid Saw", {
+            .cutoff = 0.52f, .resonance = 0.08f, .vcfEnv = 0.20f,
+            .vcaLevel = 0.74f, .decay = 0.38f, .sustain = 0.82f,
+            .release = 0.10f, .sub = 0.18f, .range = DcoRange::Sixteen,
+            .highPass = HighPassMode::Boost
+        }, bass, Category::Bass },
+        { "YB4", "Rubber Bass", {
+            .pwm = 0.36f, .cutoff = 0.16f, .resonance = 0.63f, .vcfEnv = 0.70f,
+            .vcaLevel = 0.76f, .decay = 0.32f, .sustain = 0.35f,
+            .release = 0.16f, .sub = 0.24f, .pulse = true,
+            .highPass = HighPassMode::Boost
+        }, bass, Category::Bass },
+        { "YB5", "Octave Weight", {
+            .pwm = 0.14f, .cutoff = 0.35f, .resonance = 0.06f, .vcfEnv = 0.12f,
+            .vcaLevel = 0.72f, .decay = 0.42f, .sustain = 0.88f,
+            .release = 0.20f, .sub = 0.90f, .pulse = true,
+            .highPass = HighPassMode::Boost
+        }, octaveBass, Category::Bass },
+        { "YB6", "Short PWM", {
+            .lfoRate = 0.30f, .pwm = 0.62f, .cutoff = 0.42f,
+            .resonance = 0.12f, .vcfEnv = 0.32f, .vcaLevel = 0.78f,
+            .decay = 0.19f, .sustain = 0.0f, .release = 0.10f,
+            .range = DcoRange::Sixteen, .saw = false, .pulse = true,
+            .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
+        }, bass, Category::Bass },
+        { "YB7", "Glide Mono", {
+            .cutoff = 0.31f, .resonance = 0.28f, .vcfEnv = 0.29f,
+            .vcaLevel = 0.76f, .decay = 0.48f, .sustain = 0.70f,
+            .release = 0.20f, .sub = 0.48f, .highPass = HighPassMode::Boost
+        }, glideBass, Category::Bass },
+        { "YB8", "Hollow Square", {
+            .pwm = 0.0f, .cutoff = 0.72f, .resonance = 0.08f, .vcfEnv = 0.0f,
+            .vcaLevel = 0.60f, .decay = 0.12f, .sustain = 1.0f,
+            .release = 0.16f, .range = DcoRange::Sixteen,
+            .saw = false, .pulse = true
+        }, bass, Category::Bass },
+        { "YP1", "Warm Ensemble", {
+            .lfoRate = 0.25f, .dcoLfo = 0.018f, .pwm = 0.25f,
+            .cutoff = 0.56f, .resonance = 0.06f, .vcfEnv = 0.05f,
+            .keyFollow = 0.56f, .vcaLevel = 0.70f, .attack = 0.48f,
+            .decay = 0.65f, .sustain = 0.80f, .release = 0.58f, .sub = 0.12f,
+            .pulse = true, .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::Two
+        }, pad, Category::Pad },
+        { "YP2", "Slow Horizon", {
+            .lfoRate = 0.13f, .pwm = 0.60f, .cutoff = 0.28f,
+            .resonance = 0.16f, .vcfEnv = 0.33f, .vcaLevel = 0.74f,
+            .attack = 0.78f, .decay = 0.75f, .sustain = 0.74f,
+            .release = 0.80f, .sub = 0.26f, .saw = false, .pulse = true,
+            .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
+        }, pad, Category::Pad },
+        { "YP3", "Glass Halo", {
+            .lfoRate = 0.28f, .dcoLfo = 0.009f, .pwm = 0.56f,
+            .cutoff = 0.74f, .resonance = 0.43f, .vcfEnv = 0.04f,
+            .keyFollow = 0.60f, .vcaLevel = 0.74f, .attack = 0.30f,
+            .decay = 0.45f, .sustain = 0.58f, .release = 0.70f,
+            .range = DcoRange::Four, .saw = false, .pulse = true,
+            .highPass = HighPassMode::Two, .chorus = ChorusMode::Two
+        }, pad, Category::Pad },
+        { "YP4", "Velvet PWM", {
+            .lfoRate = 0.18f, .pwm = 0.38f, .cutoff = 0.39f,
+            .resonance = 0.04f, .vcfEnv = 0.12f, .vcaLevel = 0.70f,
+            .attack = 0.42f, .decay = 0.62f, .sustain = 0.94f,
+            .release = 0.64f, .sub = 0.06f, .saw = false, .pulse = true,
+            .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
+        }, pad, Category::Pad },
+        { "YP5", "Hollow Choir", {
+            .lfoRate = 0.22f, .dcoLfo = 0.022f, .pwm = 0.38f,
+            .cutoff = 0.46f, .resonance = 0.72f, .vcfEnv = 0.03f,
+            .keyFollow = 0.84f, .vcaLevel = 0.70f, .attack = 0.59f,
+            .decay = 0.50f, .sustain = 0.83f, .release = 0.52f,
+            .saw = false, .pulse = true, .chorus = ChorusMode::Two
+        }, pad, Category::Pad },
+        { "YP6", "Brass Cloud", {
+            .lfoRate = 0.22f, .cutoff = 0.45f, .resonance = 0.10f,
+            .vcfEnv = 0.33f, .vcaLevel = 0.72f, .attack = 0.30f,
+            .decay = 0.72f, .sustain = 0.60f, .release = 0.55f,
+            .sub = 0.14f, .chorus = ChorusMode::One
+        }, pad, Category::Pad },
+        { "YP7", "Resonant Mist", {
+            .lfoRate = 0.16f, .pwm = 0.48f, .noise = 0.035f,
+            .cutoff = 0.42f, .resonance = 0.59f, .vcfEnv = 0.12f,
+            .vcfLfo = 0.07f, .vcaLevel = 0.72f, .attack = 0.69f,
+            .decay = 0.80f, .sustain = 0.81f, .release = 0.76f,
+            .pulse = true, .pwmSource = PwmSource::Lfo,
+            .highPass = HighPassMode::Two, .chorus = ChorusMode::Two
+        }, pad, Category::Pad },
+        { "YP8", "Dark Motion", {
+            .lfoRate = 0.09f, .pwm = 0.68f, .cutoff = 0.29f,
+            .resonance = 0.22f, .vcfEnv = 0.10f, .vcfLfo = 0.055f,
+            .vcaLevel = 0.72f, .attack = 0.52f, .decay = 0.78f,
+            .sustain = 0.77f, .release = 0.67f, .sub = 0.32f,
+            .pulse = true, .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
+        }, pad, Category::Pad }
+    }};
+    // Visible VR1 positions balanced against both the short stress score and
+    // full phrases. Hot programs target 0.5 dB below the bank ceiling; the
+    // quiet sustained square bass uses the nominal 0.80 output position.
+    result[0].controls.volume = 0.273f;   // Round Sub
+    result[4].controls.volume = 0.121f;   // Octave Weight
+    result[7].controls.volume = 0.800f;   // Hollow Square: sustained bass balance
+    result[8].controls.volume = 0.239f;   // Warm Ensemble
+    result[9].controls.volume = 0.459f;   // Slow Horizon
+    result[11].controls.volume = 0.433f;  // Velvet PWM
+    result[12].controls.volume = 0.427f;  // Hollow Choir
+    return result;
+}();
 } // namespace
 
 const std::array<Preset, presetCount>& factoryBank() noexcept
@@ -446,11 +601,29 @@ const std::array<Preset, presetCount>& factoryBank() noexcept
     return bankStorage.presets;
 }
 
+const std::array<Preset, productPresetCount>& productBank() noexcept
+{
+    return productPresets;
+}
+
+const Preset* programPreset(int hostProgramIndex) noexcept
+{
+    if (hostProgramIndex > 0 && hostProgramIndex <= presetCount)
+        return &factoryBank()[static_cast<std::size_t>(hostProgramIndex - 1)];
+    if (hostProgramIndex > presetCount
+        && hostProgramIndex <= presetCount + productPresetCount)
+        return &productBank()[static_cast<std::size_t>(hostProgramIndex - presetCount - 1)];
+    return nullptr;
+}
+
 const Preset* findByNumber(const char* number) noexcept
 {
     if (number == nullptr)
         return nullptr;
     for (const auto& preset : bankStorage.presets)
+        if (std::strcmp(preset.number, number) == 0)
+            return &preset;
+    for (const auto& preset : productPresets)
         if (std::strcmp(preset.number, number) == 0)
             return &preset;
     return nullptr;

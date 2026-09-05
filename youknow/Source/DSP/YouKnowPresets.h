@@ -8,13 +8,14 @@
 namespace youknow::presets
 {
 
-// The complete 128-tone factory memory supplied with the reference instrument:
+// factoryBank() retains the complete 128-tone reference-instrument memory:
 // bank A followed by bank B, groups 1..8 and patches 1..8. Each entry is stored
 // from its original eighteen 7-bit tone bytes and decoded by the same path used
 // for a hardware SysEx dump; there are no hand-transcribed tone floats and no
-// hidden per-preset DSP gain. Product presets add only the documented plug-in
-// controls below, including attenuation-only positions for the front-panel
-// output-volume shaft.
+// hidden per-preset DSP gain. Factory product controls add only the documented
+// plug-in controls below, including attenuation-only output-volume positions.
+// productBank() contains separately authored YouKnow basses and pads, appended
+// to the host list without changing the archival memory or MIDI addressing.
 //
 // The hardware stores no names. The names here are archival descriptive
 // metadata and do not take part in tone-memory or SysEx round trips. Provenance,
@@ -22,7 +23,8 @@ namespace youknow::presets
 
 struct Preset
 {
-    // "A11" through "A88", then "B11" through "B88".
+    enum class Category { Bass, Brass, Strings, Pad, Other };
+    // Hardware A11..A88/B11..B88, then original product IDs YB1..8/YP1..8.
     const char* number;
     const char* name;
     sysex::Patch patch;
@@ -33,7 +35,8 @@ struct Preset
     // not carry.  Keeping them beside the tone, rather than teaching SysEx
     // about plug-in-only data, lets the preset bar restore the player's whole
     // setup without changing what an imported hardware patch means.  "Whole
-    // setup" stops short of one visible control: see the note below the fields.
+    // setup" excludes numerical processing choices, Aging and the live
+    // performance lever: those belong to the session rather than the sound.
     struct Controls
     {
         float volume { 0.80f };
@@ -55,11 +58,12 @@ struct Preset
     };
 
     Controls controls {};
+    Category category { Category::Other };
 
     // Whether this patch keeps the same effective 7-bit hardware state.
     //
-    // The factory bank uses only the patch memory's Off/I/II chorus states, so
-    // its entries are exportable. Live I+II has no tone-memory encoding and is
+    // Both banks use only the patch memory's Off/I/II chorus states, so their
+    // entries are exportable. Live I+II has no tone-memory encoding and is
     // therefore reported as a categorical loss when written to hardware SysEx.
     [[nodiscard]] bool exportsLosslessly() const noexcept
     {
@@ -68,8 +72,14 @@ struct Preset
 };
 
 inline constexpr int presetCount = 128;
+inline constexpr int productPresetCount = 16;
 
 [[nodiscard]] const std::array<Preset, presetCount>& factoryBank() noexcept;
+// Original YouKnow basses and pads follow the immutable hardware bank in the
+// host list. Hardware MIDI Program Change retains its original 128 slots.
+[[nodiscard]] const std::array<Preset, productPresetCount>& productBank() noexcept;
+// Host program zero is INIT; invalid indices and INIT have no bank entry.
+[[nodiscard]] const Preset* programPreset(int hostProgramIndex) noexcept;
 
 // The bank entry for a patch number such as "A11", or nullptr.
 [[nodiscard]] const Preset* findByNumber(const char* number) noexcept;

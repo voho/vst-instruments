@@ -384,7 +384,7 @@ bounds a span it sits inside that bound; the points inside are still voiced
 sound design, not measured population statistics — OQ-10 owns the data that
 would replace them.
 
-**Aging** sits beside Unit Character: zero is a freshly serviced
+**Aging** sits beside Unit Character and defaults to 50%: zero is a freshly serviced
 instrument; raising it drifts each voice's filter trim flat by its own
 share of up to a quarter tone and lifts the noise source by up to 3.5 dB,
 following one documented four-year recalibration. It describes the
@@ -393,17 +393,16 @@ it alone.
 
 ### Interface
 
-The interface keeps the reference instrument's control inventory **and its
+The interface follows the reference instrument's synthesis controls **and their
 reading order** in a 1360×718 opening window. The synthesis strip is LFO,
 DCO, HPF, VCF, VCA, ENV and CHORUS; VOLUME and PORTA live in the left
 performance cheek with the bender-depth faders and spring lever. Fully down
 is off; any non-zero PORTA setting enables glide. The 61-key keyboard begins
 beside that cheek. Below the strip
 is the hardware programmer tier: POLY 1/2 plus UNISON, A/B group, BANK and
-PATCH keys, the recessed red display, MANUAL, WRITE and tape
-SAVE/VERIFY/LOAD — the immutable factory bank makes WRITE and VERIFY
-explanatory disabled controls, while selection, MANUAL and SysEx SAVE/LOAD
-are live.
+PATCH keys, the recessed green display, MANUAL and SysEx SAVE/LOAD. ABOUT opens
+product information; HELP opens Quick Start. The factory bank remains
+unchanged when editing or exporting a patch.
 
 Plug-in-only controls stay close to their hardware families: UNISON
 completes the VOICE MODE group, HISS sits inside CHORUS, VELOCITY and
@@ -414,16 +413,43 @@ VARIATION actions occupy the lower bay. The visual language is planar warm
 charcoal with restrained oxblood and teal, project-drawn controls and
 independent branding.
 
-Hovering any interactive element updates the fixed help strip below the
-keys immediately — explanation plus the control's current value in its own
+Hovering a control or reaching it with Tab updates the fixed help strip below the
+keys — explanation plus the control's current value in its own
 units — and the same strings are exposed as accessibility metadata. The
+result of a patch-file load or save stays visible for six seconds. The
 oscilloscope ranges itself and prints its gain. The bender lever is live
 performance input (pitch left/right, modulation up, spring to zero); it
 drives the same controller scan as external Pitch Wheel and CC 1. Its two
 axes can also be recorded and played back as host automation, independently
-of patch selection. The host preset rail recalls the factory
-bank with a stepper, name list, RELOAD and a LOADED/EDITED indicator, in
+of patch selection. The host preset rail recalls the sound bank
+with a stepper, family menu, RELOAD and a LOADED/EDITED indicator, in
 sync with the host's own program state.
+
+### Choosing a sound
+
+The preset menu contains **144 sounds plus INIT**: 128 archival factory tones
+and 16 original YouKnow presets. Its Basses, Brass, Strings and Pads submenus
+provide focused starting points; the remaining factory sounds include keys,
+organs, plucks, bells, leads, percussion and effects.
+
+| Family | Sounds | Examples |
+| --- | ---: | --- |
+| Basses | 12 | Round Sub, Pulse Pluck, Rubber Bass, Glide Mono |
+| Brass | 11 | Brass Swell, Trumpet, Fanfare, Brass Ensemble |
+| Strings | 10 | Moving Strings, Pizzicato, Violin, Cello |
+| Pads | 15 | Warm Ensemble, Slow Horizon, Velvet PWM, Dark Motion |
+
+The eight original basses occupy YB1–YB8; the eight original pads occupy
+YP1–YP8. They are complete presets with their own visible volume, voice and
+performance settings. The original 128 tones and host program numbers retain
+their existing positions; the new sounds follow them. The A/B hardware keys
+continue to address the archival bank. A new YouKnow sound shows `--` in that
+hardware location display and its full name in the preset menu.
+
+Save a host preset or project to retain the complete setup. A `.syx` export
+contains the hardware tone, so it omits volume, voice mode and the other
+performance controls. Preset recall preserves Aging, Quality, filter-processing
+settings and the current pitch-bend and modulation positions.
 
 ### Original factory bank
 
@@ -528,8 +554,8 @@ The QUALITY selector offers a 1×/2×/4× internal-rate ladder applied as a
 ceiling against what the host rate needs; engine cost tracks the applied
 factor nearly linearly, and the worst audited six-voice resonant scenario
 measures 0.85× realtime at 4× on one Apple M1 Max core (0.23× at 1×). New
-instances ship at 4× because the BBD and VCF domains pass their absolute
-numerical gates only there; 1× and 2× remain available for lower CPU use.
+instances ship at 1× for lower CPU use. Choose 2× or 4× to reduce aliasing;
+the BBD and VCF domains pass their absolute numerical gates at 4×.
 
 The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
 nonlinear filter. Normal — the cheapest rung, roughly half the filter's
@@ -777,6 +803,17 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### 1.1.0 — unreleased
 
+- More space below the programmer header, consistent caption baselines,
+  centred button icons and text, and readable monitor/help text when enlarged.
+  Synth keys share two cap widths and one height, with darker faces and
+  recessed green indicators; lower utility buttons use one size.
+  ABOUT and HELP replace inactive keys; patch-file notices remain visible.
+- Sixteen original bass and pad presets expand the bank to 144 sounds, with
+  Basses, Brass, Strings and Pads menus. Existing factory program numbers are
+  preserved.
+- Later preset/session recalls supersede queued MIDI patch changes. SysEx
+  import recovers a valid patch after an interrupted message. Session saves
+  include MIDI program and tone changes before the panel timer catches up.
 - The instrument is 2.5 dB louder. Digital full scale used to be the output
   summer's clipping asymptote and nothing else, which left ordinary patches
   22 dB below it and the plug-in far quieter than peer emulations. Full scale
@@ -996,8 +1033,8 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   minimally lowered to keep all 128 tones inside the established loudness
   contract.
 - A three-level 1×/2×/4× QUALITY control with fixed reported latency; new
-  instances now default to the fidelity-qualified 4× mode, while saved
-  sessions retain their stored choice and 1×/2× remain available.
+  instances default to 1× for lower CPU use and Aging at 50%, while saved
+  sessions retain their stored choices. 2×/4× remain available to reduce aliasing.
 - Disabled the unmeasured C14 voltage-coefficient candidate by default. Its
   internal comparison switch is not serialized, so restored sessions also use
   the evidence-conservative default; the opt-in comparison renderer retains it
@@ -1104,12 +1141,25 @@ YOUKNOW_EDITOR_SNAPSHOT="$PWD/out/ui-polish/youknow.png" \
 ```
 
 On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
-universal binary. `./scripts/sign-and-package-macos.sh` and `./scripts/release-macos.sh`
-produce the signed, notarized distribution.
+universal binary. `./scripts/sign-and-package-macos.sh` packages an existing
+build with ad-hoc signatures by default for local testing. Its
+`--preflight` option checks prerequisites without building or packaging.
+
+A production release uses `./scripts/release-macos.sh` with
+`APP_SIGN_IDENTITY`, `INSTALLER_SIGN_IDENTITY` and `NOTARY_PROFILE` set to the
+Developer ID Application identity, Developer ID Installer identity and
+notarytool Keychain profile. It requires full Xcode, a clean YouKnow source
+tree, a dated release-history entry and a matching `youknow-v<version>` tag
+at HEAD. It validates prerequisites before a fresh universal build, then
+signs, notarizes and staples the installer. The installer includes the MIT
+license and dependency notices and requires macOS 11 or later. Version
+1.1.0 remains unreleased until the release steps are completed.
 
 ## Licensing and privacy
 
-Original code under the MIT license (`LICENSE`). JUCE and the other
-third-party components are used under their own terms — see
-`THIRD_PARTY_NOTICES.md`, which also records the factory-tone provenance.
-YouKnow collects and transmits nothing; see `PRIVACY.md`.
+YouKnow's original code and assets are distributed under the [MIT license](LICENSE),
+which is also the customer license. The publisher has selected JUCE 8 Starter
+for JUCE; that framework and its dependencies retain their own license terms.
+[Third-party notices](THIRD_PARTY_NOTICES.md) record those terms and the
+factory-tone provenance. YouKnow has no telemetry or automatic network
+activity; see the [privacy notice](PRIVACY.md).
