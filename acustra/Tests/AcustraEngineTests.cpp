@@ -2553,21 +2553,25 @@ void testTheFractionalDelayReadIsLossless()
 {
     // A fractional read must not add interpolation-dependent loss: the
     // second-order Thiran allpass has unit magnitude at every frequency.
-    // Isolate the string loop from bridge loading and sympathetic strings.
+    // Isolate the string loop from bridge loading and sympathetic strings,
+    // and observe saddle force: the microphone filter changes partial levels
+    // during pitch glides and adds its own decay.
     // The loss shelves now retain the same calibrated 48 kHz transfer across
-    // hosts, but bilinear warping leaves H8 decay spread at 4.1..12.8% over
-    // these rates and notes. The H1 spread is below 0.21%; neither tolerance
+    // hosts, but bilinear warping leaves H8 decay spread at 4.1..12.9% over
+    // these rates and notes. The H1 spread is below 0.20%; neither tolerance
     // is a claim of perfect sample-rate independence.
     struct Reading { double perSecond; double perPass; };
     const auto decay = [] (int midiNote, double rate, int partial)
     {
         acustra::AcustraEngine engine;
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = acustra::StringMaterial::Steel;
+        parameters.capture = acustra::CaptureType::SaddlePiezo;
+        // Select before prepare so the capture fade never includes the mic.
+        engine.setParameters(parameters);
         engine.prepare(rate, blockSize);
         engine.setBridgeCouplingEnabled(false);
         engine.setSympatheticStringsEnabled(false);
-        acustra::EngineParameters parameters;
-        parameters.stringMaterial = acustra::StringMaterial::Steel;
-        engine.setParameters(parameters);
         engine.noteOn(midiNote, 0.8f);
         const int samples = static_cast<int>(1.6 * rate);
         Audio audio { std::vector<float>(static_cast<std::size_t>(samples)),
@@ -2618,8 +2622,9 @@ void testTheFractionalDelayReadIsLossless()
         }
         // Loss per round trip across the nine notes and three rates. It is
         // physical - a higher note's H8 sits at a higher frequency, where the
-        // string loses more - so it is a smooth 1.7:1 rise, not the 47:1 the
-        // interpolated read produced out of loop fractions alone.
+        // string loses more. The isolated saddle observer spans 1.40:1 on
+        // H1 and 1.16:1 on H8, not the 47:1 the interpolated read produced
+        // out of loop fractions alone.
         expect(highestPass / lowestPass < 2.5,
                "steel H" + std::to_string(partial)
                    + " loss per round trip ranged over a factor of "

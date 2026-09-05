@@ -81240,5 +81240,218 @@
   "validation_sha256": "48daa67d04ab825fd145866babd0a0dae450b34aca528a06209f1d6c36f1c592",
   "independent_review": "No findings; 127x14 steel and141x14 nylon float32 coefficient bytes independently match the frozen audition header. Existing formatter and force-pair transform reused.",
   "scope": "Reproducible native header export in the fresh output directory only; shipping source and calibration remain unchanged."
+ },
+ "body_pair_selected_native_qualification_2026_09_05": {
+  "report": "/tmp/acustra-b-qualification/qualification-report.json",
+  "sha256": "8b4701935c9e586f00a4af30950a88fb181ce038548f5349d91b7dd8ca8fd238",
+  "results": {
+   "protocol": "Frozen qualification of selected body-force-pair direction B: committed experiment patch applied to 00fb2daf, exactly four neutral body-calibration defaults, unchanged regression tests. No gate changes, protected targets, canonical rerenders or listening-key access.",
+   "base_commit": "00fb2dafa3cc2a0808c7875bbfcdc1c1772875b1",
+   "source_path": "/tmp/acustra-b-qualification/source",
+   "core_build_path": "/tmp/acustra-b-qualification/core-build",
+   "plugin_build_path": "/tmp/acustra-b-qualification/build",
+   "source_manifest_sha256": "931fbd7f4e26a990a45fbec6df798f07ee95aeedb246907d0f47bcc13861d276",
+   "source_archive_sha256": "bcffe4bddd667807101fc2bc18ba1d3710bea0c9adf95f075d52a2c7eb0b3963",
+   "experiment_patch_sha256": "cf0226acee5dab92b054895925a69eb0dedd30263a05b897e8ef9f47f15102d8",
+   "neutral_fields": {
+    "bodyFrequencyScale": 1.0,
+    "bodyQScale": 1.0,
+    "residueTiltDbPerOctave": 0.0,
+    "lowBodyModeGain": 1.0
+   },
+   "longitudinal_gain": 0.0,
+   "native_idle_strings_enabled_by_default": true,
+   "test_adaptations": [],
+   "test_sources_match_base_commit": true,
+   "tests": [
+    {
+     "name": "Acustra.Engine",
+     "status": "failed",
+     "seconds": 134.48,
+     "assertion_failures": 10
+    },
+    {
+     "name": "Acustra.Capture",
+     "status": "passed",
+     "seconds": 7.07
+    },
+    {
+     "name": "Acustra.MeasuredSteelBridge",
+     "status": "passed",
+     "seconds": 4.02
+    },
+    {
+     "name": "Acustra.PluginProcessor",
+     "status": "passed",
+     "seconds": 7.03
+    }
+   ],
+   "exact_engine_failure_messages": [
+    "steel H1 loss per round trip ranged over a factor of 3.520829",
+    "steel at 44100: lift 1.000000 carries -11.152039 dB against a pluck at that velocity",
+    "steel at 48000: lift 1.000000 carries -11.147266 dB against a pluck at that velocity",
+    "steel at 96000: lift 1.000000 carries -11.176910 dB against a pluck at that velocity",
+    "nylon at 44100: a lift clicked on its first sample",
+    "nylon at 44100: a lift clicked on its first sample",
+    "nylon at 48000: a lift clicked on its first sample",
+    "nylon at 48000: a lift clicked on its first sample",
+    "nylon at 96000: a lift clicked on its first sample",
+    "nylon at 96000: a lift clicked on its first sample"
+   ],
+   "realtime_ratio": 0.0598319,
+   "realtime_ratio_upper_gate": 0.25,
+   "retained_tail_relative_wave_norm_error": 2.03057e-08,
+   "failure_groups": [
+    {
+     "test": "testTheFractionalDelayReadIsLossless",
+     "count": 1,
+     "observed_factor": 3.520829,
+     "upper_gate": 2.5,
+     "scope": "Steel H1 per-round-trip decay range over MIDI 76–84 and 44.1/48/96 kHz. Helper disables bridge coupling/idles but estimates microphone audio, including body-filter poles. No per-note sample-rate-spread assertion failed. Observer diagnosis is an inference from the exact helper."
+    },
+    {
+     "test": "testFrettingHandFollowsThePluckLaw",
+     "count": 3,
+     "material": "steel",
+     "rates": [
+      44100,
+      48000,
+      96000
+     ],
+     "lift_velocity": 1.0,
+     "model_minus_pluck_db": [
+      -11.152039,
+      -11.147266,
+      -11.17691
+     ],
+     "absolute_gate_db": 10.0,
+     "scope": "Nonlegato note 43 at 0.2 s released with lift to open 40 at 1 s, compared to fresh note 40 at identical lift velocity. Microphone sum energy over first 1 s after event; outputGain .06 and idle-string ports disabled in this existing test. Separate 8 dB held-note pull-off gate passed."
+    },
+    {
+     "test": "testFrettingHandFollowsThePluckLaw",
+     "count": 6,
+     "material": "nylon",
+     "rates": [
+      44100,
+      48000,
+      96000
+     ],
+     "failures_per_rate": 2,
+     "peak_ratio_upper_gate": 1.2,
+     "scope": "Maximum first 1 ms after lifted release compared to maximum preceding 50 ms of plain release reference. Original text says first sample but assertion checks 1 ms. Log does not identify which two of .3/.6/1 lift velocities fail or their peak ratios. No additional focused rerender performed."
+    }
+   ],
+   "qualification": "Does not pass complete unchanged regression suite; direction remains unqualified for adoption.",
+   "commands": [
+    [
+     "cmake",
+     "-S",
+     "/tmp/acustra-b-qualification/source",
+     "-B",
+     "/tmp/acustra-b-qualification/core-build",
+     "-DCMAKE_BUILD_TYPE=Release",
+     "-DACUSTRA_BUILD_PLUGIN=OFF",
+     "-DACUSTRA_BUILD_UNIVERSAL=OFF",
+     "-DBUILD_TESTING=ON",
+     "-DACUSTRA_BUILD_TOOLS=ON"
+    ],
+    [
+     "cmake",
+     "-S",
+     "/tmp/acustra-b-qualification/source",
+     "-B",
+     "/tmp/acustra-b-qualification/build",
+     "-DCMAKE_BUILD_TYPE=Release",
+     "-DACUSTRA_BUILD_UNIVERSAL=OFF",
+     "-DACUSTRA_JUCE_PATH=/tmp/acustra-goal-build/_deps/juce-src",
+     "-DBUILD_TESTING=ON",
+     "-DACUSTRA_BUILD_TOOLS=ON"
+    ],
+    [
+     "cmake",
+     "--build",
+     "/tmp/acustra-b-qualification/core-build",
+     "--target",
+     "AcustraEngineTests",
+     "AcustraCaptureTests",
+     "AcustraMeasuredSteelBridgeTests",
+     "--parallel",
+     "6"
+    ],
+    [
+     "cmake",
+     "--build",
+     "/tmp/acustra-b-qualification/build",
+     "--target",
+     "AcustraPluginProcessorTests",
+     "--parallel",
+     "6"
+    ],
+    [
+     "ctest",
+     "--test-dir",
+     "/tmp/acustra-b-qualification/core-build",
+     "-R",
+     "^Acustra\\.(Engine|Capture|MeasuredSteelBridge)$",
+     "--output-on-failure",
+     "-V",
+     "--parallel",
+     "3"
+    ],
+    [
+     "ctest",
+     "--test-dir",
+     "/tmp/acustra-b-qualification/build",
+     "-R",
+     "^Acustra\\.PluginProcessor$",
+     "--output-on-failure",
+     "-V"
+    ]
+   ],
+   "test_file_sha256": {
+    "Tests/AcustraEngineTests.cpp": "7ad72239e319d0746d6fc48a278a8b436cc33ac674029b0b58e6240c02ea7128",
+    "Tests/CaptureTests.cpp": "4f0197cd0a4da6dcd77c9779e942eac497b7e00ba0e5354b556710e025071bd4",
+    "Tests/MeasuredSteelBridgeTests.cpp": "d796f4e835013f3e9b04bae2cca41176adcf9bc5dc7cf8da31ab59469c555df8",
+    "Tests/PluginProcessorTests.cpp": "2a98efb035b2adb4c79b426070710264a1224f12768c4394c4624054e4112c06"
+   },
+   "artifact_sha256": {
+    "configure.log": "0407d58d122fcc05283e3fd3e929e6f718b23dc3dc8f5eaf7c1a1987fbbfd1c5",
+    "core-configure.log": "4589b408227231b89cf98b785cb9367d246e46035b4573f0db0df33e9ac2049b",
+    "core-build.log": "4b2442401eef353df5459225dcb8419af97362bb985792c7871670968c0ee842",
+    "plugin-build.log": "1b06109b022533ad795bdf217d5cb4fb2e8ab33d2367a14774ffac51333f7935",
+    "core-tests.log": "924c1263b08ab98b775755883f36c706808b8315389dbc32a816ad4d6760af7c",
+    "plugin-tests.log": "333ab1f998a8f6f22a35d3c898eee302f0e1ffe8c81b512408287ad7864f80a4",
+    "core-build/AcustraEngineTests": "82a5331675878c4781fd6810a520675e6b176c12fe1c1832ef88a485d938918f",
+    "core-build/AcustraCaptureTests": "a35d0fcad5785afd7a7a4ffcf7536c80e4fb3db7c87749d2a7722324a081efe3",
+    "core-build/AcustraMeasuredSteelBridgeTests": "6b65b986fac7a15106b8327865f0a171a85b0f70ab02a15d3c15c2d72438aeda",
+    "build/AcustraPluginProcessorTests": "f6c918fdcd0b822d95af5713a3419d540e795ffdddf18320d47fa1f7f4acd08d",
+    "core-build/libAcustraDSP.a": "608cf8c948dec33dfe7116debc6cf9f5c6675a756711f5458a530d3b8f01e59f",
+    "build/libAcustraDSP.a": "608cf8c948dec33dfe7116debc6cf9f5c6675a756711f5458a530d3b8f01e59f"
+   },
+   "reporting_erratum": "Intermediate messages used an incomplete four-failure snapshot and an unverified CPU value. Final completed log has ten failures and CPU 0.0598319. Applicable open-lift bound is 10 dB, not the separate 8 dB hammer/held-pull-off gate. This report supersedes those intermediate messages."
+  },
+  "status": "The exact selected B variant was qualified against unchanged tests in an isolated source snapshot. It is not adopted as the default. Subsequent observer diagnosis is separate from this frozen original result."
+ },
+ "isolated_string_loss_observer_correction_2026_09_05": {
+  "source": "Tests/AcustraEngineTests.cpp:testTheFractionalDelayReadIsLossless",
+  "change": "Select SaddlePiezo before prepare. Keep bridge coupling and idle ports disabled as before. All sample-rate and cross-register gates unchanged.",
+  "reason": "A microphone body filter changes partial levels during the existing pitch glide and adds its own decay, contaminating the intended isolated-string loss estimate.",
+  "report": "/tmp/acustra-fractional-loss-observer-review/report.json",
+  "report_sha256": "65769cfd42cdd0200d669301d2c4f4bece6f93a677d587603d699d81c51decdf",
+  "controlled_variants": "Shipping and exact selectedB, each observed through original microphone or saddle force; identical estimator/windows and unchanged gates.",
+  "result": "Both saddle-force variants pass with all54 complete-stream SHA256 hashes and every reading identical. Original B microphone reproduces H1cross-register ratio3.520828866 failure; original shipping microphone passes.",
+  "piezo_limits": {
+   "h1_cross_register_per_trip_ratio": 1.3965488514,
+   "h8_cross_register_per_trip_ratio": 1.1544604438,
+   "h1_max_rate_spread_percent": 0.19894781,
+   "h8_max_rate_spread_percent": 12.8771139
+  },
+  "shipping_full_engine": {
+   "log": "/tmp/acustra-fractional-loss-observer-review/shipping-full-engine.log",
+   "sha256": "6d4d8376ed61bdd2998d79bb166bf3e7246704d3c4e967d46d210078e18ba9c2",
+   "result": "PASS",
+   "seconds": 108.11
+  },
+  "scope": "Test observation correction only; no production DSP, calibration, parameter or audio changes. It resolves one diagnostic failure and does not waive the separate microphone release-level and transient gates."
  }
 }
