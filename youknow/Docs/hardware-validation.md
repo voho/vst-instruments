@@ -87,6 +87,67 @@ The source-level defaults remain provisional. Original-card captures with
 documented noise trim and TP8 voltage are still the highest-priority evidence,
 alongside original chorus captures. No market-wide ranking was performed.
 
+The [harmonic comparison](benchmarks/harmonics-2026-09-05.json) measures
+H2–H8 at each recording's independently estimated pitch using coherent Hann
+projections. It uses the later take's **PWM0/approximately 50% pulse**, not
+the earlier PWM64 pulse. Synthetic checks cover non-integer-cycle windows,
+sample rate, tuning, phase, gain and DC changes; unidentified fundamentals
+are rejected and adjacent projections flag potentially contaminated lines.
+These are harmonic magnitudes, not phase or waveform-null measurements.
+
+| Third harmonic relative to fundamental | Shipping model minus hardware |
+| --- | ---: |
+| Saw | −0.061 dB |
+| Pulse, PWM0 | −0.023 dB |
+| Sub | −0.055 dB |
+| True self-oscillation | −0.069 dB |
+
+That close H3 agreement coexists with source-level and small even-harmonic
+differences. For example, pulse H2 is −41.973 dBc on hardware and −53.636 dBc
+in the shipping render; sub H2 is −58.502 versus −80.443 dBc. These results
+do not identify whether duty offset, original oscillator circuitry,
+replacement-card behavior or the recording chain supplies the residual.
+No asymmetry term was fitted from them. The harmonic record reuses the
+existing final WAVs and keeps the earlier RMS benchmark record intact.
+
+## Build and regression validation
+
+The combined September 5 implementation passes all **19 CTest checks**,
+including the circuit and engine suites, dynamic numerical oracles, new chorus
+bypass test, calibration renderer, plug-in processor and VST3 bundle loading.
+Both Python analyzer self-tests pass. The circuit and chorus-bypass checks
+also pass under the Intel slice using Rosetta. The VST3, Audio Unit and
+Standalone artifacts contain both `arm64` and `x86_64` slices.
+
+```sh
+cmake --build build --parallel 6
+ctest --test-dir build --output-on-failure --parallel 2
+python3 Tools/AnalyzeHardwareCalibration.py --self-test
+python3 Tools/AnalyzeHardwareIsolators.py --self-test
+arch -x86_64 ./build/YouKnowCircuitTests
+arch -x86_64 ./build/YouKnowChorusBypassTests
+./build/YouKnowRenderDemos Docs/audio
+./build/YouKnowAuditFactoryPresets Docs/audio/factory-presets
+```
+
+All ten maintained demos and ten factory previews were regenerated. The
+full 128-preset audit found eight gated-level violations after the C59 change,
+although every preset met the peak ceiling. Reducing the existing VR1 output
+positions for A21, A22, A48, A63, A66, B56, B64 and B76 and rerendering those
+eight complete scores gives a final bank whose maximum peak is −7.065 dBFS
+and maximum gated RMS is −28.512 dBFS, inside the existing −1/−28.5 dBFS
+limits. The other 120 measured rows remain valid; no original tone bytes or
+other product controls changed. The [factory report](audio/factory-presets/README.md)
+and [full metrics](audio/factory-presets/metrics.csv) contain the final values.
+This is product loudness maintenance, not a fit to the hardware recordings;
+the calibration renderer uses volume 1 and does not load factory VR1 controls.
+Its rebuilt executable remains byte-identical to the recorded benchmark binary
+after these changes (SHA-256 `63af3df331176ab87fff1c0bf1938be244f2a1840ca530a62ecef48fa97128e3`).
+
+These software checks qualify implementation consistency and numerical
+behavior. Hardware correspondence remains limited to the reference conditions
+and measurements described above.
+
 ## Hardware reference
 
 Lewis Francis identifies the instrument as **Juno-106 #439522**, with Borish

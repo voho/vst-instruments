@@ -43,6 +43,14 @@ The [tracked record](benchmarks/hardware-2026-09-05.json) pins the input,
 source, renderer and output identities. One serviced replacement-card unit
 still cannot establish original-card fidelity or market leadership.
 
+The complete 128-preset product-level audit exposed eight gated-ceiling
+violations after the C59 correction. Only their existing VR1 positions were
+reduced; all original tone bytes and other controls stayed fixed. Full-score
+rerenders of A21/A22/A48/A63/A66/B56/B64/B76 pass, and the other 120 rows
+remain unchanged. The final bank peaks no higher than −7.065 dBFS and reaches
+at most −28.512 dBFS gated, within the existing −1/−28.5 dBFS contracts.
+The maintained demos, full metrics and fixed previews were regenerated.
+
 ## 2026-09-04 — Identified hardware comparison and complete-voice calibration
 
 The [hardware validation report](hardware-validation.md) supersedes the noise
