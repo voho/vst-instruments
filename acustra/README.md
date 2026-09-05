@@ -1291,6 +1291,8 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   Joint pole selection from the six measured endpoint paths does better:
   [`GenerateBodyForcePair.py`](Tools/GenerateBodyForcePair.py) fits their raw
   complex responses and checks both endpoint and generalized-force bases.
+  It exports the native coefficient header into a new output directory;
+  its 3,752 float values reproduce the auditioned model exactly.
   The zero-delay candidates pass the existing filter and capture-balance
   limits at 127/141 poles for g21/g34. On forces from 72 native modeled notes,
   median pressure-approximation error falls about 20% against the fixed-pole
@@ -1304,7 +1306,9 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   Across the same six GuitarSet clips, this version reduces mean log-spectrum
   error from 14.920 to 13.103 dB, while spectral convergence and chroma distance
   worsen from 0.902/0.310 to 0.920/0.318. The mixed result supports further
-  comparison, not an automatic default change.
+  comparison, not an automatic default change. On 2026-09-05 the user preferred
+  this candidate because it sounded more stereo; that selects its spatial
+  presentation for further integration work, subject to engine qualification.
   Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference

@@ -81197,5 +81197,48 @@
    "pre_limiter_validation": "A frozen-copy assertion render checked all1,536,000 stereo frames across both variants: finite and below0.89125094 before limiting; output remains byte-identical to both raw files.",
    "keys": "Original private key and key.md alias remained unopened."
   }
+ },
+ "body_pair_stereo_verdict_2026_09_05": {
+  "user_verbatim": "i like B since it is more stereo",
+  "decision_log": "Docs/decisions.md",
+  "verdict_commit": "00fb2daf",
+  "selected": "B: phase-preserving normal-force/normalized-moment body, four neutral body calibration fields",
+  "scope": "Preference for stereo presentation; does not establish overall realism or waive engine/plugin regression gates.",
+  "key_handling": "Verdict recorded in decision log before root opened audition/key.md; mapping confirmed A shipping, B pair. Earlier unopened-key statements are frozen pre-verdict history.",
+  "key_sha256": "0587ec4ba488369144c01754d3ad04564a684561eaeec696b2ad297f5611304b",
+  "stereo_report": "/tmp/acustra-audition-stereo-verdict/report.json",
+  "stereo_report_sha256": "f183471b61df0ebd4483b052dab408e34e61f1e971870c79390bde0d7021296b",
+  "stereo_summary": "B wider in all four sections. Whole-file L/R correlation A0.98179/B0.92952; side/mid A-17.7867/B-14.3678dB. B whole-file mono level -0.1560dB vs stereo RMS; 4-10kHz band loss approximately4dB. No stereo control, artificial delay, fitting or audio modifications added."
+ },
+ "body_pair_native_export_2026_09_05": {
+  "tool": "Tools/GenerateBodyForcePair.py",
+  "tool_sha256": "3708a0f8391bb288be5831e65c0b8b8491a187dcde085352682717c96bf400c1",
+  "output_directory": "/tmp/acustra-body-pair-selected-export",
+  "validation": {
+   "generated_report_sha256": "67b02211f808471807d2f57788adcc88b5826531f7d79eb780c34a828eeedbbd",
+   "native_header_sha256": "7a7b9a48908c2f0bb3674f41134ce9af1003e02e13c7985ee4cecd5da7ab4301",
+   "compared_arrays": [
+    "frequency",
+    "g21_frequency_q",
+    "g21_endpoint_residues",
+    "g21_target_endpoint",
+    "g21_target_pair",
+    "g21_model_endpoint",
+    "g21_model_pair",
+    "g34_frequency_q",
+    "g34_endpoint_residues",
+    "g34_target_endpoint",
+    "g34_target_pair",
+    "g34_model_endpoint",
+    "g34_model_pair"
+   ],
+   "all_arrays_exact": true,
+   "compiled_native_float_coefficients_exact": 3752,
+   "mechanism": "No runtime source or calibration change",
+   "selftest": "PASS: causal response, phase inversion, force-pair basis and explicit native field/microphone/sign ordering"
+  },
+  "validation_sha256": "48daa67d04ab825fd145866babd0a0dae450b34aca528a06209f1d6c36f1c592",
+  "independent_review": "No findings; 127x14 steel and141x14 nylon float32 coefficient bytes independently match the frozen audition header. Existing formatter and force-pair transform reused.",
+  "scope": "Reproducible native header export in the fresh output directory only; shipping source and calibration remain unchanged."
  }
 }
