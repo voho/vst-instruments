@@ -80885,5 +80885,317 @@
    "Native checks cover modal realization, linearity, finite audio, unchanged observed core/pickup signals and bounded construction checks; they are not a full releasable-plugin regression or blind-listening verdict.",
    "Audio decisions remain private and uncommitted until a real user verdict licenses a direction."
   ]
+ },
+ "body_pair_direction_audition_2026_09_05": {
+  "status": "Private direction audition prepared; no user verdict, installation or default change recorded.",
+  "manifest": "/tmp/acustra-body-pair-direction-neutral/manifest.json",
+  "manifest_sha256": "12ba08ead63eb91027f6bb1edaaef1ee4d0a93daad9d015da51cb350cc681f4d",
+  "duration_seconds": 16,
+  "sample_rate": 48000,
+  "frames": 768000,
+  "format": "IEEE float32 WAV",
+  "sections": [
+   {
+    "start_seconds": 0,
+    "end_seconds": 4,
+    "material": "steel",
+    "picking": "pick",
+    "fresh_engine": true
+   },
+   {
+    "start_seconds": 4,
+    "end_seconds": 8,
+    "material": "steel",
+    "picking": "thumb",
+    "fresh_engine": true
+   },
+   {
+    "start_seconds": 8,
+    "end_seconds": 12,
+    "material": "nylon",
+    "picking": "pick",
+    "fresh_engine": true
+   },
+   {
+    "start_seconds": 12,
+    "end_seconds": 16,
+    "material": "nylon",
+    "picking": "thumb",
+    "fresh_engine": true
+   }
+  ],
+  "input_protocol": {
+   "render_maximum_block": 256,
+   "blocks_split_at_exact_midi_events": true,
+   "all_native_idle_string_ports": true,
+   "string_per_channel": true,
+   "strumMember": false,
+   "random_seed": "Fresh engine reset seeds unchanged in both variants; native velocity/noise/attack tension remain enabled. No external random MIDI jitter.",
+   "fresh_engine_per_section": true
+  },
+  "controls": {
+   "shape": "Dreadnought",
+   "bodyMaterial": "Spruce",
+   "capture": "StereoMic",
+   "tuning": "Standard",
+   "bridgeModel": "Original",
+   "stringAge": 0.15,
+   "pluckPosition": 0.28,
+   "touch": 0.58,
+   "bodyAmount": 0.82,
+   "stereoWidth": 0.62,
+   "outputGain": 0.42,
+   "section_picking_and_material": "See sections; all controls use original float32 defaults except the explicit material and picking selector."
+  },
+  "calibration": {
+   "base": "fittedPhysicalCalibration from frozen35075391 sources; exact remaining float values are in the hashed FittedPhysicalData.h",
+   "both_overrides": {
+    "longitudinalGain": 0
+   },
+   "shipping_body": {
+    "bodyFrequencyScale": 1.04,
+    "bodyQScale": 0.0534179688,
+    "residueTiltDbPerOctave": -1,
+    "lowBodyModeGain": 7.5
+   },
+   "pair_body_only_overrides": {
+    "bodyFrequencyScale": 1,
+    "bodyQScale": 1,
+    "residueTiltDbPerOctave": 0,
+    "lowBodyModeGain": 1
+   },
+   "remaining_string_bridge_and_body_controls": "unchanged"
+  },
+  "level_matching": {
+   "common_whole_file_stereo_rms": 0.02304840952191988,
+   "method": "One constant attenuation per complete16s file; no per-section normalization, crop, fade, delay, EQ, individual-channel gain, or sample alignment.",
+   "trim_start_frames": 0,
+   "trim_end_frames": 0,
+   "section_boundary": "Four complete native4s segments concatenated without overlap or edits; final note-off at2.5s,1.5s native tail per section. Tail residuals at boundaries are recorded below.",
+   "letter_attenuation_db": {
+    "A": 0.0,
+    "B": -0.4849441826075028
+   },
+   "readable_scope": "Trim here means gain attenuation; zero start/end cropping and no fades."
+  },
+  "audition_files": [
+   {
+    "file": "/private/tmp/acustra-body-pair-direction-neutral/audition/A.wav",
+    "sha256": "74e7bd6bbb0e46fde54b968b2677523d34379cc7b619c287e1636ab9d6669a54",
+    "frames": 768000,
+    "rms": 0.02304840952191988,
+    "peak": 0.31958985328674316
+   },
+   {
+    "file": "/private/tmp/acustra-body-pair-direction-neutral/audition/B.wav",
+    "sha256": "4681ab8b51124d2d2d336ddbf94be36eb5f580f45becf3959e136a5fe4368490",
+    "frames": 768000,
+    "rms": 0.0230484090631928,
+    "peak": 0.3123280704021454
+   }
+  ],
+  "validation": {
+   "core_identity": [
+    {
+     "file": "physical-state.sha256frames",
+     "bytes": 96512,
+     "sha256": "637299572be1f9e8c14007c72a19a7f6034791850c25389d87d6ad886ae2c337",
+     "byte_identical": true
+    },
+    {
+     "file": "capture3.f32",
+     "bytes": 6144000,
+     "sha256": "60f4104b75cea41038454656a6ebf36f137d54cf12d20663020ccdb037d406cb",
+     "byte_identical": true
+    },
+    {
+     "file": "capture4.f32",
+     "bytes": 6144000,
+     "sha256": "690b9420e203940f4bdaa9ac28580259adf1acdd5d812954eadae1998448d961",
+     "byte_identical": true
+    }
+   ],
+   "core_snapshot_scope": "3016 SHA256 snapshots across4 sections, after every ≤256-frame processing block. Each hashes all six complete Voice objects (all18 complete8192-sample delay buffers plus excitation/metadata/filter state), complete BridgeLoad and all eight force/motion finite-difference histories, control counter/note order and strum generator state. Initial engine storage is zeroed. Hash streams are byte-identical; no claim that sparse point observers prove full state.",
+   "block_partition": [
+    {
+     "model": "shipping",
+     "capture": 0,
+     "byte_identical_256_vs_1": true,
+     "sha256": "ec21af04fb40b8becc23025af967774b13463acf950d54846271b122c6ec7dc4"
+    },
+    {
+     "model": "shipping",
+     "capture": 3,
+     "byte_identical_256_vs_1": true,
+     "sha256": "60f4104b75cea41038454656a6ebf36f137d54cf12d20663020ccdb037d406cb"
+    },
+    {
+     "model": "shipping",
+     "capture": 4,
+     "byte_identical_256_vs_1": true,
+     "sha256": "690b9420e203940f4bdaa9ac28580259adf1acdd5d812954eadae1998448d961"
+    },
+    {
+     "model": "pair",
+     "capture": 0,
+     "byte_identical_256_vs_1": true,
+     "sha256": "c9d3f225c3758ec2ba3e40410178ae6c61bd83fea64513b9217c9f97146fe6ec"
+    },
+    {
+     "model": "pair",
+     "capture": 3,
+     "byte_identical_256_vs_1": true,
+     "sha256": "60f4104b75cea41038454656a6ebf36f137d54cf12d20663020ccdb037d406cb"
+    },
+    {
+     "model": "pair",
+     "capture": 4,
+     "byte_identical_256_vs_1": true,
+     "sha256": "690b9420e203940f4bdaa9ac28580259adf1acdd5d812954eadae1998448d961"
+    }
+   ],
+   "native_checks": {
+    "shipping": [
+     {
+      "kind": "segment",
+      "index": 0,
+      "peak": 0.31958985328674316,
+      "rms": 0.030045142481934888,
+      "last_50ms_peak": 0.00041849102126434445
+     },
+     {
+      "kind": "segment",
+      "index": 1,
+      "peak": 0.30664142966270447,
+      "rms": 0.028576806699139524,
+      "last_50ms_peak": 0.0004042954824399203
+     },
+     {
+      "kind": "segment",
+      "index": 2,
+      "peak": 0.18730199337005615,
+      "rms": 0.015200003049007644,
+      "last_50ms_peak": 2.5989227651734836e-05
+     },
+     {
+      "kind": "segment",
+      "index": 3,
+      "peak": 0.16733914613723755,
+      "rms": 0.013211062235531314,
+      "last_50ms_peak": 2.3785289158695377e-05
+     },
+     {
+      "kind": "capture",
+      "capture": 0,
+      "peak": 0.31958985328674316,
+      "rms": 0.0230484095219208,
+      "physical_snapshots": 3016
+     },
+     {
+      "kind": "capture",
+      "capture": 3,
+      "peak": 0.1269213855266571,
+      "rms": 0.007786864179957825,
+      "physical_snapshots": 0
+     },
+     {
+      "kind": "capture",
+      "capture": 4,
+      "peak": 0.18444864451885223,
+      "rms": 0.012968397416550136,
+      "physical_snapshots": 0
+     },
+     {
+      "kind": "stability_smoke",
+      "pole_configurations": 160,
+      "min_radius": 0,
+      "max_radius": 0.9996311104284581,
+      "construction_render_peak_48k": 0.12407172471284866
+     }
+    ],
+    "pair": [
+     {
+      "kind": "segment",
+      "index": 0,
+      "peak": 0.3302617073059082,
+      "rms": 0.033162968753195,
+      "last_50ms_peak": 0.0006972173578105867
+     },
+     {
+      "kind": "segment",
+      "index": 1,
+      "peak": 0.30920588970184326,
+      "rms": 0.03141243458536755,
+      "last_50ms_peak": 0.0006784654688090086
+     },
+     {
+      "kind": "segment",
+      "index": 2,
+      "peak": 0.1252722293138504,
+      "rms": 0.01279521999695999,
+      "last_50ms_peak": 1.7490847312728874e-05
+     },
+     {
+      "kind": "segment",
+      "index": 3,
+      "peak": 0.11394679546356201,
+      "rms": 0.011211758544237064,
+      "last_50ms_peak": 1.7068199667846784e-05
+     },
+     {
+      "kind": "capture",
+      "capture": 0,
+      "peak": 0.3302617073059082,
+      "rms": 0.024371831730146284,
+      "physical_snapshots": 3016
+     },
+     {
+      "kind": "capture",
+      "capture": 3,
+      "peak": 0.1269213855266571,
+      "rms": 0.007786864179957825,
+      "physical_snapshots": 0
+     },
+     {
+      "kind": "capture",
+      "capture": 4,
+      "peak": 0.18444864451885223,
+      "rms": 0.012968397416550136,
+      "physical_snapshots": 0
+     },
+     {
+      "kind": "stability_smoke",
+      "pole_configurations": 160,
+      "min_radius": 0,
+      "max_radius": 0.9999240271882369,
+      "construction_render_peak_48k": 0.0975317731499672
+     }
+    ]
+   },
+   "headroom": "All audition output magnitudes strictly below the unchanged monotonic limiter knee0.89125094; therefore no finite audition sample reaches compression. Body modal state finite checked every processing block.",
+   "pole_stability_scope": "Both materials ×4 shapes ×4 woods at8k/44.1k/48k/96k/192k (160 configurations per variant), all native float pole radii<1. This is stability, not measured transfer accuracy at those rates.",
+   "construction_smoke_scope": "32 material/shape/wood cases at48k, held shape/wood switch, native body states/output finite.",
+   "full_engine_suite": "Not run for this calibration variant. Native impulse-response gates were previously verified at48k ONLY on the untransformed reference bank; their success does not certify authored morphology, calibrated default behavior, or this variant as ship-ready."
+  },
+  "research_limits": [
+   "Normal endpoint force-to-pressure measurements transformed into heave and normalized moment under the assumed rigid saddle map; no measured horizontal-force response or independent arbitrary-string-location transfer.",
+   "The measured original banks are g21/g34 nylon/classical guitars; the steel voicing is a construction adaptation, not same-steel measured microphone data.",
+   "Unresolved axial-force projection is isolated identically by longitudinalGain0; native idle bridge loading remains enabled.",
+   "Mixed six-clip real-recording scores support a direction audition, not a realism ranking."
+  ],
+  "private_key": {
+   "original_path": "/private/tmp/acustra-body-pair-direction-neutral/private-listening-key.json",
+   "opaque_copy_for_local_filename_convention": "/tmp/acustra-body-pair-direction-neutral/audition/key.md",
+   "sha256": "0587ec4ba488369144c01754d3ad04564a684561eaeec696b2ad297f5611304b",
+   "handling": "Original key and byte-identical key.md alias have not been displayed or parsed by root. Audio files and original manifest remain unchanged; key contents are not committed."
+  },
+  "permission_scope": "User preference requested for tonal research direction under CLAUDE.md49-54. This is not approval to ship the current prototype; full release integration/regression remains separate.",
+  "independent_review": {
+   "report": "/tmp/acustra-body-pair-direction-review.json",
+   "sha256": "d9e486f2d119ed242575f4613329d59a13e13fcca7839eb79476cf883009abaf",
+   "result": "PASS: controls/sources/audio hashes, whole-file RMS and gains,3016 state snapshots, pickup streams and block partitions verified independently.",
+   "pre_limiter_validation": "A frozen-copy assertion render checked all1,536,000 stereo frames across both variants: finite and below0.89125094 before limiting; output remains byte-identical to both raw files.",
+   "keys": "Original private key and key.md alias remained unopened."
+  }
  }
 }
