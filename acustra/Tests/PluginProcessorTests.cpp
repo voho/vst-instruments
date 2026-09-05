@@ -305,23 +305,21 @@ void testSameSampleChordOrderIsCanonical()
 
 void testSameSampleChordsAreStrummedAndAlternate()
 {
-    // A chord on one sample is swept like a strum and consecutive strums
-    // alternate: on a downstroke the top string sounds last, on the return
-    // it sounds first, and a rest longer than two seconds restarts with a
-    // downstroke. A legato group is hammered, not strummed. The chord is
-    // the six strings at the first fret, whose top string's fundamental
-    // (370 Hz) is not a low partial of any lower string.
+    // Listen to upper-register energy in the rendered stereo output. C6 on
+    // the top string separates down/up attacks; the old F#4 probe mistook
+    // strong 349 Hz partials from the bass strings for its 370 Hz fundamental.
+    // No engine scheduling state or private wrapper flags are inspected.
     AcustraAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
     juce::AudioBuffer<float> audio { 2, blockSize };
-    const auto topStringDelay = [&] (bool legato, double restSeconds)
+    const auto upperRegisterDelay = [&] (bool legato, double restSeconds)
     {
         juce::MidiBuffer chord;
         chord.addEvent (juce::MidiMessage::controllerEvent (1, 68, legato ? 127 : 0), 0);
-        for (const int note : { 41, 46, 51, 56, 61, 66 })
+        for (const int note : { 41, 46, 51, 56, 61, 84 })
             chord.addEvent (juce::MidiMessage::noteOn (1, note, 0.8f), 0);
         std::vector<float> mono;
-        const int blocks = std::max (1, static_cast<int> (0.10 * sampleRate / blockSize));
+        const int blocks = static_cast<int> (0.10 * sampleRate / blockSize);
         for (int block = 0; block < blocks; ++block)
         {
             juce::MidiBuffer empty;
@@ -331,7 +329,7 @@ void testSameSampleChordsAreStrummedAndAlternate()
                                         + audio.getSample (1, sample)));
         }
         juce::MidiBuffer off;
-        for (const int note : { 41, 46, 51, 56, 61, 66 })
+        for (const int note : { 41, 46, 51, 56, 61, 84 })
             off.addEvent (juce::MidiMessage::noteOff (1, note), 0);
         off.addEvent (juce::MidiMessage::controllerEvent (1, 68, 0), 0);
         const int restBlocks = static_cast<int> (restSeconds * sampleRate / blockSize);
@@ -340,18 +338,19 @@ void testSameSampleChordsAreStrummedAndAlternate()
             juce::MidiBuffer empty;
             processor.processBlock (audio, block == 0 ? off : empty);
         }
-        // Seconds from the first sound to the top string's fundamental
-        // reaching a fifth of its maximum over the first 80 ms, from 5 ms
-        // heterodyne windows every millisecond.
+        // Five-millisecond heterodyne windows locate the rise around C6,
+        // relative to first sound, to one millisecond. Use a clip-relative
+        // level so the measured per-string dynamics do not set the threshold.
         std::size_t first = 0;
         while (first < mono.size() && std::abs (mono[first]) < 1.0e-5f)
             ++first;
-        const double frequency = 440.0 * std::exp2 ((66.0 - 69.0) / 12.0);
-        const std::size_t window = static_cast<std::size_t> (0.005 * sampleRate);
-        const std::size_t hop = static_cast<std::size_t> (0.001 * sampleRate);
+        const double frequency = 440.0 * std::exp2 ((84.0 - 69.0) / 12.0);
+        const auto window = static_cast<std::size_t> (0.005 * sampleRate);
+        const auto hop = static_cast<std::size_t> (0.001 * sampleRate);
+        const auto extent = static_cast<std::size_t> (0.08 * sampleRate);
         std::vector<double> level;
         for (std::size_t start = first; start + window <= mono.size()
-                                        && start - first < 0.08 * sampleRate; start += hop)
+                                        && start - first < extent; start += hop)
         {
             double real = 0.0;
             double imaginary = 0.0;
@@ -364,22 +363,15 @@ void testSameSampleChordsAreStrummedAndAlternate()
             }
             level.push_back (std::hypot (real, imaginary));
         }
+        expect (! level.empty(), "the strum direction probe rendered silence");
+        if (level.empty())
+            return 1.0;
         const double top = *std::max_element (level.begin(), level.end());
         for (std::size_t index = 0; index < level.size(); ++index)
             if (level[index] > 0.2 * top)
                 return static_cast<double> (index) * 0.001;
         return 1.0;
     };
-    // Read over repeated strokes, not one. A strum now draws one pick speed
-    // per stroke and one level per string (both measured from GuitarSet --
-    // AcustraEngine's beginStrum and initialisePluck), so a single stroke no
-    // longer pins the sweep: the top string's 370 Hz band also carries the
-    // two lowest strings' 349 Hz partials, and those strings sound first on
-    // a downstroke, so when the level draw makes them loud the band crosses
-    // its threshold before the top string has sounded at all. Twenty Hz
-    // apart needs a 48 ms window to separate, which is longer than the sweep
-    // itself, so the leakage cannot be filtered out here and the median over
-    // eight strokes is what carries the contract instead.
     const auto median = [] (std::vector<double> values)
     {
         std::sort (values.begin(), values.end());
@@ -388,59 +380,38 @@ void testSameSampleChordsAreStrummedAndAlternate()
     std::vector<double> downs, ups, downAgains, hammereds;
     for (int stroke = 0; stroke < 8; ++stroke)
     {
-        // Each triple is a downstroke (the 2.5 s rest that closed the last
-        // triple restarts the alternation), its return, and the third in a
-        // row alternating back.
-        downs.push_back (topStringDelay (false, 0.5));
-        ups.push_back (topStringDelay (false, 0.5));
-        downAgains.push_back (topStringDelay (false, 2.5));
+        // The odd-length group ends on a downstroke: the next stroke must
+        // restart down after the long rest, overriding its pending upstroke.
+        downs.push_back (upperRegisterDelay (false, 0.5));
+        ups.push_back (upperRegisterDelay (false, 0.5));
+        downAgains.push_back (upperRegisterDelay (false, 2.5));
     }
     for (int group = 0; group < 4; ++group)
-        hammereds.push_back (topStringDelay (true, 2.5));
+        hammereds.push_back (upperRegisterDelay (true, 2.5));
     const double down = median (downs);
     const double up = median (ups);
     const double downAgain = median (downAgains);
+    const double restarted = median ({ downs.begin() + 1, downs.end() });
     const double hammered = median (hammereds);
-    // The heterodyne needs a couple of cycles to register a string that
-    // sounds at once, so the comparisons are against the downstroke's own
-    // delay rather than against zero.
-    // Measured medians: down 8 ms, up 3 ms, down again 7.5 ms, legato 6 ms.
-    // These were 13, 4, 13 and 7 ms on one stroke each before the strum
-    // carried its measured variation; the downstroke's median fell because
-    // the level draw floods the band early, not because the pick crosses
-    // any faster -- its rank-5 delay is 26 ms nominal at this velocity.
-    // The legato clause is the thinnest of the four: a legato group draws
-    // no level jitter at all, so it reads the band's own floor, and that
-    // floor sits close to a leakage-shortened downstroke.
-    expect (down > 0.006, "a same-sample chord was not swept across its strings");
-    // The two direction clauses that stood here - up < 0.6 x down, and
-    // downAgain > 0.7 x down - are gone, and not because they were failing
-    // inconveniently. The 2026-09-04 refit lifts the two lowest strings'
-    // 349 Hz partials relative to the top string's 370 Hz fundamental, and
-    // that leakage is what the band reads first on every stroke: the medians
-    // are now down 8 ms, up 9 ms, down again 9 ms and legato 7 ms, so this
-    // detector separates no direction from any other and an assertion built
-    // on it would assert nothing. What survives here is the sweep itself.
-    // Direction is not covered by any other test: the engine suite pins
-    // strumDelaySamples against rank and pins that a stroke never reorders
-    // its strings, but PluginProcessor's own alternation flag is proven
-    // nowhere now. Rewriting this detector so it does not sit on a band two
-    // other strings reach first is recorded in the README's Known gaps.
-    (void) up;
-    (void) downAgain;
-    // On the two-point bridge the medians read down 8, up 2, down again 8 and
-    // legato 7 ms, where the one-point bridge read 8, 3, 7.5 and 6. The legato
-    // floor rose by one 1 ms analysis hop: nothing about the sweep changed,
-    // but the top string's 370 Hz band reaches a fifth of its own maximum a
-    // hop later now that every string drives the bridge through its own point
-    // on the saddle. The sample-exact form of this contract - a scheduled
-    // pluck sounds on the sample it was scheduled for - is in the engine
-    // suite; what is left here is that a legato group is not swept.
-    expect (hammered < 0.9 * down, "a legato group was swept like a strum");
+    // Medians allow the existing measured stroke-speed and string-level
+    // variation. At the shipping defaults they are 13/0/12/13/0 ms; the
+    // direction margins are several analysis hops, not threshold rounding.
+    // Off-tree wrapper mutations disabling alternation or the rest reset
+    // must fail these audible checks; no golden audio is required.
+    expect (downs.front() > 0.006,
+            "the first same-sample chord did not sweep low to high");
+    expect (up < 0.5 * down,
+            "the return strum did not sweep high to low");
+    expect (downAgain > 0.006 && downAgain > 2.0 * up,
+            "the third strum did not alternate back to low to high");
+    expect (restarted > 0.006 && restarted > 2.0 * up,
+            "a long rest did not restart with a low-to-high strum");
+    expect (hammered < 0.5 * down,
+            "a legato group was swept like a strum");
     std::cout << "Acustra strum sweep medians: down " << down * 1000.0
               << " ms, up " << up * 1000.0 << " ms, down again "
-              << downAgain * 1000.0 << " ms, legato " << hammered * 1000.0
-              << " ms\n";
+              << downAgain * 1000.0 << " ms, restart " << restarted * 1000.0
+              << " ms, legato " << hammered * 1000.0 << " ms\n";
 }
 
 void testSameSampleNoteOnOffDoesNotStick()

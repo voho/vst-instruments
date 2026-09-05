@@ -906,16 +906,6 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   measured finger dimensions or a beam/friction plectrum solver. Matched
   technique recordings are needed to benchmark these choices independently.
 
-- The wrapper's strum test no longer proves which direction a stroke sweeps.
-  It reads the top string's 370 Hz fundamental, and the two lowest strings'
-  349 Hz partials reach that band first; the 2026-09-04 refit lifted them
-  until the medians read down 8 ms, up 9 ms, down again 9 ms and legato 7 ms,
-  which separates nothing. The sweep itself is still asserted, and the engine
-  suite still pins the per-rank delays and that a stroke never reorders its
-  strings, but PluginProcessor's own alternation flag is now proven nowhere.
-  Closing this wants a detector that does not sit on a band two other strings
-  reach first — a per-string probe, or the wrapper reporting the delays it
-  computed — not a looser bound on the same measurement.
 - The highest steel partials still vary with host rate. The loop-loss filters
   now map the calibrated 48 kHz transfer to the host rate, preserving the
   existing 48 kHz sound; bilinear frequency warping leaves H8 decay spread of
