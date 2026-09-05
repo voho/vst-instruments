@@ -12,7 +12,17 @@ namespace
 using namespace youknow;
 using namespace youknow::tools::realism;
 
-EngineParameters parametersFor(const sysex::Patch& patch, float character)
+bool shippingMode(const std::string& name)
+{
+    if (name == "shipping")
+        return true;
+    if (name == "exact")
+        return false;
+    throw std::runtime_error("kernel must be exact or shipping");
+}
+
+EngineParameters parametersFor(const sysex::Patch& patch, float character,
+                               bool shipping)
 {
     EngineParameters p;
     p.lfoRate = patch.lfoRate; p.lfoDelay = patch.lfoDelay;
@@ -28,6 +38,15 @@ EngineParameters parametersFor(const sysex::Patch& patch, float character)
     p.decay = patch.decay; p.sustain = patch.sustain;
     p.release = patch.release; p.chorus = patch.chorus;
     p.volume = 1.0f; p.polyphony = 6; p.calibration = character;
+    // Match fresh plug-in instances, including the inactive-card/chorus skips.
+    // Keep Exact/Merson as the default for historical hardware comparisons.
+    // PluginProcessor's public defaults are Poly (2), Cubic (1), RK4 x1 (2).
+    if (shipping)
+    {
+        p.vcfTanhMode = VcfTanhMode::PolyZoned;
+        p.vcfFastEarlyMode = VcfFastEarlyMode::Cubic;
+        p.vcfSolverMode = VcfSolverMode::Rk4Single;
+    }
     return p;
 }
 
@@ -71,6 +90,20 @@ std::vector<Event> readEvents(std::istream& input)
 
 void selfTest()
 {
+    const auto exact = parametersFor(sysex::Patch {}, 0.0f, shippingMode("exact"));
+    const auto shipping = parametersFor(sysex::Patch {}, 1.0f, shippingMode("shipping"));
+    if (exact.vcfTanhMode != VcfTanhMode::Exact
+        || exact.vcfSolverMode != VcfSolverMode::MersonHalfSteps
+        || shipping.vcfTanhMode != VcfTanhMode::PolyZoned
+        || shipping.vcfFastEarlyMode != VcfFastEarlyMode::Cubic
+        || shipping.vcfSolverMode != VcfSolverMode::Rk4Single
+        || exact.calibration != 0.0f || shipping.calibration != 1.0f)
+        throw std::runtime_error("calibration renderer kernel selection changed");
+    bool invalidKernelRejected = false;
+    try { (void) shippingMode("shippng"); }
+    catch (const std::runtime_error&) { invalidKernelRejected = true; }
+    if (!invalidKernelRejected)
+        throw std::runtime_error("unknown kernel was accepted");
     std::istringstream input("# timestamped MIDI\n0 903c7f\n0.05 803c00\n");
     const auto events = readEvents(input);
     if (events.size() != 2 || events[0].frame != 0 || events[1].frame != 2400
@@ -86,17 +119,18 @@ void selfTest()
         if (!rejected)
             throw std::runtime_error("invalid event input was accepted");
     }
-    std::cout << "calibration event parser self-check passed\n";
+    std::cout << "calibration event parser and kernel self-check passed\n";
 }
 } // namespace
 
 int main(int argc, char** argv)
 {
     const bool selfCheck = argc == 2 && std::string(argv[1]) == "--self-test";
-    if (!selfCheck && argc != 3 && argc != 4)
+    if (!selfCheck && argc != 3 && argc != 4 && argc != 5)
     {
         std::cerr << "usage: " << argv[0]
-                  << " <seconds-hex-events.txt> <output.wav> [character 0..2]\n";
+                  << " <seconds-hex-events.txt> <output.wav> [character 0..2]"
+                     " [exact|shipping]\n";
         return 2;
     }
     try
@@ -107,7 +141,7 @@ int main(int argc, char** argv)
             return 0;
         }
         float character = 1.0f;
-        if (argc == 4)
+        if (argc >= 4)
         {
             std::string value(argv[3]);
             std::size_t used;
@@ -116,6 +150,7 @@ int main(int argc, char** argv)
                 || character < 0.0f || character > 2.0f)
                 throw std::runtime_error("character must be a finite value in 0..2");
         }
+        const bool shipping = argc == 5 && shippingMode(argv[4]);
         std::ifstream input(argv[1]);
         if (!input)
             throw std::runtime_error("cannot open event file");
@@ -147,12 +182,12 @@ int main(int argc, char** argv)
             if (sysex::readPatchMessage(bytes.data(), bytes.size(), patch, channel))
             {
                 havePatch = true;
-                engine.setParameters(parametersFor(patch, character));
+                engine.setParameters(parametersFor(patch, character, shipping));
             }
             else if (havePatch && sysex::readParameterMessage(
                          bytes.data(), bytes.size(), parameter, value, channel)
                      && sysex::applyParameter(patch, parameter, value))
-                engine.setParameters(parametersFor(patch, character));
+                engine.setParameters(parametersFor(patch, character, shipping));
             else if (havePatch && bytes.size() == 3 && bytes[1] < 128 && bytes[2] < 128
                      && ((bytes[0] & 0xf0) == 0x80 || (bytes[0] & 0xf0) == 0x90))
             {
@@ -172,7 +207,9 @@ int main(int argc, char** argv)
         std::cout << events.size() << " events, "
                   << audio.left.size() / double(comparisonSampleRate)
                   << " seconds, character " << character
-                  << ", 48 kHz/4x, Exact/Merson, volume 1, peak "
+                  << ", 48 kHz/4x, "
+                  << (shipping ? "Poly/Cubic/RK4 x1" : "Exact/Merson")
+                  << ", volume 1, peak "
                   << decibels(measure(audio).peak) << " dBFS\n";
     }
     catch (const std::exception& error)
