@@ -47,6 +47,55 @@ struct AcustraEngineTestAccess
         double residue;
     };
 
+    struct ReleasedContactSnapshot
+    {
+        std::vector<double> history;
+        double position, aperture, gain;
+    };
+
+    static ReleasedContactSnapshot releasedContact(StringMaterial material,
+                                                    int rate, int string)
+    {
+        AcustraEngine engine;
+        auto calibration = fittedPhysicalCalibration;
+        // Recover the initializer's amplitude from its envelope metadata,
+        // including nylon, without duplicating the displacement/velocity law.
+        // No audio is advanced, so this probe emits no release noise.
+        calibration.steel.transientScale = calibration.nylon.transientScale = 1.0f;
+        engine.setPhysicalCalibration(calibration);
+        EngineParameters parameters;
+        parameters.stringMaterial = material;
+        parameters.picking = PickingTechnique::Thumb;
+        engine.setParameters(parameters);
+        engine.prepare(rate, 64);
+        engine.setStringPerChannelMode(true);
+        auto& voice = engine.voices_[static_cast<std::size_t>(string)];
+        engine.noteOn(voice.openMidi, 0.6f, string + 1);
+        const auto& loop = voice.loops[0];
+        const int length = std::clamp(static_cast<int>(std::round(loop.currentDelay)),
+                                      8, AcustraEngine::maximumDelaySamples - 3);
+        const float touch = engine.effectiveTouch(voice.velocity);
+        const auto& physical = material == StringMaterial::Steel
+            ? calibration.steel : calibration.nylon;
+        const float apertureSamples = 0.70f + 3.60f * (1.0f - touch)
+            + (string < 3 ? 1.0f : 0.0f);
+        ReleasedContactSnapshot result {
+            {}, std::clamp(voice.pluckPoint - 0.006f, 0.05f, 0.48f),
+            registeredAperture(apertureSamples, physical.apertureScale,
+                loop.currentDelay * 48000.0f / static_cast<float>(rate),
+                calibration.apertureRegisterExponent),
+            static_cast<double>(voice.excitationEnvelope)
+                / (0.003f + 0.014f * touch) * std::sqrt(voice.polarisationMix)
+        };
+        for (int sample = 0; sample < length; ++sample)
+        {
+            const int index = (loop.writeIndex - sample - 1
+                + AcustraEngine::maximumDelaySamples) % AcustraEngine::maximumDelaySamples;
+            result.history.push_back(loop.delay[static_cast<std::size_t>(index)]);
+        }
+        return result;
+    }
+
     struct PluckSnapshot
     {
         double touch;
@@ -3934,6 +3983,69 @@ void testBodyAndBridgeCalibrationChangePhysicalDescriptors()
            "bridge mobility did not reach speaking-string phase delay");
 }
 
+void testReleasedContactPreservesTheLinearFilterSpectrum()
+{
+    // Independently integrate the asymmetric triangle's Fourier series.
+    // Sampling aliases all n+kN coefficients into DFT bin n; the five-point
+    // spatial convolution multiplies each by cos^4(pi*(n+kN)*a). Subtracting
+    // the endpoint changes only DC. A subsequent zero clamp violates this.
+    constexpr int aliases = 64;
+    double worstError = 0.0;
+    for (const auto material : { acustra::StringMaterial::Steel,
+                                 acustra::StringMaterial::Nylon })
+        for (const int rate : { 44100, 48000, 96000 })
+            for (const int string : { 0, 5 })
+            {
+                const auto state = acustra::AcustraEngineTestAccess::releasedContact(
+                    material, rate, string);
+                const int length = static_cast<int>(state.history.size());
+                const double p = state.position, a = state.aperture;
+                expect(state.gain > 0.0 && a > 0.0 && a < 0.125,
+                       "released-contact Fourier probe left its resolved domain");
+                // |T_m| <= 1/(2*pi^2*p*(1-p)*m^2). For n<N/2 the
+                // omitted +/- alias tails are bounded by this integral.
+                const double tailBound = 1.0 / (std::numbers::pi * std::numbers::pi
+                    * p * (1.0 - p) * length * length * (aliases - 0.5));
+                // Float phase wrapping, piecewise-linear slope <=1/min(p,1-p),
+                // five positive weighted additions and amplitude recovery:
+                // 16 eps/min(p,1-p) conservatively bounds their absolute error
+                // after gain normalization. DFT averaging cannot amplify it.
+                const double roundingBound = 16.0 * std::numeric_limits<float>::epsilon()
+                    / std::min(p, 1.0 - p);
+                for (const int harmonic : { 1, 2, 3, 5, 8,
+                     static_cast<int>(std::round(0.5 / a)),
+                     static_cast<int>(std::round(1.0 / a)) })
+                {
+                    if (harmonic <= 0 || 2 * harmonic >= length)
+                        continue;
+                    std::complex<double> expected {}, observed {};
+                    for (int alias = -aliases; alias <= aliases; ++alias)
+                    {
+                        const double m = harmonic + alias * length;
+                        const auto triangle = (std::polar(1.0, -2.0 * std::numbers::pi * m * p)
+                            - 1.0) / (4.0 * std::numbers::pi * std::numbers::pi
+                                      * m * m * p * (1.0 - p));
+                        const double kernel = std::cos(std::numbers::pi * m * a);
+                        expected += triangle * (kernel * kernel * kernel * kernel);
+                    }
+                    for (int sample = 0; sample < length; ++sample)
+                        observed += state.history[static_cast<std::size_t>(sample)]
+                            / (state.gain * length) * std::polar(1.0,
+                                -2.0 * std::numbers::pi * harmonic * sample / length);
+                    const double error = std::abs(observed - expected);
+                    worstError = std::max(worstError, error);
+                    expect(error <= tailBound + roundingBound,
+                           "released-contact linear spectrum differs by " + std::to_string(error)
+                           + " at rate " + std::to_string(rate) + " string "
+                           + std::to_string(string) + " material "
+                           + std::to_string(static_cast<int>(material))
+                           + " H" + std::to_string(harmonic));
+                }
+            }
+    std::cout << "Acustra released-contact maximum complex coefficient error: "
+              << worstError << '\n';
+}
+
 void testPickingChangesTheContactWithoutRetuningOrReplucking()
 {
     using acustra::PickingTechnique;
@@ -6589,6 +6701,7 @@ int main()
     testHostilePhysicalCalibrationIsSanitised();
     testBodyAndBridgeCalibrationChangePhysicalDescriptors();
     testMaterialCalibrationChangesStringAndPluckDescriptors();
+    testReleasedContactPreservesTheLinearFilterSpectrum();
     testPickingChangesTheContactWithoutRetuningOrReplucking();
     testHighLossCutoffScaleChangesOnlyUpperLoss();
     testPlateConductanceFloorDampsOnlyTheUpperBand();

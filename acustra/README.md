@@ -75,12 +75,12 @@ reverb, room effect or recorded-note layer.
 | `04-string-age.wav` | The same steel phrase with fresh strings, then fully aged strings | 6.5 s | −9.1 dBFS | +6.1 dB |
 | `05-alternate-tunings.wav` | Drop D, DADGAD and Open G chords | 12.3 s | −10.8 dBFS | +7.8 dB |
 | `06-playing-behaviours.wav` | A chord change over a ringing chord, CC2 bridge-hand damping, then two natural harmonics above the fretted range | 10.7 s | −11.1 dBFS | +8.1 dB |
-| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −14.3 dBFS | +11.3 dB |
+| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −14.0 dBFS | +11.0 dB |
 | `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −5.1 dBFS | +2.1 dB |
 | `09-recuerdos-de-la-alhambra.wav` | Tarrega, Recuerdos de la Alhambra, bars 1-12: a nylon tremolo over a thumb arpeggio | 31.6 s | −17.6 dBFS | +14.6 dB |
 | `10-lagrima.wav` | Tarrega, Lagrima, bars 1-8: a sung nylon melody over held bass | 26.0 s | −20.6 dBFS | +17.6 dB |
-| `11-picking-techniques.wav` | Finger, pick and thumb on steel, then on nylon; same notes and velocity | 10.6 s | −15.8 dBFS | +12.8 dB |
-| `12-capture-types.wav` | Stereo, treble and bass microphones, saddle piezo, then steel magnetic | 12.2 s | −16.1 dBFS | +13.1 dB |
+| `11-picking-techniques.wav` | Finger, pick and thumb on steel, then on nylon; same notes and velocity | 10.6 s | −15.9 dBFS | +12.9 dB |
+| `12-capture-types.wav` | Stereo, treble and bass microphones, saddle piezo, then steel magnetic | 12.2 s | −16.0 dBFS | +13.0 dB |
 <!-- peaks-table-end -->
 
 ## Real dry-note benchmark
@@ -455,8 +455,11 @@ Upper-zone MPE is not implemented.
 ### Pluck and strings
 
 Each audible string path is a full-round-trip stiff-string waveguide. A note
-begins as a triangular string displacement released from rest. A finite spatial
-aperture rounds that shape, and a short deterministic noise burst adds the
+begins with a triangular travelling-wave history. A finite spatial aperture
+rounds that shape; the signed result preserves this linear filter without
+rectification adding extra harmonics. Its current phase origin and initially
+empty filter/body histories do not describe a complete release from rest.
+A short deterministic noise burst adds the
 release detail; the bridge-local direct path's fitted gain is zero, so the
 measured body is the only radiator. Pluck Position moves the
 displacement point; Touch and MIDI velocity alter its aperture, level and
@@ -1116,15 +1119,21 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   loud/soft pairs, the recordings' median 12 ms power-centroid rise is 2,054
   cents and the model's 76 cents; 60 of 81 round-robin combinations are
   measurable. The median H5--H12 versus H1--H4 balance rise is 9.04 dB in the
-  recordings and 0.28 dB in the model, with all 81 combinations measurable.
+  recordings and 0.36 dB in the model, with all 81 combinations measurable.
   These combinations reuse 54 recordings; they are not 81 independent
   performances. Median paired model-minus-recording differences in normalized
-  attack energy are +4.91/+4.32 dB at the quiet layer and −9.02/−11.03 dB at
+  attack energy are +4.97/+4.32 dB at the quiet layer and −9.02/−10.82 dB at
   the loud layer in the 2.56--5.12 and 5.12--10 kHz bands, respectively.
   These descriptors preserve their existing window-stability guards and
   establish a velocity-response gap; they do not isolate its physical source
   or make body effects cancel. This two-layer training comparison replaces the
   obsolete current-build claim based on the older four-layer audit.
+  Removing unintended pluck rectification leaves mixed recording agreement:
+  median absolute harmonic-balance error moves from 3.89 to 4.38 dB on quiet
+  steel, 9.80 to 9.85 dB on loud steel, and 4.42 to 4.37 dB on the 29 processed
+  nylon training recordings. These use unchanged common masks; this is a
+  correction to the specified linear contact model, not an overall realism
+  improvement established by these recordings.
   Earlier audio-rate tension modulation was built and
   is inert at the fitted displacement (the decision log says by how much). A
   finite plectrum release — the string held by a rounded tip of radius r
@@ -1626,6 +1635,9 @@ git history rather than here.
 
 ### 2026-09-05
 
+- Removed unintended zero clipping after pluck-contact smoothing, preserving
+  its specified harmonic response and eliminating rectification artifacts.
+  The selected stereo body, contact width and pluck timing remain intact.
 - Guitar preset selections now survive an intervening display refresh, so the
   timer cannot silently discard a queued menu choice. Restoring a saved state
   into an open editor also verifies its guitar, picking and capture controls.

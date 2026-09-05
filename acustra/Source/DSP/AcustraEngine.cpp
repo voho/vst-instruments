@@ -2378,7 +2378,7 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
 
     // The caller has already retained any preceding wave. This full-period
     // triangle initializes a fresh pluck, but its time origin is not the
-    // zero-velocity release: before smoothing/clipping it is phase-equivalent
+    // zero-velocity release: before smoothing it is phase-equivalent
     // to a rest pluck, with the same modal magnitudes. Unlike the fretting
     // primitives below, it is not combined with a prescribed velocity state.
     for (int polarisation = 0; polarisation < 2; ++polarisation)
@@ -2442,12 +2442,14 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
             return sum / static_cast<float>(modes);
         };
         const float endpoint = releasedAt(0.0f);
+        // Subtracting a constant only changes the travelling wave's DC term.
+        // Keep the signed result: rectifying it would add corners and modes
+        // absent from the linear contact filter (whose transfer is cos^4(pi*n*a)).
         for (int sample = 1; sample <= length; ++sample)
         {
             const float phase = static_cast<float>(sample - 1)
                               / static_cast<float>(length);
-            const float triangle = std::max(
-                releasedAt(phase) - endpoint, 0.0f);
+            const float triangle = releasedAt(phase) - endpoint;
             loop.delay[static_cast<std::size_t>(wrapDelayIndex(
                 loop.writeIndex - sample))]
                 = amplitude * polarisationGain * triangle;
@@ -3243,7 +3245,7 @@ void AcustraEngine::firePluck(Voice& voice, int stringIndex) noexcept
         }
         // The pick reaches this held string now. Keep its preceding wave
         // intact until then, and carry it under the hand while the new pluck
-        // is released from rest, exactly as for an immediate re-pluck.
+        // is released, exactly as for an immediate re-pluck.
         if (voice.level > 2.0e-7f)
             captureTail(voice);
         configureVoice(voice, stringIndex, voice.midiNote, true);
