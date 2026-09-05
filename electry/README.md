@@ -223,19 +223,19 @@ accessibility title uses its complete host parameter name (for example,
 
 ### Keyswitches, playable range and repick triggers
 
-MIDI notes 0..7 are solo-string keyswitches in Octave -1 corresponding to physical strings 8..1 (lowest E1 to highest E4), and note 8 is Solo Clear (All Strings). When any solo string keyswitch is active (either held in HOLD mode or latched in LATCH mode), played notes and chords are voiced only on those active strings; notes outside their playable 22-fret range are ignored without sounding. Voices already sounding or decaying on unselected strings continue ringing naturally.
+MIDI notes 24..31 are solo-string keyswitches in Octave 1 (C1..G1) corresponding to physical strings 8..1 (lowest E1 to highest E4), and note 32 (G#1) is Solo Clear (All Strings). These are prominently indicated directly on the on-screen keyboard with labels `S8` through `S1` and `CLR`, dynamically highlighted when active. When any solo string keyswitch is active (either held in HOLD mode or latched in LATCH mode), played notes and chords are voiced only on those active strings; notes outside their playable 22-fret range are ignored without sounding. Voices already sounding or decaying on unselected strings continue ringing naturally.
 
 | MIDI note | Key | Solo string keyswitch |
 | --- | --- | --- |
-| 0 | C-1 | Solo String 8 (low E1, open pitch 28) |
-| 1 | C#-1 | Solo String 7 (B1, open pitch 35) |
-| 2 | D-1 | Solo String 6 (E2, open pitch 40) |
-| 3 | D#-1 | Solo String 5 (A2, open pitch 45) |
-| 4 | E-1 | Solo String 4 (D3, open pitch 50) |
-| 5 | F-1 | Solo String 3 (G3, open pitch 55) |
-| 6 | F#-1 | Solo String 2 (B3, open pitch 59) |
-| 7 | G-1 | Solo String 1 (high E4, open pitch 64) |
-| 8 | G#-1 | Solo Clear (All Strings) — resets string restriction to normal polyphony |
+| 24 | C1 | Solo String 8 (low E1, open pitch 28 sounding / written 40) |
+| 25 | C#1 | Solo String 7 (B1, open pitch 35 sounding / written 47) |
+| 26 | D1 | Solo String 6 (E2, open pitch 40 sounding / written 52) |
+| 27 | D#1 | Solo String 5 (A2, open pitch 45 sounding / written 57) |
+| 28 | E1 | Solo String 4 (D3, open pitch 50 sounding / written 62) |
+| 29 | F1 | Solo String 3 (G3, open pitch 55 sounding / written 67) |
+| 30 | F#1 | Solo String 2 (B3, open pitch 59 sounding / written 71) |
+| 31 | G1 | Solo String 1 (high E4, open pitch 64 sounding / written 76) |
+| 32 | G#1 | Solo Clear (All Strings) — resets string restriction to normal polyphony |
 
 MIDI notes 12..21 are two independent banks of silent keyswitches. Notes
 12..14 (C0..D0) always latch how the pick moves. Notes 15..21 (D#0..A0) either
@@ -282,22 +282,7 @@ that was already ringing.
 | 22 | A#0 | Vibrato — hold while physically held stopped notes ring; Note On velocity sets the hand's width and Note Off eases it back to rest. Pre-held intent waits at zero for a stopped finger, while open strings and key-released tails stay fixed. Overlapping owners balance, All Sound Off and Reset All Controllers preserve a physically held key, while All Notes Off and Panic release it |
 | 23 | B0 | Tremolo picking — hold to repick every physically held string through the current Pick Stroke and Play Style; only a latched Hammer uses a neutral Sustain contact without changing the latch. Velocity is pick force and TRM Rate is speed. A newly played note is its own first contact. Overlapping owners balance; CC120/121 preserve the held wrist, while CC123, Panic, prepare and release stop it |
 
-Notes 24..27 are ignored, and notes 28..86 are playable on a 22-fret,
-eight-string Drop-E instrument tuned E1-B1-E2-A2-D3-G3-B3-E4. D#6 (87) is a
-silent separator. Notes 88..95 (E6..B6) are picking-hand triggers for physical
-strings 8..1, from the lowest E1 string to the highest E4 string. A trigger
-repicks the note physically held on that string with its own velocity and the
-current Pick Stroke and Play Style; only a latched Hammer becomes a neutral
-Sustain pick for this dedicated contact, without changing the latch or the next
-playable note. An unheld string stays silent. A trigger never adds
-fretting-key ownership, so its Note Off is inert and the original note's Note
-Off still releases normally. Held ownership survives the old sound's natural
-decay, allowing a silent Mute or Dead note to be struck again. Notes
-outside these ranges are ignored. The on-screen piano ends at D6: E6..B6 remain
-available as MIDI-only performance triggers and are not shown as pitched keys.
-Clicking a row in the live fretboard sends the same trigger at hard velocity;
-it is a visible picking-hand shortcut, while the MIDI lane retains continuous
-velocity and sequencer timing.
+Notes 33..39 (A1..D#2) are silent unmapped keys. Following standard written guitar notation convention, the playable area is written one octave above sounding pitch: notes 40..98 (E2..D7) are playable on a 22-fret, eight-string Drop-E instrument sounding as physical E1..D6 (tuned E1-B1-E2-A2-D3-G3-B3-E4). D#7 (99) is a silent separator. Notes 100..107 (E7..B7) are picking-hand triggers for physical strings 8..1, from the lowest E1 string to the highest E4 string. A trigger repicks the note physically held on that string with its own velocity and the current Pick Stroke and Play Style; only a latched Hammer becomes a neutral Sustain pick for this dedicated contact, without changing the latch or the next playable note. An unheld string stays silent. A trigger never adds fretting-key ownership, so its Note Off is inert and the original note's Note Off still releases normally. Held ownership survives the old sound's natural decay, allowing a silent Mute or Dead note to be struck again. Notes outside these ranges are ignored. The on-screen keyboard displays C0 through D7: Octave 0 houses picking/style keyswitches and gestures, Octave 1 houses solo-string keyswitches (with a visual brass nut divider at E2 = 40), and E2..D7 is the interactive playable area. E7..B7 remain available as MIDI-only performance triggers. Clicking a row in the live fretboard sends the same trigger at hard velocity; it is a visible picking-hand shortcut, while the MIDI lane retains continuous velocity and sequencer timing.
 The visible B0 **TRM** key drives those same one-shot contacts from one shared
 wrist clock. At the default 12 strokes/s, the first repeat is exactly 4,000
 host samples after the initial contact at 48 kHz; phase remains sample-accurate
@@ -307,7 +292,7 @@ contact re-anchors that phase instead of inheriting a nearly finished empty
 cycle and creating a flam against its own next pick.
 Hammer-ons and legato slides remain fretting-hand gestures: even when one lands
 on the exact repeat boundary, B0 still reaches every physically held string.
-Conversely, leaving Hammer latched cannot turn a B0 or E6..B6 picking-hand
+Conversely, leaving Hammer latched cannot turn a B0 or E7..B7 picking-hand
 command into another tap: that dedicated contact uses Sustain while the latch
 remains available to the next playable note.
 If that finger move arrives after a repeat has been reserved but before its
@@ -315,7 +300,7 @@ pick reaches the same string, the plectrum keeps its remaining travel time and
 meets the string at its current moving pitch instead of disappearing or
 finishing the glide early.
 The reverse separation matters too: while a held string is still ringing, a B0
-or E6..B6 plectrum contact restarts it without restarting the A#0 finger rocking
+or E7..B7 plectrum contact restarts it without restarting the A#0 finger rocking
 the fret. A new fretting assignment, or a contact after the damped voice has
 retired, draws a new finger phase, rate and excursion.
 Pre-held A#0 intent remains at zero until a physically held stopped finger

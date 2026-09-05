@@ -40,10 +40,10 @@ constexpr int statusDisplayWidth = 256;
 constexpr int timerHz = 30;
 constexpr int lastDrawnFret = electry::ElectryEngine::fretCount;
 constexpr int firstKeyboardNote = electry::ElectryEngine::firstKeyswitchNote; // C0
-constexpr int firstPlayableNote = electry::ElectryEngine::lowestPlayableNote; // E1
-constexpr int lastKeyboardNote = electry::ElectryEngine::highestPlayableNote; // D6
+constexpr int firstPlayableNote = electry::ElectryEngine::lowestMidiPlayableNote; // E2
+constexpr int lastKeyboardNote = electry::ElectryEngine::highestMidiPlayableNote; // D7
 constexpr int keyswitchCount = electry::ElectryEngine::keyswitchCount;
-constexpr int keyboardWhiteKeyCount = 44; // C0..D6 inclusive
+constexpr int keyboardWhiteKeyCount = 51; // C0..D7 inclusive
 constexpr auto visualWeightProperty = "electryVisualWeight";
 constexpr float compactKnobWeight = 0.65f;
 constexpr int sectionTitleHeight = 28;
@@ -138,10 +138,24 @@ constexpr std::array<const char*, keyswitchCount> keyswitchLabels {
     "DN", "UP", "ALT", "SUS", "MUT", "H/P", "HRM", "PNC", "SLD", "X"
 };
 
+constexpr std::array<const char*, electry::ElectryEngine::soloStringKeyswitchCount> soloStringLabels {
+    "S8", "S7", "S6", "S5", "S4", "S3", "S2", "S1"
+};
+
 bool isKeyswitch (int midiNoteNumber) noexcept
 {
     return midiNoteNumber >= firstKeyboardNote
         && midiNoteNumber < firstKeyboardNote + keyswitchCount;
+}
+
+bool isSoloStringKeyswitch (int midiNoteNumber) noexcept
+{
+    return electry::ElectryEngine::isMidiSoloStringNote (midiNoteNumber);
+}
+
+bool isSoloClearKeyswitch (int midiNoteNumber) noexcept
+{
+    return electry::ElectryEngine::isMidiSoloClearNote (midiNoteNumber);
 }
 
 bool isVibratoGesture (int midiNoteNumber) noexcept
@@ -154,14 +168,11 @@ bool isTremoloGesture (int midiNoteNumber) noexcept
     return electry::ElectryEngine::isTremoloGestureNote (midiNoteNumber);
 }
 
-// The remaining gaps around the playing range are dead: the engine ignores
-// them, and they are drawn muted so nobody hunts for a sound there.
+// The dead zone notes before the playable range (A1..D#2: 33..39) are drawn muted.
 bool isDeadZoneNote (int midiNoteNumber) noexcept
 {
-    return midiNoteNumber >= firstKeyboardNote + keyswitchCount
-        && midiNoteNumber < firstPlayableNote
-        && ! isVibratoGesture (midiNoteNumber)
-        && ! isTremoloGesture (midiNoteNumber);
+    return midiNoteNumber > electry::ElectryEngine::midiSoloClearNote
+        && midiNoteNumber < firstPlayableNote;
 }
 
 void drawKeyswitchDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
@@ -186,12 +197,47 @@ void drawKeyswitchDecoration (juce::Graphics& graphics, juce::Rectangle<float> a
     }
 }
 
+void drawSoloDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
+                         int stringIndex, bool selected, bool blackKey)
+{
+    auto badge = area.removeFromBottom (blackKey ? 16.0f : 20.0f)
+                     .reduced (blackKey ? 1.0f : 2.0f, 2.0f);
+    graphics.setColour (selected ? colours::accentBright
+                                 : juce::Colours::black.withAlpha (0.34f));
+    graphics.fillRoundedRectangle (badge, 2.5f);
+    graphics.setColour (selected ? colours::rosewoodDark : colours::binding);
+    graphics.setFont (juce::FontOptions (blackKey ? 7.4f : 9.0f, juce::Font::bold));
+    graphics.drawFittedText (
+        soloStringLabels[static_cast<std::size_t> (stringIndex)],
+        badge.getSmallestIntegerContainer(), juce::Justification::centred,
+        1, 0.72f);
+
+    if (selected)
+    {
+        graphics.setColour (colours::accentBright.withAlpha (0.65f));
+        graphics.drawRoundedRectangle (badge.reduced (0.5f), 2.0f, 0.8f);
+    }
+}
+
+void drawSoloClearDecoration (juce::Graphics& graphics, juce::Rectangle<float> area,
+                              bool blackKey)
+{
+    auto badge = area.removeFromBottom (blackKey ? 16.0f : 20.0f)
+                     .reduced (blackKey ? 1.0f : 2.0f, 2.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.34f));
+    graphics.fillRoundedRectangle (badge, 2.5f);
+    graphics.setColour (colours::dimText.brighter (0.2f));
+    graphics.setFont (juce::FontOptions (blackKey ? 7.2f : 8.6f, juce::Font::bold));
+    graphics.drawFittedText ("CLR", badge.getSmallestIntegerContainer(),
+                             juce::Justification::centred, 1, 0.72f);
+}
+
 void drawVibratoDecoration (juce::Graphics& graphics,
                             juce::Rectangle<float> area, bool isDown)
 {
     auto badge = area.removeFromBottom (16.0f).reduced (1.0f, 2.0f);
     graphics.setColour (isDown ? colours::accentBright
-                               : colours::accentDark.brighter (0.18f));
+                                : colours::accentDark.brighter (0.18f));
     graphics.fillRoundedRectangle (badge, 2.5f);
     graphics.setColour (isDown ? colours::rosewoodDark : colours::binding);
     graphics.setFont (juce::FontOptions (7.4f, juce::Font::bold));
@@ -204,7 +250,7 @@ void drawTremoloDecoration (juce::Graphics& graphics,
 {
     auto badge = area.removeFromBottom (20.0f).reduced (2.0f);
     graphics.setColour (isDown ? colours::accentBright
-                               : colours::accentDark.brighter (0.18f));
+                                : colours::accentDark.brighter (0.18f));
     graphics.fillRoundedRectangle (badge, 2.5f);
     graphics.setColour (isDown ? colours::rosewoodDark : colours::binding);
     graphics.setFont (juce::FontOptions (8.4f, juce::Font::bold));
@@ -513,6 +559,14 @@ void ElectryKeyboardComponent::setSelectedKeyswitches (int pickIndex,
     repaint();
 }
 
+void ElectryKeyboardComponent::setSoloStringMask (std::uint8_t mask)
+{
+    if (activeSoloMask == mask)
+        return;
+    activeSoloMask = mask;
+    repaint();
+}
+
 bool ElectryKeyboardComponent::isKeyswitchSelected (int keyswitchIndex) const noexcept
 {
     const auto pickCount = electry::ElectryEngine::pickStyleKeyswitchCount;
@@ -521,9 +575,16 @@ bool ElectryKeyboardComponent::isKeyswitchSelected (int keyswitchIndex) const no
         : keyswitchIndex - pickCount == selectedStyleIndex;
 }
 
+bool ElectryKeyboardComponent::isSoloStringSelected (int stringIndex) const noexcept
+{
+    return stringIndex >= 0 && stringIndex < electry::ElectryEngine::stringCount
+        && (activeSoloMask & (1u << stringIndex)) != 0;
+}
+
 juce::String ElectryKeyboardComponent::getWhiteNoteText (int midiNoteNumber)
 {
-    if (isKeyswitch (midiNoteNumber) || isDeadZoneNote (midiNoteNumber))
+    if (isKeyswitch (midiNoteNumber) || isSoloStringKeyswitch (midiNoteNumber)
+        || isSoloClearKeyswitch (midiNoteNumber) || isDeadZoneNote (midiNoteNumber))
         return {};
 
     if (midiNoteNumber == firstPlayableNote || midiNoteNumber % 12 == 0)
@@ -539,12 +600,24 @@ void ElectryKeyboardComponent::drawWhiteNote (
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
     const auto tremoloGesture = isTremoloGesture (midiNoteNumber);
+    const auto soloKey = isSoloStringKeyswitch (midiNoteNumber);
+    const auto soloClr = isSoloClearKeyswitch (midiNoteNumber);
+    const int soloIndex = soloKey
+        ? midiNoteNumber - electry::ElectryEngine::firstMidiSoloStringNote : -1;
+    const bool soloSelected = soloKey && isSoloStringSelected (soloIndex);
+
     const auto top = keyswitch ? colours::oxblood.brighter (0.22f)
                    : tremoloGesture ? colours::accentDark.brighter (0.22f)
-                               : colours::warmBone.brighter (0.08f);
+                   : soloSelected ? colours::accentDark.brighter (0.35f)
+                   : soloKey ? colours::accentDark.darker (0.15f)
+                   : soloClr ? colours::oxblood.darker (0.25f)
+                   : colours::warmBone.brighter (0.08f);
     const auto bottom = keyswitch ? colours::oxblood.darker (0.32f)
                       : tremoloGesture ? colours::accentDark.darker (0.28f)
-                                  : colours::warmBone.darker (0.12f);
+                      : soloSelected ? colours::accentDark.darker (0.10f)
+                      : soloKey ? colours::accentDark.darker (0.42f)
+                      : soloClr ? colours::oxblood.darker (0.45f)
+                      : colours::warmBone.darker (0.12f);
     graphics.setGradientFill ({ top, area.getCentreX(), area.getY(),
                                 bottom, area.getCentreX(), area.getBottom(), false });
     graphics.fillRect (area);
@@ -566,6 +639,14 @@ void ElectryKeyboardComponent::drawWhiteNote (
     else if (tremoloGesture)
     {
         drawTremoloDecoration (graphics, area, isDown);
+    }
+    else if (soloKey)
+    {
+        drawSoloDecoration (graphics, area, soloIndex, soloSelected, false);
+    }
+    else if (soloClr)
+    {
+        drawSoloClearDecoration (graphics, area, false);
     }
     else if (isDeadZoneNote (midiNoteNumber))
     {
@@ -592,8 +673,18 @@ void ElectryKeyboardComponent::drawBlackNote (
 {
     const auto keyswitch = isKeyswitch (midiNoteNumber);
     const auto vibratoGesture = isVibratoGesture (midiNoteNumber);
+    const auto soloKey = isSoloStringKeyswitch (midiNoteNumber);
+    const auto soloClr = isSoloClearKeyswitch (midiNoteNumber);
+    const int soloIndex = soloKey
+        ? midiNoteNumber - electry::ElectryEngine::firstMidiSoloStringNote : -1;
+    const bool soloSelected = soloKey && isSoloStringSelected (soloIndex);
+
     const auto fill = keyswitch ? colours::keyswitchBlack
-                    : vibratoGesture ? colours::accentDark : noteFillColour;
+                    : vibratoGesture ? colours::accentDark
+                    : soloSelected ? colours::accentDark.brighter (0.18f)
+                    : soloKey ? colours::accentDark.darker (0.28f)
+                    : soloClr ? colours::oxblood.darker (0.35f)
+                    : noteFillColour;
 
     graphics.setColour (juce::Colours::black.withAlpha (0.48f));
     graphics.fillRoundedRectangle (area.translated (0.0f, 1.0f), 2.0f);
@@ -626,6 +717,14 @@ void ElectryKeyboardComponent::drawBlackNote (
     else if (vibratoGesture)
     {
         drawVibratoDecoration (graphics, area, isDown);
+    }
+    else if (soloKey)
+    {
+        drawSoloDecoration (graphics, area, soloIndex, soloSelected, true);
+    }
+    else if (soloClr)
+    {
+        drawSoloClearDecoration (graphics, area, true);
     }
     else if (isDeadZoneNote (midiNoteNumber))
     {
@@ -950,7 +1049,7 @@ ElectryFretboardDisplay::ElectryFretboardDisplay()
                  "physical string, then press Space or Return to repick it.");
     setTooltip ("Click any held string row, or use Up/Down or 1-8 then "
                 "Space/Return, for one hard repick. Host MIDI "
-                "E6 through B6 provides the same eight-string trigger lane "
+                "E7 through B7 provides the same eight-string trigger lane "
                 "with velocity control.");
     selectString (0);
 }
@@ -1461,7 +1560,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     addAndMakeVisible (factoryProgramSelector);
 
     keyboardHintLabel.setText (
-        "C0..D0 pick stroke; D#0..A0 style; hold A#0 VIB (vibrato) or B0 TRM (tremolo pick). E1..D6 plays.",
+        "C0..D0 pick stroke; D#0..A0 style; A#0 vibrato; B0 tremolo; C1..G1 solo string (G#1 clear). E2..D7 plays.",
         juce::dontSendNotification);
     keyboardHintLabel.setFont (juce::FontOptions (11.0f));
     keyboardHintLabel.setColour (juce::Label::textColourId,
@@ -1767,6 +1866,7 @@ void ElectryAudioProcessorEditor::timerCallback()
     playStyleKeyModeStrip.setSelectedIndex (
         electryProcessor.getPlayStyleKeysHold() ? 1 : 0);
     keyboard.setSelectedKeyswitches (pickIndex, effectiveStyleIndex);
+    keyboard.setSoloStringMask (electryProcessor.getSoloStringMask());
 
     if (fretboardDisplay.refresh (electryProcessor, 1.0f / static_cast<float> (timerHz)))
         fretboardDisplay.repaint();

@@ -54,6 +54,7 @@ public:
     explicit ElectryKeyboardComponent (juce::MidiKeyboardState&);
 
     void setSelectedKeyswitches (int pickIndex, int styleIndex);
+    void setSoloStringMask (std::uint8_t mask);
 
     void drawWhiteNote (int midiNoteNumber, juce::Graphics&,
                         juce::Rectangle<float> area, bool isDown, bool isOver,
@@ -65,9 +66,11 @@ public:
 
 private:
     bool isKeyswitchSelected (int keyswitchIndex) const noexcept;
+    bool isSoloStringSelected (int stringIndex) const noexcept;
 
     int selectedPickIndex = 0;
     int selectedStyleIndex = 0;
+    std::uint8_t activeSoloMask = 0;
 };
 
 // A titled row of exclusive buttons, used for the pickup selector and the

@@ -93,8 +93,8 @@ bool isAttackConditioningNote (int note) noexcept
     return electry::ElectryEngine::isKeyswitchNote (note)
         || electry::ElectryEngine::isVibratoGestureNote (note)
         || electry::ElectryEngine::isTremoloGestureNote (note)
-        || electry::ElectryEngine::isSoloStringKeyswitchNote (note)
-        || electry::ElectryEngine::isSoloClearKeyswitchNote (note);
+        || electry::ElectryEngine::isMidiSoloStringNote (note)
+        || electry::ElectryEngine::isMidiSoloClearNote (note);
 }
 
 bool isRpnStateMidiEvent (const juce::MidiMessageMetadata& metadata) noexcept
@@ -912,7 +912,7 @@ void ElectryAudioProcessor::dispatchHostNoteOff (int note,
     // Keyswitches, gestures and repick commands are global performance
     // controls, even when a controller sends them on an MPE member channel.
     // Only playable notes participate in per-channel string ownership.
-    if (! electry::ElectryEngine::isPlayableNote (note))
+    if (! electry::ElectryEngine::isMidiPlayableNote (note))
     {
         dispatchNoteOff (note);
         return;
@@ -925,10 +925,11 @@ void ElectryAudioProcessor::dispatchHostNoteOff (int note,
     const auto expressionId = recordedOwner >= 0
         ? static_cast<electry::ElectryEngine::ExpressionId> (recordedOwner)
         : currentExpressionId;
+    const int engineNote = note - electry::ElectryEngine::octaveShiftSemitones;
     if (expressionId != electry::ElectryEngine::legacyExpressionId)
     {
-        engine.noteOff (note, expressionId);
-        doubleEngine->noteOff (note, expressionId);
+        engine.noteOff (engineNote, expressionId);
+        doubleEngine->noteOff (engineNote, expressionId);
         if (expressionId <= electry::ElectryEngine::maximumExpressionId)
         {
             auto& total = outstandingMpeChannelNotes[
@@ -939,8 +940,8 @@ void ElectryAudioProcessor::dispatchHostNoteOff (int note,
         }
         return;
     }
-    engine.noteOff (note, electry::ElectryEngine::legacyExpressionId);
-    doubleEngine->noteOff (note, electry::ElectryEngine::legacyExpressionId);
+    engine.noteOff (engineNote, electry::ElectryEngine::legacyExpressionId);
+    doubleEngine->noteOff (engineNote, electry::ElectryEngine::legacyExpressionId);
 }
 
 bool ElectryAudioProcessor::processMpeController (const juce::uint8* data,
@@ -1248,16 +1249,16 @@ void ElectryAudioProcessor::dispatchNoteOn (
         return;
     }
 
-    if (electry::ElectryEngine::isSoloClearKeyswitchNote (note))
+    if (electry::ElectryEngine::isMidiSoloClearNote (note))
     {
         clearHeldSoloStrings();
         applySoloStringMask (0);
         return;
     }
 
-    if (electry::ElectryEngine::isSoloStringKeyswitchNote (note))
+    if (electry::ElectryEngine::isMidiSoloStringNote (note))
     {
-        const int stringIndex = note - electry::ElectryEngine::firstSoloStringKeyswitchNote;
+        const int stringIndex = note - electry::ElectryEngine::firstMidiSoloStringNote;
         if (appliedPlayStyleKeysHold)
         {
             auto& count = heldSoloStringCounts[static_cast<std::size_t> (stringIndex)];
@@ -1279,9 +1280,14 @@ void ElectryAudioProcessor::dispatchNoteOn (
     if (articulation < 0
         || articulation >= electry::ElectryEngine::keyswitchCount)
     {
-        engine.noteOn (note, velocity);
-        if (doubleModeActive)
-            doubleEngine->noteOn (note, velocity);
+        if (electry::ElectryEngine::isMidiPlayableNote (note)
+            || electry::ElectryEngine::isMidiRepickNote (note))
+        {
+            const int engineNote = note - electry::ElectryEngine::octaveShiftSemitones;
+            engine.noteOn (engineNote, velocity);
+            if (doubleModeActive)
+                doubleEngine->noteOn (engineNote, velocity);
+        }
         return;
     }
 
@@ -1339,14 +1345,14 @@ void ElectryAudioProcessor::dispatchNoteOff (int note) noexcept
         return;
     }
 
-    if (electry::ElectryEngine::isSoloClearKeyswitchNote (note))
+    if (electry::ElectryEngine::isMidiSoloClearNote (note))
         return;
 
-    if (electry::ElectryEngine::isSoloStringKeyswitchNote (note))
+    if (electry::ElectryEngine::isMidiSoloStringNote (note))
     {
         if (appliedPlayStyleKeysHold)
         {
-            const int stringIndex = note - electry::ElectryEngine::firstSoloStringKeyswitchNote;
+            const int stringIndex = note - electry::ElectryEngine::firstMidiSoloStringNote;
             auto& count = heldSoloStringCounts[static_cast<std::size_t> (stringIndex)];
             if (count > 0)
             {
@@ -1357,15 +1363,18 @@ void ElectryAudioProcessor::dispatchNoteOff (int note) noexcept
         return;
     }
 
-    if (electry::ElectryEngine::isPlayableNote (note))
+    if (electry::ElectryEngine::isMidiPlayableNote (note))
         static_cast<void> (takeNoteOwnership (note, 0, true));
 
     const int style = note - electry::ElectryEngine::firstPlayStyleKeyswitchNote;
     if (! appliedPlayStyleKeysHold || style < 0
         || style >= electry::ElectryEngine::playStyleKeyswitchCount)
     {
-        engine.noteOff (note);
-        doubleEngine->noteOff (note);
+        const int engineNote = electry::ElectryEngine::isMidiPlayableNote (note)
+            ? note - electry::ElectryEngine::octaveShiftSemitones
+            : note;
+        engine.noteOff (engineNote);
+        doubleEngine->noteOff (engineNote);
         return;
     }
 
@@ -1615,6 +1624,8 @@ void ElectryAudioProcessor::publishStringVisualState() noexcept
          stringIndex < electry::ElectryEngine::stringCount; ++stringIndex)
     {
         const auto index = static_cast<std::size_t> (stringIndex);
+        if (visualScratch[index].sounding && visualScratch[index].midiNote >= 0)
+            visualScratch[index].midiNote += electry::ElectryEngine::octaveShiftSemitones;
         stringVisuals[index].store (
             electry::visuals::packStringVisual (visualScratch[index]),
             std::memory_order_relaxed);
@@ -1643,7 +1654,7 @@ void ElectryAudioProcessor::triggerStringRepick (int stringIndex,
         return;
 
     enqueueUiMidiEvent (
-        electry::ElectryEngine::firstRepickNote + stringIndex,
+        electry::ElectryEngine::firstMidiRepickNote + stringIndex,
         velocity, true);
 }
 
@@ -1747,7 +1758,7 @@ void ElectryAudioProcessor::batchOrDispatchNoteOn (
     NoteOnBatch& batch) noexcept
 {
     if (selectsBaseArticulation || velocity <= 0.0f
-        || ! electry::ElectryEngine::isPlayableNote (note))
+        || ! electry::ElectryEngine::isMidiPlayableNote (note))
     {
         flushNoteOnBatch (batch);
         dispatchNoteOn (note, velocity, selectsBaseArticulation);
@@ -1763,7 +1774,8 @@ void ElectryAudioProcessor::batchOrDispatchNoteOn (
     // than create an owner that no later Note Off can address.
     if (! recordNoteOwnership (note, midiChannel, expressionId))
         return;
-    batch.events[batch.size++] = { note, velocity, expressionId };
+    const int engineNote = note - electry::ElectryEngine::octaveShiftSemitones;
+    batch.events[batch.size++] = { engineNote, velocity, expressionId };
 }
 
 void ElectryAudioProcessor::flushNoteOnBatch (NoteOnBatch& batch) noexcept

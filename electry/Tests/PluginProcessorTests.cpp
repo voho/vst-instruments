@@ -850,15 +850,15 @@ void testSameSampleChordAllocationIsCanonical()
         return true;
     };
 
-    const std::array<int, 3> canonical { 33, 40, 45 };
+    const std::array<int, 3> canonical { 45, 52, 57 };
     for (const float spread : { 0.0f, 12.0f })
     {
         const auto reference = render (canonical, {}, spread, 137);
-        expect (reference.strings[0].midiNote == 33
+        expect (reference.strings[0].midiNote == 45
                     && reference.strings[0].fret == 5
-                    && reference.strings[1].midiNote == 40
+                    && reference.strings[1].midiNote == 52
                     && reference.strings[1].fret == 5
-                    && reference.strings[2].midiNote == 45
+                    && reference.strings[2].midiNote == 57
                     && reference.strings[2].fret == 5,
                 "same-sample A power chord did not use its compact fifth-fret shape");
         expect (std::all_of (reference.left.begin(),
@@ -898,7 +898,7 @@ void testSameSampleChordAllocationIsCanonical()
     // The processor knows that a one-note timestamp is complete too. With no
     // strings to cross, enabling Strum Spread must be a sample-exact no-op;
     // otherwise a monophonic riff pays the old fixed 20 ms lookahead.
-    const std::array<int, 1> singleNote { 45 };
+    const std::array<int, 1> singleNote { 57 };
     const auto flatSingle = render (singleNote, {}, 0.0f, 137);
     const auto spreadSingle = render (singleNote, {}, 12.0f, 137);
     expect (flatSingle.left == spreadSingle.left
@@ -908,9 +908,9 @@ void testSameSampleChordAllocationIsCanonical()
     // A#0 is continuous performance state, not a fourth chord note. It must
     // condition the complete simultaneous attack wherever the host inserted
     // it, without flushing the bounded chord solve into separate fingerings.
-    const std::array<int, 4> vibratoFirst { 22, 33, 40, 45 };
-    const std::array<int, 4> vibratoMiddle { 33, 40, 22, 45 };
-    const std::array<int, 4> vibratoLast { 33, 40, 45, 22 };
+    const std::array<int, 4> vibratoFirst { 22, 45, 52, 57 };
+    const std::array<int, 4> vibratoMiddle { 45, 52, 22, 57 };
+    const std::array<int, 4> vibratoLast { 45, 52, 57, 22 };
     const auto conditionedReference = render (
         vibratoFirst, {}, 0.0f, 137);
     for (const auto& candidate : {
@@ -924,19 +924,19 @@ void testSameSampleChordAllocationIsCanonical()
                 "same-sample A#0 vibrato depended on host insertion order");
     }
 
-    std::array duplicateChord { 33, 40, 40, 45 };
+    std::array duplicateChord { 45, 52, 52, 57 };
     const auto duplicateReference = render (
-        duplicateChord, {}, 0.0f, 137, 40);
-    expect (duplicateReference.strings[0].midiNote == 33
+        duplicateChord, {}, 0.0f, 137, 52);
+    expect (duplicateReference.strings[0].midiNote == 45
                 && duplicateReference.strings[0].fret == 5
-                && duplicateReference.strings[1].midiNote == 40
+                && duplicateReference.strings[1].midiNote == 52
                 && duplicateReference.strings[1].fret == 5
-                && duplicateReference.strings[2].midiNote == 45
+                && duplicateReference.strings[2].midiNote == 57
                 && duplicateReference.strings[2].fret == 5,
             "duplicate chord did not retain its compact physical shape");
     do
     {
-        const auto candidate = render (duplicateChord, {}, 0.0f, 137, 40);
+        const auto candidate = render (duplicateChord, {}, 0.0f, 137, 52);
         expect (sameMapping (candidate, duplicateReference),
                 "mixed duplicate chord fingering depended on event order");
         expect (candidate.left == duplicateReference.left
@@ -949,7 +949,7 @@ void testSameSampleChordAllocationIsCanonical()
     while (std::next_permutation (duplicateChord.begin(),
                                   duplicateChord.end()));
 
-    const std::array nineNotes { 28, 35, 40, 45, 50, 55, 59, 64, 69 };
+    const std::array nineNotes { 40, 47, 52, 57, 62, 67, 71, 76, 81 };
     const auto nineReference = render (nineNotes, {}, 0.0f, 137);
     for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
     {
@@ -982,15 +982,15 @@ void testSameSampleChordAllocationIsCanonical()
     // or the deterministic player draws.
     const std::array<int, 3> noHost { -1, -1, -1 };
     const auto hostReference = render (canonical, {}, 0.0f, 0);
-    const std::array<int, 2> uiLowHigh { 33, 45 };
-    const std::array<int, 2> uiHighLow { 45, 33 };
-    const std::array<int, 1> uiMiddle { 40 };
+    const std::array<int, 2> uiLowHigh { 45, 57 };
+    const std::array<int, 2> uiHighLow { 57, 45 };
+    const std::array<int, 1> uiMiddle { 52 };
     const auto lowHighSplit = render (
-        std::array { 40, -1, -1 }, uiLowHigh, 0.0f, 0);
+        std::array { 52, -1, -1 }, uiLowHigh, 0.0f, 0);
     const auto highLowSplit = render (
-        std::array { 40, -1, -1 }, uiHighLow, 0.0f, 0);
+        std::array { 52, -1, -1 }, uiHighLow, 0.0f, 0);
     const auto reverseHostSplit = render (
-        std::array { 45, 33, -1 }, uiMiddle, 0.0f, 0);
+        std::array { 57, 45, -1 }, uiMiddle, 0.0f, 0);
     const auto uiOnly = render (noHost, canonical, 0.0f, 0);
     for (const auto* candidate : { &lowHighSplit, &highLowSplit,
                                   &reverseHostSplit, &uiOnly })
@@ -1011,8 +1011,8 @@ void testSameSampleChordAllocationIsCanonical()
         juce::AudioBuffer<float> audio;
         juce::MidiBuffer midi;
         const auto noteOn = juce::MidiMessage::noteOn (
-            1, 45, static_cast<juce::uint8> (110));
-        const auto noteOff = juce::MidiMessage::noteOff (1, 45);
+            1, 57, static_cast<juce::uint8> (110));
+        const auto noteOff = juce::MidiMessage::noteOff (1, 57);
         if (releaseFirst)
             midi.addEvent (noteOff, 0);
         midi.addEvent (noteOn, 0);
@@ -1023,7 +1023,7 @@ void testSameSampleChordAllocationIsCanonical()
         for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
         {
             const auto state = processor.getStringVisualState (string);
-            if (state.midiNote == 45)
+            if (state.midiNote == 57)
                 result = state;
         }
         processor.releaseResources();
@@ -1040,28 +1040,28 @@ void testSameSampleChordAllocationIsCanonical()
     juce::AudioBuffer<float> overlapAudio;
     juce::MidiBuffer overlapMidi;
     overlapMidi.addEvent (juce::MidiMessage::noteOn (
-                              1, 45, static_cast<juce::uint8> (110)), 0);
+                              1, 57, static_cast<juce::uint8> (110)), 0);
     overlapMidi.addEvent (juce::MidiMessage::noteOn (
-                              1, 45, static_cast<juce::uint8> (110)), 0);
+                              1, 57, static_cast<juce::uint8> (110)), 0);
     renderBlock (overlaps, overlapAudio, overlapMidi);
-    overlapMidi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+    overlapMidi.addEvent (juce::MidiMessage::noteOff (1, 57), 0);
     renderBlock (overlaps, overlapAudio, overlapMidi);
     bool heldAfterOneRelease = false;
     for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
     {
         const auto state = overlaps.getStringVisualState (string);
         heldAfterOneRelease = heldAfterOneRelease
-                           || (state.midiNote == 45 && state.sounding
+                           || (state.midiNote == 57 && state.sounding
                                && ! state.releasing);
     }
-    overlapMidi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+    overlapMidi.addEvent (juce::MidiMessage::noteOff (1, 57), 0);
     renderBlock (overlaps, overlapAudio, overlapMidi);
     bool secondOwnerStillHeld = false;
     for (int string = 0; string < electry::ElectryEngine::stringCount; ++string)
     {
         const auto state = overlaps.getStringVisualState (string);
         secondOwnerStillHeld = secondOwnerStillHeld
-                            || (state.midiNote == 45 && state.sounding
+                            || (state.midiNote == 57 && state.sounding
                                 && ! state.releasing);
     }
     expect (heldAfterOneRelease && ! secondOwnerStillHeld,
@@ -1105,7 +1105,7 @@ void testKeyswitchContract()
     midi.addEvent (juce::MidiMessage::noteOff (1, mutedNote), 0);
     midi.addEvent (juce::MidiMessage::noteOff (1, upNote), 0);
     midi.addEvent (juce::MidiMessage::noteOn (
-        1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 96), 16);
+        1, electry::ElectryEngine::lowestMidiPlayableNote, (juce::uint8) 96), 16);
     renderBlock (processor, audio, midi);
     expect (processor.getCurrentPlayStyleIndex() == mutedIndex,
             "keyswitch note-off cleared the latched style");
@@ -1317,16 +1317,16 @@ void testPlayStyleHoldContract()
     // releasing the style key only changes future attacks.
     setParameterValue (processor, electry::parameters::strumSpread, 20.0f);
     midi.addEvent (juce::MidiMessage::noteOn (
-        1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 110), 0);
+        1, electry::ElectryEngine::lowestMidiPlayableNote, (juce::uint8) 110), 0);
     midi.addEvent (juce::MidiMessage::noteOn (
         1, palmKey, (juce::uint8) 127), 0);
     renderBlock (processor, audio, midi);
     send (juce::MidiMessage::noteOff (1, palmKey));
     expect (capturedPlayStyle (
-                processor, electry::ElectryEngine::lowestPlayableNote) == palm,
+                processor, electry::ElectryEngine::lowestMidiPlayableNote) == palm,
             "a HOLD release rewrote a delayed Palm attack");
-    send (juce::MidiMessage::noteOn (1, 40, (juce::uint8) 110));
-    expect (capturedPlayStyle (processor, 40) == dead,
+    send (juce::MidiMessage::noteOn (1, 52, (juce::uint8) 110));
+    expect (capturedPlayStyle (processor, 52) == dead,
             "the first attack after HOLD release did not use the base style");
 
     // Only mode and base are state. A temporary override must not reopen as a
@@ -1369,64 +1369,69 @@ void testSoloStringProcessorKeyswitches()
     // Test 1: HOLD mode
     processor.setPlayStyleKeysHold (true);
 
-    // Press MIDI note 0 (Solo string 8, index 0)
-    midi.addEvent (juce::MidiMessage::noteOn (1, 0, (juce::uint8) 127), 0);
+    const int s8 = electry::ElectryEngine::firstMidiSoloStringNote;
+    const int s7 = s8 + 1;
+    const int s6 = s8 + 2;
+    const int clr = electry::ElectryEngine::midiSoloClearNote;
+
+    // Press MIDI note for Solo string 8 (index 0)
+    midi.addEvent (juce::MidiMessage::noteOn (1, s8, (juce::uint8) 127), 0);
     render();
     expect (processor.getSoloStringMask() == 1,
-            "HOLD note on 0 did not set solo mask to 1");
+            "HOLD note on s8 did not set solo mask to 1");
 
-    // Press MIDI note 1 (Solo string 7, index 1) simultaneously
-    midi.addEvent (juce::MidiMessage::noteOn (1, 1, (juce::uint8) 127), 0);
+    // Press MIDI note for Solo string 7 (index 1) simultaneously
+    midi.addEvent (juce::MidiMessage::noteOn (1, s7, (juce::uint8) 127), 0);
     render();
     expect (processor.getSoloStringMask() == 3,
-            "holding notes 0 and 1 did not set mask to 3");
+            "holding s8 and s7 did not set mask to 3");
 
-    // Release note 1
-    midi.addEvent (juce::MidiMessage::noteOff (1, 1), 0);
+    // Release s7
+    midi.addEvent (juce::MidiMessage::noteOff (1, s7), 0);
     render();
     expect (processor.getSoloStringMask() == 1,
-            "releasing note 1 did not leave note 0 held");
+            "releasing s7 did not leave s8 held");
 
-    // Release note 0 -> returns to 0
-    midi.addEvent (juce::MidiMessage::noteOff (1, 0), 0);
+    // Release s8 -> returns to 0
+    midi.addEvent (juce::MidiMessage::noteOff (1, s8), 0);
     render();
     expect (processor.getSoloStringMask() == 0,
-            "releasing note 0 did not clear solo mask to 0 in HOLD mode");
+            "releasing s8 did not clear solo mask to 0 in HOLD mode");
 
     // Test 2: LATCH mode
     processor.setPlayStyleKeysHold (false);
     expect (processor.getSoloStringMask() == 0,
             "switching to LATCH did not clear solo mask");
 
-    // Tap note 2 (Solo string 6, index 2)
-    midi.addEvent (juce::MidiMessage::noteOn (1, 2, (juce::uint8) 127), 0);
-    midi.addEvent (juce::MidiMessage::noteOff (1, 2), 0);
+    // Tap s6 (Solo string 6, index 2)
+    midi.addEvent (juce::MidiMessage::noteOn (1, s6, (juce::uint8) 127), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (1, s6), 0);
     render();
     expect (processor.getSoloStringMask() == (1u << 2),
-            "tapping note 2 in LATCH mode did not latch string 6");
+            "tapping s6 in LATCH mode did not latch string 6");
 
-    // Tap note 8 (Clear / All strings)
-    midi.addEvent (juce::MidiMessage::noteOn (1, 8, (juce::uint8) 127), 0);
+    // Tap clr (Clear / All strings)
+    midi.addEvent (juce::MidiMessage::noteOn (1, clr, (juce::uint8) 127), 0);
     render();
     expect (processor.getSoloStringMask() == 0,
-            "tapping note 8 did not clear solo mask in LATCH mode");
+            "tapping clr did not clear solo mask in LATCH mode");
 
     // Test 3: Same-sample conditioning with playable note
     processor.setPlayStyleKeysHold (true);
-    // On the same sample: Note On for solo string 8 (note 0), and note 40 (playable on string 8)
+    // On the same sample: Note On for solo string 8 (s8), and note 40 (playable on string 8)
     midi.addEvent (juce::MidiMessage::noteOn (1, 40, (juce::uint8) 110), 0);
-    midi.addEvent (juce::MidiMessage::noteOn (1, 0, (juce::uint8) 127), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, s8, (juce::uint8) 127), 0);
     render();
     expect (processor.getStringVisualState (0).sounding,
             "same-sample solo keyswitch did not condition attack to string 0");
 
-    // On same sample: play note 64 (unplayable on string 8) while string 8 is soloed
-    midi.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 110), 0);
+    // On same sample: play note 76 (open string 1, unplayable on string 8) while string 8 is soloed
+    midi.addEvent (juce::MidiMessage::noteOn (1, 76, (juce::uint8) 110), 0);
     render();
     expect (! processor.getStringVisualState (7).sounding,
-            "unplayable note 64 sounded on string 7 despite solo string 8 active");
+            "unplayable note 76 sounded on string 7 despite solo string 8 active");
     expect (processor.getStringVisualState (0).sounding,
-            "playing unplayable note 64 interrupted active note on string 0");
+            "playing unplayable note 76 interrupted active note on string 0");
 
     // Test 4: CC123 (All Notes Off) in HOLD mode clears solo mask
     midi.addEvent (juce::MidiMessage::controllerEvent (1, 123, 0), 0);
@@ -1436,10 +1441,10 @@ void testSoloStringProcessorKeyswitches()
 
     // Test 5: Double Mode retains active solo mask
     processor.setPlayStyleKeysHold (false);
-    midi.addEvent (juce::MidiMessage::noteOn (1, 0, (juce::uint8) 127), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, s8, (juce::uint8) 127), 0);
     render();
     expect (processor.getSoloStringMask() == 1,
-            "latching string 0 did not set mask to 1");
+            "latching s8 did not set mask to 1");
 
     auto* const outputModeParam = processor.parameters.getParameter (electry::parameters::outputMode);
     expect (outputModeParam != nullptr, "outputMode parameter missing");
@@ -1476,7 +1481,7 @@ void testSameSampleMuteKeyswitchOrder()
                    + static_cast<int> (playStyle),
             (juce::uint8) 127);
         const auto playable = juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote,
+            1, electry::ElectryEngine::lowestMidiPlayableNote,
             (juce::uint8) 120);
 
         if (playableNoteFirst)
@@ -1504,7 +1509,7 @@ void testSameSampleMuteKeyswitchOrder()
         const auto queuePlayable = [&processor]
         {
             processor.keyboardState.noteOn (
-                1, electry::ElectryEngine::lowestPlayableNote,
+                1, electry::ElectryEngine::lowestMidiPlayableNote,
                 120.0f / 127.0f);
         };
         const auto articulation =
@@ -1535,7 +1540,7 @@ void testSameSampleMuteKeyswitchOrder()
         processor.prepareToPlay (sampleRate, blockSize);
         setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
         processor.keyboardState.noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote,
+            1, electry::ElectryEngine::lowestMidiPlayableNote,
             120.0f / 127.0f);
 
         juce::AudioBuffer<float> audio;
@@ -1622,9 +1627,9 @@ void testSameSampleMuteKeyswitchOrder()
     ElectryAudioProcessor releasedUiNote;
     releasedUiNote.prepareToPlay (sampleRate, blockSize);
     releasedUiNote.keyboardState.noteOn (
-        1, electry::ElectryEngine::lowestPlayableNote, 120.0f / 127.0f);
+        1, electry::ElectryEngine::lowestMidiPlayableNote, 120.0f / 127.0f);
     releasedUiNote.keyboardState.noteOff (
-        1, electry::ElectryEngine::lowestPlayableNote, 0.0f);
+        1, electry::ElectryEngine::lowestMidiPlayableNote, 0.0f);
     juce::AudioBuffer<float> releaseAudio;
     juce::MidiBuffer releaseMidi;
     releaseMidi.addEvent (juce::MidiMessage::noteOn (
@@ -1752,7 +1757,7 @@ void testSameSamplePalmMutePressureAttack()
         else if (timing == PressureTiming::GuiNoteController)
         {
             processor.keyboardState.noteOn (
-                1, electry::ElectryEngine::lowestPlayableNote,
+                1, electry::ElectryEngine::lowestMidiPlayableNote,
                 120.0f / 127.0f);
             midi.addEvent (juce::MidiMessage::controllerEvent (1, 2, 127), 0);
         }
@@ -1768,7 +1773,7 @@ void testSameSamplePalmMutePressureAttack()
         }
         if (timing != PressureTiming::GuiNoteController)
             midi.addEvent (juce::MidiMessage::noteOn (
-                1, electry::ElectryEngine::lowestPlayableNote,
+                1, electry::ElectryEngine::lowestMidiPlayableNote,
                 (juce::uint8) 120), 0);
         if (timing == PressureTiming::NoteFirst)
             midi.addEvent (juce::MidiMessage::controllerEvent (1, 2, 127), 0);
@@ -1832,8 +1837,8 @@ void testSameSamplePalmMutePressureAttack()
 
 void testRepickMidiContract()
 {
-    constexpr int heldNote = electry::ElectryEngine::lowestPlayableNote;
-    constexpr int repickNote = electry::ElectryEngine::firstRepickNote;
+    constexpr int heldNote = electry::ElectryEngine::lowestMidiPlayableNote;
+    constexpr int repickNote = electry::ElectryEngine::firstMidiRepickNote;
     const int muteKeyswitch = electry::ElectryEngine::firstPlayStyleKeyswitchNote
                             + static_cast<int> (electry::PlayStyle::PalmMute);
 
@@ -2137,7 +2142,7 @@ void testPitchWheelByteReconstruction()
 void testPitchWheelMidiDispatch()
 {
     constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
-    constexpr int openD3Note = 50;
+    constexpr int openD3Note = 62;
     constexpr double openD3Hz = 146.83238;
 
     const auto measuredHz = [] (int midiNote, int wheelPosition14,
@@ -2166,13 +2171,13 @@ void testPitchWheelMidiDispatch()
     };
 
     const auto centre = measuredHz (
-        electry::ElectryEngine::lowestPlayableNote, 8192,
+        electry::ElectryEngine::lowestMidiPlayableNote, 8192,
         openLowStringHz);
     const auto bentUp = measuredHz (
-        electry::ElectryEngine::lowestPlayableNote, 16383,
+        electry::ElectryEngine::lowestMidiPlayableNote, 16383,
         openLowStringHz);
     const auto bentDown = measuredHz (
-        electry::ElectryEngine::lowestPlayableNote, 0,
+        electry::ElectryEngine::lowestMidiPlayableNote, 0,
         openLowStringHz);
 
     const auto centsUp = 1200.0 * std::log2 (bentUp / centre);
@@ -2200,7 +2205,7 @@ void testPitchWheelMidiDispatch()
         midi.addEvent (
             juce::MidiMessage::pitchWheel (1, initialWheelPosition14), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 100), 0);
+            1, electry::ElectryEngine::lowestMidiPlayableNote, (juce::uint8) 100), 0);
         renderBlock (processor, audio, midi);
         renderSeconds (processor, audio, 0.9);
 
@@ -2253,18 +2258,18 @@ void testMpeRouting()
         midi.addEvent (juce::MidiMessage::pitchWheel (
             spreadAcrossChannels ? 9 : 1, 12288), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            spreadAcrossChannels ? 2 : 1, 28, (juce::uint8) 105), 0);
+            spreadAcrossChannels ? 2 : 1, 40, (juce::uint8) 105), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            spreadAcrossChannels ? 15 : 1, 52, (juce::uint8) 99), 0);
+            spreadAcrossChannels ? 15 : 1, 64, (juce::uint8) 99), 0);
         renderBlock (processor, audio, midi);
         std::vector<float> rendered (audio.getReadPointer (0),
                                      audio.getReadPointer (0) + blockSize);
         auto tail = renderCapture (processor, audio, 0.35);
         rendered.insert (rendered.end(), tail.begin(), tail.end());
         midi.addEvent (juce::MidiMessage::noteOff (
-            spreadAcrossChannels ? 2 : 1, 28), 0);
+            spreadAcrossChannels ? 2 : 1, 40), 0);
         midi.addEvent (juce::MidiMessage::noteOff (
-            spreadAcrossChannels ? 15 : 1, 52), 0);
+            spreadAcrossChannels ? 15 : 1, 64), 0);
         renderBlock (processor, audio, midi);
         tail = renderCapture (processor, audio, 0.35);
         rendered.insert (rendered.end(), tail.begin(), tail.end());
@@ -2284,7 +2289,7 @@ void testMpeRouting()
         juce::AudioBuffer<float> audio;
         juce::MidiBuffer midi;
         midi.addEvent (juce::MidiMessage::noteOn (
-            4, 40, (juce::uint8) 105), 0);
+            4, 52, (juce::uint8) 105), 0);
         if (rpnParameter >= 0)
         {
             midi.addEvent (juce::MidiMessage::controllerEvent (1, 101, 0), 0);
@@ -2298,7 +2303,7 @@ void testMpeRouting()
             midi.addEvent (juce::MidiMessage::controllerEvent (4, 7, 12), 0);
         }
         midi.addEvent (juce::MidiMessage::noteOn (
-            4, 52, (juce::uint8) 99), 0);
+            4, 64, (juce::uint8) 99), 0);
         renderBlock (processor, audio, midi);
         std::vector<float> rendered (audio.getReadPointer (0),
                                      audio.getReadPointer (0) + blockSize);
@@ -2338,9 +2343,9 @@ void testMpeRouting()
         }
         midi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            2, 28, (juce::uint8) 105), 0);
+            2, 40, (juce::uint8) 105), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            3, 52, (juce::uint8) 99), 0);
+            3, 64, (juce::uint8) 99), 0);
         renderBlock (processor, audio, midi);
         std::vector<float> rendered (audio.getReadPointer (0),
                                      audio.getReadPointer (0) + blockSize);
@@ -2368,13 +2373,13 @@ void testMpeRouting()
         if (setupPosition == 0)
             addSetup();
         midi.addEvent (juce::MidiMessage::noteOn (
-            2, 40, (juce::uint8) 105), 0);
+            2, 52, (juce::uint8) 105), 0);
         if (setupPosition == 1)
             addSetup();
         if (interleaveTimbre)
             midi.addEvent (juce::MidiMessage::controllerEvent (2, 74, 96), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            3, 50, (juce::uint8) 99), 0);
+            3, 62, (juce::uint8) 99), 0);
         if (setupPosition == 2)
             addSetup();
         renderBlock (processor, audio, midi);
@@ -2410,7 +2415,7 @@ void testMpeRouting()
         const auto memberSetup = juce::MPEMessages::setLowerZone (2, 5, 1);
         memberMidi.addEvents (memberSetup, 0, -1, 0);
         memberMidi.addEvent (juce::MidiMessage::noteOn (
-            3, 50, (juce::uint8) 105), 0);
+            3, 62, (juce::uint8) 105), 0);
         renderBlock (memberProcessor, memberAudio, memberMidi);
         if (sendForeignBend)
             memberMidi.addEvent (juce::MidiMessage::pitchWheel (2, 16383), 0);
@@ -2438,7 +2443,7 @@ void testMpeRouting()
 
     // Insert notes before the complete same-sample RPN sequence. The
     // processor's conditioning pass must still activate the zone first.
-    midi.addEvent (juce::MidiMessage::noteOn (2, 28, (juce::uint8) 110), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (2, 40, (juce::uint8) 110), 0);
     auto setup = juce::MPEMessages::setLowerZone (2, 5, 1);
     midi.addEvents (setup, 0, -1, 0);
     renderBlock (processor, audio, midi);
@@ -2492,10 +2497,10 @@ void testMpeRouting()
     // wheel arrives. The zone-master bend remains live across that handoff.
     midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
     renderBlock (processor, audio, midi);
-    midi.addEvent (juce::MidiMessage::noteOff (2, 28), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (2, 40), 0);
     renderBlock (processor, audio, midi);
     midi.addEvent (juce::MidiMessage::noteOn (
-        2, 28, (juce::uint8) 110), 0);
+        2, 40, (juce::uint8) 110), 0);
     renderBlock (processor, audio, midi);
     const auto reusedMember = measureLow();
     const auto reusedCents = cents (reusedMember, baseline);
@@ -2519,7 +2524,7 @@ void testMpeRouting()
     auto upperSetup = juce::MPEMessages::setUpperZone (1, 3, 1);
     upperMidi.addEvents (upperSetup, 0, -1, 0);
     upperMidi.addEvent (juce::MidiMessage::noteOn (
-        15, 45, (juce::uint8) 108), 0);
+        15, 57, (juce::uint8) 108), 0);
     renderBlock (upperProcessor, upperAudio, upperMidi);
     renderSeconds (upperProcessor, upperAudio, 0.55);
     const auto captureUpperStereo = [&]
@@ -2600,7 +2605,7 @@ void testMpeRouting()
 
 void testMpeIdlePitchPreservesReleaseTail()
 {
-    constexpr int note = 50;
+    constexpr int note = 62;
     constexpr double openHz = 146.83238;
     ElectryAudioProcessor reference;
     ElectryAudioProcessor idleBent;
@@ -2682,7 +2687,7 @@ void testMpeIdlePitchPreservesReleaseTail()
 
 void testMpeFractionalRangeAndLiveMasterTail()
 {
-    constexpr int note = 50;
+    constexpr int note = 62;
     constexpr double openHz = 146.83238;
     ElectryAudioProcessor processor;
     setParameterValue (processor, electry::parameters::bodyResonance, 0.0f);
@@ -3268,7 +3273,7 @@ void testResetAllControllersDispatch()
         juce::MidiBuffer midi;
         midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
         midi.addEvent (juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 100), 0);
+            1, electry::ElectryEngine::lowestMidiPlayableNote, (juce::uint8) 100), 0);
         renderBlock (processor, audio, midi);
         renderSeconds (processor, audio, 0.5);
 
@@ -3483,8 +3488,8 @@ void testVibratoGestureMidiAndLifecycle()
         return result;
     };
 
-    const auto stillStopped = renderGestureTail (47, false);
-    const auto movingStopped = renderGestureTail (47, true);
+    const auto stillStopped = renderGestureTail (59, false);
+    const auto movingStopped = renderGestureTail (59, true);
     float stoppedDifference = 0.0f;
     for (std::size_t i = 0; i < stillStopped.left.size(); ++i)
         stoppedDifference = std::max (
@@ -3494,8 +3499,8 @@ void testVibratoGestureMidiAndLifecycle()
                 && stoppedDifference > 1.0e-6f,
             "A#0 did not audibly move a stopped string");
 
-    const auto stillOpen = renderGestureTail (45, false);
-    const auto movingOpen = renderGestureTail (45, true);
+    const auto stillOpen = renderGestureTail (57, false);
+    const auto movingOpen = renderGestureTail (57, true);
     expect (stillOpen.fret == 0 && movingOpen.fret == 0
                 && stillOpen.left == movingOpen.left,
             "A#0 moved an open string that no finger can rock");
@@ -3515,7 +3520,7 @@ void testVibratoGestureMidiAndLifecycle()
         renderBlock (p, block, events); // Double is still dormant here.
         setParameterValue (p, electry::parameters::outputMode, 2.0f);
         events.addEvent (juce::MidiMessage::noteOn (
-            1, 47, static_cast<juce::uint8> (105)), 0);
+            1, 59, static_cast<juce::uint8> (105)), 0);
         for (int remaining = static_cast<int> (0.8 * sampleRate);
              remaining > 0;)
         {
@@ -3556,7 +3561,7 @@ void testVibratoGestureMidiAndLifecycle()
 void testTremoloPickingMidiAndLifecycle()
 {
     constexpr int gestureNote = electry::ElectryEngine::tremoloGestureNote;
-    constexpr int heldNote = electry::ElectryEngine::lowestPlayableNote;
+    constexpr int heldNote = electry::ElectryEngine::lowestMidiPlayableNote;
     ElectryAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
     setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
@@ -3680,11 +3685,11 @@ void testTremoloPickingMidiAndLifecycle()
         if (gesturePosition == 0)
             addGesture();
         events.addEvent (juce::MidiMessage::noteOn (
-            1, 28, static_cast<juce::uint8> (105)), 0);
+            1, 40, static_cast<juce::uint8> (105)), 0);
         if (gesturePosition == 1)
             addGesture();
         events.addEvent (juce::MidiMessage::noteOn (
-            1, 35, static_cast<juce::uint8> (105)), 0);
+            1, 47, static_cast<juce::uint8> (105)), 0);
         if (gesturePosition == 2)
             addGesture();
         renderBlock (p, block, events);
@@ -3765,7 +3770,7 @@ void testTremoloPickingMidiAndLifecycle()
         renderBlock (p, block, events);
         setParameterValue (p, electry::parameters::outputMode, 2.0f);
         events.addEvent (juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote,
+            1, electry::ElectryEngine::lowestMidiPlayableNote,
             static_cast<juce::uint8> (105)), 0);
         std::vector<float> right;
         for (int remaining = static_cast<int> (0.11 * sampleRate);
@@ -3844,7 +3849,7 @@ void testUiArticulationTriggerAndPanic()
                 juce::MidiMessage::controllerEvent (1, 120, 0), 0);
         }
         attackMidi.addEvent (juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote,
+            1, electry::ElectryEngine::lowestMidiPlayableNote,
             (juce::uint8) 120), 0);
         renderBlock (attackProcessor, attackAudio, attackMidi);
         const auto* channel = attackAudio.getReadPointer (0);
@@ -4004,7 +4009,7 @@ void testPerformanceControls()
         juce::AudioBuffer<float> audio;
         juce::MidiBuffer midi;
         renderSeconds (processor, audio, 0.05);
-        for (const int note : { 28, 40, 45, 50, 55, 64 })
+        for (const int note : { 40, 52, 57, 62, 67, 76 })
             midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 105), 0);
         renderBlock (processor, audio, midi);
         // Sequenced deliberately: renderSeconds overwrites the buffer, so the
@@ -4102,22 +4107,22 @@ void testOutputModeAudioField()
         };
     };
 
-    const auto mono = render (0.0f, electry::ElectryEngine::lowestPlayableNote);
+    const auto mono = render (0.0f, electry::ElectryEngine::lowestMidiPlayableNote);
     expect (mono.identical, "Mono output parameter did not produce exact dual mono");
 
     const auto stereoLow = render (
-        1.0f, electry::ElectryEngine::lowestPlayableNote);
+        1.0f, electry::ElectryEngine::lowestMidiPlayableNote);
     expect (stereoLow.leftRms > stereoLow.rightRms * 1.08,
             "Stereo APVTS parameter did not spread the low string left");
 
-    const auto stereoHigh = render (1.0f, 64);
+    const auto stereoHigh = render (1.0f, 76);
     expect (stereoHigh.rightRms > stereoHigh.leftRms * 1.08,
             "Stereo APVTS parameter did not spread the high string right");
 
     const auto doubled = render (
-        2.0f, electry::ElectryEngine::lowestPlayableNote);
+        2.0f, electry::ElectryEngine::lowestMidiPlayableNote);
     const auto repeatedDouble = render (
-        2.0f, electry::ElectryEngine::lowestPlayableNote);
+        2.0f, electry::ElectryEngine::lowestMidiPlayableNote);
     expect (! doubled.identical && doubled.differenceRatio > 0.02,
             "Double did not render two distinct Electry performances");
     expect (doubled.leftHash == mono.leftHash,
@@ -4146,7 +4151,7 @@ void testOutputModeAudioField()
     juce::MidiBuffer midi;
     renderSeconds (toggled, audio, 0.05);
     midi.addEvent (juce::MidiMessage::noteOn (
-        1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 102), 0);
+        1, electry::ElectryEngine::lowestMidiPlayableNote, (juce::uint8) 102), 0);
     renderBlock (toggled, audio, midi);
     renderSeconds (toggled, audio, 0.08);
     setParameterValue (toggled, electry::parameters::outputMode, 0.0f);
@@ -4159,7 +4164,7 @@ void testOutputModeAudioField()
             "re-entering Double did not preserve only the primary tail (L "
                 + std::to_string (reentryLeft) + ", R "
                 + std::to_string (reentryRight) + ")");
-    midi.addEvent (juce::MidiMessage::noteOn (1, 40, (juce::uint8) 102), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 52, (juce::uint8) 102), 0);
     renderBlock (toggled, audio, midi);
     expect (audio.getMagnitude (0, 0, blockSize) > 1.0e-5f
                 && audio.getMagnitude (1, 0, blockSize) > 1.0e-5f,
@@ -4914,8 +4919,8 @@ void testEditorRendering()
                     && fretboard->getHelpText().contains ("Space")
                     && fretboard->getHelpText().contains ("Return")
                     && fretboard->getTooltip().containsIgnoreCase ("click")
-                    && fretboard->getTooltip().contains ("E6")
-                    && fretboard->getTooltip().contains ("B6")
+                    && fretboard->getTooltip().contains ("E7")
+                    && fretboard->getTooltip().contains ("B7")
                     && fretboard->getTooltip().containsIgnoreCase ("velocity"),
                 "the live fretboard does not explain its selection and repick controls");
 
@@ -5047,7 +5052,7 @@ void testEditorRendering()
         juce::AudioBuffer<float> semanticAudio;
         juce::MidiBuffer semanticMidi;
         semanticMidi.addEvent (juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote,
+            1, electry::ElectryEngine::lowestMidiPlayableNote,
             (juce::uint8) 110), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
@@ -5067,7 +5072,7 @@ void testEditorRendering()
                     && tuningSpacerUnchanged,
                 "an open-string position marker invaded the tuning-label spacer");
         expect (accessibleTitle().contains ("physical string 8")
-                    && accessibleTitle().contains ("open E1")
+                    && accessibleTitle().contains ("open E2")
                     && accessibleTitle().contains ("downstroke")
                     && accessibleTitle().contains ("held"),
                 "an open downstroke did not reach the fretboard's accessible title");
@@ -5080,16 +5085,16 @@ void testEditorRendering()
         semanticProcessor.triggerStringRepick (0, 110.0f / 127.0f);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
-        expect (accessibleTitle().contains ("open E1")
+        expect (accessibleTitle().contains ("open E2")
                     && accessibleTitle().contains ("upstroke")
                     && accessibleTitle().contains ("held"),
                 "a same-note upstroke repick did not refresh its accessible title");
 
         semanticMidi.addEvent (juce::MidiMessage::noteOff (
-            1, electry::ElectryEngine::lowestPlayableNote), 0);
+            1, electry::ElectryEngine::lowestMidiPlayableNote), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
-        expect (accessibleTitle().contains ("open E1")
+        expect (accessibleTitle().contains ("open E2")
                     && accessibleTitle().contains ("releasing"),
                 "a released string was not described as releasing");
 
@@ -5099,12 +5104,12 @@ void testEditorRendering()
             static_cast<int> (electry::PickStyle::Up));
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticMidi.addEvent (juce::MidiMessage::noteOn (
-            1, electry::ElectryEngine::lowestPlayableNote + 1,
+            1, electry::ElectryEngine::lowestMidiPlayableNote + 1,
             (juce::uint8) 110), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
         expect (accessibleTitle().contains ("physical string 8")
-                    && accessibleTitle().contains ("fret 1 F1")
+                    && accessibleTitle().contains ("fret 1 F2")
                     && accessibleTitle().contains ("upstroke")
                     && accessibleTitle().contains ("held"),
                 "a fretted upstroke did not reach the fretboard's accessible title");
@@ -5115,7 +5120,7 @@ void testEditorRendering()
                            electry::parameters::sympathetic, 1.0f);
         renderSeconds (semanticProcessor, semanticAudio, 0.10);
         semanticMidi.addEvent (
-            juce::MidiMessage::noteOn (1, 45, (juce::uint8) 121), 0);
+            juce::MidiMessage::noteOn (1, 57, (juce::uint8) 121), 0);
         renderBlock (semanticProcessor, semanticAudio, semanticMidi);
         renderSeconds (semanticProcessor, semanticAudio, 0.10);
         semanticDisplay.refresh (semanticProcessor, 1.0f / 30.0f);
@@ -5174,11 +5179,11 @@ void testEditorRendering()
                     && midiKeyboard->getRangeStart()
                         == electry::ElectryEngine::firstKeyswitchNote
                     && midiKeyboard->getRangeEnd()
-                        == electry::ElectryEngine::highestPlayableNote,
-                "keyboard does not stop at the highest pitched note D6");
+                        == electry::ElectryEngine::highestMidiPlayableNote,
+                "keyboard does not stop at the highest pitched note D7");
         expect (midiKeyboard != nullptr
                     && midiKeyboard->getWhiteNoteText (24).isEmpty(),
-                "keyboard labels the silent C1 dead zone as playable");
+                "keyboard labels C1 keyswitch as ordinary playable note");
         expect (keyboard->getWantsKeyboardFocus()
                     && keyboard->hasFocusOutline(),
                 "keyboard is not visibly keyboard-focusable");
@@ -5188,7 +5193,7 @@ void testEditorRendering()
                         == "MIDI keyboard: " + hintLabel->getText(),
                 "keyboard accessibility omits its visible keyswitch instructions");
         expect (hintLabel != nullptr
-                    && hintLabel->getText().contains ("E1..D6")
+                    && hintLabel->getText().contains ("E2..D7")
                     && hintLabel->getText().contains ("A#0")
                     && hintLabel->getText().containsIgnoreCase ("vibrato")
                     && hintLabel->getText().contains ("B0")
@@ -5376,7 +5381,7 @@ void runRealtimeDeadlineBenchmarkIfRequested()
     };
     constexpr std::array rates { 48000.0, 96000.0, 384000.0 };
     constexpr std::array frameCounts { 64, 512 };
-    constexpr std::array chord { 28, 35, 40, 45, 50, 55, 59, 64 };
+    constexpr std::array chord { 40, 47, 52, 57, 62, 67, 71, 76 };
 
     const auto percentile = [] (const std::vector<double>& sorted,
                                 double probability)

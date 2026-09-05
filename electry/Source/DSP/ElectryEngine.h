@@ -310,8 +310,14 @@ public:
     // audio thread; ordinary MIDI/UI attack groups are far smaller.
     static constexpr int maximumChordEvents = 128;
 
+    // Physical sounding range of the eight-string Drop-E instrument:
+    static constexpr int lowestSoundingNote = 28;
+    static constexpr int highestSoundingNote = 86;
+    static constexpr int firstRepickNote = 88;
+    static constexpr int repickNoteCount = stringCount;
+
     // Keyswitches occupy the lowest octaves below the playable range.
-    // Solo-string keyswitches occupy Octave -1: MIDI notes 0..7 correspond to
+    // Solo-string keyswitches occupy Octave -1 in the engine: MIDI notes 0..7 correspond to
     // physical strings 8..1 (lowest to highest, matching repick keys).
     // Note 8 is the Solo Clear / All Strings keyswitch.
     static constexpr int firstSoloStringKeyswitchNote = 0;
@@ -339,10 +345,19 @@ public:
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
-    // E6..B6 repick the physically held strings from low to high without
-    // adding another fretting-key owner. D#6 remains a silent separator.
-    static constexpr int firstRepickNote = 88;
-    static constexpr int repickNoteCount = stringCount;
+
+    // Electry follows standard guitar notation convention: written one octave
+    // higher than it sounds. Written low E2 (40) sounds at the true 8-string
+    // fundamental of 41.2 Hz (sounding E1 = 28).
+    static constexpr int octaveShiftSemitones = 12;
+
+    // Written MIDI layout (as exposed by the plugin, host, DAW, and on-screen keyboard):
+    static constexpr int firstMidiSoloStringNote = 24; // C1..G1 (strings 8..1)
+    static constexpr int midiSoloClearNote = 32;       // G#1 (clear)
+    static constexpr int lowestMidiPlayableNote = lowestPlayableNote + octaveShiftSemitones; // 40 (E2)
+    static constexpr int highestMidiPlayableNote = highestPlayableNote + octaveShiftSemitones; // 98 (D7)
+    static constexpr int firstMidiRepickNote = firstRepickNote + octaveShiftSemitones; // 100 (E7)
+
     // How far the fretting hand reaches above its index finger. Four fret
     // spaces is one finger per fret with the ordinary stretch a player uses
     // without shifting, so the hand covers `position .. position + reach`.
@@ -510,6 +525,25 @@ public:
     {
         return midiNote >= firstRepickNote
             && midiNote < firstRepickNote + repickNoteCount;
+    }
+    [[nodiscard]] static bool isMidiPlayableNote(int midiNote) noexcept
+    {
+        return midiNote >= lowestMidiPlayableNote
+            && midiNote <= highestMidiPlayableNote;
+    }
+    [[nodiscard]] static bool isMidiRepickNote(int midiNote) noexcept
+    {
+        return midiNote >= firstMidiRepickNote
+            && midiNote < firstMidiRepickNote + repickNoteCount;
+    }
+    [[nodiscard]] static bool isMidiSoloStringNote(int midiNote) noexcept
+    {
+        return midiNote >= firstMidiSoloStringNote
+            && midiNote < firstMidiSoloStringNote + soloStringKeyswitchCount;
+    }
+    [[nodiscard]] static bool isMidiSoloClearNote(int midiNote) noexcept
+    {
+        return midiNote == midiSoloClearNote;
     }
 
 private:
