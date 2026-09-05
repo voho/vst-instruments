@@ -789,6 +789,28 @@ also observes vibration evolving across both transverse planes; this reinforces
 the requirement for measured reciprocal 2-D bridge data before the silent
 second axis is promoted.
 
+The 2025
+[robotic plucking-depth study, posted in 2026](https://arxiv.org/abs/2606.24356)
+separates small depth changes from pick speed: deeper strokes generally increase
+level and strengthen low harmonics within a mounting, while remounting changes
+the result substantially. It supplies no universal MIDI-velocity brightness
+law. Release depth, speed and contact geometry therefore remain separate
+physical questions in the excitation work.
+
+[`ModalPreloadProbe.cpp`](Tools/ModalPreloadProbe.cpp) and
+[`PrototypeModalPreload.py`](Tools/PrototypeModalPreload.py) provide a reproducible
+mechanical reference for a string held before release, using
+[Woodhouse's constrained modal construction](https://euphonics.org/wp-content/uploads/2022/03/Guitar_I.pdf).
+It couples one low-E string to the Original bridge and all six fixed tail
+anchors, solves static equilibrium under a stated 1 N point force, then releases
+it with zero initial velocity. At 128 string modes, static displacement is
+within 0.20% of the infinite pinned stiff-string reference for both materials;
+free-release energy balance passes at 44.1, 48 and 96 kHz. The tool reports modal
+convergence and time-integration error separately. It has no acoustic radiation,
+MIDI-force calibration or runtime role; it is a reference for future source
+changes, not a validated audible improvement. Compile/export/run instructions
+are in the two files.
+
 ## Recordings are calibration references only
 
 The separate `AcustraReferenceBank` contains 321 CC0 regions over MIDI 38--84:
@@ -1167,11 +1189,21 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   sounding length itself, so both velocity layers lose their upper partials
   and the model's already-small velocity-to-brightness rise inverts sign
   rather than growing toward the recordings' nine decibels, and the corpus
-  gets worse at every published tip radius. The attack noise has the recordings'
-  level (percussive-to-harmonic −15 dB against −14) but not their spectrum
-  (its centroid 380 Hz against the archtop's 1,090 and its share above 3 kHz
-  0.2% against 2.6%), and Touch is inert on it: the plectrum's click is
-  missing. Sustained radiation above 5 kHz is 6 to 13 dB weak on steel and
+  gets worse at every published tip radius. Earlier percussive descriptors did
+  not isolate the current random release burst. A controlled source-on/off
+  subtraction now keeps every random draw and the entire instrument unchanged:
+  on quiet/loud E2, its microphone perturbation has a power centroid of
+  4.94/5.73 kHz over 80 Hz–10 kHz and a stereo level of −47.9/−32.6 dB relative
+  to the whole first 350 ms note. Touch changes the burst's level, duration and
+  colour; nylon's fitted burst gain is zero. These are native causal differences,
+  not new recording comparisons or identification of a real pick click.
+  The burst is inserted at the folded bridge write and reaches E2 radiation
+  after 11.52–11.54 ms. A source at the nominal pluck point would have a first
+  ideal travel time near 0.7 ms; the current burst has no measured local-force
+  interpretation. An off-tree attempt to insert the two local travelling waves
+  repairs integer-delay arrival timing, but its injection into the fractional
+  allpass states lacks a verified physical mapping. It is not shipped.
+  Sustained radiation above 5 kHz is 6 to 13 dB weak on steel and
   15 to 34 dB weak on nylon. Nylon's bending stiffness now comes from
   Woodhouse's per-string measured table (Acta Acustica 90 (2004) 945-965,
   Table I) rather than a fitted diameter-based formula; the corpus's own
@@ -1268,6 +1300,14 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   frozen public guitar-49 nonlinear profile by 7.30% at 2.4 mm and 7.74% at
   3.6 mm, produced non-monotone velocity/pitch motion and failed its DC gate.
   It was stopped before TRAIN, validation or blind scoring and is not shipped.
+- The initial pluck is a propagated ideal shape, not a complete finger-loaded
+  rest state. Changing its phase or subtracting its travelling-wave mean alone
+  does not transform the coupled filter and body histories. The scalar loop
+  attenuation also replaces the static elastic limit with a small creep term;
+  this is a limitation of the high-frequency loss approximation, not something
+  filter priming can repair. The modal preload reference above retains the
+  static elastic term and checks release energy, but mapping that state into
+  the shipping waveguide remains unresolved.
 - Above H12 the loop's single second-order allpass is not collocated at all,
   and drift there reaches 29.6 cents by H24 on an open steel low E. A
   multi-biquad cascade sized by the published group-delay-area method (Abel

@@ -84454,5 +84454,867 @@
    }
   },
   "preserved_prior_ledger_sha256": "586b6a9c445507d2c86646e0ebfd24a18b167078b90456b0d94f2aca8709be22"
+ },
+ "pluck_state_and_local_source_reference_2026_09_05": {
+  "status": "Reproducible mechanical reference and diagnostic corrections; no production sound, defaults, calibration, GUI or benchmark target changes.",
+  "native_source_base_commit": "5e9b15849ee86c21e45732bee1ac2365d5c9f2f6",
+  "production_source_sha256": {
+   "Source/DSP/AcustraEngine.cpp": "5d4b45148b61a90fb175ea80aff5d83ee53939ab8514c5e645b00110909298d8",
+   "Source/DSP/AcustraEngine.h": "0d7bc71d09e61d2e0be1c145c8999a2f909e2503aeda079d11a37e250c4b2f18"
+  },
+  "viscous_string_limit": {
+   "scope": "36 freshly prepared normal-polarisation native coefficient sets: two materials, six open strings, 44.1/48/96k, default controls and Original bridge. No audio renders; scalar-loss isolation only.",
+   "derivation": {
+    "definitions": "T tension [N], mu mass/length [kg/m], r distributed drag [kg/(m s)], c=sqrt(T/mu), Z0=sqrt(T mu), alpha=r/(2mu), Laplace s [1/s]. x runs from driven end 0 to rigid end L.",
+    "PDE": "mu*y_tt+r*y_t=T*y_xx",
+    "energy_balance": "d/dt [1/2 integral_0^L(mu*v^2+T*y_x^2)dx] = F(0)*v(0)-r integral_0^L v^2 dx, F(0)=-T*y_x(0).",
+    "propagation": "kappa=sqrt(s*(s+2alpha))/c, branch with Re(kappa)>=0 for Re(s)>0; one way q=exp(-kappa L), round trip P=exp(-2kappa L).",
+    "characteristic_impedance": "Zc=T*kappa/s=Z0*sqrt(1+2alpha/s). The right-going force/velocity ratio follows directly from F=-T*y_x and v=s*y.",
+    "finite_string": "Zin=Zc*coth(kappa L); Yin=tanh(kappa L)/Zc. General load ZL: Zin=Zc*(ZL+Zc*tanh(kappa L))/(Zc+ZL*tanh(kappa L)).",
+    "static": "Yin=sL/T+O(s^2); Zin=T/(sL)+rL/3+O(s). The elastic string has finite static compliance even with distributed viscous damping.",
+    "high_frequency": "kappa=(s+alpha-alpha^2/(2s)+...)/c; Zc/Z0=1+alpha/s-alpha^2/(2s^2)+... . Constant gain exp(-alpha*2L/c) approximates propagation attenuation at |s|>>alpha, not the exact impedance.",
+    "modal_poles": "For both fixed ends, s_n=-alpha +/- i*sqrt((n*pi*c/L)^2-alpha^2); constant-g ideal-delay poles are -alpha +/- i*n*pi*c/L. This excludes stiffness, body loading and native fractional-delay tuning.",
+    "exact_viscous_modal_impedance": "Zin=(T/L)[1/s+sum_n>=1 2*(s+2alpha)/(s^2+2alpha*s+(n*pi*c/L)^2)]. Derived from coth partial fractions, not copied from Woodhouse."
+   },
+   "gain_only_conclusion": {
+    "constant_gain": "The constant-g ideal-delay approximation moves the static spring impedance pole from s=0 to s=-alpha. No constant g<1 repairs static compliance: Y(0)=(1-g)/(Z0*(1+g))>0. Setting g=1 removes that loss rather than modeling viscous drag.",
+    "exact_propagation_only": "Keeping Z0 while replacing the return propagation by exp(-2kappa L) gives Y~kappa L/Z0 proportional to sqrt(s), still not the required sL/T.",
+    "possible_reference_wave_realization": "A fixed real reference Z0 is not intrinsically forbidden: P_eff=(Zin-Z0)/(Zin+Z0) reproduces the exact passive driving-point impedance and has |P_eff|<=1. But it is an effective reflection filter, not physical propagation. Native internal displacement observations, distributed excitation and port wave histories cannot be kept unchanged without a new state mapping.",
+    "recommendation": "Do not patch scalar gain or prime existing history under an unproven gauge law. Use an independent finite-string reference to assess initialization and force histories first."
+   },
+   "mapping": "alpha=-log(native loopGain)/(2L/c) matches only existing scalar high-frequency round-trip attenuation. It is not fitted to data and not a measured drag coefficient; the native frequency-loss shelves, allpass dispersion, delay correction and loaded bridge remain outside this analytic comparison.",
+   "summary_48k": {
+    "nylon": {
+     "alpha_diagnostic_per_s": [
+      2.0147484569544774,
+      2.1056751494893073
+     ],
+     "dc_crossover_hz": [
+      0.32064120440928506,
+      0.3351274689560625
+     ],
+     "dc_mobility_m_per_N_s": [
+      0.016491609327783412,
+      0.023008116783172366
+     ],
+     "fixed_fixed_fundamental_pole_shift_cents": [
+      -0.01310641923279175,
+      -0.0008947506409886745
+     ],
+     "at_own_fundamental_max_abs_characteristic_phase_degrees": 0.22294172352979627,
+     "at_own_fundamental_max_abs_characteristic_magnitude_dB": 0.00013150919953578178,
+     "at_own_fundamental_max_abs_roundtrip_phase_degrees": 0.002725331049088904,
+     "dense20_to20k_max_absolute_mobility_difference_times_Z0": 0.3691183385347459
+    },
+    "steel": {
+     "alpha_diagnostic_per_s": [
+      0.8898454171833078,
+      1.006200577902039
+     ],
+     "dc_crossover_hz": [
+      0.14162192063071785,
+      0.16014167136521862
+     ],
+     "dc_mobility_m_per_N_s": [
+      0.0044826032029705015,
+      0.006264098514399311
+     ],
+     "fixed_fixed_fundamental_pole_shift_cents": [
+      -0.002556635575095892,
+      -0.00020430932815345632
+     ],
+     "at_own_fundamental_max_abs_characteristic_phase_degrees": 0.09846732064746681,
+     "at_own_fundamental_max_abs_characteristic_magnitude_dB": 2.5653943779162558e-05,
+     "at_own_fundamental_max_abs_roundtrip_phase_degrees": 0.0005316346743310416,
+     "dense20_to20k_max_absolute_mobility_difference_times_Z0": 0.367812914390041
+    }
+   },
+   "checks": {
+    "passed": true,
+    "static_limit_relative_error_bound": 1e-08,
+    "lossless_limit_absolute_error_bound": 1e-12,
+    "passivity": "Re Zin>=0 and |P_eff|<=1 over each dense 20Hz-20kHz grid; analytic energy identity establishes the passive PDE beyond this grid.",
+    "exact_modal_expansion_relative_errors_N32_128_512": [
+     0.016746141309107926,
+     0.004235546857675112,
+     0.001061988167257579
+    ],
+    "zero_velocity_modal_solution_finite_difference_per_s": 2.8742436251047633e-07
+   },
+   "woodhouse_reference": {
+    "source": "https://euphonics.org/wp-content/uploads/2022/03/Guitar_I.pdf",
+    "verified": "Printed p.936, Eq29/30/31, visually checked. Eq29 is explicitly a small-modal-damping approximation; Eq30 is a small-bending-stiffness frequency correction.",
+    "causal_small_loss_second_form_Eq29": "Z_W=(T/L)[1/s+sum_n (2s+d_n)/(s^2+d_n*s+omega_n^2)], d_n=omega_n/Q_n. This scalar impedance is passive for d_n>=0 and retains T/(Ls). It is not the exact uniform-viscous PDE: d_n=2alpha gives numerator 2s+2alpha rather than 2s+4alpha.",
+    "usefulness": "Yes as a bounded causal reference for endpoint impedance with a known static term; Eq31 separately retains the static end-to-interior x/L transfer. Do not claim exact joint equivalence to the distributed PDE or native waveguide.",
+    "physical_initial_state_reference": "For a chosen Galerkin string/body model with positive mass, stiffness and damping, solve K*q0=b*Fpluck and set qdot0=0, then release the external force. Static preload is independent of damping. Build and converge the same finite basis used for dynamics; include bridge constraint and actual anchor stiffness if body motion is retained.",
+    "rigid_pinned_string_example": "phi_n=sin(n*pi*x/L), m_n=mu L/2, omega_n^2=(T k_n^2+EI k_n^4)/mu. q_n(0)=Fpluck*phi_n(xp)/(m_n*omega_n^2), qdot_n(0)=0. EI=0 converges to a triangle. With EI>0, the correct static profile is the corresponding bending Green function, not exactly triangular.",
+    "free_mode_release": "For alpha_n<omega_n, q_n(t)=q_n(0)*exp(-alpha_n*t)*[cos(omega_dn*t)+(alpha_n/omega_dn)*sin(omega_dn*t)], omega_dn=sqrt(omega_n^2-alpha_n^2). This has exactly zero initial velocity; a decaying cosine alone does not.",
+    "available_inputs_and_limits": "T, mu, L, EI and positive model decay targets are already available. Current calibrated modal losses can define a diagnostic modal damping choice, not a new measured loss dataset. A frequency-loss filter magnitude divided by phase/group delay is only an approximate modal-pole conversion; exact native equivalence needs actual poles. Mechanical body preload follows its compliance and anchors; the current pressure-bank DC equilibrium and pluck force/metre scaling remain unresolved. No full architecture replacement proposed."
+   },
+   "audible_scope": "At open-string fundamentals the scalar-loss approximation produces very small isolated pole shifts (see summary), while the exact characteristic impedance has a first-order phase correction. Dense driving-point response errors can be amplified near narrow resonances. Static/pre-release behavior differs qualitatively; these coefficient checks do not prove an audible improvement or identify the true guitar damping mechanism. No measured body, contact, level, EQ or gain changes were made.",
+   "primary_sources": [
+    {
+     "url": "https://www.dsprelated.com/freebooks/pasp/Lossy_1D_Wave_Equation.html",
+     "supports": "J.O. Smith Appendix C.5 EqC.21 gives the viscous PDE and exact spatial frequency; C.22/C.23 explicitly make the small-loss/high-frequency approximation before exponential-wave loss consolidation."
+    },
+    {
+     "url": "https://www.dsprelated.com/freebooks/pasp/Terminated_String_Impedance.html",
+     "supports": "Distinguishes characteristic wave impedance from the rigidly terminated input impedance; gives the lossless coth/cot limit."
+    },
+    {
+     "url": "https://euphonics.org/wp-content/uploads/2022/03/Guitar_I.pdf",
+     "supports": "J. Woodhouse (2004), On the Synthesis of Guitar Plucks, Eq29-31, printed p.936; modal impedance/transfer retain the static spring and constraint terms."
+    }
+   ],
+   "evidence": {
+    "path": "/tmp/acustra-viscous-string-static-review/report.json",
+    "sha256": "ea94b4a390335d2e8e10225ecd016cbb56b5185b9205fc8fc0eccf2ab6bf0854"
+   }
+  },
+  "pluck_state_gauge": {
+   "conclusion": "A uniform history constant is an ideal folded-coordinate gauge, not net physical displacement. Current scalar loss and empty or untransformed coupled histories do not preserve this gauge. Gauge-only native variants change actual attack audio, so the prior rest candidate cannot be interpreted as a phase-only comparison. No standalone corrective equivalence for the full current lossy/dispersive guitar has been established.",
+   "protocol": {
+    "native_cases": [
+     {
+      "case": 0,
+      "material": "nylon",
+      "note": 40,
+      "velocity": "91/127",
+      "picking": "Pick",
+      "string_channel": 1
+     },
+     {
+      "case": 1,
+      "material": "nylon",
+      "note": 84,
+      "velocity": "91/127",
+      "picking": "Thumb",
+      "string_channel": 6
+     },
+     {
+      "case": 2,
+      "material": "steel",
+      "note": 40,
+      "velocity": "16/127",
+      "picking": "Pick",
+      "string_channel": 1
+     },
+     {
+      "case": 3,
+      "material": "steel",
+      "note": 40,
+      "velocity": "112/127",
+      "picking": "Thumb",
+      "string_channel": 1
+     }
+    ],
+    "isolated": "Three rates44.1/48/96k, both axes:24 actual public-noteOn states. Freeze delay/coefficient updates with native advance(0,1), feed its output back for4rounded periods, observe displacementAt(.3). Compare original state to same-phase history minus its actual N-sample mean; test shipping or unity scalar gain, with unchanged or analytically shifted filter states.",
+    "gauge": "Subtract g=mean(C[0:N]) from ALL8192 stored cells. Variant1 leaves filter histories unchanged. Variant2 subtracts g from ThiranY1/Y2, both shelves' state/previousInput, and dispersionx1/x2/y1/y2. This is additive state conversion of each unity-DC filter, not the earlier periodic steady-state priming assumption. Other engine states are unchanged.",
+    "span_only_diagnostic": "Subtract from only the N initialized cells to expose a guard/boundary error; this variant is not rendered as an audio candidate.",
+    "full_engine": "At48k, four cases \u00d7 StereoMic/SaddlePiezo/Magnetic \u00d7 baseline/gauge-only/gauge+filter-state =36 renders,250ms each. Original shipping calibration, outputGain.03, native idle strings, body, noise, longitudinal path and seed remain identical. Block64 with32-frame final block. Raw little-endian planar float32stereo; no RMS matching/trimming. Nylon magnetic is explicitly silent and excluded from relative-error ratios.",
+    "ideal_coordinate_check": "Independent unit-height triangle at rational p=5/32, exact integer period4096, one-metre ideal reference. Native readDelay/write propagation and displacementAt central velocity; finite differences have float rounding and one-cell corner errors. This isolates coordinate geometry, not body preload or a calibrated guitar."
+   },
+   "derivation": {
+    "fold": "After write, C(r)=buffer[writeIndex-1-r]. For normalized bridge distance x, y(x)=C(D-D*x/2)-C(D*x/2). A uniform C->C-g cancels at every x, even under the observer's linear fractional interpolation, if both taps and guard samples share the shift.",
+    "mean_is_not_motion": "The physical mean displacement is the spatial integral of the two-wave difference; it is not mean(C). Mean velocity is the spatial integral of the derivative difference. Nonzero mean displacement/momentum at a later propagation phase is permitted; it is not a DC-gauge error.",
+    "phase_identity": "For periodic unit triangle T_p, T_p(p-u)=1-T_p(u). The existing normalized symmetric five-atom smoothing and cyclic harmonic projection preserve this identity. Write S for the filtered/projected triangle and e=S(0): C_ship(u)=A[S(u)-e], C_rest(u)=A[S(u+p/2)-1/2]. Hence C_ship(u)=C_rest(u-p/2)+A(1/2-e). Continuous non-DC modal magnitudes and derivative energy agree. Discrete fractional phase shifts of non-bandlimited corners also change alias alignment; no exact sampled/full-engine equality follows.",
+    "shipping_time_origin": "On the ideal periodic string, C_t(u)=C_0(u-t/D), so shipping is the rest-state solution at t=pD/2=pL/c plus a constant gauge. Each polarization has its own local p and delay. This is not one common time shift of the full two-axis instrument/body.",
+    "unsmoothed_geometry": "For p<1/2 and L=A=1, current y(x)=x(2p-1)/(2p(1-p)) forx<2p, else(x-1)/(1-p). Peak lies at2p; mean y=-(1-2p)/(2(1-p)); displacement centroid=(1+2p)/3. Interior v/c=1/(2p(1-p)) forx<2p, else0, with mean v/c=1/(1-p). These describe a propagated pluck atp, not evidence that the declared pluck location must be doubled or halved.",
+    "filter_shift": "For y[n]=sum b_k*x[n-k]-sum a_k*y[n-k], unity DC requires sum b=1+sum a. Shifting every corresponding x/y history by-g therefore shifts every output by-g. All four native pre-loss sections meet this condition (to float precision).",
+    "scalar_loss": "The remaining loopGain=lambda multiplies that output, yielding shift-lambda*g rather than-g. Relative restored-offset residual is1-lambda on the first advance; the native measurement verifies this. Replacing lambda*C by lambda*(C-g0)+g0 would impose a gauge-relative affine boundary or explicit coordinate origin; it is not the present homogeneous lossy boundary. No such runtime change is proposed.",
+    "bridge": "BridgeDrive integrates2Z times the incident history; its raw offsets reach the bridge and anchor recurrences before the acoustic finite differences. Keeping these coupled histories fixed is not a full gauge transform. The selected string's normalized saddle lever is u=.5*(stringIndex-2.5), and incident moment=u*incident force; pluck distance p does not enter that lever. No missing pluck moment-arm factor is established."
+   },
+   "native_gauge_summary": {
+    "unity_gain=False,shifted_filter_states=False": {
+     "count": 24,
+     "max_initial_displacement_error": 1.4901161193847656e-08,
+     "max_first_residual_minus_1_minus_loopGain": 0.7264102627585205,
+     "max_physical_displacement_difference_over_gauge": 1.5031848623388424,
+     "max_incident_offset_residual_over_gauge": 2.0103860515651895
+    },
+    "unity_gain=False,shifted_filter_states=True": {
+     "count": 24,
+     "max_initial_displacement_error": 1.4901161193847656e-08,
+     "max_first_residual_minus_1_minus_loopGain": 1.9993490680929316e-07,
+     "max_physical_displacement_difference_over_gauge": 0.03503591926005939,
+     "max_incident_offset_residual_over_gauge": 0.09678744210711511
+    },
+    "unity_gain=True,shifted_filter_states=False": {
+     "count": 24,
+     "max_initial_displacement_error": 1.4901161193847656e-08,
+     "max_first_residual_minus_1_minus_loopGain": 0.7291625974800245,
+     "max_physical_displacement_difference_over_gauge": 1.5414373430726898,
+     "max_incident_offset_residual_over_gauge": 2.0135037964493985
+    },
+    "unity_gain=True,shifted_filter_states=True": {
+     "count": 24,
+     "max_initial_displacement_error": 1.4901161193847656e-08,
+     "max_first_residual_minus_1_minus_loopGain": 2.032819231357407e-07,
+     "max_physical_displacement_difference_over_gauge": 2.601827527078477e-05,
+     "max_incident_offset_residual_over_gauge": 2.1738953680195173e-05
+    }
+   },
+   "max_relative_cyclic_slope_energy_change": 1.655366177466533e-08,
+   "span_only_bridge_error_over_gauge_range": [
+    0.5549354553222656,
+    1
+   ],
+   "evidence": {
+    "path": "/tmp/acustra-pluck-state-invariant-review/report.json",
+    "sha256": "a121378705d068f8d79724994fe2c4c6f3c5b1c99ab295df62f6055d7b3e01c3"
+   }
+  },
+  "current_release_noise_attribution": {
+   "protocol": "Frozen native-only attribution. No measured audio, fitting or target selection.\nEight named native cases at48k/1s/127-frame blocks; Finger, original bridge,\nDreadnought/Spruce, fitted calibration and all idle ports retained. Modes are:\n0 shipping;1 suppress BOTH noise writes;2 suppress horizontal write only;\n4 remove initial delay-buffer shape, retaining the same native burst/control\nstate (diagnostic, not a physically prepared pure-noise guitar).\nAll modes still call renderExcitation with the same seed/draws/envelope.\nMode0 must match an independently compiled unmodified engine byte for byte.\nThe 0-1 subtraction is the total causal effect, including nonlinear steel\nattack-pitch feedback; its energy is NOT an independent incoherent stem.\nSignals use native model units; integrals are not string Joules or calibrated\nPa/SPL. Centroids use POWER, unlike unknown historical HPSS conventions.\nRectangular fixed windows deliberately preserve attack time; finite-window\nspectral leakage is retained, no gates/latency corrections/normalization/EQ.\nThe ideal local-force propagation comparison is conditional on interpreting\nthis phenomenological displacement-noise burst as an actual point contact.\n",
+   "findings": {
+    "verified_topology": "One burst is added at the folded bridge write, first affecting the bridge near a full loop later. It has no two delayed opposite-sign point-contact arrivals. Interpretation as a local string contact is therefore inconsistent, but the burst has no calibrated force units or isolated recorded-click validation.",
+    "current_spectrum": "Default steel native burst effect is small and bright; the historical380Hz and Touch-inert statements cannot describe this isolated current random source.",
+    "touch_saturation": "At velocity112, default Touch.58 already clamps effectiveTouch to1, so Touch.58 to1 is exactly inert by saturation. Quiet velocity16 remains responsive.",
+    "nylon": "Fitted transientScale0 means no generated burst.",
+    "rate": "Seconds-based decay and exponential pole time constant are preserved up to coefficient rounding. Common-frequency color is approximate; explicit white bypass reaches hostNyquist, so full-band variance grows with bandwidth. See rate report.",
+    "not_perceptual": "First response means numerically nonzero, not an audibility judgment. No click classification, listening, new real-recording score or physical-force calibration was performed."
+   },
+   "historical_limit": {
+    "README_claim_added_revision": "60549c36f85754b75577499cacf74c13689218a7",
+    "README_claim_date": "2026-09-01",
+    "current_real_recording_comparison": false,
+    "original_noise_HPSS_protocol_or_raw_results_located": false,
+    "meaning": "Current isolated burst/subtraction descriptors cannot be equated to unknown historical full-output percussive masks; no claim that real level or spectrum now matches."
+   },
+   "case_summaries": [
+    {
+     "name": "steel-m40-v16-t0-mode0",
+     "applied_touch": 0,
+     "force_first_ms": 11.541666666666668,
+     "ideal_direct_ms": 0.7089856580563492,
+     "source": {
+      "power": 4.2224264597759187e-13,
+      "centroid_power_hz": 1351.1967251483136,
+      "share_above_3000": 0.13818057455227345
+     },
+     "actual_delta_microphone": {
+      "power": 9.17951170832641e-11,
+      "centroid_power_hz": 4107.730326227154,
+      "share_above_3000": 0.501895546860415
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 8.962758062468367e-11,
+      "centroid_power_hz": 4187.118812899223,
+      "share_above_3000": 0.5137833290928868
+     },
+     "stereo_delta_to_full_db": -54.26653846335125,
+     "horizontal_effect_to_total_delta_db": null,
+     "full_to_muted_level_db": 0.0007940412819403281
+    },
+    {
+     "name": "steel-m40-v16-t58-mode0",
+     "applied_touch": 0.1364406794309616,
+     "force_first_ms": 11.541666666666668,
+     "ideal_direct_ms": 0.7089856580563492,
+     "source": {
+      "power": 1.4741068050267698e-12,
+      "centroid_power_hz": 1735.5166377867292,
+      "share_above_3000": 0.20098842284611199
+     },
+     "actual_delta_microphone": {
+      "power": 3.8376049175891146e-10,
+      "centroid_power_hz": 4942.4207624739765,
+      "share_above_3000": 0.6192357787863815
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 3.852917192343958e-10,
+      "centroid_power_hz": 4933.174587508589,
+      "share_above_3000": 0.6179321496901546
+     },
+     "stereo_delta_to_full_db": -47.916141918733636,
+     "horizontal_effect_to_total_delta_db": -44.01761358090853,
+     "full_to_muted_level_db": 0.0002933038359973439
+    },
+    {
+     "name": "steel-m40-v16-t100-mode0",
+     "applied_touch": 0.5564407110214233,
+     "force_first_ms": 11.541666666666668,
+     "ideal_direct_ms": 0.7089856580563492,
+     "source": {
+      "power": 1.050891512998536e-11,
+      "centroid_power_hz": 2732.757436771825,
+      "share_above_3000": 0.3859129438269492
+     },
+     "actual_delta_microphone": {
+      "power": 4.2315538064192015e-09,
+      "centroid_power_hz": 6158.293981698138,
+      "share_above_3000": 0.7928548326712289
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 4.230462290836439e-09,
+      "centroid_power_hz": 6174.693148515531,
+      "share_above_3000": 0.795008837605393
+     },
+     "stereo_delta_to_full_db": -37.65530501494122,
+     "horizontal_effect_to_total_delta_db": -48.9210500008896,
+     "full_to_muted_level_db": -0.0031433781608406065
+    },
+    {
+     "name": "steel-m40-v112-t0-mode0",
+     "applied_touch": 0.45289739966392517,
+     "force_first_ms": 11.520833333333332,
+     "ideal_direct_ms": 0.7089856580563492,
+     "source": {
+      "power": 1.259294041727154e-10,
+      "centroid_power_hz": 2512.701405272473,
+      "share_above_3000": 0.34296342727592594
+     },
+     "actual_delta_microphone": {
+      "power": 4.9729484183667485e-08,
+      "centroid_power_hz": 5545.121647874627,
+      "share_above_3000": 0.7061639352858328
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 4.620719886546135e-08,
+      "centroid_power_hz": 5928.730406423853,
+      "share_above_3000": 0.7641597157350262
+     },
+     "stereo_delta_to_full_db": -39.672489723032605,
+     "horizontal_effect_to_total_delta_db": -29.496608867872077,
+     "full_to_muted_level_db": -0.0020626543923924277
+    },
+    {
+     "name": "steel-m40-v112-t58-mode0",
+     "applied_touch": 1,
+     "force_first_ms": 11.520833333333332,
+     "ideal_direct_ms": 0.7089856580563492,
+     "source": {
+      "power": 4.5383606809281875e-10,
+      "centroid_power_hz": 3542.7400759508596,
+      "share_above_3000": 0.5479952493027048
+     },
+     "actual_delta_microphone": {
+      "power": 2.9475109543072453e-07,
+      "centroid_power_hz": 5732.905732768791,
+      "share_above_3000": 0.7326491808081186
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 2.390989070112428e-07,
+      "centroid_power_hz": 6744.698049650526,
+      "share_above_3000": 0.8782112557848812
+     },
+     "stereo_delta_to_full_db": -32.63425578604727,
+     "horizontal_effect_to_total_delta_db": -20.77860184398183,
+     "full_to_muted_level_db": -0.004339313797610472
+    },
+    {
+     "name": "steel-m40-v112-t100-mode0",
+     "applied_touch": 1,
+     "force_first_ms": 11.520833333333332,
+     "ideal_direct_ms": 0.7089856580563492,
+     "source": {
+      "power": 4.5383606809281875e-10,
+      "centroid_power_hz": 3542.7400759508596,
+      "share_above_3000": 0.5479952493027048
+     },
+     "actual_delta_microphone": {
+      "power": 2.9475109543072453e-07,
+      "centroid_power_hz": 5732.905732768791,
+      "share_above_3000": 0.7326491808081186
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 2.390989070112428e-07,
+      "centroid_power_hz": 6744.698049650526,
+      "share_above_3000": 0.8782112557848812
+     },
+     "stereo_delta_to_full_db": -32.63425578604727,
+     "horizontal_effect_to_total_delta_db": -20.77860184398183,
+     "full_to_muted_level_db": -0.004339313797610472
+    },
+    {
+     "name": "steel-m84-v112-t58-mode0",
+     "applied_touch": 1,
+     "force_first_ms": 0.8541666666666667,
+     "ideal_direct_ms": 0.16389804406799158,
+     "source": {
+      "power": 5.418136666802921e-10,
+      "centroid_power_hz": 3712.6992985177994,
+      "share_above_3000": 0.5864217641765368
+     },
+     "actual_delta_microphone": {
+      "power": 2.0895936207049787e-07,
+      "centroid_power_hz": 3455.5166897784916,
+      "share_above_3000": 0.5310322777989601
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 9.349779679405872e-08,
+      "centroid_power_hz": 5029.469530718957,
+      "share_above_3000": 0.9322327626655157
+     },
+     "stereo_delta_to_full_db": -33.15016318720415,
+     "horizontal_effect_to_total_delta_db": -14.711595855453602,
+     "full_to_muted_level_db": -0.012979761224893582
+    },
+    {
+     "name": "nylon-m40-v91-t58-mode0",
+     "applied_touch": 0.5881200432777405,
+     "force_first_ms": null,
+     "ideal_direct_ms": 0.8988178043736639,
+     "source": {
+      "power": 0.0,
+      "centroid_power_hz": null,
+      "share_above_3000": null
+     },
+     "actual_delta_microphone": {
+      "power": 0.0,
+      "centroid_power_hz": null,
+      "share_above_3000": null
+     },
+     "noise_only_diagnostic_microphone": {
+      "power": 0.0,
+      "centroid_power_hz": null,
+      "share_above_3000": null
+     },
+     "stereo_delta_to_full_db": null,
+     "horizontal_effect_to_total_delta_db": null,
+     "full_to_muted_level_db": 0.0
+    }
+   ],
+   "evidence": [
+    {
+     "path": "/tmp/acustra-attack-noise-path-review/report.json",
+     "sha256": "57aa4a1df13f9db27e4b9463529415df40ba265c69724496004265ee2c4a74c8"
+    },
+    {
+     "path": "/tmp/acustra-attack-noise-path-review/summary.json",
+     "sha256": "833bc4704cbecec204f243640396c3d513f3e04928c00ff6f49f3af2f16a0fe6"
+    }
+   ],
+   "recording_boundary": "Source-on/off native differences with identical noise draws, not identification of a recorded pick click. No new real recording comparison."
+  },
+  "local_noise_routing_prototypes": {
+   "status": "NOT QUALIFIED; stop before recording renders or a new solver",
+   "scope": "Off-tree implementation of the proposed before-advance injection and pending-head write. No repository changes, calibration, full suite, protected data, recording render or listening verdict.",
+   "v1_failure": "After-write insertion drops the direct part falling on the already consumed age-D cell. D16,p.05 loses the +.456 sample-zero vertical term and leaves recurring signed DC; ordinary longer integer flight times do not expose it.",
+   "candidate_v2": "StringLoop.addPointExcitation inserts +wave at writeIndex-(D-pD/2) and -wave at writeIndex-pD/2 using linear neighboring-cell weights before advance. Contributions to the current head accumulate in pendingSource, which write adds then clears; reset clears it. Process calls this before the existing fractional read/loss/dispersion. Directional amplitudes remain .76/.51.",
+   "integer_conclusion": "V2 restores the missing current-sample interpolation component and removes recurring DC at D16,p.05. Ordinary D128,p.25 and fractional spatial location65/256 retain the correct paired arrival signs/timing. The after-write observer at the bridge can still include the freshly injected boundary-support sample during a sub-sample source impulse; no exact endpoint-displacement claim is made during that injection.",
+   "causal_reference_protocol": "For fixed fractionalD, compute anchor=floor(D-1.1), f=D-anchor, and the existing nativefloat Thiran coefficients. Retain the actual previous input values in independent x1/x2 variables and previous outputs in y1/y2. Use y=a2*x+a1*x1+x2-a1*y1-a2*y2. Native and reference arrays receive exactly the same source insertions and forced write(0), including pendingSource, so divergent feedback cannot explain a mismatch. No loss/dispersion confound.",
+   "causal_reference_results": [
+    {
+     "D": 16,
+     "point": 0.05000000074505806,
+     "travel": 0.4000000059604645,
+     "fractional_section": 2,
+     "maximum_reference_difference": 0.45600029826164246,
+     "first_three_samples": [
+      {
+       "D": 16,
+       "point": 0.05000000074505806,
+       "travel": 0.4000000059604645,
+       "anchor": 14,
+       "fractional_section": 2,
+       "sample": 0,
+       "current_input": 0,
+       "actual": 0.45600029826164246,
+       "causal_reference": 0
+      },
+      {
+       "D": 16,
+       "point": 0.05000000074505806,
+       "travel": 0.4000000059604645,
+       "anchor": 14,
+       "fractional_section": 2,
+       "sample": 1,
+       "current_input": 0,
+       "actual": 0.3039996922016144,
+       "causal_reference": 0
+      },
+      {
+       "D": 16,
+       "point": 0.05000000074505806,
+       "travel": 0.4000000059604645,
+       "anchor": 14,
+       "fractional_section": 2,
+       "sample": 2,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      }
+     ]
+    },
+    {
+     "D": 16.5,
+     "point": 0.05000000074505806,
+     "travel": 0.4124999940395355,
+     "fractional_section": 1.5,
+     "maximum_reference_difference": 0.5559403300285339,
+     "first_three_samples": [
+      {
+       "D": 16.5,
+       "point": 0.05000000074505806,
+       "travel": 0.4124999940395355,
+       "anchor": 15,
+       "fractional_section": 1.5,
+       "sample": 0,
+       "current_input": 0,
+       "actual": 0.34389981627464294,
+       "causal_reference": 0
+      },
+      {
+       "D": 16.5,
+       "point": 0.05000000074505806,
+       "travel": 0.4124999940395355,
+       "anchor": 15,
+       "fractional_section": 1.5,
+       "sample": 1,
+       "current_input": 0,
+       "actual": 0.5559403300285339,
+       "causal_reference": 0
+      },
+      {
+       "D": 16.5,
+       "point": 0.05000000074505806,
+       "travel": 0.4124999940395355,
+       "anchor": 15,
+       "fractional_section": 1.5,
+       "sample": 2,
+       "current_input": 0,
+       "actual": -0.21255043148994446,
+       "causal_reference": 0
+      }
+     ]
+    },
+    {
+     "D": 41.56181335449219,
+     "point": 0.05742818862199783,
+     "travel": 1.19340980052948,
+     "fractional_section": 1.5618133544921875,
+     "maximum_reference_difference": 0.2472214549779892,
+     "first_three_samples": [
+      {
+       "D": 41.56181335449219,
+       "point": 0.05742818862199783,
+       "travel": 1.19340980052948,
+       "anchor": 40,
+       "fractional_section": 1.5618133544921875,
+       "sample": 0,
+       "current_input": 0.4800126552581787,
+       "actual": 0.08283068239688873,
+       "causal_reference": -0.012950461357831955
+      },
+      {
+       "D": 41.56181335449219,
+       "point": 0.05742818862199783,
+       "travel": 1.19340980052948,
+       "anchor": 40,
+       "fractional_section": 1.5618133544921875,
+       "sample": 1,
+       "current_input": 0,
+       "actual": 0.4158596992492676,
+       "causal_reference": 0.16863824427127838
+      },
+      {
+       "D": 41.56181335449219,
+       "point": 0.05742818862199783,
+       "travel": 1.19340980052948,
+       "anchor": 40,
+       "fractional_section": 1.5618133544921875,
+       "sample": 2,
+       "current_input": 0,
+       "actual": 0.33998554944992065,
+       "causal_reference": 0.4219736158847809
+      }
+     ]
+    },
+    {
+     "D": 128,
+     "point": 0.25,
+     "travel": 16,
+     "fractional_section": 2,
+     "maximum_reference_difference": 0,
+     "first_three_samples": [
+      {
+       "D": 128,
+       "point": 0.25,
+       "travel": 16,
+       "anchor": 126,
+       "fractional_section": 2,
+       "sample": 0,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      },
+      {
+       "D": 128,
+       "point": 0.25,
+       "travel": 16,
+       "anchor": 126,
+       "fractional_section": 2,
+       "sample": 1,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      },
+      {
+       "D": 128,
+       "point": 0.25,
+       "travel": 16,
+       "anchor": 126,
+       "fractional_section": 2,
+       "sample": 2,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      }
+     ]
+    },
+    {
+     "D": 128.5,
+     "point": 0.25,
+     "travel": 16.0625,
+     "fractional_section": 1.5,
+     "maximum_reference_difference": 1.4901161193847656e-08,
+     "first_three_samples": [
+      {
+       "D": 128.5,
+       "point": 0.25,
+       "travel": 16.0625,
+       "anchor": 127,
+       "fractional_section": 1.5,
+       "sample": 0,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      },
+      {
+       "D": 128.5,
+       "point": 0.25,
+       "travel": 16.0625,
+       "anchor": 127,
+       "fractional_section": 1.5,
+       "sample": 1,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      },
+      {
+       "D": 128.5,
+       "point": 0.25,
+       "travel": 16.0625,
+       "anchor": 127,
+       "fractional_section": 1.5,
+       "sample": 2,
+       "current_input": 0,
+       "actual": 0,
+       "causal_reference": 0
+      }
+     ]
+    }
+   ],
+   "fractional_finding": "The actual legal48k high-nylon MPE geometry D41.5618133545,p.0574281886 has travel1.1934098 inside the1.56181335-sample Thiran section. Its injection writes an age41 cell now reused as x[n-1], although that value was not the input observed in the previous sample. Corresponding feedback histories are unchanged. Maximum output difference versus the independently retained causal-input recurrence is.247221455 for a.76 source; ordinary D128.5,p.25 agrees within1.49e-8.",
+   "critical_interpretation": "This is NOT a proof of future-input dependence or that all internal-state excitation is invalid. The integer short-travel case also differs from an input-only recurrence: injecting explicit pure-delay registers is a valid localized source and correctly produces immediate arrivals. At fractionalD, however, the two old-input cells and recursive Thiran outputs jointly represent an allpass state, not an identified pair of physical point ports. No source-to-internal-state transformation or passive spatial realization has been derived here. Therefore ordinary impulse timing does not qualify the fractional point-force topology.",
+   "physical_force_boundary": "The retained burst has displacement-wave units. A force source requires the integrated force/(2Z) relation (Smith PASP Eq10.26); these calibrated amplitudes do not supply that derivation or equal source energy. A sub-sample component belongs in the current boundary solve, not a later microphone-only direct term.",
+   "remaining_limits": [
+    "Fractional-location linear interpolation does not preserve every exact continuous point node; initial fault report quantifies H3 leakage at p1/3,D128.",
+    "Live delay smoothing is intentionally disabled in these probes; v2 deposits using pre-advance currentDelay, so no changing-length contact-position qualification is established.",
+    "No body/bridge coupling, natural-harmonic projection, parameter changes, safety limiter or full-engine realism claim follows from the isolated tests.",
+    "The next required work is a defensible fractional spatial/state realization or explicit placement relative to the lumped filter, not a gain adjustment or arbitrary added delay. No such solver was attempted."
+   ],
+   "primary_force_reference": "https://www.dsprelated.com/freebooks/pasp/Incorporating_Control_Motion.html",
+   "evidence": [
+    {
+     "path": "/tmp/acustra-local-noise-topology-review/initial-fault-report.json",
+     "sha256": "08e16691c22ce84091df7811dcef2ac0af1e72c3800d8ff39f930774c2161761"
+    },
+    {
+     "path": "/tmp/acustra-local-noise-topology-review/v2/report.json",
+     "sha256": "bcba3f2f86889c473555a360a3cffd4cc83b48e20be8b396cc2a77ba96c80e0c"
+    }
+   ],
+   "qualification_boundary": "Neither prototype entered production, full plugin qualification, recording scoring or listening review. Prepared native TRAIN scorer was not run after the fractional-state gate remained unqualified."
+  },
+  "modal_preload_reference": {
+   "status": "bounded passive mechanical reference completed; not native audio or an identified physical pluck calibration",
+   "formulation": {
+    "coordinates": "y(x)=(x/L)*B*q_body+sum q_n*sin(n*pi*x/L)/sqrt(mu*L/2), B=[1,arm]*V; R_mode=V_mode*V_mode^T.",
+    "mass": "Mss=I, Msb_n=sqrt(2muL)*(-1)^(n+1)/(n*pi)*B, Mbb=I+muL/3*B^T B.",
+    "stiffness": "Kss=diag((T*k_n^2+EI*k_n^4)/mu); Kbb=diag(Omega_body^2)+V^T*K_all_tails*V+(T/L)*B^T B; Ksb=0.",
+    "damping": "D=diag(2alpha_string,Omega_body/Q_body) in this chosen coordinate basis; positive but not a spatially uniform viscous operator. alpha_string=-log(nativeGain*abs(nativeLossShelves(omega_n)))/(2L/c), an approximate modal decay target.",
+    "preload": "At x/L=.8, b=[sin(n*pi*.8)/sqrt(muL/2), .8*B]; q0=K^-1*b*1N, qdot0=0. No assumed MIDI-force relation.",
+    "release": "M*qdd+D*qdot+K*q=0 after external holding force removal. Body is preloaded mechanically; no pressure bank or acoustic DC equilibrium is assumed.",
+    "energy": "E=.5*(v^T*M*v+q^T*K*q). Trapezoidal update obeys E_next-E=-dt*v_mid^T*D*v_mid, checked each step.",
+    "static_reference": "Pinned stiff string C(xp,xp)=[L*xi*(1-xi)-sinh(eta*xp)*sinh(eta*(L-xp))/(eta*sinh(eta*L))]/T, eta=sqrt(T/EI), plus xi^2*arm^T*C_body_with_tails_and_one_string*arm."
+   },
+   "checks": "M/K Cholesky SPD, positive diagonal D, static algebra, positive preload energy, zero initial velocity by construction, dense expm reference at1/5/10/20ms, trapezoidal free energy balance at every sample. Mode counts32/64/128; rate comparison44.1/48/96k uses the SAME exported48k continuous system.",
+   "case_summaries": [
+    {
+     "material": "nylon",
+     "string_modes": 32,
+     "body_coordinates": 72,
+     "static_equilibrium_relative_residual": 1.2017559712922841e-16,
+     "initial_energy_J": 0.000726984867898767,
+     "initial_point_displacement_m": 0.0014539697357975338,
+     "static_compliance_relative_error_to_infinite_pinned_stiff_string": -0.015581847079424973,
+     "maximum_string_mode_hz": 2662.4586143127744,
+     "body_compliance_relative_PSD_projection": 1.3626604375732307e-10
+    },
+    {
+     "material": "nylon",
+     "string_modes": 64,
+     "body_coordinates": 72,
+     "static_equilibrium_relative_residual": 1.3292461778321495e-16,
+     "initial_energy_J": 0.0007339295206326515,
+     "initial_point_displacement_m": 0.0014678590412653028,
+     "static_compliance_relative_error_to_infinite_pinned_stiff_string": -0.006178016932691659,
+     "maximum_string_mode_hz": 5474.711779260303,
+     "body_compliance_relative_PSD_projection": 1.3626604375732307e-10
+    },
+    {
+     "material": "nylon",
+     "string_modes": 128,
+     "body_coordinates": 72,
+     "static_equilibrium_relative_residual": 1.3734647183686513e-16,
+     "initial_energy_J": 0.0007370271790369731,
+     "initial_point_displacement_m": 0.0014740543580739462,
+     "static_compliance_relative_error_to_infinite_pinned_stiff_string": -0.0019834438412665925,
+     "maximum_string_mode_hz": 12073.669096509942,
+     "body_compliance_relative_PSD_projection": 1.3626604375732307e-10
+    },
+    {
+     "material": "steel",
+     "string_modes": 32,
+     "body_coordinates": 69,
+     "static_equilibrium_relative_residual": 1.468169013965713e-16,
+     "initial_energy_J": 0.00046048706431832474,
+     "initial_point_displacement_m": 0.0009209741286366493,
+     "static_compliance_relative_error_to_infinite_pinned_stiff_string": -0.01222495933453572,
+     "maximum_string_mode_hz": 2744.1140496570683,
+     "body_compliance_relative_PSD_projection": 4.0622077000626205e-10
+    },
+    {
+     "material": "steel",
+     "string_modes": 64,
+     "body_coordinates": 69,
+     "static_equilibrium_relative_residual": 1.3833461016788728e-16,
+     "initial_energy_J": 0.0004644050644356853,
+     "initial_point_displacement_m": 0.0009288101288713706,
+     "static_compliance_relative_error_to_infinite_pinned_stiff_string": -0.0038205913834357184,
+     "maximum_string_mode_hz": 6085.727190025947,
+     "body_compliance_relative_PSD_projection": 4.0622077000626205e-10
+    },
+    {
+     "material": "steel",
+     "string_modes": 128,
+     "body_coordinates": 69,
+     "static_equilibrium_relative_residual": 1.3887750346940862e-16,
+     "initial_energy_J": 0.00046578737937317573,
+     "initial_point_displacement_m": 0.0009315747587463512,
+     "static_compliance_relative_error_to_infinite_pinned_stiff_string": -0.0008554349232571307,
+     "maximum_string_mode_hz": 16086.98684983617,
+     "body_compliance_relative_PSD_projection": 4.0622077000626205e-10
+    }
+   ],
+   "maximum_step_energy_identity_residual_over_initial_energy": 3.979510728923961e-15,
+   "maximum_cumulative_energy_balance_relative_residual": 6.88061069018247e-13,
+   "convergence": [
+    {
+     "material": "nylon",
+     "pairs": [
+      "32_to64",
+      "64_to128"
+     ],
+     "expm_observation_changes": [
+      {
+       "maximum_point_displacement_change_m": 1.070543000242089e-06,
+       "maximum_bridge_vector_change_m": 3.021804764647294e-08
+      },
+      {
+       "maximum_point_displacement_change_m": 7.556611755979025e-07,
+       "maximum_bridge_vector_change_m": 4.731562720673078e-08
+      }
+     ]
+    },
+    {
+     "material": "steel",
+     "pairs": [
+      "32_to64",
+      "64_to128"
+     ],
+     "expm_observation_changes": [
+      {
+       "maximum_point_displacement_change_m": 2.5488769998219425e-06,
+       "maximum_bridge_vector_change_m": 7.37719761745055e-08
+      },
+      {
+       "maximum_point_displacement_change_m": 3.2749321599357165e-07,
+       "maximum_bridge_vector_change_m": 9.672358990705498e-09
+      }
+     ]
+    }
+   ],
+   "limitations": [
+    "Other speaking strings, second transverse polarization, contact motion, noise, longitudinal waves and acoustic radiation are omitted. This is not the production guitar or a listening candidate.",
+    "The measured bridge bank and extrapolated static compliance retain their existing measurement/geometry limitations. Only float-rounding negative residue eigenvalues are projected to zero; numerical changes are recorded.",
+    "Changing modal count changes the finite Galerkin state; convergence is reported, not assumed. Time integration preserves energy dissipation but trapezoidal frequency warping need not be negligible for the highest modes.",
+    "D diagonal in these normalized fixed-string/free-body coordinates does not prescribe the final coupled modal decay rates. Native loop phase, exact delay and dispersion recurrence are not reproduced.",
+    "No measured string/body release recording, force-to-MIDI mapping, absolute acoustic level or perceptual realism claim follows."
+   ],
+   "primary_source": {
+    "url": "https://euphonics.org/wp-content/uploads/2022/03/Guitar_I.pdf",
+    "description": "Woodhouse2004 On the Synthesis of Guitar Plucks, Eq11 constraint and modal energy construction; finite model and code derived independently from the stated energies."
+   },
+   "reproducible_tools": {
+    "Tools/ModalPreloadProbe.cpp": "b6ee6078d4ff6ab1f257ceb6bc6a771a114932caf28247037a05531f51d2620c",
+    "Tools/PrototypeModalPreload.py": "b586d6513d3cc481a8a4bb2da9398b5501314f9bb2e3bdcfa009bab8c19fda0f"
+   },
+   "provenance_boundary": "Observation context only; these hashes do not prove the supplied coefficients were generated from these sources.",
+   "verification": {
+    "frozen_report_sha256": "3009d5b2315d9412793d4d6270c594609a0140a0ba09bda941bbee5fbb300da5",
+    "new_report_sha256": "b35ae59ddeb932f9a245098891af3a41af770266a0dee8a17d41f8eb2ca28000",
+    "exact_exported_rows": 99,
+    "physical_numeric_fields_checked": 1060,
+    "physical_results_roundoff_equivalent": true,
+    "maximum_displacement_difference_m": 8.673617379884035e-18,
+    "max_absolute_numeric_difference": 4.474104841903154e-16,
+    "no_overwrite": true,
+    "invalid_inputs_rejected_without_output": {
+     "nonfinite": true,
+     "duplicate": true
+    },
+    "source_hashes": {
+     "Tools/ModalPreloadProbe.cpp": "b6ee6078d4ff6ab1f257ceb6bc6a771a114932caf28247037a05531f51d2620c",
+     "Tools/PrototypeModalPreload.py": "b586d6513d3cc481a8a4bb2da9398b5501314f9bb2e3bdcfa009bab8c19fda0f"
+    }
+   },
+   "evidence": [
+    {
+     "path": "/tmp/acustra-modal-preload-repository-check/final-analysis/report.json",
+     "sha256": "b35ae59ddeb932f9a245098891af3a41af770266a0dee8a17d41f8eb2ca28000"
+    },
+    {
+     "path": "/tmp/acustra-modal-preload-repository-check/verification.json",
+     "sha256": "fc649fcacab246b9b6871af1319a7ff381ecbeb46ae9da4e9132174909130657"
+    }
+   ],
+   "review": "Independent read-only reviews of mathematical formulation and promoted tools passed; exported prepared residues, float prewarp, dimensionless stiffness and loss retention poles checked against production."
+  },
+  "contact_measurement_research": [
+   {
+    "source": "https://arxiv.org/abs/2606.24356",
+    "paper": "Pluta et al., The Effect of Microchanges in the Plucking Trajectory on the Acoustic Parameters of Guitar Sound, journal2025 DOI10.21008/j.0860-6897.2025.2.05; arXiv posted2026-06-23.",
+    "protocol": "Martin D-X2e steel low E, six depths separated by192um, eight picks, ten repetitions each;480 plucks, robot maximum speed20mm/s.",
+    "finding": "Within a mounting, deeper strokes generally raise level and low-harmonic weight, reducing centroid. Above the third depth the first-nine-harmonic ratios are largely stable. Remounting effects prevent absolute material comparisons.",
+    "boundary": "Depth is not speed or MIDI velocity. No universal harder-means-brighter law or calibrated release-force trajectory follows; no open raw-audio link identified in article."
+   },
+   {
+    "source": "https://www.frontiersin.org/journals/computer-science/articles/10.3389/fcomp.2019.00008/full",
+    "paper": "Perez-Carrillo2019 optical motion-capture guitar performance study.",
+    "protocol": "About1500 plucks from two players;240Hz motion capture and48k audio from Schaller Oyster S/P top-plate contact pickup.",
+    "boundary": "Twenty-point averaging spans about83ms and occluded markers are reconstructed. This measures gesture at a different resolution from submillisecond contact release; fingertip motion is not an identified string force. Top-plate contact pickup is not a saddle-piezo reference."
+   },
+   {
+    "source": "https://www.mdphys.org/PDF/DAFx24_Guitar.pdf",
+    "paper": "Bilbao et al. DAFx2024 nonlinear guitar model.",
+    "finding": "Energy-based nonlinear finite-difference formulation supports explicit local forcing. Its Eq5 raised-sine-squared force pulse with abrupt release still has selected force/time parameters; it does not provide a measured MIDI-force law."
+   }
+  ],
+  "validation_scope": "Compiled and exported the standalone probe, reproduced six modal references, passed unchanged mechanical gates and invalid-input/no-overwrite checks. Production source hashes unchanged; no full plugin-suite rerun or canonical-demo regeneration for tools/docs-only work.",
+  "recording_and_listening_boundary": "No new real-guitar audio reads, training fit, validation/blind scoring, recording descriptor updates or listener preference. User-selected wider stereo body remains shipping. Pleasantness and market superiority remain unvalidated.",
+  "preserved_prior_ledger_sha256": "e69bec31ec53beca637e5b90e338e33b19744c5112078787468cce29f580adca"
  }
 }
