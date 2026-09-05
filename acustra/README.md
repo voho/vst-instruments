@@ -1062,9 +1062,11 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   its compliance shaped anything — and the finger's damping has no published
   value at all (the paper states its own worked example lossless). What is
   missing is a measured fingertip speed against playing dynamic; Kinoshita,
-  Furuya, Aoki and Altenmüller 2007 (JASA 121:2959) does not report one, and
-  Heijink and Meulenbroek, J. Motor Behavior 34(4) 2002, 339-351, is the
-  nearer source, unread here. Nylon's action heights are converted to wave
+  Furuya, Aoki and Altenmüller 2007 (JASA 121:2959) does not report one.
+  [Heijink and Meulenbroek (2002)](https://www.socsci.ru.nl/meulenbroek/Publications/Heijink%20en%20Meulenbroek%202002.pdf)
+  measures fretting timing and placement at five notes per second; its velocity
+  figure has no magnitude scale and supplies no hammer-on dynamics calibration.
+  Nylon's action heights are converted to wave
   units with the steel displacement scale because nylon has no fitted scale
   of its own; the conversion cancels in the energy equality but not between a
   true height in metres and nylon's pluck amplitude, so nylon pull-off levels
@@ -1258,9 +1260,17 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   string spread. Equal-initial-energy, isolated held notes produce horizontal
   output up to 5.3 dB below the vertical output through cross-to-heave coupling;
   every tested note decays. The existing training loss improves 1.0%, but attack
-  and pitch-trajectory losses worsen and three release/pull-off gates fail.
-  It remains a research candidate: rotation-axis geometry, lateral translation
-  and moment radiation are unmeasured. Development scores were not opened.
+  and pitch-trajectory losses worsen. That early version failed three
+  release/pull-off gates. The current fretting correction and simultaneous
+  held-note release comparison resolve those failures; including both string
+  axes in the wave-flux audit makes the complete engine suite pass. This is
+  not proof that its tuning or radiation is correct: the independent per-axis
+  phase estimate omits the other axis's returning wave, and even the shipping
+  tuning estimate omits neighbouring strings' frequency-dependent loop loads.
+  Rotation-axis geometry and lateral translation remain unmeasured. The raw
+  normal-impact microphone records do support a conditional force-pair
+  radiation map; they do not measure arbitrary horizontal excitation.
+  Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference
   recordings' round robins is noise-limited (a take-to-take spread the same

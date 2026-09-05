@@ -1733,10 +1733,10 @@ float AcustraEngine::bridgePhaseDelay(float frequency,
     const auto notes = openNotes(parameters_.tuning);
     const float impedance = stringImpedance(
         steel, stringIndex, notes[static_cast<std::size_t>(stringIndex)]);
-    // Evaluate this folded return phase independently for each played string.
-    // Unplayed open-string voices are forced one-way and do not appear in the
-    // return impedance, avoiding a second count of the strings already visible
-    // in the Mores bridge measurement.
+    // This estimates one string's return phase from the body and anchors.
+    // Other strings' frequency-dependent loopback impedances are omitted here,
+    // although the runtime junction includes their returning waves. It is an
+    // isolated-port tuning approximation, not the coupled instrument's poles.
     const float characteristicAdmittance = 1.0f / impedance;
     // Body and anchor are in parallel at the saddle, but on a bridge with two
     // degrees of freedom that parallel has to be taken as matrices and only
@@ -2857,7 +2857,10 @@ void AcustraEngine::liftFinger(Voice& voice, int stringIndex,
 // one finger-tap demonstration; DAFx-14's own finger is unforced (Sec. 4.3)
 // and its one kinematic figure is the 3 m/s approach of the Fig. 4 caption.
 // Neither is a playing range. Bounding the top of this map still needs a
-// measured fingertip speed -- see Known gaps.
+// measured fingertip speed. Heijink and Meulenbroek (2002) measure fretting
+// timing/placement at 5 notes/s; their velocity figure has no magnitude scale
+// and the protocol is not a hammer-on dynamics measurement:
+// https://www.socsci.ru.nl/meulenbroek/Publications/Heijink%20en%20Meulenbroek%202002.pdf
 void AcustraEngine::hammerString(Voice& voice, int stringIndex,
                                  int previousMidi, float velocity) noexcept
 {

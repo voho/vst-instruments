@@ -741,34 +741,39 @@ struct AcustraEngineTestAccess
                 engine.process(&left, &right, 1);
                 continue;
             }
-            std::array<double, 12> incoming {}, impedance {};
+            std::array<double, 18> incoming {}, impedance {};
             for (int i = 0; i < 6; ++i)
             {
                 const auto& voice = engine.voices_[static_cast<std::size_t>(i)];
-                auto copy = voice.loops[0];
-                incoming[2 * i] = copy.advance(engine.delaySmoothing_, 1.0f);
-                impedance[2 * i] = voice.characteristicImpedance
-                                * voice.appliedBendImpedanceScale;
+                for (int axis = 0; axis < 2; ++axis)
+                {
+                    auto copy = voice.loops[static_cast<std::size_t>(axis)];
+                    incoming[3 * i + axis] = copy.advance(engine.delaySmoothing_, 1.0f);
+                    impedance[3 * i + axis] = voice.characteristicImpedance
+                                           * voice.appliedBendImpedanceScale;
+                }
                 if (voice.tailActive)
                 {
-                    copy = voice.tailLoop;
-                    incoming[2 * i + 1] = copy.advance(engine.delaySmoothing_,
+                    auto copy = voice.tailLoop;
+                    incoming[3 * i + 2] = copy.advance(engine.delaySmoothing_,
                                                        voice.tailDamping);
                     // Weight the retained state by its independently observed
                     // pre-capture port, not the new note's or a copied field.
-                    impedance[2 * i + 1] = expectedTailZ;
+                    impedance[3 * i + 2] = expectedTailZ;
                 }
             }
             engine.process(&left, &right, 1);
             if (!retained.tailActive)
                 break;
             double waveFlux = 0.0;
-            for (int port = 0; port < 12; ++port)
+            for (int port = 0; port < 18; ++port)
             {
                 if (impedance[port] == 0.0)
                     continue;
-                const auto& voice = engine.voices_[static_cast<std::size_t>(port / 2)];
-                const auto& loop = port % 2 == 0 ? voice.loops[0] : voice.tailLoop;
+                const auto& voice = engine.voices_[static_cast<std::size_t>(port / 3)];
+                const int axis = port % 3;
+                const auto& loop = axis < 2 ? voice.loops[static_cast<std::size_t>(axis)]
+                                            : voice.tailLoop;
                 const double outgoing = loop.delay[static_cast<std::size_t>(
                     (loop.writeIndex + AcustraEngine::maximumDelaySamples - 1)
                     % AcustraEngine::maximumDelaySamples)];
@@ -2042,6 +2047,9 @@ void testRetainedTailClosesTheWaveNormBalance()
     // The collapsed loops hold displacement waves, so this is a wave-norm
     // identity, not calibrated joules or a complete string-energy ledger:
     // sum Z*(a^2-c^2) = [x,r] dot [integrated force, integrated moment].
+    // Include both polarisations and the retained normal branch. A rigid
+    // horizontal termination contributes exactly zero flux; omitting that
+    // branch would incorrectly report an energy error for a moving saddle.
     // Reading incidents from copies and actual emitted delay samples catches
     // a tail receiving a full return while its impedance is absent from G.
     // With one impedance counted for two loops, the discrepancy is Z*x_u^2.

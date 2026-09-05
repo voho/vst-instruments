@@ -78888,5 +78888,374 @@
   },
   "visual_review": "Five fresh native screenshots at896x640,1120x800,1456x1040 plus restoredClassicalNylon/Thumb/UpperMic and minimum-size nylon/magnetic warning reviewed. Root independently inspected minimum and restoredstate images. No layout changes or new visual assets needed.",
   "preserved_behavior": "No parameter IDs, saved-state formats, DSP formulas or preset construction values changed. Live serialized state reload confirms Guitar,Picking,Capture,radio state and steel-only magnetic availability."
+ },
+ "complete_wave_flux_and_source_audit_2026_09_05": {
+  "baseline_revision": "b870c7ed",
+  "runtime_change": "None; test observer includes every speaking polarization and normal retained wave. Source comments now state limitations accurately.",
+  "wave_flux_regression": {
+   "baseline_revision": "b870c7ed",
+   "scope": "Six vertical speaking loops, six horizontal speaking loops, and up to six retained normal loops. No new horizontal tail invented. Same1e-7wave-norm bound.",
+   "current": {
+    "failed_cases": 0,
+    "cases": 27,
+    "log_sha256": "fb1862a1d26f661f65a6ef6b84c71a553b523ad64cbecf12e4279bf85f02559f",
+    "executable_sha256": "d8ffb1efc4a6c0a71375adf3317c08d6f0aca8c7fc4cd871dcb449eefb0858ae",
+    "maximum_relative_error": 2.03057e-08
+   },
+   "mutations": {
+    "missing-tail": {
+     "failed_cases": 27,
+     "cases": 27,
+     "log_sha256": "045673c110ac740fa5d4421217923c1d7f3e7d5a8ad3970681fabe1d297de1ff",
+     "executable_sha256": "a03894f01004305894e97cf80302f0f1612d56bd796cff760bf3d0c636d53187",
+     "maximum_relative_error": 9.92227e-05
+    },
+    "wrong-tail-z": {
+     "failed_cases": 18,
+     "cases": 27,
+     "log_sha256": "3c18bb0d917f1e26c37b0daaef5ce45308f39bd062b56e52f4ba28e57ac5f71b",
+     "executable_sha256": "b16415b725e98f6368c3703c288e50b6d0f8ba37ce51bd15687e42c4c6f43c1f",
+     "maximum_relative_error": 1.46426e-05
+    }
+   },
+   "private_two_axis": {
+    "all_engine_tests_pass": true,
+    "maximum_relative_error": 2.02442e-08,
+    "observed_realtime_ratio": 0.0667401,
+    "log_sha256": "1e9ba3933bd4a4220032a321496321e22d4be912c76aeab3af0f5458d3f52764",
+    "note": "No coupled-phase correction yet; this test proves junction wave balance, not correct tuning or measured realism."
+   },
+   "focused_test_sha256": "f65fee9222929668d6253cb3c576ff7b959eddde8f6c8de5d214bc8442a30a62"
+  },
+  "regression_artifact": {
+   "path": "/tmp/acustra-eighteen-port-regression/report.json",
+   "sha256": "46abf1b9b92e70ce00dccd5808ef94e81ac6bdfb68e1645f1336aadee70a6469"
+  },
+  "validation": {
+   "shipping_full_engine_suite": "Passed98.46s after native rebuild; same1e-7wave-flux threshold. Tests for both earlier port mutations still fail.",
+   "log": {
+    "path": "/tmp/acustra-eighteen-port-regression/full-test.log",
+    "sha256": "9bbcdf4b97c47e7a3de4e167b0fd3a4c45e48a878a41753abda1841ff9032260"
+   },
+   "build_log": {
+    "path": "/tmp/acustra-eighteen-port-regression/build.log",
+    "sha256": "73703b4e1fa25b124c0c60a4edb74ec7f1318088f40c95cf4f0eb0648b86f844"
+   }
+  },
+  "tuning_scope": "Shipping bridgePhaseDelay is an isolated-port approximation: body/anchor load is included but frequency-dependent returns from other strings are not. Private two-axis diagonalSchurphase additionally treats the other axis as anechoic. Passing pitch/energy regressions is not proof of exact coupled poles.",
+  "source_search": {
+   "audit_date": "2026-09-05",
+   "result": "One verified accessible steel archtop radiation archive; no new verified open-licensed SI-calibrated matched steel body and bridge dataset found in this bounded search. Mores65 and Carcagno/Fylde archives were not revisited.",
+   "new_accessible_rawdata": "/tmp/acustra-steel-body-search/nbody-archive-audit.json",
+   "new_accessible_rawdata_report_sha256": "0ee32911356179e22b180f099a90bb7229ed40891bac38897c1bdabd20f55b05",
+   "recent_primary_measurements": {
+    "paper": "Evaluation of Soundboard Damping Variations on Physical and Perceptual Aspects of the Sound of a Steel-String Acoustic Guitar",
+    "year": 2025,
+    "doi": "10.3390/acoustics7010011",
+    "url": "https://www.mdpi.com/2624-599X/7/1/11",
+    "pdf_url": "https://mdpi-res.com/d_attachment/acoustics/acoustics-07-00011/article_deploy/acoustics-07-00011.pdf",
+    "instrument": "Three Trevor Gore small bodied steel string guitars: Lutz spruce tops, Koa sides, Australian blackwood backs and Macassar ebony fingerboards; Martin MA540FX 12–54 strings",
+    "geometry": "G.R.A.S. 40HF microphone approximately 1.6 m in front; three vertical bridge impacts at center, low E and high E. Anechoic chamber; hand-damped strings.",
+    "measurements": "B&K 8202 rubber-tip hammer and Dytran 1051 force sensor, HEAD labCOMPACT24 / ArtemiS. Published plot averages the three impact positions. Plucked notes and real performances also acquired.",
+    "data_availability_exact": "The raw data supporting the conclusions of this article will be made available by the authors on request.",
+    "no_public_download_verified": true,
+    "additional_data_needed_for_model": "Original separate force and microphone channels or complex FRFs; channel calibration, sample rate, delay and geometry metadata; numerical instrument dimensions; explicit reuse terms. No bridge velocity channel reported."
+   },
+   "matched_steel_twoaxis_publication_without_verified_rawdownload": {
+    "doi": "10.1109/TASLP.2017.2689241",
+    "instrument": "Godin steel acoustic guitar, model unspecified",
+    "measurements": "Matched horizontal and vertical bass-side impacts, LDV velocity and two microphones at 1 m; 44.1 kHz. Strings damped with rubber bands. Three admittance FRFs and two force-to-pressure FRFs.",
+    "primary_pdf": "https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Amaestre_jointmodeling_ieeeaslp_2017.pdf",
+    "supplement_link_in_paper": "http://ccrma.stanford.edu/~esteban/suppl/taslp2016",
+    "checked_https_result": "404",
+    "supplement_described_in_paper": "Synthesized plucked-string examples; not described as raw measurements. No open raw archive verified."
+   },
+   "fretting_speed_source_checked": {
+    "paper": "Heijink and Meulenbroek (2002), Journal of Motor Behavior 34(4), 339–351",
+    "doi": "10.1080/00222890209601952",
+    "primary_pdf": "https://www.socsci.ru.nl/meulenbroek/Publications/Heijink%20en%20Meulenbroek%202002.pdf",
+    "protocol": "Six professional classical guitarists, 5 notes/s, normal left-hand fretting before right-hand plucking. Ten IRED markers including four fingernail markers; Optotrak 100 Hz, spatial accuracy below 0.2 mm; audio at 9 kHz.",
+    "what_reported": "Finger placement timing and position means and variability; velocity and acceleration used to identify impact time.",
+    "what_not_reported": "No numerical fingertip speed distribution, playing-dynamic mapping, hammer-on impact velocity, raw motion dataset or force estimate. Figure 2D velocity axis labels zero but no absolute magnitude or units. Kinetic aspects explicitly excluded."
+   },
+   "artifacts_sha256": {
+    "arch_top.zip": "9f7ecd558cc48b1686738239a2230a22425caf89de5daa6aaf515e78c52910fd",
+    "nbody1998.pdf": "54308579e972db8bcb77fae11f77bfdf8770e6a225c44da8a9ef7d95173f3336",
+    "wuehle2025.pdf": "51fa15bb7df0148c392b9b0cc41cadd2d8281018110a4880ca2c4828ac890752",
+    "maestre2017.pdf": "fdca0f3382811a0f6a6d3e3e3febfb2f478f9c249ec9d8ffe0607cd36284bb98",
+    "heijink2002.pdf": "15ca15326b26bcb23f1cbe6a69eb232e51037c53cefc45e4254efd17cb375464",
+    "percolate-license.md": "3d79ee025991be4fc629cdb6a9261ce5f4050ad7dd7658af7844d091d2726bf2",
+    "Arch12.lpc.h": "764a5d0b93fc474e0f3fed6c250d1a396ee1b71ce127db7377c9f234e7c82db1",
+    "nbody.c": "2135797724a47efd8dd0d50d5a9572854609f312d89a86e67765f1820789968a"
+   }
+  },
+  "source_search_report": {
+   "path": "/tmp/acustra-steel-body-search/findings.json",
+   "sha256": "d4810262b00227226ac46ccee1a7137a802f1750c9dde561f9a25fbf7356261e"
+  },
+  "nbody_archive": {
+   "archive_url": "https://www.cs.princeton.edu/~prc/NBody/arch_top.zip",
+   "archive_bytes": 132853,
+   "archive_sha256": "9f7ecd558cc48b1686738239a2230a22425caf89de5daa6aaf515e78c52910fd",
+   "zip_crc_check": "all entries pass",
+   "author_paper": "https://www.cs.princeton.edu/~prc/ism98fin.pdf",
+   "instrument": "Fender Elite dAquisto1987 archtop acoustic/electric jazz guitar",
+   "recording_condition": "player-held, principal orientation, low-E bridge impact; strings normal tension but felt-damped",
+   "contents": [
+    {
+     "name": "arch_topLowE-1/impulseE-1",
+     "bytes": 17722,
+     "sha256": "c71660b237e107872b16d68724e09eaa6515ff39ead59b7e9c70c9502c74cc2b",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.365203857421875,
+     "peak_sample": 104,
+     "tail_last20ms_rms": 0.0022898900297678103,
+     "wholefile_rms": 0.016452416314018004,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-10",
+     "bytes": 17722,
+     "sha256": "247154bb5c0c2873ca216ff98ed4cef6a28297cba817c9f789f0ab6057c1b777",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.06304931640625,
+     "peak_sample": 116,
+     "tail_last20ms_rms": 0.0018506638589463758,
+     "wholefile_rms": 0.007427793884301568,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-11",
+     "bytes": 17722,
+     "sha256": "a46f2c3e9121a3deb0921174bc33b4131fb275b63bfe4a0549da53305f6519c6",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.05267333984375,
+     "peak_sample": 134,
+     "tail_last20ms_rms": 0.0008103257491399543,
+     "wholefile_rms": 0.004296934610855793,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-12",
+     "bytes": 17722,
+     "sha256": "74a7a65c1d178d9f0fb535507a632c22749711049ee84d7840d8d90046e80f51",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.097991943359375,
+     "peak_sample": 105,
+     "tail_last20ms_rms": 0.004375293713991104,
+     "wholefile_rms": 0.006816601533386144,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-2",
+     "bytes": 17722,
+     "sha256": "e5aaa08bfd5af7f1bb9e7eee7ba38f0198c83672c679f99a7ef19a44ed9e402f",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.231719970703125,
+     "peak_sample": 126,
+     "tail_last20ms_rms": 0.0018498420650167474,
+     "wholefile_rms": 0.011955573829289617,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-3",
+     "bytes": 17722,
+     "sha256": "2c50060dd5cfc53adc018faea3b6fd61453726edc0e55ce1d303a815a268bee3",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.4190673828125,
+     "peak_sample": 130,
+     "tail_last20ms_rms": 0.0012751518078349406,
+     "wholefile_rms": 0.018074606333043374,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-4",
+     "bytes": 17722,
+     "sha256": "00910c972ea9ce131abbddb3ed9e704bb82af39ea5a63dcbb9077135ed08a926",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.138702392578125,
+     "peak_sample": 92,
+     "tail_last20ms_rms": 0.006488716606031976,
+     "wholefile_rms": 0.01113722293514158,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-5",
+     "bytes": 17722,
+     "sha256": "6b65a256944e7274e47e90bf580b47a21081696ccf6d694ce6b78fd41781d866",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.31884765625,
+     "peak_sample": 131,
+     "tail_last20ms_rms": 0.004140624485277788,
+     "wholefile_rms": 0.0170264995130531,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-6",
+     "bytes": 17722,
+     "sha256": "7bc2847b9fbc59f51c296234edf8f26e133b879a2bb376148ee1d06fcd040f15",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.24444580078125,
+     "peak_sample": 84,
+     "tail_last20ms_rms": 0.0015517946084547148,
+     "wholefile_rms": 0.015846986473795246,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-7",
+     "bytes": 17722,
+     "sha256": "3b6fa49f36e344554b639787b06cbc5e65737c120fb35f846cbc25d824efa5e4",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.03546142578125,
+     "peak_sample": 220,
+     "tail_last20ms_rms": 0.0010590958710758214,
+     "wholefile_rms": 0.0027165585072292243,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-8",
+     "bytes": 17722,
+     "sha256": "8d0e53ee7a7b5f4ac63726434442dd162956f04e548be6c4f271cff363b35949",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.03082275390625,
+     "peak_sample": 207,
+     "tail_last20ms_rms": 0.0020962225202591574,
+     "wholefile_rms": 0.0029126543268631648,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-9",
+     "bytes": 17722,
+     "sha256": "27f6584097859bb3975ee2189550b33a97051eab20b885422ca961e1f0db9187",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.060028076171875,
+     "peak_sample": 169,
+     "tail_last20ms_rms": 0.0012983594081866388,
+     "wholefile_rms": 0.005064074490598792,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-hammerA",
+     "bytes": 17722,
+     "sha256": "4232d1f4d2ef399264c8bda29852e90ff7125b01e1761e8bde2e1d6d1b7a4c19",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.8546142578125,
+     "peak_sample": 2,
+     "tail_last20ms_rms": 0.0007481455069570647,
+     "wholefile_rms": 0.013687668736587154,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-hammerB",
+     "bytes": 17722,
+     "sha256": "211d4fd941538d5e204f597b7575a473365548d0f22b74e13436498af0755714",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.984130859375,
+     "peak_sample": 2,
+     "tail_last20ms_rms": 0.00029316489760240235,
+     "wholefile_rms": 0.01645794107029446,
+     "clipped_samples": 0
+    },
+    {
+     "name": "arch_topLowE-1/impulseE-pickup",
+     "bytes": 17722,
+     "sha256": "d76b35c15bb28a58fe7945dcce6f7fa23db1fc81d75398d1b79396dc2227e301",
+     "sample_rate": 44100,
+     "channels": 1,
+     "bits": 16,
+     "frames": 8834,
+     "duration_seconds": 0.2003174603174603,
+     "peak": 0.117431640625,
+     "peak_sample": 68,
+     "tail_last20ms_rms": 0.0002273670915945488,
+     "wholefile_rms": 0.010473524277370142,
+     "clipped_samples": 0
+    }
+   ],
+   "hammer_copies": {
+    "crosscorrelation_peak_lag_samples": 0,
+    "zero_lag_normalized_correlation": 0.9567060160737892,
+    "least_squares_A_over_B_gain": 0.7956690919226727,
+    "relative_L2_residual_after_scalar_gain": 0.29105600630844086,
+    "interpretation": "Publication says same hammer signal was sent to each DA-88. Their recorded waveforms differ beyond a scalar gain; no channel-to-recorder map accompanies the archive."
+   },
+   "units": "AIFF PCM16 digital full scale. Publication gives mic-path normalization within1dB but no absolute PCM-to-Pa gain. Hammer nominal sensitivity printed96.6mV/g (not an SI force unit); intervening preamp/recorder gains unspecified. Absolute Pa/N cannot be established from archive alone.",
+   "capture_geometry": "12 inward AKGC3000 cardioids aticosahedralvertices; adjacent spacing21in=.5334m; nominaldiameter~4ft=1.2192m; paperpicturemapschannels. About8ft foam enclosure inside concert hall. Notanechoic.",
+   "mobility_data": "No velocity/acceleration recordings present. These are hammer-force and microphone/pickup observations only.",
+   "license": "No LICENSE/README in17-filearchive or authorfolder listing; publicavailability verified, commercial reuse authorization NOT established. STK sources have their own license, which cannot automatically cover this separaterawarchive.",
+   "capture_geometry_consistency": "Published adjacent-microphone spacing21in=.5334m implies regular-icosahedroncircumdiameter1.0146m, while text also says approximately4ft=1.2192m. Do not treat either as an exact independently verified radius; camera/axis mapping remains as in paper.",
+   "download_protocol": [
+    "curl -L --fail https://www.cs.princeton.edu/~prc/NBody/arch_top.zip -o NEW_DESTINATION.zip",
+    "VerifySHA2569f7ecd558cc48b1686738239a2230a22425caf89de5daa6aaf515e78c52910fd",
+    "zipfile.ZipFile.testzip()==None; archive17members=15AIFF+2conversioncommandtextfiles; DO NOT execute archivecommands",
+    "Read extensionless FORM/AIFF PCM16bigendian44100Hz; keep12mic and2hammer channels separately, retaining all relative sample timing",
+    "Do not infer Pa/N, exact recorder-map, horizontal mobility, or productreuse authorization frompubliclisting."
+   ],
+   "related_processed_coefficients": {
+    "url": "https://github.com/Cycling74/percolate/blob/master/source/projects/nbody~/Arch12.lpc.h",
+    "file": "/tmp/acustra-steel-body-search/Arch12.lpc.h",
+    "license_url": "https://github.com/Cycling74/percolate/blob/master/LICENSE.md",
+    "license_scope": "Educational/non-commercial reuse withcredit; commercial uses require separate agreement. This license does not itselfcoverrawPrincetonarchive."
+   }
+  },
+  "source_search_conclusion": "Actual Fender archtop microphone impulse data located, but no matched bridge mobility or absolutePa/N gains established. No source audio/coefficients from that archive added to the product. RelatedPeRColateexplicitnoncommerciallicense is not a rawNBodygrant. No author-contact messages sent.",
+  "finger_speed_conclusion": "Heijink/Meulenbroek2002 read including velocity figure: placement/timing at5notes/s, no numeric speed axis or hammer-on dynamic calibration. The unmeasured speed map remains unresolved; no guessed clamp added.",
+  "next_action_changed_by_measurements": "Existing Mores bass/treble normal-input complex pressure data can be transformed exactly to common/differential force coordinates; a separate raw-complex2input3output prototype is possible under that force-pair restriction. Horizontal motion and arbitrary spatial-load interpretation still need assumptions. Follow-up audit remains separate."
  }
 }
