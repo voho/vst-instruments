@@ -1,8 +1,10 @@
 // Render annotated performances through the shipping JUCE-free engine.
 // Input: ACUSTRA_PERFORMANCE_V1 sample_rate frame_count, then ordered rows
 // frame channel midi velocity bend_semitones. Velocity zero means note-off.
-// Channels 1-6 fix the played string (low E to high e); simultaneous note-offs
+// Channels 1-6 fix the played string (lowest to highest); simultaneous note-offs
 // precede note-ons. Output is headerless little-endian float32 stereo.
+// Optional material/tuning flags follow the existing capture/picking/bridge
+// positionals; omitting them preserves the original steel/Standard rendering.
 #include "DSP/AcustraEngine.h"
 
 #include <algorithm>
@@ -30,17 +32,24 @@ struct Event
 
 int main(int argc, char** argv)
 {
-    if (argc != 3 && argc != 5 && argc != 6)
+    if (argc < 3)
     {
         std::cerr << "usage: AcustraPerformanceRenderer EVENTS OUTPUT.f32 "
                      "[stereo_mic|treble_mic|bass_mic|saddle_piezo|magnetic "
-                     "finger|pick|thumb [original|fylde]]\n";
+                     "finger|pick|thumb [original|fylde]] "
+                     "[--string-material steel|nylon] [--tuning standard|drop_d]\n";
         return 2;
     }
     try
     {
         acustra::EngineParameters parameters;
-        if (argc >= 5)
+        int optionStart = 3;
+        while (optionStart < argc && !std::string(argv[optionStart]).starts_with("--"))
+            ++optionStart;
+        const int positionalCount = optionStart - 3;
+        if (positionalCount != 0 && positionalCount != 2 && positionalCount != 3)
+            throw std::runtime_error("expected capture and picking, with optional bridge model");
+        if (positionalCount >= 2)
         {
             const std::array captures { "stereo_mic", "treble_mic", "bass_mic",
                                         "saddle_piezo", "magnetic" };
@@ -52,13 +61,40 @@ int main(int argc, char** argv)
             parameters.capture = static_cast<acustra::CaptureType>(capture - captures.begin());
             parameters.picking = static_cast<acustra::PickingTechnique>(technique - techniques.begin());
         }
-        if (argc == 6)
+        if (positionalCount == 3)
         {
             if (std::string(argv[5]) != "original" && std::string(argv[5]) != "fylde")
                 throw std::runtime_error("unknown bridge model");
             parameters.bridgeModel = std::string(argv[5]) == "fylde"
                 ? acustra::BridgeModel::FyldeSteel : acustra::BridgeModel::Original;
         }
+        bool materialSeen = false, tuningSeen = false;
+        for (int index = optionStart; index < argc; index += 2)
+        {
+            if (index + 1 >= argc)
+                throw std::runtime_error("missing material/tuning option value");
+            const std::string option(argv[index]), value(argv[index + 1]);
+            if (option == "--string-material" && !materialSeen)
+            {
+                if (value != "steel" && value != "nylon")
+                    throw std::runtime_error("unknown string material");
+                parameters.stringMaterial = value == "steel"
+                    ? acustra::StringMaterial::Steel : acustra::StringMaterial::Nylon;
+                materialSeen = true;
+            }
+            else if (option == "--tuning" && !tuningSeen)
+            {
+                if (value != "standard" && value != "drop_d")
+                    throw std::runtime_error("unknown tuning");
+                parameters.tuning = value == "standard" ? acustra::Tuning::Standard : acustra::Tuning::DropD;
+                tuningSeen = true;
+            }
+            else
+                throw std::runtime_error("unknown or repeated material/tuning option");
+        }
+        std::array openNotes { 40, 45, 50, 55, 59, 64 };
+        if (parameters.tuning == acustra::Tuning::DropD)
+            openNotes[0] = 38;
         std::ifstream input(argv[1]);
         input.imbue(std::locale::classic());
         std::string format;
@@ -82,7 +118,6 @@ int main(int argc, char** argv)
                 || !std::isfinite(event.bend) || std::abs(event.bend) > 0.5f
                 || (!events.empty() && event.frame < events.back().frame))
                 throw std::runtime_error("invalid or unordered performance event");
-            constexpr std::array openNotes { 40, 45, 50, 55, 59, 64 };
             const int fret = event.note - openNotes[static_cast<std::size_t>(event.channel - 1)];
             if (fret < 0 || fret > acustra::AcustraEngine::fretCount)
                 throw std::runtime_error("performance requests an unplayable string/fret");

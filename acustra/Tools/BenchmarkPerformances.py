@@ -317,18 +317,57 @@ def self_test(renderer: Path | None) -> None:
             for letter in ("a", "b"):
                 subprocess.run([str(renderer), str(event_path), str(root / (letter + ".f32"))], check=True)
             assert (root / "a.f32").read_bytes() == (root / "b.f32").read_bytes()
+            default_hash = digest(root / "a.f32")
+            for name, options in (
+                ("legacy-capture", ["stereo_mic", "finger"]),
+                ("explicit-default", ["stereo_mic", "finger", "original",
+                                      "--string-material", "steel", "--tuning", "standard"]),
+                ("flags-only", ["--tuning", "standard", "--string-material", "steel"]),
+            ):
+                output = root / (name + ".f32")
+                subprocess.run([str(renderer), str(event_path), str(output), *options], check=True)
+                assert digest(output) == default_hash, "default material/tuning changed existing audio"
             rendered = np.fromfile(root / "a.f32", dtype="<f4")
             assert len(rendered) == RATE * 2 and np.isfinite(rendered).all() and np.max(np.abs(rendered)) > 0
             alternative = root / "fylde.f32"
             subprocess.run([str(renderer), str(event_path), str(alternative),
                             "stereo_mic", "finger", "fylde"], check=True)
             assert alternative.read_bytes() != (root / "a.f32").read_bytes()
+            nylon = root / "nylon.f32"
+            subprocess.run([str(renderer), str(event_path), str(nylon),
+                            "stereo_mic", "finger", "--string-material", "nylon"], check=True)
+            nylon_audio = np.fromfile(nylon, dtype="<f4")
+            assert np.isfinite(nylon_audio).all() and np.max(np.abs(nylon_audio)) > 0
+            assert digest(nylon) != default_hash, "nylon selection did not change the physical strings"
             rejected = subprocess.run([str(renderer), str(event_path), str(root / "invalid.f32"),
                                        "stereo_mic", "finger", "unknown"], capture_output=True)
             assert rejected.returncode != 0 and not (root / "invalid.f32").exists()
+            for options in (["--string-material", "bronze"], ["--tuning", "open_z"],
+                            ["--tuning"], ["--unknown", "steel"],
+                            ["--tuning", "standard", "--tuning", "drop_d"],
+                            ["--string-material", "steel", "--string-material", "nylon"]):
+                rejected = subprocess.run([str(renderer), str(event_path), str(root / "invalid.f32"),
+                                           *options], capture_output=True)
+                assert rejected.returncode != 0 and not (root / "invalid.f32").exists(), options
             rejected = subprocess.run([str(renderer), str(event_path), str(root / "a.f32")],
                                       capture_output=True)
             assert rejected.returncode != 0 and (root / "a.f32").read_bytes() == (root / "b.f32").read_bytes()
+            # D2 is playable on Drop D's lowest string, but not Standard's.
+            write_events(event_path, [(0, 1, 38, 91, 0.0), (RATE // 2, 1, 38, 0, 0.0)], RATE)
+            rejected = subprocess.run([str(renderer), str(event_path), str(root / "invalid.f32")],
+                                      capture_output=True)
+            assert rejected.returncode != 0 and not (root / "invalid.f32").exists()
+            for material in ("steel", "nylon"):
+                output = root / ("drop-d-" + material + ".f32")
+                subprocess.run([str(renderer), str(event_path), str(output), "stereo_mic", "finger", "original",
+                                "--string-material", material, "--tuning", "drop_d"], check=True)
+                audio = np.fromfile(output, dtype="<f4")
+                assert len(audio) == RATE * 2 and np.isfinite(audio).all() and np.max(np.abs(audio)) > 0
+            for note, channel in ((37, 1), (38, 2), (59, 1)):
+                write_events(event_path, [(0, channel, note, 91, 0.0)], RATE)
+                rejected = subprocess.run([str(renderer), str(event_path), str(root / "invalid.f32"),
+                                           "--tuning", "drop_d"], capture_output=True)
+                assert rejected.returncode != 0 and not (root / "invalid.f32").exists(), (note, channel)
             for invalid in ("not an event", "0 6 40 91 0"):
                 event_path.write_text(f"ACUSTRA_PERFORMANCE_V1 {RATE} {RATE}\n{invalid}\n", encoding="utf-8")
                 rejected = subprocess.run([str(renderer), str(event_path), str(root / "bad.f32")],

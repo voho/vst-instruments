@@ -1704,6 +1704,10 @@ For dry-note comparisons, add `--bridge-model fylde` after the optional
 `--models-only`/`--smoke` mode and before the output directory in
 `AcustraPhysicalFitRenderer`; the same 29 calibration arguments follow.
 The selected bridge is recorded in each model manifest.
+For an explicit performance event file, `AcustraPerformanceRenderer` also
+accepts trailing `--string-material steel|nylon` and `--tuning standard|drop_d`
+options. String/fret validation uses the selected tuning; omitting these
+options preserves the original steel/Standard render.
 
 Two audits read a rendered fit corpus and compare the model with the recordings
 where the fitted score cannot say where a difference sits: one along the
