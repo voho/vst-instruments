@@ -463,6 +463,10 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowCircuitTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowCircuitTests PRIVATE cxx_std_20)
 
+    add_executable(YouKnowChorusBypassTests Tests/YouKnowChorusBypassTests.cpp)
+    target_link_libraries(YouKnowChorusBypassTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusBypassTests PRIVATE cxx_std_20)
+
     add_executable(YouKnowVcfIntegratorTests
         Tests/YouKnowVcfIntegratorTests.cpp)
     target_link_libraries(YouKnowVcfIntegratorTests PRIVATE YouKnowDSP)
@@ -472,7 +476,7 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowSysExTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
-    foreach(target YouKnowEngineTests YouKnowCircuitTests
+    foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests
                    YouKnowVcfIntegratorTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
@@ -483,6 +487,8 @@ if(BUILD_TESTING)
 
     add_test(NAME YouKnow.Engine COMMAND YouKnowEngineTests)
     add_test(NAME YouKnow.Circuit COMMAND YouKnowCircuitTests)
+    add_test(NAME YouKnow.ChorusBypass COMMAND YouKnowChorusBypassTests)
+    set_tests_properties(YouKnow.ChorusBypass PROPERTIES TIMEOUT 60)
     add_test(NAME YouKnow.VcfIntegrator COMMAND YouKnowVcfIntegratorTests)
     add_test(NAME YouKnow.SysEx COMMAND YouKnowSysExTests)
 
@@ -578,7 +584,7 @@ if(BUILD_TESTING)
         # only -fsanitize=undefined defines nothing a test can see -- so the
         # build system tells them directly and the two decisions cannot drift
         # apart.
-        foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowSysExTests)
+        foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowSysExTests)
             target_compile_definitions(${target} PRIVATE YOUKNOW_SANITIZER_BUILD=1)
         endforeach()
     else()

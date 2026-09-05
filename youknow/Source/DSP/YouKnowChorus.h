@@ -540,6 +540,7 @@ public:
 
 private:
     friend struct YouKnowTestAccess;
+    void advanceMuteDrive(bool commandMute) noexcept;
 
     // OQ-03 keeps the compatibility hiss and the still-unknown mechanisms as
     // distinct components.  Every number in this profile is voiced/unknown,
@@ -728,6 +729,7 @@ private:
     float muteDriveNodeGlide_ { 0.0f };
     float muteDriveHoldGlide_ { 0.0f };
     bool muteDriveMuted_ { true };
+    bool muteDriveEnabled_ { false };
     // Per-line insertion gains at the last calibration they were solved for.
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };

@@ -1223,6 +1223,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     muteDriveNodeVolts_ = muteDriveRailVolts;
     muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveRailVolts);
     muteDriveMuted_ = true;
+    muteDriveEnabled_ = false;
 }
 
 float Chorus::lineInsertionGainDraw() noexcept
@@ -1252,6 +1253,12 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
     if (!primed_ || wetGain_ != 0.0f)
         return false;
 
+    // Muting the return does not disconnect C16/C13 from their drive circuit
+    // (Service Notes p. 15). Keep charging them after the audible glide ends,
+    // or a later engage starts from stale charge and opens earlier than Exact.
+    if (muteDriveEnabled_)
+        advanceMuteDrive(true);
+
     // The modulation LFO free-runs behind the switch, exactly as it does
     // through the full path with mode Off.
     lfoPhase_ += rateHz_ * inverseSampleRate_;
@@ -1262,6 +1269,20 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
     left = dryMixGain * input;
     right = dryMixGain * input;
     return true;
+}
+
+void Chorus::advanceMuteDrive(bool commandMute) noexcept
+{
+    // Existing nominal RC/0.6 V junction model; the 5 ms JFET glide is separate.
+    if (commandMute)
+        muteDriveNodeVolts_ += (muteDriveRailVolts - muteDriveNodeVolts_)
+                             * muteDriveNodeGlide_;
+    else
+        muteDriveNodeVolts_ = -muteDriveRailVolts;
+    muteDriveHoldVolts_ += (muteDriveHoldRestVolts(muteDriveNodeVolts_)
+                            - muteDriveHoldVolts_)
+                         * muteDriveHoldGlide_;
+    muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
 }
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
@@ -1318,22 +1339,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         runningMode_ = mode;
     }
     float wetTarget = target.wetGain;
+    muteDriveEnabled_ = enableMuteDrive;
     if (enableMuteDrive)
     {
-        // Tr5 open: C16 charges toward +15 V through R50. Tr5 saturated:
-        // it empties C16 within a millisecond, immediate on this scale.
-        if (commandMute)
-            muteDriveNodeVolts_ += (muteDriveRailVolts - muteDriveNodeVolts_)
-                                 * muteDriveNodeGlide_;
-        else
-            muteDriveNodeVolts_ = -muteDriveRailVolts;
-        // C13 follows through R48 against the R49+R42 return to -15 V.
-        muteDriveHoldVolts_ += (muteDriveHoldRestVolts(muteDriveNodeVolts_)
-                                - muteDriveHoldVolts_)
-                             * muteDriveHoldGlide_;
-        // Tr4 conducts above the divided junction drop and pulls the gates
-        // down; the JFET transition itself remains the declared glide.
-        muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
+        advanceMuteDrive(commandMute);
         wetTarget = muteDriveMuted_ ? 0.0f : settingsFor(runningMode_).wetGain;
     }
     else
