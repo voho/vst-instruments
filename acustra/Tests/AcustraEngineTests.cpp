@@ -1002,6 +1002,72 @@ struct AcustraEngineTestAccess
 
         return { before, forced, landed, leaked, after };
     }
+
+    struct FrettingStateSnapshot
+    {
+        std::vector<double> displacement;
+        std::vector<double> velocity;
+        double energy { 0.0 };
+    };
+
+    static FrettingStateSnapshot frettingState(int period, float nutPosition,
+                                               float height, float uniformSpeed,
+                                               float triangleSpeed)
+    {
+        // Ideal string of length 1 m, tension 1 N, sampled at 48 kHz.
+        // An integer round trip makes readDelay exact. Bypass loss and
+        // dispersion to test state conversion, not a fitted sounding note.
+        constexpr double rate = 48000.0;
+        const double speed = 2.0 * rate / period;
+        AcustraEngine engine;
+        AcustraEngine::StringLoop loop;
+        loop.currentDelay = loop.targetDelay = static_cast<float>(period);
+        loop.reset();
+        engine.addReleasedTriangle(loop, std::abs(height), nutPosition,
+                                    std::copysign(1.0f, height));
+        engine.addUniformVelocity(loop,
+            static_cast<float>(0.5 * std::abs(uniformSpeed) * nutPosition / speed),
+            nutPosition, std::copysign(1.0f, uniformSpeed));
+        engine.addTriangleVelocity(loop,
+            static_cast<float>(0.5 * std::abs(triangleSpeed) / speed),
+            nutPosition, std::copysign(1.0f, triangleSpeed));
+        const auto step = [period] (AcustraEngine::StringLoop& state)
+        {
+            state.write(state.readDelay(static_cast<float>(period)));
+        };
+        auto after = loop;
+        auto before = loop;
+        step(after);
+        // One period minus a sample is exactly the preceding state of this
+        // lossless rigid-end loop. The centred difference measures release
+        // velocity without confusing a pluck's first acceleration with it.
+        for (int sample = 1; sample < period; ++sample)
+            step(before);
+        FrettingStateSnapshot result;
+        const int intervals = period / 2;
+        for (int point = 0; point <= intervals; ++point)
+        {
+            const float fromBridge = static_cast<float>(point) / intervals;
+            result.displacement.push_back(loop.displacementAt(fromBridge));
+            result.velocity.push_back(0.5 * rate
+                * (static_cast<double>(after.displacementAt(fromBridge))
+                    - before.displacementAt(fromBridge)));
+        }
+        const double dx = 1.0 / intervals;
+        for (int point = 0; point <= intervals; ++point)
+        {
+            const double velocity = result.velocity[static_cast<std::size_t>(point)];
+            const double weight = point == 0 || point == intervals ? 0.5 : 1.0;
+            result.energy += 0.5 * dx * weight * velocity * velocity / (speed * speed);
+            if (point > 0)
+            {
+                const double change = result.displacement[static_cast<std::size_t>(point)]
+                    - result.displacement[static_cast<std::size_t>(point - 1)];
+                result.energy += 0.5 * change * change / dx;
+            }
+        }
+        return result;
+    }
 };
 } // namespace acustra
 
@@ -5593,7 +5659,7 @@ void testNoTwoPlucksLandInTheSamePlace()
            "six plucks of one note all landed in the same place");
 }
 
-void testNoteOffOnlyRemovesEnergy()
+void testNoteOffDoesNotCreateANewAttack()
 {
     const auto renderNote = [] (acustra::StringMaterial material,
                                 std::initializer_list<int> notes,
@@ -5689,15 +5755,20 @@ void testNoteOffOnlyRemovesEnergy()
                 // two-way junction a G2's third partial keeps the idle D
                 // string's second sounding through the anchor's 306 Hz
                 // resonance, peaking 35 ms after the note-off at 1.4x the
-                // held peak. The defect this guards against was a step at
-                // the release sample of half the note, so the first 5 ms
-                // may not exceed the held peak and the 50 ms may not
-                // exceed it by more than 1.5x.
+                // held peak. These peaks are an audible-attack heuristic,
+                // not a measure of physical energy or a passivity proof.
+                // The held envelope can already be rising after the event,
+                // so include its same-time 5 ms peak in the reference. The
+                // 1.05 ceiling still catches a release-induced attack; the
+                // later 50 ms allowance still covers what keeps ringing.
                 const double atRelease = peak(lifted, offAt,
                     offAt + static_cast<int>(0.005 * rate));
-                expect(atRelease <= 1.05 * before,
+                const double heldAtRelease = peak(held, offAt,
+                    offAt + static_cast<int>(0.005 * rate));
+                const double reference = std::max(before, heldAtRelease);
+                expect(atRelease <= 1.05 * reference,
                        label + ": the release stepped " + std::to_string(atRelease)
-                       + " over a held " + std::to_string(before));
+                       + " over the held reference " + std::to_string(reference));
                 expect(after <= 1.5 * before,
                        label + ": note-off peaks " + std::to_string(after)
                        + " over a held " + std::to_string(before));
@@ -6075,6 +6146,74 @@ void testTheNormalPolarisationIsTheHigherMemberByALength()
               << " cents, normal loop unmoved\n";
 }
 
+void testFrettingImpulsesHaveTheRequestedPhysicalState()
+{
+    using Access = acustra::AcustraEngineTestAccess;
+    // Geometry and energy are checked on the reconstructed string, not on
+    // the helper's stored waveform. The observer's origin is the bridge;
+    // the finger's apex and moving interval are measured from the nut.
+    for (const int period : { 128, 512, 2048 })
+        for (const float position : { 0.125f, 0.375f, 0.75f })
+            for (const float sign : { -1.0f, 1.0f })
+            {
+                const float height = sign * 0.002f;
+                const auto rest = Access::frettingState(period, position, height, 0, 0);
+                const auto uniform = Access::frettingState(period, position, 0, sign, 0);
+                const auto triangle = Access::frettingState(period, position, 0, 0, sign);
+                const double speed = 96000.0 / period;
+                const double dx = 2.0 / period;
+                // Float history interpolation followed by a time difference
+                // magnifies displacement roundoff by the sample rate.
+                const double displacementTolerance = 64.0 * std::numeric_limits<float>::epsilon()
+                    * std::max(std::abs(static_cast<double>(height)), 0.5 / speed);
+                const double velocityTolerance = 48000.0 * displacementTolerance;
+                double shapeError = 0.0, restVelocity = 0.0;
+                double velocityDisplacement = 0.0, uniformError = 0.0, triangleError = 0.0;
+                for (std::size_t point = 0; point < rest.displacement.size(); ++point)
+                {
+                    const double fromNut = 1.0 - point * dx;
+                    const double shape = std::min(fromNut / position,
+                                                  (1.0 - fromNut) / (1.0 - position));
+                    shapeError = std::max(shapeError, std::abs(rest.displacement[point] - height * shape));
+                    restVelocity = std::max(restVelocity, std::abs(rest.velocity[point]));
+                    velocityDisplacement = std::max({ velocityDisplacement,
+                        std::abs(uniform.displacement[point]), std::abs(triangle.displacement[point]) });
+                    // A centred time difference averages across the moving
+                    // front at a kink. Compare the constant/linear interiors.
+                    if (fromNut > 2.0 * dx && fromNut < 1.0 - 2.0 * dx
+                        && std::abs(fromNut - position) > 2.0 * dx)
+                    {
+                        uniformError = std::max(uniformError,
+                            std::abs(uniform.velocity[point] - (fromNut < position ? sign : 0.0)));
+                        triangleError = std::max(triangleError,
+                            std::abs(triangle.velocity[point] - sign * shape));
+                    }
+                }
+                const std::string label = "fretting state D=" + std::to_string(period)
+                    + " nut=" + std::to_string(position) + " sign=" + std::to_string(sign);
+                expect(shapeError < displacementTolerance, label + ": released shape has wrong height or nut position");
+                expect(restVelocity < velocityTolerance, label + ": released displacement is not at rest");
+                expect(velocityDisplacement < displacementTolerance, label + ": velocity injection moves the initial string");
+                expect(uniformError < velocityTolerance, label + ": hammer velocity has wrong sign or end of string");
+                expect(triangleError < velocityTolerance, label + ": lift velocity has wrong sign or nut position");
+                const double elastic = 0.5 * height * height / (position * (1.0 - position));
+                const double kineticUniform = 0.5 * position / (speed * speed);
+                const double kineticTriangle = 1.0 / (6.0 * speed * speed);
+                const double quadratureTolerance = 2.0 * dx / std::min(position, 1.0f - position) + 1.0e-4;
+                expect(std::abs(rest.energy / elastic - 1.0) < quadratureTolerance
+                    && std::abs(uniform.energy / kineticUniform - 1.0) < quadratureTolerance
+                    && std::abs(triangle.energy / kineticTriangle - 1.0) < quadratureTolerance,
+                    label + ": reconstructed energy differs from the physical displacement/velocity energy");
+                // Potential and kinetic increments are orthogonal at release,
+                // including the hammer's opposing displacement and velocity.
+                const auto mixedUniform = Access::frettingState(period, position, height, -sign, 0);
+                const auto mixedTriangle = Access::frettingState(period, position, height, 0, sign);
+                expect(std::abs(mixedUniform.energy / (rest.energy + uniform.energy) - 1.0) < 1.0e-4
+                    && std::abs(mixedTriangle.energy / (rest.energy + triangle.energy) - 1.0) < 1.0e-4,
+                    label + ": mixed displacement/velocity increments have a spurious energy cross term");
+            }
+}
+
 void testPerformance()
 {
     acustra::AcustraEngine engine;
@@ -6099,6 +6238,7 @@ void testPerformance()
 
 int main()
 {
+    testFrettingImpulsesHaveTheRequestedPhysicalState();
     testDecayEstimatorFollowsPitchGlides();
     testLossFiltersPreserveTheReferenceTransfer();
     testSilenceAndFiniteOutput();
@@ -6159,7 +6299,7 @@ int main()
     testSteelFretT60SlopeRaisesOnlyFrettedSteelSustain();
     testApertureRegisterExponentChangesOnlyRegisterGeometry();
     testOrdinaryOutputIsLinearAndPathologicalOutputIsBounded();
-    testNoteOffOnlyRemovesEnergy();
+    testNoteOffDoesNotCreateANewAttack();
     testAScheduledPluckIsANoteOnIssuedThen();
     testCancelledScheduledAttacksKeepOnlyTheExistingWave();
     testStrumTimingFollowsThePickAcrossTheStrings();

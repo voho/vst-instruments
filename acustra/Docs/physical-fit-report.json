@@ -77746,5 +77746,194 @@
     "12-capture-types.wav": "9939b21433ff3b3326cc90d32b2fd6ed46a4fd2a1a9e83c2c969787a1c8dcd99"
    }
   }
+ },
+ "fretting_state_conversion_2026_09_05": {
+  "baseline_commit": "40cf90449c31675086e4f79f9e89fc15dbc8e274",
+  "status": "Production correction of three fretting-state primitives; no calibration, control or body-default change.",
+  "source": "https://www.dsprelated.com/freebooks/pasp/Converting_Any_String_State.html",
+  "derivation": {
+   "coordinate": "Collapsed round-trip displacement history C(r); displacementAt observes y(x)=C(D-x/c)-C(x/c), with x from bridge. Finger apex/extent is measured from new nut.",
+   "released_displacement": "Opposed half-height histories give the requested nut-relative shape with zero centered-time velocity.",
+   "prescribed_velocity": "Equal integrated histories give zero initial displacement and velocity in the requested direction near the fretting end.",
+   "previous_error": "A positive full-period displacement triangle carried unintended initial velocity; negative velocity integrals described the opposite sign at the bridge end. Their combination added a positive energy cross term.",
+   "ordinary_pluck": "Formula unchanged. Before smoothing/clipping its full-period triangle is phase-equivalent to a rest pluck with the same modal magnitudes; its chosen time origin is not zero velocity. Coupled-body preload/time-origin remains a separate limitation."
+  },
+  "physical_state_regression": {
+   "function": "testFrettingImpulsesHaveTheRequestedPhysicalState",
+   "string": {
+    "length_m": 1,
+    "tension_n": 1,
+    "sample_rate": 48000,
+    "integer_round_trip_samples": [
+     128,
+     512,
+     2048
+    ],
+    "apex_from_nut": [
+     0.125,
+     0.375,
+     0.75
+    ],
+    "signs": [
+     -1,
+     1
+    ]
+   },
+   "observer": "Actual readDelay/write/displacementAt; lossless rigid-end advance. Centered-time velocity uses a one-sample forward state and D-1 samples for preceding state.",
+   "checks": [
+    "rest shape location/amplitude and zero velocity",
+    "uniform/triangle velocity sign/location and zero displacement",
+    "physical elastic and kinetic integral with grid-dependent quadrature tolerance",
+    "mixed-state energy equals sum of separate energies"
+   ],
+   "corrected_pass": true,
+   "baseline_failed_checks": 90,
+   "baseline_failure_log": {
+    "path": "/tmp/acustra-fretting-state-review/shipping-failures.txt",
+    "sha256": "c576d17acdd64ef00d084082b2165d071c3d1b6961d56f204a2b6adb5e8b5960"
+   },
+   "normalized_independent_probe": {
+    "protocol": "H=1, apex/extent=.2L; normalized elastic4 + kinetic5 =9. Increase grid resolution; no model audio or fitted constant.",
+    "round_trip_samples": 4096,
+    "before_total": 13.99609375,
+    "after_total": 8.99414026738,
+    "before_cross_term": 5,
+    "after_cross_term": 0,
+    "note": "Finite centered-time/quadrature approximation approaches14 before and9 after; these normalized values are not whole-instrument joules."
+   },
+   "actual_hammer_probe": {
+    "trigger": "43→47 velocity.8 at44.1/48/96kHz; helper increment analyzed separately from previous state.",
+    "before_nominal_target_energy_ratio": {
+     "steel": [
+      1.51307276044,
+      1.52220012389,
+      1.5222030981
+     ],
+     "nylon": [
+      1.56921193737,
+      1.57057694511,
+      1.5711344676
+     ]
+    },
+    "after_nominal_target_energy_ratio_range": {
+     "steel": [
+      0.9869396,
+      0.9996861
+     ],
+     "nylon": [
+      0.9955233,
+      0.9977435
+     ]
+    },
+    "horizontal_finger_increment": 0,
+    "limitations": "Uses nominal target span; current delay is still changing over6ms. Neither existing-wave remap nor whole-instrument energy is proved."
+   },
+   "independent_report": {
+    "path": "/tmp/acustra-excitation-axis-review/report.json",
+    "sha256": "3e841ca7a714f4e6f5a302c517ca2d8e4e6622e56100757e9f5b159e800efe36"
+   }
+  },
+  "release_attack_regression": {
+   "change": "Use maximum of preceding50ms and simultaneous held5ms peaks for first5ms release comparison. An evolving held envelope can exceed its preceding-window peak.",
+   "unchanged_thresholds": {
+    "first5ms_vs_matched_held": 1.05,
+    "first50ms_vs_previous50ms": 1.5,
+    "difference_vs_previous50ms": 2.0
+   },
+   "cases": 18,
+   "current_and_private_two_axis_pass": true,
+   "immediate_loss_mutation_failed_cases": 18,
+   "immediate_loss_mutation_failed_assertions": 54,
+   "note": "Peak/difference audible-attack heuristic, not proof of physical passivity. Production release slew unchanged.",
+   "report": {
+    "path": "/tmp/acustra-release-attack-regression/report.json",
+    "sha256": "d297ac6295a724ab9eaa5ba3f007399ed71ab8052c0d0543c1e7ab15902be941"
+   }
+  },
+  "two_axis_research_followup": {
+   "status": "Private prototype remains unshipped. Historical saddle_height_audit_2026_09_05 results remain recorded unchanged.",
+   "release_counterfactual": "Steel43/96k candidate first5ms released/held peak1.027814 vs baseline1.03332; preceding-only peak reference falsely flagged an attack. Candidate release is not louder relative to simultaneous held continuation.",
+   "composite_gate": "Previous nylon +8.01dB pull-off gate actually performs hammer43→47/.8 and noteOff47/.8 with no rendered sample between; old hammer increment dominates. Removing hammer increment leaves only about+.5dB against fresh pluck. This was not an isolated lift-energy proof.",
+   "remaining_phase_problem": "Independent diagonal Schur phase compensation assumes the other axis is anechoic. Returning orthogonal loop requires the full coupled feedback/eigenmode condition det(I-diag(Pv,Ph)S)=0. Do not promote unchanged diagonal compensation as a solved two-axis tuning model.",
+   "missing_measurements": "Saddle rotation center, lateral stiffness and moment-to-pressure response are unmeasured; h/a uses lower string-edge height as a conditional geometry approximation.",
+   "release_audit": {
+    "path": "/tmp/acustra-saddle-release-audit/report.json",
+    "sha256": "30032957a2157c5bb8dac2a8443bc6c2026cef4e3d666e2b0884cf06e866e790"
+   }
+  },
+  "preview": {
+   "sample_rate": 44100,
+   "channels": 2,
+   "block_size": 256,
+   "frames": 385875,
+   "source": "Tools/RenderDemos.cpp::frettingHand through actual AcustraEngine; same score/parameters/seed, no note-on changes",
+   "before_commit": "40cf90449c31675086e4f79f9e89fc15dbc8e274",
+   "after_changes": "Only released-displacement, uniform-velocity, triangle-velocity fretting-state primitives; one-axis shipping bridge retained.",
+   "normalisation": "one whole-file stereo RMS gain, matched to quieter raw render; no EQ or per-event matching",
+   "unchanged_first_pluck_frames": 26460,
+   "files": {
+    "before": {
+     "rms_before": 0.020373824839562852,
+     "gain": 1.0,
+     "trim_db": 0.0,
+     "rms_after": 0.020373824839562852,
+     "raw_peak": 0.21842436492443085,
+     "wav_sha256": "4a7be07fe489d283d1d83e9f7aaee31aee609f23bd0ed2be1c0d2944a9f51524"
+    },
+    "after": {
+     "rms_before": 0.020642254324423247,
+     "gain": 0.9869961158000656,
+     "trim_db": -0.11369112877377734,
+     "rms_after": 0.020373824839562852,
+     "raw_peak": 0.1592867225408554,
+     "wav_sha256": "604348e120eee86f4db885c91d9e4e8cac845b1a75b4efd2761d517d25b26488"
+    }
+   },
+   "sha256": {
+    "render-before": "71331bb99bfc09405681b605d24e517c69382cb26a5c645c064a2979459a2963",
+    "render-after": "07ec95fa1066498a6d25ac3b0fa3b75027d18e721415f84b08056cca2de24b13",
+    "AcustraEngine.cpp": "b74221abc597e830b3e3d1634cba930c4ed746b45adfa481e17f215262dcd0ac",
+    "AcustraEngine.h": "b279bba0dc738148c0d6f7619e44c7a00b43c8c98d772c3a24cffc97da020f86",
+    "render_hand.cpp": "87dfb9c357cfedd38eaa13d28c707eeb2fdb58023297167c472dca1bdda418ee"
+   }
+  },
+  "validation": {
+   "tools_tests": "Acustra.Engine,Capture,MeasuredSteelBridge,RenderDemos,PhysicalFitRenderer,PerformanceBenchmark:6/6passed in102.30s.",
+   "plugin_tests": "Acustra.PluginProcessor:passed in4.96s.",
+   "build": "Native arm64 Release VST3,AU,Standalone rebuilt. No universal-build or installation claim.",
+   "logs": [
+    {
+     "path": "/tmp/acustra-fretting-final-tools-build.log",
+     "sha256": "c0889cd23cd3493788395783e8b3febb00ae466e39ce09387c56fc5b14139a6a"
+    },
+    {
+     "path": "/tmp/acustra-fretting-final-plugin-build.log",
+     "sha256": "40fce8a6bdfbacdafecee53d9fc75d7ffba1e0ad264da9e9117cb41c93d67230"
+    },
+    {
+     "path": "/tmp/acustra-fretting-final-tests.log",
+     "sha256": "22100bf516cb68d3b7e2fb207f1238bf059761a5ca07319a9346615720c70b4a"
+    },
+    {
+     "path": "/tmp/acustra-fretting-final-plugin-tests.log",
+     "sha256": "ba574f693152e1b7c8a7732429a13b0cfb8abff84a2ae8a3ad4e7b0603a63319"
+    }
+   ],
+   "canonical_demos": "All12raw peak gates passed. Only07-fretting-hand.wav changed; other11byte-identical to baseline. Historical per-fix/listening files unchanged.",
+   "canonical_fretting_demo": {
+    "path": "/Users/vojta/Dev/vst-instruments/acustra/Docs/audio/07-fretting-hand.wav",
+    "sha256": "571de62c4488138effb6c5773505380677cfab2359d2ea7281c493d292ad287f"
+   },
+   "canonical_render_log": {
+    "path": "/tmp/acustra-fretting-canonical-demos.log",
+    "sha256": "4aa42c9eed574e529ec3c304bf1b7792574a1b98fe7895cd251de3936f39c480"
+   },
+   "source_sha256": {
+    "Source/DSP/AcustraEngine.cpp": "714e9eb8f781564b2ac271f3e8a3abe33a5e5b92e0136021f248d23fedb38250",
+    "Source/DSP/AcustraEngine.h": "b279bba0dc738148c0d6f7619e44c7a00b43c8c98d772c3a24cffc97da020f86",
+    "Tests/AcustraEngineTests.cpp": "f21127858755e5e01abd1f99bbccb08c87a0d7054f732eb977f40048171cbdaa"
+   },
+   "conclusion": "Physical-state conversion bug removed. No real-recording similarity or market-rank claim follows from these regressions."
+  }
  }
 }

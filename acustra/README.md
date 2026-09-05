@@ -75,7 +75,7 @@ reverb, room effect or recorded-note layer.
 | `04-string-age.wav` | The same steel phrase with fresh strings, then fully aged strings | 6.5 s | −7.6 dBFS | +4.6 dB |
 | `05-alternate-tunings.wav` | Drop D, DADGAD and Open G chords | 12.3 s | −10.7 dBFS | +7.7 dB |
 | `06-playing-behaviours.wav` | A chord change over a ringing chord, CC2 bridge-hand damping, then two natural harmonics above the fretted range | 10.7 s | −11.2 dBFS | +8.2 dB |
-| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −13.2 dBFS | +10.2 dB |
+| `07-fretting-hand.wav` | Hammer-ons at two velocities and a pull-off under CC68, then one fretted note released three ways by its note-off velocity | 8.8 s | −16.0 dBFS | +13.0 dB |
 | `08-strummed-chords.wav` | Same-sample chords swept as alternating strums, then one chord eight times hand-damped, no two strokes the same take | 6.9 s | −4.2 dBFS | +1.2 dB |
 | `09-recuerdos-de-la-alhambra.wav` | Tarrega, Recuerdos de la Alhambra, bars 1-12: a nylon tremolo over a thumb arpeggio | 31.6 s | −14.4 dBFS | +11.4 dB |
 | `10-lagrima.wav` | Tarrega, Lagrima, bars 1-8: a sung nylon melody over held bass | 26.0 s | −19.8 dBFS | +16.8 dB |
@@ -244,14 +244,11 @@ triangle of half-width c·h/v moving down at the finger's speed; relative to
 the new segment's own rest line that is a released triangle with its apex at
 that half-width plus a uniform velocity across it. Note-on velocity sets the
 finger's speed through the pluck's own velocity law: a hammer-on at a velocity
-carries the string energy a pluck at that velocity would. Equal energy is not
-equal loudness, because the dent narrows as the finger speeds up and the
-loop's upper-partial loss discards that brightness within the second: over
-one second a hammered note sits within +7 and −15 dB of the pluck and spans
-only 1 to 3 dB of its own from velocity 0.3 to 1.0 on ordinary intervals,
-getting brighter rather than louder, as a real one does; the quiet extreme is
-a semitone onto the first fret, where the string has almost no clearance to
-fall through. (The equality asks for finger speeds up to 62 m/s on steel and
+carries the nominal string-energy budget of a pluck at that velocity.
+Equal energy is not equal loudness: a faster finger makes a narrower dent,
+and the string losses and body radiation weight its spectrum differently.
+The map is an energy convention, not a measurement of real finger dynamics.
+(The equality asks for finger speeds up to 62 m/s on steel and
 43 m/s on nylon at the top of the range, far faster than a hand moves. The
 published stopping finger — Bilbao and Torin, DAFx-14 — has been checked
 against the whole fretboard and is rigid everywhere the engine reaches, so it
@@ -280,8 +277,11 @@ toward the requested one across one round trip, in either direction, because
 applying the whole of it to the first sample after the key came up stepped the
 wave the junction reads by up to a third on a low fretted note, and the bridge
 and body rang on that step as a thump 4.6 to 8.6 dB above the note's own level
-at that moment. Nothing about a lifted key now peaks above the held note it
-interrupts, at 44.1, 48 or 96 kHz.
+at that moment. Paired held/released renders guard against a new attack at
+44.1, 48 and 96 kHz. The comparison includes the held note at the same time:
+its evolving envelope can exceed the preceding window's peak, and damping
+can also change the interference between modes. These peak checks are not
+a proof of physical energy conservation.
 
 Note-off velocity is the fretting finger leaving the string. MIDI's default
 when a keyboard does not sense it is 64, so 64 and below is the finger staying
@@ -311,6 +311,18 @@ release will ghost open strings unless the player holds the key to the end
 or damps with CC2. A string lifted to open is nobody's: it rings on in the junction with no key and
 no hand on it until it has died away, and the next note on it lands the hand
 on it first.
+
+Fretting-hand displacement and velocity are converted separately into the
+folded travelling waves. A released shape uses opposed half-height waves;
+a velocity profile uses equal integrated waves. Both use distance from the
+new fret, so a hammer acts downward near that fret and a lift moves upward.
+Previously the velocity profiles acted near the bridge with reversed sign,
+and the displacement triangle carried unintended initial velocity. Combining
+those profiles added an unwanted energy cross term. Reconstructing the
+corrected displacement and velocity on an ideal string verifies their separate
+energies add without that cross term. This verifies the state conversion,
+not a complete finger-contact simulation: existing vibration still changes length through
+the model's delay slew, and the finger-speed map remains unmeasured.
 
 A chord that arrives on one sample, which is what a sequencer sends and no
 hand can play, is swept as a strum: newly assigned strings are fretted at
@@ -940,13 +952,17 @@ The JUCE-free suites cover:
   on its own string;
 - the repluck/cut-short tail: its captured energy is below 1% of what it
   started with 60 ms later, at three sample rates;
-- a lifted key only removes energy: with and without the note-off, the same
-  low fretted notes and a six-string chord in both materials at three rates
-  peak no higher after the release than the held note, and add nothing above
-  it, where the previous engine failed all eighteen cases;
-- the fretting hand: hammer-ons and lifts at 0.3 to 1.0 carry the energy of a
-  pluck at the same velocity within 6 to 8 dB and never fall as velocity
-  rises, a lift leaves the open pitch sounding and a pull-off the held one,
+- a note-off does not create a new attack: paired low fretted notes and a
+  six-string chord in both materials at three rates constrain the first
+  5 ms against the preceding and simultaneous held peaks, with a separate
+  allowance for later ringing. Restoring the abrupt release loss fails all
+  eighteen cases; the peak gates are not physical-energy measurements;
+- the fretting hand: reconstructed ideal-string displacement and velocity
+  have the intended location, direction and additive mechanical energy.
+  Separate audio checks compare one-second microphone energy with a pluck
+  at the same velocity, allowing 10 dB for lifts and 8 dB for hammers and
+  pull-offs; these are broad regression gates, not measured realism targets.
+  A lift leaves the open pitch sounding and a pull-off the held one,
   neither steps on its first sample, lift zero is bit-identical to the plain
   note-off, and the wrapper maps release velocity 64, an unsensed release and
   a Note On at velocity zero to that plain note-off while 127 lifts;
@@ -1515,6 +1531,10 @@ git history rather than here.
   captured bend impedance. The transition remains an approximation of hand
   contact. Real-performance descriptor changes are small and mixed; isolated
   dry-note renders remain identical.
+- Corrected hammer-on and pull-off wave states: finger motion now acts at the
+  fretting end with the intended direction, and released displacement starts
+  at rest. This removes an unwanted cross term between the hammer's shape
+  and velocity, without changing its energy budget or finger-speed map.
 
 ### 2026-09-04
 

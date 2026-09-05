@@ -2357,9 +2357,11 @@ void AcustraEngine::initialisePluck(Voice& voice, int stringIndex,
     // independent of material, string choice and host sample rate.
     const float apertureReferenceDelay = 48000.0f / midiFrequency(61);
 
-    // A string that was still sounding has already been taken into the tail
-    // by the caller: the hand landing on it is the same contact a taken
-    // string goes through, so the pluck itself is always released from rest.
+    // The caller has already retained any preceding wave. This full-period
+    // triangle initializes a fresh pluck, but its time origin is not the
+    // zero-velocity release: before smoothing/clipping it is phase-equivalent
+    // to a rest pluck, with the same modal magnitudes. Unlike the fretting
+    // primitives below, it is not combined with a prescribed velocity state.
     for (int polarisation = 0; polarisation < 2; ++polarisation)
     {
         auto& loop = voice.loops[static_cast<std::size_t>(polarisation)];
@@ -2630,11 +2632,14 @@ float AcustraEngine::pluckEnergy(float velocity, float soundingLength,
          * (1.0f / position + 1.0f / (1.0f - position)) / soundingLength;
 }
 
-// The loop holds one period of the wave the bridge reads. A shape released
-// from rest is one hump of its own height; a velocity profile v(x) is the
-// integral of v, mirrored about the half period, at half height over c. All
-// three add to what the loop already holds: the string was vibrating and
-// goes on doing so.
+// With history C(r), displacementAt reads y(x)=C(D-x/c)-C(x/c), x from
+// the bridge. A rest shape therefore needs opposite half-height waves;
+// a velocity profile needs equal waves +(1/(2c))*integral_0^x v(s) ds.
+// Smith, Physical Audio Signal Processing, Appendix C.3.2:
+// https://www.dsprelated.com/freebooks/pasp/Converting_Any_String_State.html
+// The fretting-hand geometry below measures apex/extent from the NEW NUT,
+// so convert it to the bridge coordinate before filling the folded line.
+// Add these increments to the preceding wave, without resetting its state.
 void AcustraEngine::addReleasedTriangle(StringLoop& loop, float height,
                                         float apexFraction,
                                         float sign) noexcept
@@ -2650,9 +2655,14 @@ void AcustraEngine::addReleasedTriangle(StringLoop& loop, float height,
     {
         const float phase = static_cast<float>(sample - 1)
                           / static_cast<float>(length);
-        const float value = phase < p ? phase / p : (1.0f - phase) / (1.0f - p);
+        const float bridgeFraction = phase < 0.5f
+            ? 2.0f * phase : 2.0f * (1.0f - phase);
+        const float nutFraction = 1.0f - bridgeFraction;
+        const float value = nutFraction < p ? nutFraction / p
+            : (1.0f - nutFraction) / (1.0f - p);
         loop.delay[static_cast<std::size_t>(wrapDelayIndex(
-            loop.writeIndex - sample))] += sign * height * value;
+            loop.writeIndex - sample))]
+                += sign * height * (phase < 0.5f ? -0.5f : 0.5f) * value;
     }
 }
 
@@ -2668,10 +2678,11 @@ void AcustraEngine::addUniformVelocity(StringLoop& loop, float plateau,
     {
         const float x = 2.0f * static_cast<float>(sample - 1)
                       / static_cast<float>(length);
-        const float mirrored = x < 1.0f ? x : 2.0f - x;
+        const float bridgeFraction = x < 1.0f ? x : 2.0f - x;
         loop.delay[static_cast<std::size_t>(wrapDelayIndex(
             loop.writeIndex - sample))]
-            += -sign * plateau * std::min(mirrored, w) / w;
+            += sign * plateau
+                * std::max(bridgeFraction - (1.0f - w), 0.0f) / w;
     }
 }
 
@@ -2687,18 +2698,18 @@ void AcustraEngine::addTriangleVelocity(StringLoop& loop, float scale,
     {
         const float x = 2.0f * static_cast<float>(sample - 1)
                       / static_cast<float>(length);
-        const float mirrored = x < 1.0f ? x : 2.0f - x;
+        const float nutFraction = 1.0f - (x < 1.0f ? x : 2.0f - x);
         float integral = 0.0f;
-        if (mirrored < p)
-            integral = 0.5f * mirrored * mirrored / p;
+        if (nutFraction < p)
+            integral = 0.5f * nutFraction * nutFraction / p;
         else
         {
-            const float remaining = (1.0f - mirrored) / (1.0f - p);
+            const float remaining = (1.0f - nutFraction) / (1.0f - p);
             integral = 0.5f * p
                      + 0.5f * (1.0f - p) * (1.0f - remaining * remaining);
         }
         loop.delay[static_cast<std::size_t>(wrapDelayIndex(
-            loop.writeIndex - sample))] += -sign * scale * integral;
+            loop.writeIndex - sample))] += sign * scale * (0.5f - integral);
     }
 }
 
