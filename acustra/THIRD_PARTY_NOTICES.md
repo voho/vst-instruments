@@ -137,35 +137,49 @@ Licence: [Creative Commons Attribution 4.0 International](https://creativecommon
 
 `Source/DSP/MeasuredBodyData.h` is adapted from the archive's
 `qualified_selected_impulses.mat` (MD5
-`733cb10baf5ce36d8bf333610ffbb260`). Acustra selects row g21, the archive's
-2018 Lester DeVoe flamenca blanca with spruce top and cypress back and sides,
-and the third one-second segment containing its treble-side bridge impact. It
-applies the archive's full-record half-cosine taper and calibration scales,
-then forms separate H1 force-to-pressure responses from the hammer channel to
-the 10 cm treble-side and bass-side microphone channels.
+`733cb10baf5ce36d8bf333610ffbb260`). Acustra selects g21, the archive's 2018
+Lester DeVoe flamenca blanca with spruce top and cypress back and sides, and
+g34, a 1971 Manuel Contreras classical guitar with cedar top and Rio palisander
+back and sides. It uses each guitar's first and third one-second segments,
+containing bass-side and treble-side normal bridge impacts. After applying the
+archive's full-record half-cosine taper and SI calibration scales, it forms
+complex H1 force-to-pressure responses to the upper, treble-side and bass-side
+microphones, each 10 cm above the top plate. Their common time origin and
+relative phase are retained.
 
 The archive's physical-measures table identifies g21's strings as Savarez
 Tomatito, with nylon/KF trebles and wound multifilament basses. Acustra adapts
 this flamenco measurement for its original steel setting; it is not a measured
-steel-strung body. The nylon setting uses g34, a 1971 Manuel Contreras classical
-guitar with cedar top and Rio palisander back and sides, measured anechoically.
-Both `MeasuredBodyData.h` and `MeasuredBridgeData.h` derive from these records;
-the bridge adaptation fits positive-semidefinite heave/rocking residues to
-the calibrated bass/treble acceleration-to-force measurements.
+steel-strung body. The nylon setting uses g34, measured anechoically rather
+than in g21's semi-reverberant music room. Both `MeasuredBodyData.h` and
+`MeasuredBridgeData.h` derive from these records; the bridge adaptation fits
+positive-semidefinite heave/rocking residues to the calibrated bass/treble
+acceleration-to-force measurements.
 
-For each g21 path, Acustra inverse-transforms the H1 response, retains 3000 samples,
-leaves the first 2700 unchanged and applies an authored 300-sample raised-cosine
-fade. It independently reconstructs minimum phase from each path's magnitude,
-selects 96 shared frequencies and Q values over 80 Hz–10 kHz, and fits separate
-regularised complex residues for the two microphone paths. No corpus averaging,
-FIR remainder, per-path peak/RMS normalisation or authored left/right gain
-spread is used. Minimum-phase reconstruction, the 300-sample fade, modal
-reduction, global gain and shape/material transformations are Acustra changes;
-no DAFx-26 coefficient is used.
+For each g21 microphone/impact path, Acustra inverse-transforms the H1 response,
+retains 3000 samples, leaves the first 2700 unchanged and applies an authored
+300-sample raised-cosine fade. The g34 paths use 12000 retained samples and a
+fade over the final tenth, following the earlier low-frequency Q-convergence
+check. These common causal windows preserve inter-path phase; no independent
+minimum-phase reconstruction or delay alignment is applied.
 
-The g34 radiation uses the same minimum-phase/modal method with 12000 retained
-samples, a fade over the final tenth and 103 shared poles; its longer window
-is selected by the low-frequency Q-convergence check in the generator.
+Acustra jointly selects shared frequencies and Q values over 80 Hz–10 kHz
+from all six paths per guitar and fits regularised complex endpoint residues.
+The smallest passing prominence-ordered prefix has 127 poles for g21 and 141
+for g34, with frequencies, Q values and residue components rounded to float32.
+For bass/treble forces `Fb`/`Ft`, the transformed inputs are `F = Fb + Ft` and
+`T = Ft - Fb = M/a`, where `a` is the assumed impact half-spacing. The pressure
+paths are `(Ht + Hb)/2` and `(Ht - Hb)/2`, respectively. Separate force/moment
+states drive all three microphone outputs. This basis reconstructs the two
+measured inputs; extending it to arbitrary strings assumes a rigid saddle and
+does not identify a horizontal-force response.
+
+No corpus averaging, FIR remainder, per-path peak/RMS normalisation or authored
+left/right gain spread is used. The causal fades, modal reduction, force-pair
+basis conversion, global gain and shape/material transformations are Acustra
+changes; the selected body calibration has neutral frequency/Q scales, residue
+tilt and low-mode gain. Runtime output has no RMS matching and is not calibrated
+to absolute sound pressure. No DAFx-26 coefficient is used in this body model.
 
 Acustra ships only those transformed numerical coefficients. It does not ship
 the source MAT file, recorded impulses, photographs or documentation from the

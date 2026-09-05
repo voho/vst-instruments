@@ -81675,5 +81675,198 @@
    "refresh": "Renderer regenerated the marked peak table. Only07 refreshed in git; other11 restored to their previously clean canonical bytes, avoiding unrelated compiler/render churn. Historical previews untouched."
   },
   "decision": "Ship the independently checked coordinate correction with explicit unfavorable AGPT result and physically scoped release tests. Selected stereo B is integrated separately; no calibration fitting or excitation gain compensation."
+ },
+ "selected_stereo_body_integration_2026_09_05": {
+  "decision": "Integrate the exact force/moment body and four neutral body calibration values selected by the user for B stereo presentation. No general realism ranking; conditional AG-PT microphone level regression retained. Fretting geometry was committed separately as d1f4f0d5.",
+  "model": {
+   "force_basis": "F=Fb+Ft; T=Ft-Fb=M/a. H_force=(Ht+Hb)/2; H_moment=(Ht-Hb)/2. Same normalized saddle coordinates and body branch forces already present in the junction.",
+   "modes": {
+    "g21_adapted_for_steel": 127,
+    "g34_nylon": 141
+   },
+   "outputs": [
+    "treble microphone",
+    "bass microphone",
+    "upper microphone"
+   ],
+   "native_float32_coefficients": 3752,
+   "measured_phase": "Common causal time origin retained, no independent minimum-phase conversion or added delay",
+   "body_calibration": {
+    "bodyFrequencyScale": 1,
+    "bodyQScale": 1,
+    "residueTiltDbPerOctave": 0,
+    "lowBodyModeGain": 1
+   },
+   "unchanged": "All other calibration, string/bridge mechanics, pickup observations, UI parameters and automation IDs. RadiationReferenceGain18 retained; audition RMS trim not applied at runtime.",
+   "limits": [
+    "Both measured bodies are nylon-strung; steel construction is an adaptation.",
+    "Rigid-saddle interpolation between endpoint impacts is assumed; no measured horizontal-force radiation or independent rotation-axis identification.",
+    "Windowed pole fitting and authored shape/wood morphs are approximations; output is not absolute SPL."
+   ]
+  },
+  "native_equivalence": {
+   "review": {
+    "path": "/tmp/acustra-selected-b-production-review.json",
+    "sha256": "1b81e804b2679bbd28b6c7090d19ff38e9efb32c96d8d90c13fdecb9f8258d43"
+   },
+   "compiled_production_and_qualified_engine_objects_byte_identical": true,
+   "object_sha256": "87ec5ff6477f02e45fcf07bcdd00e589f25095cf45fe9cc433485aaec9cc9371",
+   "all3752_float_fields_match_qualified_and_audition": true,
+   "source": {
+    "AcustraEngine.cpp": "bf3beb005feb9cd3dcbb7e65572b2829563f67cabb57b8022f03439e7adbc2e0",
+    "AcustraEngine.h": "86255e72ca31e43ee366afa48680b7948b9a80208265433d93aeff6edced3912",
+    "FittedPhysicalData.h": "94e59b49ed310714e108836b1271c24b3b03fadac408eabed022434cfde2b1c8",
+    "MeasuredBodyData.h": "7a7b9a48908c2f0bb3674f41134ce9af1003e02e13c7985ee4cecd5da7ab4301"
+   }
+  },
+  "qualification": {
+   "native_report": {
+    "path": "/tmp/acustra-selected-b-final-check/qualification-report.json",
+    "sha256": "f688916e567b3ea285ecaddbf1faf2ccbd114b373984c701c74f8283a3c5242e"
+   },
+   "native_log": {
+    "path": "/tmp/acustra-selected-b-final-check/tests.log",
+    "sha256": "fb6a921f289f42c2075d23dc06fff8207df3855d8a65147d8713380dd67889d7"
+   },
+   "native_suites_seconds": {
+    "Engine": 161.71,
+    "Capture": 7.27,
+    "MeasuredSteelBridge": 3.7
+   },
+   "six_string_realtime_ratio": 0.0571761,
+   "plugin_and_tool_tests": {
+    "path": "/tmp/acustra-selected-body-shipping/tests.log",
+    "sha256": "5bcb1cb072fbabcf3b5fe59ee52c836899e7dbb76a816437ed881b5bab4917ef"
+   },
+   "plugin_and_tool_suites": [
+    "PluginProcessor",
+    "RenderDemos",
+    "BodyForcePair",
+    "GenerateBodyForcePair"
+   ],
+   "plugin_seconds": 7.03,
+   "result": "All seven suites pass. Engine qualification uses the current physical lift/state checks and diagnostic envelope ratio committed in d1f4f0d5, with added moment-state observation. No B-specific threshold change.",
+   "formats_built": [
+    "macOS arm64 VST3",
+    "macOS arm64 AU",
+    "macOS arm64 Standalone"
+   ],
+   "build_log": {
+    "path": "/tmp/acustra-selected-body-shipping/build.log",
+    "sha256": "840d9e381c96e5e63ea5783198dd59118849731a8b0fbc9deb6e83941c3add66"
+   }
+  },
+  "release_waveform_followup": {
+   "report": {
+    "path": "/tmp/acustra-lift-onset-geometry-review/waveform-report.json",
+    "sha256": "d5b335ac37ada633edbb1ec06193298a03dff7a828d132e3dde80ade8700b4c3"
+   },
+   "all60_immediate_radiation_history_checks_pass": true,
+   "all15_piezo_AB_streams_identical": true,
+   "nylon_full_lift_peak_over_prior_A": [
+    1.378,
+    1.363,
+    1.284
+   ],
+   "nylon_full_lift_peak_over_prior_B": [
+    1.527,
+    1.49,
+    1.504
+   ],
+   "rates": [
+    44100,
+    48000,
+    96000
+   ],
+   "at48k": {
+    "A_first_ms_peak": 0.0009004,
+    "B_first_ms_peak": 0.0008648,
+    "A_max_adjacent_step": 0.000219,
+    "B_max_adjacent_step": 9.17e-05,
+    "B_increment_peak_ms": 0.917
+   },
+   "interpretation": "Former1.2 ratio rejects both correct-geometry bodies. B absolute peak and adjacent step are smaller at48k; peak is after event. This diagnoses articulation balance, not zero intentional transient or a listening click verdict."
+  },
+  "real_recordings": {
+   "GuitarSet_six_clip_previous_controlled_comparison": {
+    "mean_log_spectral_error_db_before_after": [
+     14.91974,
+     13.10337
+    ],
+    "spectral_convergence_before_after": [
+     0.902063,
+     0.919925
+    ],
+    "chroma_distance_before_after": [
+     0.30987,
+     0.317795
+    ],
+    "interpretation": "Mixed descriptors on six already-opened performance clips; exact auditioned body configuration retained."
+   },
+   "AGPT_on_corrected_geometry": {
+    "summary": {
+     "path": "/tmp/acustra-agpt-selected-body-integration/summary.json",
+     "sha256": "2983e1b4476ab6a00e958bba3ccb93396869bf2c64e97d014fb80cdca1675671"
+    },
+    "full_report": {
+     "path": "/tmp/acustra-agpt-selected-body-integration/report.json",
+     "sha256": "67d957f62be49b886d4e7820b68cc68fbb6973481a49bc19dbb03d2688cafbdf"
+    },
+    "protocol": "25 inferred real semitone pairs;18 frozen timing/velocity assumptions;StereoMic midpoint and SaddlePiezo;450 cases per capture. Same renderer/scorer descriptors and all cases retained.",
+    "complete_piezo_streams_byte_identical": 450,
+    "changed_microphone_streams": 450,
+    "microphone_median_absolute_plateau_error_before_range_db": [
+     1.53295,
+     3.35132
+    ],
+    "after_range_db": [
+     3.79295,
+     4.65217
+    ],
+    "error_increase_range_db": [
+     0.595117,
+     2.446771
+    ],
+    "worse_assumptions": 18,
+    "assumptions": 18,
+    "max_mic_channel_peak_before_after": [
+     0.143025,
+     0.132201
+    ],
+    "max_piezo_peak": 0.13695,
+    "allfinite": true,
+    "exclusions": 0,
+    "fitted_parameters": 0,
+    "validation_only_scorer_change": "The prior hand-only comparison required all pre-event microphone samples to match. A body replacement changes those samples; all450piezo fullstreams must match instead. Descriptor calculations, grouping and recording windows unchanged.",
+    "limitations": "Recorded LR Baggs Anthem blend, inferred event times and unknown dynamics differ from model capture. These conditional errors do not validate the wider spatial presentation or establish an overall product rank."
+   },
+   "protected_targets": "No fresh blind/development/test targets opened. Historical dry-note fit scores explicitly labeled as predating this body."
+  },
+  "canonical_demos": {
+   "renderer": {
+    "path": "/tmp/acustra-goal-build/AcustraRenderDemos",
+    "sha256": "7cf664adc2b72ca70e37d6a1f3df5465218ff7499811ad87101b6bbef986be37"
+   },
+   "log": {
+    "path": "/tmp/acustra-selected-body-shipping/canonical-render.log",
+    "sha256": "b93667d3dba2b5628754b35b9d3bd61670f6804f28a0249f9f1e589848a19282"
+   },
+   "command": "/tmp/acustra-goal-build/AcustraRenderDemos Docs/audio",
+   "result": "Exactly12 canonical files refreshed, all native safe-peak checks pass; renderer regenerated marked README table. Historical per-fix previews and audition evidence untouched.",
+   "files": {
+    "01-steel-sustain-range.wav": "dabfa9d7c14c69c7bb1eec3c159447b649e926bdc7e3e911d6106fa2ac41c3ac",
+    "02-nylon-fingerstyle.wav": "450daafc4eb2774f62d7d33e105594172268d50343bc1e7206decc7103ed3307",
+    "03-shape-material-anchors.wav": "2267bef4ca6d32c2f89fdef78b82d6bc67b59bf59eecf8976e404850729fd137",
+    "04-string-age.wav": "5cb580b4367c0cac310f18bc51935093094c6ae637e68530e89994a376ad582c",
+    "05-alternate-tunings.wav": "5bfc2ca71ad14da5c93d5719a8bf73fd5fca7c53021567bba5f606e682017d94",
+    "06-playing-behaviours.wav": "cb3e1d7cf783b4078f9d14145b3884f2f8013bf5a778b0236e29660cda0f10c2",
+    "07-fretting-hand.wav": "4c35fc2162b84081e8a299eb6de5cc57585d347cee75539419ca82aad45cc363",
+    "08-strummed-chords.wav": "be0994f113d07ca144ff78d6b2446608dadc7c18f73d5fad3719c82d8ff51f35",
+    "09-recuerdos-de-la-alhambra.wav": "976ef12001cfc9170ad1616bc0da1190412ed8b8befe632aa9feb17fe1c33822",
+    "10-lagrima.wav": "29c354f6a40ffd3d32ec19eba59975db3cfb9d9691897c7a0ee816567659cf67",
+    "11-picking-techniques.wav": "b7e6864ac6c4907ad0747be4dddce70d694a7d447bdd997313549d82f2d754f3",
+    "12-capture-types.wav": "a4c9937f3ebf8491bf388a5fac1fe4b7b7fc852992db557f417bd7599f52beed"
+   }
+  }
  }
 }

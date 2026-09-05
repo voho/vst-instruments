@@ -18,7 +18,7 @@
 #define ACUSTRA_BRIDGE_MODE_COUNT 50
 #endif
 #if !defined(ACUSTRA_BODY_MODE_COUNT)
-#define ACUSTRA_BODY_MODE_COUNT 109
+#define ACUSTRA_BODY_MODE_COUNT 141
 #endif
 
 namespace acustra
@@ -403,33 +403,35 @@ private:
 
     struct BodyMode
     {
-        float real { 0.0f };
-        float imaginary { 0.0f };
-        float poleReal { 0.0f };
-        float poleImaginary { 0.0f };
-        float leftReal { 0.0f };
-        float leftImaginary { 0.0f };
-        float rightReal { 0.0f };
-        float rightImaginary { 0.0f };
-        float upperReal { 0.0f };
-        float upperImaginary { 0.0f };
+        float real {}, imaginary {}, momentReal {}, momentImaginary {};
+        float poleReal {}, poleImaginary {};
+        float leftReal {}, leftImaginary {}, rightReal {}, rightImaginary {};
+        float upperReal {}, upperImaginary {};
+        float leftMomentReal {}, leftMomentImaginary {};
+        float rightMomentReal {}, rightMomentImaginary {};
+        float upperMomentReal {}, upperMomentImaginary {};
 
-        void process(float input, float& left, float& right, float& upper) noexcept
+        void process(float force, float moment, float& left,
+                     float& right, float& upper) noexcept
         {
-            const float nextReal = input + poleReal * real
-                                 - poleImaginary * imaginary;
-            const float nextImaginary = poleImaginary * real
-                                      + poleReal * imaginary;
+            const float nextReal = force + poleReal * real - poleImaginary * imaginary;
+            const float nextImaginary = poleImaginary * real + poleReal * imaginary;
+            const float nextMomentReal = moment + poleReal * momentReal
+                                       - poleImaginary * momentImaginary;
+            const float nextMomentImaginary = poleImaginary * momentReal
+                                            + poleReal * momentImaginary;
             real = nextReal;
             imaginary = nextImaginary;
-            left += 2.0f * (leftReal * real
-                          - leftImaginary * imaginary);
-            right += 2.0f * (rightReal * real
-                           - rightImaginary * imaginary);
-            upper += 2.0f * (upperReal * real
-                           - upperImaginary * imaginary);
+            momentReal = nextMomentReal;
+            momentImaginary = nextMomentImaginary;
+            left += 2.0f * (leftReal * real - leftImaginary * imaginary
+                + leftMomentReal * momentReal - leftMomentImaginary * momentImaginary);
+            right += 2.0f * (rightReal * real - rightImaginary * imaginary
+                + rightMomentReal * momentReal - rightMomentImaginary * momentImaginary);
+            upper += 2.0f * (upperReal * real - upperImaginary * imaginary
+                + upperMomentReal * momentReal - upperMomentImaginary * momentImaginary);
         }
-        void reset() noexcept { real = imaginary = 0.0f; }
+        void reset() noexcept { real = imaginary = momentReal = momentImaginary = 0.0f; }
     };
 
     struct Voice
@@ -624,7 +626,7 @@ private:
                      float bridgeVelocity, float& directLeft,
                      float& directRight, float& sympatheticForce,
                      float& longitudinalForce) noexcept;
-    BodyOutput renderBody(float bridgeInput) noexcept;
+    BodyOutput renderBody(float bridgeInput, float bodyMoment) noexcept;
     float renderMagneticPickup(bool crossingRelease) noexcept;
     float nextNoise(Voice& voice) noexcept;
 

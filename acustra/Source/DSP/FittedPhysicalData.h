@@ -132,13 +132,19 @@ struct PhysicalCalibration
 // What the fit did move, and what it bought: training 6.319236 -> 6.111540,
 // development validation 6.327235 -> 6.072344, and the eight never-fitted
 // flat-top rows 7.948337 -> 8.073304 (1.6% worse, the one split that loses).
+// 2026-09-05: the listener selected the phase-preserving force/moment body's
+// stereo presentation (Docs/decisions.md). Its measured-response fit uses
+// neutral body frequency/Q scales, residue tilt and low-mode gain; carrying
+// the old minimum-phase calibration over suppressed upper bands by 18-28 dB.
+// Keep the remaining string/bridge calibration above. These four neutral
+// factors are the auditioned model, not a new fit or an absolute-SPL claim.
 inline constexpr PhysicalCalibration fittedPhysicalCalibration {
-    1.04f, 0.0534179688f, 0.754677154f, -1.0f, 0.0f,
+    1.0f, 1.0f, 0.754677154f, 0.0f, 0.0f,
     { 1.0f, 0.86484718f, 1.40369766f, 1.7688939f,
       0.0f, 1.12667139f, 0.0375f },
     { 0.749355465f, 1.53f, 0.52f, 0.643124355f,
       0.494086432f, 0.88819512f, 1.1859375f },
-    -0.0706290118f, 7.5f, 0.00773577847f, -0.0597851562f, 2.28586032f,
+    -0.0706290118f, 1.0f, 0.00773577847f, -0.0597851562f, 2.28586032f,
     // The axial resonators are physically motivated, but without a measured
     // transfer level their narrow, high-Q onset reads as a pitched water-drop
     // transient rather than part of the pluck. Keep the calibrated mechanism

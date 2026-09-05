@@ -1091,6 +1091,8 @@ struct AcustraEngineTestAccess
             {
                 state.push_back(mode.real);
                 state.push_back(mode.imaginary);
+                state.push_back(mode.momentReal);
+                state.push_back(mode.momentImaginary);
             }
         for (const auto* derivative : {
                  &engine.bridgeVelocityDerivative_, &engine.bridgeRotationDerivative_,

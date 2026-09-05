@@ -23,6 +23,18 @@ regressions. The six already-opened GuitarSet clips remain a mixed result:
 log-spectral error improves, while spectral convergence and chroma distance
 worsen. No shipping sound changes merely from recording this verdict.
 
+Subsequent integration promotes that measured force/moment response and the
+same four neutral body factors, without applying the audition's RMS trim at
+runtime. The fretting-coordinate correction is separate. Engine, capture and
+bridge qualification passes; the former first-millisecond/prior-sustain peak
+ratio is retained as a diagnostic, with direct injected-energy and unchanged
+body-history checks replacing its unsupported continuity claim. The AG-PT
+hammer-on comparison on corrected geometry worsens microphone level-ratio
+error under all 18 declared timing/velocity assumptions, while every piezo
+stream remains identical. B ships for the selected spatial presentation and
+its measured response, with that conditional benchmark regression recorded;
+this is not a finding of superior overall realism.
+
 The frozen files are `/tmp/acustra-body-pair-direction-neutral/audition/A.wav`
 and `B.wav`, SHA256 `74e7bd6bbb0e46fde54b968b2677523d34379cc7b619c287e1636ab9d6669a54`
 and `4681ab8b51124d2d2d336ddbf94be36eb5f580f45becf3959e136a5fe4368490`.

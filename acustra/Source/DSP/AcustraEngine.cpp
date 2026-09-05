@@ -20,13 +20,9 @@ namespace
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 2.0f * pi;
 constexpr int localMaximumDelaySamples = 8192;
-// The g21 minimum-phase residues retain the calibrated H1 coefficient scale
-// and the measured treble/bass microphone balance. The string drive remains a
-// reference-scaled bridge-force proxy, so this is an output calibration rather
-// than an absolute-SPL claim; it changes no spectrum, decay, or coupling.
-// Overall level is excluded from the descriptor fit. This fixed calibration
-// places the quietest public physical render just above -20 dBFS while keeping
-// ordinary output well below the limiter's -1 dBFS knee.
+// Legacy output reference gain retained identically to shipping A. The pair
+// bank preserves raw measured complex phase; this gain is not an absolute-SPL
+// calibration of the new bank. Any audition RMS match is applied after render.
 constexpr float radiationReferenceGain = 18.0f;
 static_assert(detail::measuredSteelBodyModes.size() <= ACUSTRA_BODY_MODE_COUNT);
 static_assert(detail::measuredNylonBodyModes.size() <= ACUSTRA_BODY_MODE_COUNT);
@@ -1591,6 +1587,18 @@ void AcustraEngine::configureBody() noexcept
         mode.rightImaginary = right.imag();
         mode.upperReal = upperMic.real();
         mode.upperImaginary = upperMic.imag();
+        const auto leftMoment = scaledResidue(
+            measured.leftMomentReal, measured.leftMomentImaginary);
+        const auto rightMoment = scaledResidue(
+            measured.rightMomentReal, measured.rightMomentImaginary);
+        const auto upperMoment = scaledResidue(
+            measured.upperMomentReal, measured.upperMomentImaginary);
+        mode.leftMomentReal = leftMoment.real();
+        mode.leftMomentImaginary = leftMoment.imag();
+        mode.rightMomentReal = rightMoment.real();
+        mode.rightMomentImaginary = rightMoment.imag();
+        mode.upperMomentReal = upperMoment.real();
+        mode.upperMomentImaginary = upperMoment.imag();
         if (bodyConfigured_)
             mode.reset();
     }
@@ -3728,18 +3736,23 @@ void AcustraEngine::finishVoice(Voice& voice, int stringIndex,
 
 }
 
-AcustraEngine::BodyOutput AcustraEngine::renderBody(float bridgeInput) noexcept
+AcustraEngine::BodyOutput AcustraEngine::renderBody(float bridgeInput,
+                                                   float bodyMoment) noexcept
 {
     const auto renderBank = [&] (auto& modes)
     {
         BodyOutput output;
         for (auto& mode : modes)
         {
-            mode.process(bridgeInput, output.left, output.right, output.upper);
+            mode.process(bridgeInput, bodyMoment, output.left, output.right, output.upper);
             if (std::abs(mode.real) < 1.0e-30f)
                 mode.real = 0.0f;
             if (std::abs(mode.imaginary) < 1.0e-30f)
                 mode.imaginary = 0.0f;
+            if (std::abs(mode.momentReal) < 1.0e-30f)
+                mode.momentReal = 0.0f;
+            if (std::abs(mode.momentImaginary) < 1.0e-30f)
+                mode.momentImaginary = 0.0f;
         }
         return output;
     };
@@ -4031,8 +4044,11 @@ void AcustraEngine::process(float* left, float* right, int numSamples) noexcept
         // The microphone bank itself does not feed back into the junction.
         lastSympatheticRadiationForce_ = sympatheticForce;
         lastLongitudinalForce_ = longitudinalForce;
+        // Same rigid-saddle basis as the paired measurement: F=Fb+Ft and
+        // normalized moment T=M/a=Ft-Fb. Both inputs retain their measured
+        // complex microphone phase. No extra stereo delay or gain is added.
         const BodyOutput body = renderBody(lastBridgeBodyForce_
-            + lastSympatheticRadiationForce_ + lastLongitudinalForce_);
+            + lastSympatheticRadiationForce_ + lastLongitudinalForce_, bodyMomentRate);
 
         // Strings themselves radiate poorly. Keep the small bridge-local path
         // separate from the measurement-derived, author-transformed soundboard
