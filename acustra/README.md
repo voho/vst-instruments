@@ -923,6 +923,16 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   measured finger dimensions or a beam/friction plectrum solver. Matched
   technique recordings are needed to benchmark these choices independently.
 
+  [`PrototypePlectrumContact.py`](Tools/PrototypePlectrumContact.py) audits
+  Perng's published two-dimensional beam/string contact geometry offline.
+  With the stated rectangular geometry, the paper and thesis force laws fail
+  near the rounded tip. A separately derived virtual-work tip force reaches
+  the prescribed 90-degree boundary, but still exerts about 149 N against a
+  135 N string and retains pick energy: physical detachment is unvalidated.
+  Four rates leave 0.94–4.22% of grip work lost to substep averaging, so the
+  string field is not fully converged either. The tool records those limits
+  and both displacement and velocity; it changes no runtime excitation.
+
 - The highest steel partials still vary with host rate. The loop-loss filters
   now map the calibrated 48 kHz transfer to the host rate, preserving the
   existing 48 kHz sound; bilinear frequency warping leaves H8 decay spread of

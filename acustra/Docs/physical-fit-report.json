@@ -6461,5 +6461,572 @@
   ],
   "microphone_regression": "All six previous microphone targets, models and every metric remain identical; reference-capture defaults to microphone and requires no pickup archive.",
   "interpretation": "This is the first real magnetic reference audit, not a measured Ubertar model or a pickup realism claim. Original magnetic output has mean 3.95dB deficit at80-160Hz and12.44dB excess at5120-10000Hz. Fylde changes descriptors in mixed directions. Cross-capture controls also disagree: microphone output is closer to the magnetic recording in log error, magnetic output in spectral convergence. Unknown coil position/field/load/channel balance, body and unannotated dynamics/gestures prevent attributing the mismatch to one component. No runtime parameters or defaults were fitted to these results."
+ },
+ "plectrum_contact_feasibility_2026_09_05": {
+  "tool": "Tools/PrototypePlectrumContact.py",
+  "tool_sha256": "3ed833dcdfd224fe607b2bfa88eaea3744b42f3a8efcb36b3d6502e300e8033b",
+  "runtime_changed": false,
+  "physical_detachment_validated": false,
+  "scope": "Offline reference geometry from harpsichord papers, not measured acoustic guitar or thumb; original approximate body-contact law and optional separately derived energy-conjugate tip force. This is a feasibility audit, not a shipped sound candidate or perceptual benchmark.",
+  "fixed_geometry_rate_formula": "2 * 64 * sqrt(135 / 0.00084) / 0.5 = 102628.31689437096 Hz; multiplying rate by 2/4/8 scales integer delay lengths and retains an exact 0.5 m string.",
+  "reproduce": "python3 Tools/PrototypePlectrumContact.py --force-law virtual-work --sample-rate 102628.31689437096 --contact-angle-step .00625 --audit --output /tmp/contact.json --state /tmp/contact.npz; repeat with --sample-rate 821026.5351549677 without --audit for 8x. Paper and thesis commands are in the tool header.",
+  "checks": "Self-test passed. Independent CLI checks: both literal force-law references exit 2 with finite failure JSON and no requested NPZ. Derived endpoint state finite and exactly reproducible; independently summed traveling-wave energy agrees to 2.17e-17 J and reported work/variance/beam accounting agrees. No released waveform is injected into the engine.",
+  "interpretation": "The prescribed 90-degree domain edge is not the end of the semicylinder and positive force/pick energy remain there. About 149 N exceeds the 135 N string tension, straining the small-slope string/massless-pick assumptions. Averaging loss 0.94-4.22% is explicit and the string field is not fully converged. Continued contact, pick recoil/inertia, guitar grip/trajectory/material and thumb tissue parameters remain unidentified.",
+  "runs": {
+   "final-paper-failure": {
+    "status": "failed",
+    "reason": "contact continuation failed before a resolved release event",
+    "primary_source": "https://www.dafx.de/paper-archive/2011/Papers/24_e.pdf",
+    "inputs_si": {
+     "beam_length": 0.006,
+     "beam_width": 0.004,
+     "beam_thickness": 0.0005,
+     "young_modulus": 5000000000.0,
+     "string_length": 0.5,
+     "string_tension": 135.0,
+     "string_linear_density": 0.00084,
+     "pluck_fraction": 0.5,
+     "jack_speed": 0.02,
+     "initial_contact_length": 0.005,
+     "sample_rate": 100000.0,
+     "contact_angle_step": 0.025,
+     "max_seconds": 0.5
+    },
+    "failure_time_s": 0.20401903966397048,
+    "force_law": "perng2011",
+    "adaptive_contact": true,
+    "actual_string_length_m": 0.49710590995710935,
+    "actual_pluck_fraction": 0.5,
+    "fundamental_hz": 403.2258064516129,
+    "spatial_cells": [
+     62,
+     62
+    ],
+    "tip_contact": true,
+    "contact_parameters_before_step": [
+     0.23052266955353634,
+     1.5697823380022744
+    ],
+    "time_since_tip_contact_s": 0.00025903966397045064,
+    "tip_contact_before_step": true,
+    "attempted_contact_parameters": [
+     0.23049377144393662,
+     1.5702726498058162
+    ],
+    "attempted_contact_residual_mm": 1.1372286220208075e-07,
+    "last_string_energy_j": 0.005323827282740783,
+    "last_beam_energy_j": 0.0012301088235668728,
+    "integrated_string_work_j": 0.00589325384674452,
+    "pending_uniform_step_string_work_j": 0.000567521112440892,
+    "independent_wave_buffer_energy_j": 0.005323827282740797,
+    "grip_work_j": 0.00701748462003129,
+    "maximum_string_work_error_j": 3.903127820947816e-18,
+    "maximum_beam_plus_string_work_defect_j": 0.00010587805028010235,
+    "substep_variance_loss_j": 1.9054515628444716e-06,
+    "maximum_normal_force_n": 2631.278501092105,
+    "contact_substeps": 20490,
+    "backtracks": 122,
+    "smallest_accepted_contact_step_s": 5.960464477539063e-13,
+    "last_point_displacement_m": [
+     0.0011012978503833618,
+     0.0028636286223388844
+    ],
+    "local_equation_case": {
+     "free_point_m": [
+      0.0011012978499678914,
+      0.0028636286209290014
+     ],
+     "clamp_m": [
+      -0.005,
+      0.00408038079327941
+     ],
+     "force_compliance_m_per_n": 4.425003162894388e-13
+    },
+    "released_state_valid": false,
+    "bounded_root_diagnostic": {
+     "best_contact_residual_norm_mm": 1.1728864853828527e-07,
+     "best_beam_angle_degrees": 13.206320824507753,
+     "best_normal_force_n": 5092.7825696847085,
+     "best_tip_angle_rad": 1.5702724968111528,
+     "starts": 12,
+     "physical_angle_bound_degrees": 45.0
+    },
+    "tool_sha256": "3ed833dcdfd224fe607b2bfa88eaea3744b42f3a8efcb36b3d6502e300e8033b"
+   },
+   "final-thesis-failure": {
+    "status": "failed",
+    "reason": "contact continuation failed before a resolved release event",
+    "primary_source": "https://purl.stanford.edu/wp454hs7976",
+    "inputs_si": {
+     "beam_length": 0.006,
+     "beam_width": 0.002,
+     "beam_thickness": 0.0005,
+     "young_modulus": 5000000000.0,
+     "string_length": 0.5,
+     "string_tension": 135.0,
+     "string_linear_density": 0.00084,
+     "pluck_fraction": 0.5,
+     "jack_speed": 0.02,
+     "initial_contact_length": 0.0054,
+     "sample_rate": 100000.0,
+     "contact_angle_step": 0.025,
+     "max_seconds": 0.5
+    },
+    "failure_time_s": 0.1344959902116656,
+    "force_law": "perng2012",
+    "adaptive_contact": true,
+    "actual_string_length_m": 0.49710590995710935,
+    "actual_pluck_fraction": 0.5,
+    "fundamental_hz": 403.2258064516129,
+    "spatial_cells": [
+     62,
+     62
+    ],
+    "tip_contact": true,
+    "contact_parameters_before_step": [
+     0.23675476109084906,
+     1.5662790371647635
+    ],
+    "time_since_tip_contact_s": 0.0004859902116655934,
+    "tip_contact_before_step": true,
+    "attempted_contact_parameters": [
+     0.2367063468512511,
+     1.5671001639490205
+    ],
+    "attempted_contact_residual_mm": 2.500817203453379e-06,
+    "last_string_energy_j": 0.0015592356325068834,
+    "last_beam_energy_j": 0.0006487594548516784,
+    "integrated_string_work_j": 0.0020005735764901484,
+    "pending_uniform_step_string_work_j": 0.00044009606363803105,
+    "independent_wave_buffer_energy_j": 0.0015592356325068856,
+    "grip_work_j": 0.0023777644965811066,
+    "maximum_string_work_error_j": 3.2526065174565133e-18,
+    "maximum_beam_plus_string_work_defect_j": 0.0002715685347607203,
+    "substep_variance_loss_j": 1.2418803452363142e-06,
+    "maximum_normal_force_n": 8741.375321113557,
+    "contact_substeps": 13534,
+    "backtracks": 119,
+    "smallest_accepted_contact_step_s": 2.9802322387695315e-13,
+    "last_point_displacement_m": [
+     0.0006949666700930842,
+     0.0014484024575893266
+    ],
+    "local_equation_case": {
+     "free_point_m": [
+      0.0006949666698726152,
+      0.0014484024568651376
+     ],
+     "clamp_m": [
+      -0.0054,
+      0.002689919804233312
+     ],
+     "force_compliance_m_per_n": 4.425003162894388e-13
+    },
+    "released_state_valid": false,
+    "bounded_root_diagnostic": {
+     "best_contact_residual_norm_mm": 2.582473799594277e-06,
+     "best_beam_angle_degrees": 13.562273662004536,
+     "best_normal_force_n": 14889.08470122972,
+     "best_tip_angle_rad": 1.567100458943986,
+     "starts": 12,
+     "physical_angle_bound_degrees": 45.0
+    },
+    "tool_sha256": "3ed833dcdfd224fe607b2bfa88eaea3744b42f3a8efcb36b3d6502e300e8033b"
+   },
+   "convergence-00625": {
+    "reference": {
+     "status": "contact_ended_unvalidated",
+     "model": "Perng approximate beam/tip plus traveling-velocity ideal string",
+     "force_law": "virtual-work",
+     "adaptive_contact": true,
+     "primary_source": "https://www.dafx.de/paper-archive/2011/Papers/24_e.pdf",
+     "inputs_si": {
+      "beam_length": 0.006,
+      "beam_width": 0.004,
+      "beam_thickness": 0.0005,
+      "young_modulus": 5000000000.0,
+      "string_length": 0.5,
+      "string_tension": 135.0,
+      "string_linear_density": 0.00084,
+      "pluck_fraction": 0.5,
+      "jack_speed": 0.02,
+      "initial_contact_length": 0.005,
+      "sample_rate": 102628.31689437096,
+      "contact_angle_step": 0.00625,
+      "max_seconds": 0.5
+     },
+     "recomputed_second_moment_m4": 4.1666666666666674e-14,
+     "fundamental_hz": 400.89186286863657,
+     "spatial_cells": [
+      64,
+      64
+     ],
+     "actual_string_length_m": 0.5,
+     "actual_pluck_fraction": 0.5,
+     "contact_end_time_s": 0.2043914114463589,
+     "contact_end_final_step_s": 1.9938759757052013e-11,
+     "state_snapshot_time_s": 0.20439777865197128,
+     "state_snapshot_assumption": "force set to zero after prescribed endpoint until next uniform sample; continued contact unmodeled",
+     "tip_contact_time_s": 0.00026646197883989364,
+     "contact_end_reason": "prescribed contact-arc endpoint; physical detachment unvalidated",
+     "physical_detachment_validated": false,
+     "normal_force_at_contact_end_n": 148.79755122112766,
+     "contact_end_beam_angle_rad": 0.2296995681775166,
+     "contact_end_tip_angle_rad": 1.5707963267948966,
+     "contact_end_point_displacement_m": [
+      0.001102093435877627,
+      0.002874215287006517
+     ],
+     "contact_end_point_velocity_m_per_s": [
+      213.74192307685172,
+      -55.02342355900717
+     ],
+     "field_point_displacement_error_m": [
+      -1.304213720268758e-05,
+      2.074599288129711e-05
+     ],
+     "field_bridge_displacement_error_m": [
+      2.846030702774449e-19,
+      -1.212951180468158e-18
+     ],
+     "maximum_force_n": 148.79755122112766,
+     "maximum_beam_deflection_angle_degrees": 16.42114212337648,
+     "string_energy_j": 0.005503946738310619,
+     "beam_energy_at_contact_end_j": 0.0012213400838179999,
+     "grip_work_j": 0.007011595547006832,
+     "substep_variance_loss_j": 0.00029565073021294887,
+     "substep_variance_fraction_of_grip_work": 0.04216597038874535,
+     "contact_substeps": 21319,
+     "backtracks": 392,
+     "smallest_contact_step_s": 1.9938759757052013e-11,
+     "string_integrator_work_error_relative": 4.948156134639968e-16,
+     "maximum_beam_plus_string_work_defect_relative": 0.0013323651189102853,
+     "final_beam_plus_string_work_defect_relative": 0.001332365118909914,
+     "body_work_defect_before_tip_j": 2.495538146474359e-06,
+     "tip_work_defect_increment_j": 6.8464671882642256e-06,
+     "maximum_contact_residual_mm": 7.181230030116684e-14,
+     "bridge_h4_h12_over_h1_h3_db": -10.168564024630857,
+     "bridge_harmonic_magnitudes_n": [
+      2.128558462092789,
+      2.1138239747989085e-15,
+      0.7419217409735653,
+      1.2704462051194868e-15,
+      0.4719739872126401,
+      8.534080951357553e-16,
+      0.3542073758891307,
+      1.7747373892552958e-15,
+      0.2862675804811211,
+      4.0524118084058473e-16,
+      0.24208561253319177,
+      1.3226782595747509e-15
+     ],
+     "limitations": [
+      "harpsichord geometry, not measured guitar or thumb",
+      "approximate finite-angle massless frictionless beam",
+      "prescribed arc endpoint does not validate physical detachment",
+      "tip virtual work does not conserve the approximate moving-contact body",
+      "uniform delay samples lose the explicitly reported substep variance",
+      "no guitar grip/trajectory/dynamic mapping inferred",
+      "spatial and temporal convergence must be checked",
+      "no instrument-body or corpus-fidelity claim"
+     ]
+    },
+    "rate": [
+     {
+      "status": "contact_ended_unvalidated",
+      "model": "Perng approximate beam/tip plus traveling-velocity ideal string",
+      "force_law": "virtual-work",
+      "adaptive_contact": true,
+      "primary_source": "https://www.dafx.de/paper-archive/2011/Papers/24_e.pdf",
+      "inputs_si": {
+       "beam_length": 0.006,
+       "beam_width": 0.004,
+       "beam_thickness": 0.0005,
+       "young_modulus": 5000000000.0,
+       "string_length": 0.5,
+       "string_tension": 135.0,
+       "string_linear_density": 0.00084,
+       "pluck_fraction": 0.5,
+       "jack_speed": 0.02,
+       "initial_contact_length": 0.005,
+       "sample_rate": 205256.63378874192,
+       "contact_angle_step": 0.00625,
+       "max_seconds": 0.5
+      },
+      "recomputed_second_moment_m4": 4.1666666666666674e-14,
+      "fundamental_hz": 400.89186286863657,
+      "spatial_cells": [
+       128,
+       128
+      ],
+      "actual_string_length_m": 0.5,
+      "actual_pluck_fraction": 0.5,
+      "contact_end_time_s": 0.2043920938320347,
+      "contact_end_final_step_s": 3.826680625657362e-11,
+      "state_snapshot_time_s": 0.2043929067022489,
+      "state_snapshot_assumption": "force set to zero after prescribed endpoint until next uniform sample; continued contact unmodeled",
+      "tip_contact_time_s": 0.00028176021368275794,
+      "contact_end_reason": "prescribed contact-arc endpoint; physical detachment unvalidated",
+      "physical_detachment_validated": false,
+      "normal_force_at_contact_end_n": 148.78290181387365,
+      "contact_end_beam_angle_rad": 0.22969282536549449,
+      "contact_end_tip_angle_rad": 1.5707963267948966,
+      "contact_end_point_displacement_m": [
+       0.0011021004172649023,
+       0.002874256675703493
+      ],
+      "contact_end_point_velocity_m_per_s": [
+       213.72038754407657,
+       -55.01823928916638
+      ],
+      "field_point_displacement_error_m": [
+       -1.909662625292595e-05,
+       8.407872351114294e-06
+      ],
+      "field_bridge_displacement_error_m": [
+       1.7533582008164017e-19,
+       3.2864878353466853e-19
+      ],
+      "maximum_force_n": 148.78290181387365,
+      "maximum_beam_deflection_angle_degrees": 16.41538569139256,
+      "string_energy_j": 0.0056524057822504884,
+      "beam_energy_at_contact_end_j": 0.0012212683801940635,
+      "grip_work_j": 0.007011607752841121,
+      "substep_variance_loss_j": 0.00014727862131544918,
+      "substep_variance_fraction_of_grip_work": 0.021004971542478476,
+      "contact_substeps": 42279,
+      "backtracks": 380,
+      "smallest_contact_step_s": 3.826680625657362e-11,
+      "string_integrator_work_error_relative": 1.1133331921958295e-15,
+      "maximum_beam_plus_string_work_defect_relative": 0.001332794310278052,
+      "final_beam_plus_string_work_defect_relative": 0.0013327943102770623,
+      "body_work_defect_before_tip_j": 2.519833334740061e-06,
+      "tip_work_defect_increment_j": 6.825197584148061e-06,
+      "maximum_contact_residual_mm": 7.156877832883123e-14,
+      "bridge_h4_h12_over_h1_h3_db": -10.185582771783423,
+      "bridge_harmonic_magnitudes_n": [
+       2.1283784901510767,
+       1.2767551694400293e-16,
+       0.7413429718760416,
+       2.4588946895627784e-16,
+       0.47108730667407217,
+       2.6081706526232056e-16,
+       0.3532816630854787,
+       2.2330098857456292e-16,
+       0.2856223449369228,
+       9.487100956443285e-16,
+       0.2416573649761231,
+       5.841353244482964e-16
+      ],
+      "limitations": [
+       "harpsichord geometry, not measured guitar or thumb",
+       "approximate finite-angle massless frictionless beam",
+       "prescribed arc endpoint does not validate physical detachment",
+       "tip virtual work does not conserve the approximate moving-contact body",
+       "uniform delay samples lose the explicitly reported substep variance",
+       "no guitar grip/trajectory/dynamic mapping inferred",
+       "spatial and temporal convergence must be checked",
+       "no instrument-body or corpus-fidelity claim"
+      ]
+     },
+     {
+      "status": "contact_ended_unvalidated",
+      "model": "Perng approximate beam/tip plus traveling-velocity ideal string",
+      "force_law": "virtual-work",
+      "adaptive_contact": true,
+      "primary_source": "https://www.dafx.de/paper-archive/2011/Papers/24_e.pdf",
+      "inputs_si": {
+       "beam_length": 0.006,
+       "beam_width": 0.004,
+       "beam_thickness": 0.0005,
+       "young_modulus": 5000000000.0,
+       "string_length": 0.5,
+       "string_tension": 135.0,
+       "string_linear_density": 0.00084,
+       "pluck_fraction": 0.5,
+       "jack_speed": 0.02,
+       "initial_contact_length": 0.005,
+       "sample_rate": 410513.26757748384,
+       "contact_angle_step": 0.00625,
+       "max_seconds": 0.5
+      },
+      "recomputed_second_moment_m4": 4.1666666666666674e-14,
+      "fundamental_hz": 400.89186286863657,
+      "spatial_cells": [
+       256,
+       256
+      ],
+      "actual_string_length_m": 0.5,
+      "actual_pluck_fraction": 0.5,
+      "contact_end_time_s": 0.20438707335204123,
+      "contact_end_final_step_s": 3.942187844919727e-11,
+      "state_snapshot_time_s": 0.20438803475252657,
+      "state_snapshot_assumption": "force set to zero after prescribed endpoint until next uniform sample; continued contact unmodeled",
+      "tip_contact_time_s": 0.00028891960799520833,
+      "contact_end_reason": "prescribed contact-arc endpoint; physical detachment unvalidated",
+      "physical_detachment_validated": false,
+      "normal_force_at_contact_end_n": 148.79333788799124,
+      "contact_end_beam_angle_rad": 0.22969762896238102,
+      "contact_end_tip_angle_rad": 1.5707963267948966,
+      "contact_end_point_displacement_m": [
+       0.0011020954437221556,
+       0.002874136503350256
+      ],
+      "contact_end_point_velocity_m_per_s": [
+       213.73428020313102,
+       -55.02444866773364
+      ],
+      "field_point_displacement_error_m": [
+       -9.486538580425006e-06,
+       5.482301507865779e-06
+      ],
+      "field_bridge_displacement_error_m": [
+       5.454892180317694e-19,
+       7.860465750519907e-19
+      ],
+      "maximum_force_n": 148.79333788799124,
+      "maximum_beam_deflection_angle_degrees": 16.40786445005615,
+      "string_energy_j": 0.005648124263284325,
+      "beam_energy_at_contact_end_j": 0.0012213194618273069,
+      "grip_work_j": 0.0070112681583346815,
+      "substep_variance_loss_j": 0.0001510755992962711,
+      "substep_variance_fraction_of_grip_work": 0.02154754259636742,
+      "contact_substeps": 84204,
+      "backtracks": 358,
+      "smallest_contact_step_s": 3.942187844919727e-11,
+      "string_integrator_work_error_relative": 4.948387187030197e-16,
+      "maximum_beam_plus_string_work_defect_relative": 0.0013194711519090632,
+      "final_beam_plus_string_work_defect_relative": 0.0013194711519090632,
+      "body_work_defect_before_tip_j": 2.5314504150950393e-06,
+      "tip_work_defect_increment_j": 6.719715658124424e-06,
+      "maximum_contact_residual_mm": 7.116982581067445e-14,
+      "bridge_h4_h12_over_h1_h3_db": -10.090277354742462,
+      "bridge_harmonic_magnitudes_n": [
+       2.129577900643862,
+       1.7070797401465678e-15,
+       0.7442707071428655,
+       4.949940991015402e-16,
+       0.4750802059476392,
+       8.710701767368211e-16,
+       0.3576349278113951,
+       9.61748433251526e-16,
+       0.2901945851896464,
+       1.6163269660182946e-16,
+       0.24620679935780276,
+       2.2529705570136474e-15
+      ],
+      "limitations": [
+       "harpsichord geometry, not measured guitar or thumb",
+       "approximate finite-angle massless frictionless beam",
+       "prescribed arc endpoint does not validate physical detachment",
+       "tip virtual work does not conserve the approximate moving-contact body",
+       "uniform delay samples lose the explicitly reported substep variance",
+       "no guitar grip/trajectory/dynamic mapping inferred",
+       "spatial and temporal convergence must be checked",
+       "no instrument-body or corpus-fidelity claim"
+      ]
+     }
+    ],
+    "tool_sha256": "3ed833dcdfd224fe607b2bfa88eaea3744b42f3a8efcb36b3d6502e300e8033b"
+   },
+   "convergence-00625-8x": {
+    "status": "contact_ended_unvalidated",
+    "model": "Perng approximate beam/tip plus traveling-velocity ideal string",
+    "force_law": "virtual-work",
+    "adaptive_contact": true,
+    "primary_source": "https://www.dafx.de/paper-archive/2011/Papers/24_e.pdf",
+    "inputs_si": {
+     "beam_length": 0.006,
+     "beam_width": 0.004,
+     "beam_thickness": 0.0005,
+     "young_modulus": 5000000000.0,
+     "string_length": 0.5,
+     "string_tension": 135.0,
+     "string_linear_density": 0.00084,
+     "pluck_fraction": 0.5,
+     "jack_speed": 0.02,
+     "initial_contact_length": 0.005,
+     "sample_rate": 821026.5351549677,
+     "contact_angle_step": 0.00625,
+     "max_seconds": 0.5
+    },
+    "recomputed_second_moment_m4": 4.1666666666666674e-14,
+    "fundamental_hz": 400.89186286863657,
+    "spatial_cells": [
+     512,
+     512
+    ],
+    "actual_string_length_m": 0.5,
+    "actual_pluck_fraction": 0.5,
+    "contact_end_time_s": 0.20438066190342327,
+    "contact_end_final_step_s": 4.868669734298967e-11,
+    "state_snapshot_time_s": 0.204380726827943,
+    "state_snapshot_assumption": "force set to zero after prescribed endpoint until next uniform sample; continued contact unmodeled",
+    "tip_contact_time_s": 0.0002922520588219957,
+    "contact_end_reason": "prescribed contact-arc endpoint; physical detachment unvalidated",
+    "physical_detachment_validated": false,
+    "normal_force_at_contact_end_n": 148.8243242694534,
+    "contact_end_beam_angle_rad": 0.22971188890190722,
+    "contact_end_tip_angle_rad": 1.5707963267948966,
+    "contact_end_point_displacement_m": [
+     0.0011020806788216912,
+     0.002873949606869551
+    ],
+    "contact_end_point_velocity_m_per_s": [
+     213.7775025940551,
+     -55.039510501514734
+    ],
+    "field_point_displacement_error_m": [
+     -8.588274412996361e-06,
+     2.8552042673638325e-06
+    ],
+    "field_bridge_displacement_error_m": [
+     3.6422416731934915e-19,
+     -2.197203465177655e-18
+    ],
+    "maximum_force_n": 148.8243242694534,
+    "maximum_beam_deflection_angle_degrees": 16.401074001060877,
+    "string_energy_j": 0.0057329619869373235,
+    "beam_energy_at_contact_end_j": 0.001221471108863013,
+    "grip_work_j": 0.007010847603025895,
+    "substep_variance_loss_j": 6.575064735352334e-05,
+    "substep_variance_fraction_of_grip_work": 0.009378416288088368,
+    "contact_substeps": 168065,
+    "backtracks": 317,
+    "smallest_contact_step_s": 4.868669734298967e-11,
+    "string_integrator_work_error_relative": 2.4743420114111415e-15,
+    "maximum_beam_plus_string_work_defect_relative": 0.00133167067045546,
+    "final_beam_plus_string_work_defect_relative": 0.0013316706704529857,
+    "body_work_defect_before_tip_j": 2.5378462477562702e-06,
+    "tip_work_defect_increment_j": 6.798293880226278e-06,
+    "maximum_contact_residual_mm": 6.889681289671754e-14,
+    "bridge_h4_h12_over_h1_h3_db": -10.075569123808075,
+    "bridge_harmonic_magnitudes_n": [
+     2.129762617230272,
+     2.3338504775493028e-15,
+     0.744442629791705,
+     5.250053428674723e-16,
+     0.47558352514955937,
+     1.7203495744023275e-15,
+     0.3582272035069434,
+     4.165476049927867e-15,
+     0.29100182383525647,
+     1.6669069058863815e-15,
+     0.2470617928144197,
+     1.4066841396377295e-15
+    ],
+    "limitations": [
+     "harpsichord geometry, not measured guitar or thumb",
+     "approximate finite-angle massless frictionless beam",
+     "prescribed arc endpoint does not validate physical detachment",
+     "tip virtual work does not conserve the approximate moving-contact body",
+     "uniform delay samples lose the explicitly reported substep variance",
+     "no guitar grip/trajectory/dynamic mapping inferred",
+     "spatial and temporal convergence must be checked",
+     "no instrument-body or corpus-fidelity claim"
+    ],
+    "tool_sha256": "3ed833dcdfd224fe607b2bfa88eaea3744b42f3a8efcb36b3d6502e300e8033b"
+   }
+  }
  }
 }
