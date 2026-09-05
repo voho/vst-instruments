@@ -1297,6 +1297,14 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   refit, but the largest relative errors remain 0.51/0.34. These are offline
   approximation checks; real-performance validation and the unmeasured spatial
   behavior remain separate requirements for a shipping model.
+  A [native experiment](Tools/BodyForcePairExperiment.patch) passes those
+  measured-response gates, but inheriting the old body calibration suppresses
+  its upper bands by 18–28 dB. Resetting four body calibration factors to their
+  neutral values restores those levels while retaining Dreadnought morphing.
+  Across the same six GuitarSet clips, this version reduces mean log-spectrum
+  error from 14.920 to 13.103 dB, while spectral convergence and chroma distance
+  worsen from 0.902/0.310 to 0.920/0.318. The mixed result supports further
+  comparison, not an automatic default change.
   Development scores were not opened.
   Separately,
   a doublet-ratio extraction of the plucking angle from the reference

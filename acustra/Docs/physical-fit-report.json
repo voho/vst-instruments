@@ -80679,5 +80679,211 @@
    "Final runtime float recurrence, inherited construction/calibration morphs, real recording benchmarks and audible judgment remain separate from passing source-domain fit gates.",
    "Endpoint cross-product phase diagnostics use a product-peak mask; they do not replace earlier per-input phase/cancellation diagnostics."
   ]
+ },
+ "native_body_pair_and_calibration_interaction_2026_09_05": {
+  "status": "Reproducible experimental patch only; current shipping engine and defaults unchanged. No by-ear decision recorded.",
+  "patch": "Tools/BodyForcePairExperiment.patch",
+  "patch_sha256": "cf0226acee5dab92b054895925a69eb0dedd30263a05b897e8ef9f47f15102d8",
+  "patch_validation": "git apply --check succeeds against current69d5e4f7 sources; source-coordinate F/T and data attribution in patch preamble.",
+  "native_reference": {
+   "protocol": "Apply the frozen measured fitting gates to actual native-float impulse responses.",
+   "sample_rate": 48000,
+   "fft_size": 65536,
+   "banks": [
+    {
+     "guitar": 21,
+     "all_endpoint_derived_and_capture_gates_pass": true,
+     "native_vs_frozen_fit_complex_relative": 1.1878220900492804e-05
+    },
+    {
+     "guitar": 34,
+     "all_endpoint_derived_and_capture_gates_pass": true,
+     "native_vs_frozen_fit_complex_relative": 2.3830598769846246e-05
+    }
+   ],
+   "root_observation_check": {
+    "protocol": "Independent root hash comparison of18 native noncapture observables over8seconds in each material, and0.5second steel piezo/magnetic captures. Sources differ only in body radiation; sharednativecapturecode path checked inrender.cpp. No source or output changes.",
+    "byte_identical": [
+     {
+      "file": "steel-core.f32",
+      "bytes": 27648000,
+      "sha256": "92756c122ea1ea17cc44299fe607cf53293d7cbeaa4443d379186be31c066e85"
+     },
+     {
+      "file": "nylon-core.f32",
+      "bytes": 27648000,
+      "sha256": "53c71f34c20beb03a870d732dc94a53f724be64c41c3955226e013fbb05d0cc7"
+     },
+     {
+      "file": "capture3.f32",
+      "bytes": 192000,
+      "sha256": "b05e5f421173e19ddb6de4bc83deed8f8949dcd9f3002b52a53931badc9f84ec"
+     },
+     {
+      "file": "capture4.f32",
+      "bytes": 192000,
+      "sha256": "ef61a344452879f2f0f93ebd196091380cde7687174bafd24d0dcbb551d9cf7c"
+     }
+    ]
+   }
+  },
+  "calibration_interaction": {
+   "default_body_fields": {
+    "bodyFrequencyScale": 1.0399999618530273,
+    "bodyQScale": 0.05341796949505806,
+    "residueTiltDbPerOctave": -1,
+    "lowBodyModeGain": 7.5
+   },
+   "neutral_four_fields": {
+    "bodyFrequencyScale": 1,
+    "bodyQScale": 1,
+    "residueTiltDbPerOctave": 0,
+    "lowBodyModeGain": 1
+   },
+   "retained": "Dreadnought/Spruce shape and wood morphs, including low-mode101/107,modeScale.972,alternating index asymmetry.009,Qfloor4 and shape-dependent gain; all string/bridge calibration unchanged.",
+   "default_q_floor_counts": {
+    "g21": {
+     "at_floor": 120,
+     "total": 127
+    },
+    "g34": {
+     "at_floor": 125,
+     "total": 141
+    }
+   },
+   "neutral_q_floor_counts": {
+    "g21": 2,
+    "g34": 0
+   },
+   "same_bank_2560_to_10000hz_level_db": {
+    "shipping_default": [
+     -5.26,
+     -3.87
+    ],
+    "pair_default": [
+     -28.43,
+     -18.35
+    ],
+    "shipping_neutral": [
+     0.0,
+     0.477
+    ],
+    "pair_neutral": [
+     -0.151,
+     0.098
+    ]
+   },
+   "native_coefficient_replay_max_relative_l2": 7.54e-07,
+   "at48k_residue_rate_scale_plus_rounding_max_error": {
+    "gain_db": 1.95e-06,
+    "phase_degrees": 2.45e-05
+   },
+   "interpretation": "Four fields were neutralized together; this is not an isolated Q-only causal estimate. Raw-complex residues interact strongly with inherited broadening/level morphs. The sample-rate scale and force/moment wiring do not explain the observed collapse."
+  },
+  "controlled_real_performances": {
+   "protocol": "Verify and summarize the four predeclared body-bank/calibration conditions.\n\nThe original twelve renders remain unchanged. Twelve additional renders use\nfour neutral body-calibration values on both frozen engines. Every condition\nuses the same six already-opened GuitarSet clips and unchanged scorer. This\nscript verifies files and summarizes existing scores; it does not render or fit.\n",
+   "targets_per_condition": 6,
+   "notes_per_condition": 315,
+   "render_counts": {
+    "initial": 12,
+    "additional": 12
+   },
+   "mean_metrics": {
+    "shipping_fitted": {
+     "log_magnitude_mae_db": 14.919740744440176,
+     "spectral_convergence": 0.9020631701083962,
+     "chroma_cosine_distance": 0.30986956373323443
+    },
+    "pair_fitted": {
+     "log_magnitude_mae_db": 15.551620529130531,
+     "spectral_convergence": 0.9242505857272653,
+     "chroma_cosine_distance": 0.31449950560984635
+    },
+    "shipping_neutral": {
+     "log_magnitude_mae_db": 15.976630302482386,
+     "spectral_convergence": 0.918346632670391,
+     "chroma_cosine_distance": 0.31355122508549504
+    },
+    "pair_neutral": {
+     "log_magnitude_mae_db": 13.103367672633256,
+     "spectral_convergence": 0.9199248780330551,
+     "chroma_cosine_distance": 0.3177946662530873
+    }
+   },
+   "comparisons": {
+    "pair_fitted_minus_shipping_fitted": {
+     "mean_delta": {
+      "log_magnitude_mae_db": 0.631879784690355,
+      "spectral_convergence": 0.022187415618869055,
+      "chroma_cosine_distance": 0.0046299418766119205
+     },
+     "improved_clip_count": {
+      "log_magnitude_mae_db": 2,
+      "spectral_convergence": 3,
+      "chroma_cosine_distance": 3
+     }
+    },
+    "pair_neutral_minus_shipping_neutral": {
+     "mean_delta": {
+      "log_magnitude_mae_db": -2.8732626298491297,
+      "spectral_convergence": 0.0015782453626641546,
+      "chroma_cosine_distance": 0.004243441167592232
+     },
+     "improved_clip_count": {
+      "log_magnitude_mae_db": 5,
+      "spectral_convergence": 3,
+      "chroma_cosine_distance": 2
+     }
+    },
+    "shipping_neutral_minus_shipping_fitted": {
+     "mean_delta": {
+      "log_magnitude_mae_db": 1.0568895580422097,
+      "spectral_convergence": 0.016283462561994755,
+      "chroma_cosine_distance": 0.0036816613522606123
+     },
+     "improved_clip_count": {
+      "log_magnitude_mae_db": 0,
+      "spectral_convergence": 3,
+      "chroma_cosine_distance": 4
+     }
+    },
+    "pair_neutral_minus_pair_fitted": {
+     "mean_delta": {
+      "log_magnitude_mae_db": -2.448252856497275,
+      "spectral_convergence": -0.004325707694210146,
+      "chroma_cosine_distance": 0.003295160643240924
+     },
+     "improved_clip_count": {
+      "log_magnitude_mae_db": 6,
+      "spectral_convergence": 3,
+      "chroma_cosine_distance": 2
+     }
+    }
+   },
+   "exclusions": [],
+   "fitting": false,
+   "protected_targets_accessed": false,
+   "scope": "Only bodyFrequencyScale=1, bodyQScale=1, residueTiltDbPerOctave=0, lowBodyModeGain=1 differ from prior renderer. All other fitted calibration values unchanged. Dreadnought shape morphing/drive, Spruce, stereoWidth.62 and bodyAmount.82 remain. This is not literal identity with the measured pole bank, because Dreadnought modeScale.972,101/107 low-mode ratio and alternating asymmetry.009 still apply.",
+   "limitations": "Already-opened single-phrase six-player performances with unknown velocities/gestures and unmatched guitar/mic. Equal-clip descriptor means are not a realism ranking. Four neutral calibration fields retain all Dreadnought morphing and ordinary string/bridge behavior. No constants were optimized. Existing WAV trims may differ between conditions; direct A/B requires one shared whole-file RMS/headroom target.",
+   "interpretation": "Neutral pair reduces average log-spectrum error against actual shipping by1.816373dB but worsens mean spectral convergence/chroma. Low80-160Hz deficits worsen. Neutral pair vs equally neutral shipping log-error improvement is uneven:02comp supplies about66.5percent of the summed improvement, while01solo worsens. This is a calibration interaction, not a consistent fidelity gain or market ranking."
+  },
+  "artifacts": {
+   "/tmp/acustra-body-pair-native/source-manifest.json": "fbadcaf8fc881405a16a0951950c42c58850d70997577b54dc234158a6879797",
+   "/tmp/acustra-body-pair-native/native-response-report.json": "7dd75ed0c45a99a05465df05575b687137204bfb9b8f6990d095e7f37b679b74",
+   "/tmp/acustra-body-pair-native/root-observation-check.json": "39fffe3700d101fc4ab9f11ac30d57517d94dbf1c30e974062f2531ceff52805",
+   "/tmp/acustra-body-pair-morph-audit/report.json": "c0403ba7038487f788a9ce5544c95f45ea62f019311f023a8d73df3fd78e9b75",
+   "/tmp/acustra-body-pair-morph-audit/interpretation.json": "a3c7206845551263d47180c239ce96c4bf302341724c270718366dd7e6a92d41",
+   "/tmp/acustra-body-pair-morph-audit/artifact-manifest.json": "68045f81e430f22a64dc852bf06e07b746431dea4fcc724a6a86a76db98d8d28",
+   "/tmp/acustra-body-pair-guitarset/comparison.json": "9f410ee97179b92054b5361227bd2c811cb10e6193fc3498d7370906eac04cda",
+   "/tmp/acustra-body-pair-guitarset/pre-render-manifest.json": "f8eb95162aaaa93e19ca909ccfe009bcdc2ef6839315b1b428efe5ecdaa15d3e",
+   "/tmp/acustra-body-pair-guitarset-neutral/four-condition-comparison.json": "4ff0950d33580a92bb1a1516e80e188bbbe775f6c1f26f450e6d5cbeac68ba49"
+  },
+  "limits": [
+   "Reference impulse gates use unmorphed measured bank settings. Default or neutral Dreadnought filters deliberately shift poles and therefore do not retain raw-instrument complex fidelity.",
+   "Both source instruments are nylon-strung. The steel branch remains an adaptation and the normal force-pair map still has locally poor spatial interpolation.",
+   "No new constants were fitted to the GuitarSet outcomes. The same already-opened six clips and315notes per condition were retained.",
+   "Native checks cover modal realization, linearity, finite audio, unchanged observed core/pickup signals and bounded construction checks; they are not a full releasable-plugin regression or blind-listening verdict.",
+   "Audio decisions remain private and uncommitted until a real user verdict licenses a direction."
+  ]
  }
 }
