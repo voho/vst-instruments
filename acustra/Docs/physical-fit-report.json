@@ -82706,5 +82706,204 @@
    "independent_recording_audit": "Pass: all54 rows,18 raw hashes/shapes/peaks,81 pair identities/deltas and finite masks; exact original helper reproduces all candidate descriptors, and README explicitly reports paired medians.",
    "original_final_candidate_numerical_summary_identical": true
   }
+ },
+ "exact_dispersion_noteon_cache_2026_09_05": {
+  "status": "Adopted exact last-result memoization of the dispersion solve. Acoustic model, controls, existing design request tolerances, waveform resets and metadata updates unchanged.",
+  "change": "Keep the existing dispersionDesignChanged block; compare the seven actual solver arguments exactly inside it. Reuse only its previously computed float decay/pole ratios on a hit; update all original metadata on every requested design. No global cache, map, allocation or tolerance key.",
+  "inputs": [
+   "inharmonicity",
+   "unbentFrequency",
+   "sampleRate",
+   "designBroadLossCoefficient",
+   "broadLoss",
+   "lowpassCoefficient",
+   "highLoss"
+  ],
+  "fixed_initial_ratios": [
+   10,
+   4
+  ],
+  "storage_bytes_per_voice": 56,
+  "source": {
+   "Source/DSP/AcustraEngine.cpp": {
+    "path": "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/AcustraEngine.cpp",
+    "sha256": "0c92b2256a0eefce31a700b07f997295fe72d7c2d851b7b430bc2f33236ba9ec"
+   },
+   "Source/DSP/AcustraEngine.h": {
+    "path": "/Users/vojta/Dev/vst-instruments/acustra/Source/DSP/AcustraEngine.h",
+    "sha256": "1912487ac4958bbb5d9d2c8fd9c8c7cda76790475ecfea0f5abdba54cf423115"
+   },
+   "Tests/AcustraEngineTests.cpp": {
+    "path": "/Users/vojta/Dev/vst-instruments/acustra/Tests/AcustraEngineTests.cpp",
+    "sha256": "447be0cedbd7bb771b11ab3c4492779ca61739aa86ec3558b61ba7eaacbaa727"
+   }
+  },
+  "independent_input_lifecycle_review": {
+   "result": "no missing dependency found",
+   "seven_key_inputs": [
+    "inharmonicity",
+    "unbentFrequency",
+    "sampleRate",
+    "designBroadLossCoefficient",
+    "broadLoss",
+    "lowpassCoefficient",
+    "highLoss"
+   ],
+   "fixed_initial_ratios": [
+    10,
+    4
+   ],
+   "cached_results": "Only decayRatio and poleRatio are used from calibrateDispersion; caching their original float-rounded fields preserves existing conversion.",
+   "ratio_writes": "Only their declarations and the completed solve block write these two fields. reset/returnToOpenString/captureTail do not alter them independently of the last-input key.",
+   "hit_behavior": "Existing dispersionDesignChanged predicate unchanged; all four design metadata assignments execute on hits. Downstream actual-frequency coefficients, loss and bridge/tuning work still execute.",
+   "initialization": "Zero tuple cannot match positive unbentFrequency; no separate validity flag needed.",
+   "reset_behavior": "Last result survives each voice reset alongside its key. Exact sampleRate/filter/B/frequency values distinguish relevant resets; redundant material/string/tuning identity need not be added."
+  },
+  "audio_equivalence": {
+   "report": {
+    "path": "/tmp/acustra-dispersion-noteon-cache/report.json",
+    "sha256": "ae8f905ceea5035226940355c308e07aacbffc6fef175106f740a6f19bcfe99c"
+   },
+   "source_manifest": {
+    "path": "/tmp/acustra-dispersion-noteon-cache/source-manifest.json",
+    "sha256": "7878a972d21ff44d3fc5d81901e418f5c754293ddcf7b2e3edb522ff268e8f62"
+   },
+   "protocol": "Same public API operations and timings on shipping/cached binaries. Both materials; one continuing engine across44.1/48/96/384/48k prepares. Fresh open chord, held/open repluck, fresh fret/repluck, delayed repluck, harmonic/repluck, same-rate prepare, highLossCutoffScale .7, frequencyLossScale x1.1, steel stiffnessScale x1.15, stringAge .65, held material switch/repluck. Each segment captures six voices design metadata, ratios, both loop allpass coefficients/delays, then60ms interleaved float audio. No tolerance comparison: complete files must be byte-identical.",
+   "segments": 140,
+   "scalar_float_samples": 2083536,
+   "all_audio_byte_identical": true,
+   "all_design_snapshots_byte_identical": true,
+   "audio_sha256": "646d39fba5fbc558cddcf84bb97869a148242581a7e7c66f1fd2176c2db44111",
+   "design_snapshots_sha256": "f6bde1946d51cfb66046557ef84404c575dea2e4543b980186ecf60d239e0a30"
+  },
+  "deterministic_avoided_work": {
+   "report": {
+    "path": "/tmp/acustra-dispersion-noteon-cache/solver-call-counts.json",
+    "sha256": "df019826aa057e63f1dc46385edaa3b9f72325fbc5ee4a48232abb4f9496eec0"
+   },
+   "scope": "Both materials at44.1/48/96/384k; same public calls, only off-tree counter instrumentation, stripping it restores both frozen sources exactly.",
+   "shipping_cached_solver_calls": {
+    "prepare": [
+     6,
+     6
+    ],
+    "six_open_note_ons": [
+     6,
+     0
+    ],
+    "following_process64": [
+     0,
+     0
+    ],
+    "same_open_repluck": [
+     1,
+     0
+    ],
+    "changed_fret": [
+     1,
+     1
+    ],
+    "same_fret_repluck": [
+     1,
+     0
+    ],
+    "reset_after_one_fret_change": [
+     6,
+     1
+    ],
+    "six_open_note_ons_after_reset": [
+     6,
+     0
+    ]
+   }
+  },
+  "regression": {
+   "report": {
+    "path": "/tmp/acustra-dispersion-noteon-cache/regression-review.json",
+    "sha256": "107357c423c248e22453ed3d5387700ae4cf532dbf7718fa76d2ddd11950849c"
+   },
+   "method": {
+    "function": "testDispersionSolveCacheMatchesForcedRecomputation",
+    "method": "Two otherwise-identical engines. Reference last-solve keys are cleared before each public setup/note/controller/process operation, forcing the pre-cache solve path whenever its existing predicate requests a solve. Exact left/right block equality, with nonzero-audio guard.",
+    "coverage": [
+     "repeated held notes",
+     "scheduled fret note",
+     "natural harmonic",
+     "48k/96k/44.1k reprepare with warm open-string keys",
+     "steel/nylon change",
+     "age/DropD tuning",
+     "stiffness/frequency-loss change",
+     "high-loss cutoff coefficient",
+     "small/beyond-threshold/large member bends",
+     "manager slide",
+     "reset"
+    ],
+    "block_comparisons": 528,
+    "frames_compared": 67056,
+    "focused_exit_code": 0,
+    "focused_failures": 0,
+    "full_suite_run_by_reviewer": false
+   },
+   "mutation_results": {
+    "omit-rate": {
+     "exit_code": 1,
+     "failure_count": 193,
+     "first_failure": "FAIL: dispersion cache changed stereo output: steel 96000.000000 repeated open note"
+    },
+    "omit-high-coefficient": {
+     "exit_code": 1,
+     "failure_count": 42,
+     "first_failure": "FAIL: dispersion cache changed stereo output: steel 48000.000000 cutoff coefficient"
+    }
+   }
+  },
+  "full_qualification": {
+   "path": "/private/tmp/acustra-dispersion-cache-shipping/qualification-report.json",
+   "sha256": "236d1b589ae1e16e7bce5af0a940be05096e395709d839d451a123e14ad0978c"
+  },
+  "tests": [
+   {
+    "name": "Acustra.Engine",
+    "seconds": 208.03,
+    "status": "passed"
+   },
+   {
+    "name": "Acustra.Capture",
+    "seconds": 8.27,
+    "status": "passed"
+   },
+   {
+    "name": "Acustra.MeasuredSteelBridge",
+    "seconds": 5.52,
+    "status": "passed"
+   },
+   {
+    "name": "Acustra.RenderDemos",
+    "seconds": 0.42,
+    "status": "passed"
+   },
+   {
+    "name": "Acustra.PluginProcessor",
+    "seconds": 8.73,
+    "status": "passed"
+   }
+  ],
+  "timing": {
+   "protocol": "Same frozen chord_cost.cpp as Gaussian cost audit. Six simultaneous public noteOn calls at velocity.6 for open strings40/45/50/55/59/64 on channels1..6, plus process64; assert six active voices and finite samples. Both materials/all three picking techniques. Defaults. Reset outside timer;10 warmups then100 observations per condition; binaries run sequentially on shared macOS host. Summary reports maximum condition median/p95/maximum, not a guaranteed deadline.",
+   "report": {
+    "path": "/tmp/acustra-dispersion-noteon-cache/report.json",
+    "sha256": "ae8f905ceea5035226940355c308e07aacbffc6fef175106f740a6f19bcfe99c"
+   },
+   "interpretation": "Measured repeated-note medians improve, but shared-host contention produced severe scheduling tails (p95 up34ms, maxima90ms). Do not quote a precise speedup or realtime deadline guarantee. Deterministic solver counts establish avoided work without this timing uncertainty."
+  },
+  "limitations": [
+   "Exact repeated input avoids the solver; new pitches or changed physical inputs can still require the full iterative solve during noteOn.",
+   "This cache preserves the existing within-tolerance reuse on non-clear calls; it does not change numerical tuning or the known approximation.",
+   "Shared-host timing tails are not realtime bounds; fresh-cache misses and other MIDI workloads were not timed by this warm open-chord probe.",
+   "Fresh pitches/changed solver inputs still require the same iterative solve. The64-frame384k worst-callback limitation is not closed.",
+   "Gaussian contact candidate remains unselected and off-tree. This memoization is independent and preserves the selected stereo body and current contact kernel.",
+   "No new real-recording score or auditory preference is inferred from this performance change; the current-body training findings above remain the relevant measured baseline."
+  ],
+  "documentation": "No release-history or canonical-audio update for this inaudible cache/refactor; native regression and exact before/after evidence retained."
  }
 }

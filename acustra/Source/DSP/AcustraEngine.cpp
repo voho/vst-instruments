@@ -1998,12 +1998,23 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
                     - physical.frequencyLossScale) > 1.0e-5f;
     if (dispersionDesignChanged)
     {
-        const auto calibration = calibrateDispersion(
+        const std::array<double, 7> arguments {
             inharmonicity, unbentFrequency, sampleRate_,
-            designBroadLossCoefficient, broadLoss,
-            lowpassCoefficient, highLoss, 10.0, 4.0);
-        voice.dispersionDecayRatio = static_cast<float>(calibration.decayRatio);
-        voice.dispersionPoleRatio = static_cast<float>(calibration.poleRatio);
+            designBroadLossCoefficient, broadLoss, lowpassCoefficient, highLoss
+        };
+        // Resetting a wave does not change an otherwise identical design.
+        // Keep the existing request tolerances and metadata updates, while
+        // reusing only a solve with exactly the same complete input tuple.
+        if (voice.dispersionDesignArguments != arguments)
+        {
+            const auto calibration = calibrateDispersion(
+                inharmonicity, unbentFrequency, sampleRate_,
+                designBroadLossCoefficient, broadLoss,
+                lowpassCoefficient, highLoss, 10.0, 4.0);
+            voice.dispersionDecayRatio = static_cast<float>(calibration.decayRatio);
+            voice.dispersionPoleRatio = static_cast<float>(calibration.poleRatio);
+            voice.dispersionDesignArguments = arguments;
+        }
         voice.dispersionDesignFrequency = unbentFrequency;
         voice.dispersionDesignInharmonicity = inharmonicity;
         voice.dispersionDesignAge = age;

@@ -20,6 +20,12 @@ namespace acustra
 {
 struct AcustraEngineTestAccess
 {
+    static void invalidateDispersionSolveCache(AcustraEngine& engine)
+    {
+        for (auto& voice : engine.voices_)
+            voice.dispersionDesignArguments.fill(0.0);
+    }
+
     struct StringLoopSnapshot
     {
         double delay;
@@ -2796,6 +2802,90 @@ void testASlewingDelayDoesNotClickAboveFourteenKilohertz()
                    + " Hz raised the top band by a factor of "
                    + std::to_string(rise) + " in one frame");
     }
+}
+
+void testDispersionSolveCacheMatchesForcedRecomputation()
+{
+    // The reference always misses the memoization key when the unchanged
+    // design predicate requests a solve. This exercises the former solver
+    // path through public operations rather than mirroring that predicate.
+    acustra::AcustraEngine cached, reference;
+    std::array<float, blockSize> left {}, right {}, expectedLeft {}, expectedRight {};
+    bool heardSignal = false;
+    const auto apply = [&] (const auto& operation)
+    {
+        operation(cached);
+        acustra::AcustraEngineTestAccess::invalidateDispersionSolveCache(reference);
+        operation(reference);
+    };
+    const auto render = [&] (const std::string& context)
+    {
+        for (int block = 0; block < 8; ++block)
+        {
+            cached.process(left.data(), right.data(), blockSize);
+            acustra::AcustraEngineTestAccess::invalidateDispersionSolveCache(reference);
+            reference.process(expectedLeft.data(), expectedRight.data(), blockSize);
+            expect(left == expectedLeft && right == expectedRight,
+                   "dispersion cache changed stereo output: " + context);
+            heardSignal = heardSignal || std::any_of(left.begin(), left.end(),
+                                                     [] (float value) { return value != 0.0f; });
+        }
+    };
+    for (const auto material : { acustra::StringMaterial::Steel,
+                                 acustra::StringMaterial::Nylon })
+    {
+        acustra::EngineParameters parameters;
+        parameters.stringMaterial = material;
+        auto calibration = acustra::fittedPhysicalCalibration;
+        apply([&] (auto& engine) { engine.setPhysicalCalibration(calibration); });
+        apply([&] (auto& engine) { engine.setParameters(parameters); });
+        // Each preceding reset leaves open-string keys warm, so the next
+        // prepare must distinguish an otherwise identical design at a new Fs.
+        for (const double rate : { 48000.0, 96000.0, 44100.0 })
+        {
+            const std::string context = (material == acustra::StringMaterial::Steel
+                ? "steel " : "nylon ") + std::to_string(rate);
+            apply([&] (auto& engine) { engine.prepare(rate, blockSize); });
+            apply([] (auto& engine) { engine.setStringPerChannelMode(true); });
+            for (int repeat = 0; repeat < 3; ++repeat)
+            {
+                apply([] (auto& engine) { engine.noteOn(40, 0.6f, 1); });
+                render(context + " repeated open note");
+            }
+            apply([] (auto& engine) { engine.noteOn(45, 0.7f, 1, 37); });
+            render(context + " scheduled fret");
+            apply([] (auto& engine) { engine.setStringPerChannelMode(false); });
+            apply([] (auto& engine) { engine.noteOn(88, 0.6f); });
+            render(context + " natural harmonic");
+            apply([] (auto& engine) { engine.reset(); });
+            // Keep B, note, age and loss mix fixed while changing only the
+            // design's high-loss coefficient. The initial steel cutoff is
+            // Nyquist-clamped, so 1.0 deliberately moves it off that plateau.
+            calibration.highLossCutoffScale = calibration.highLossCutoffScale == 1.0f
+                ? 1.5f : 1.0f;
+            apply([&] (auto& engine) { engine.setPhysicalCalibration(calibration); });
+            apply([] (auto& engine) { engine.noteOn(40, 0.6f); });
+            render(context + " cutoff coefficient");
+            calibration.steel.stiffnessScale *= 1.01f;
+            calibration.steel.frequencyLossScale *= 1.05f;
+            calibration.nylon.frequencyLossScale *= 1.05f;
+            apply([&] (auto& engine) { engine.setPhysicalCalibration(calibration); });
+            parameters.stringAge += 0.03f;
+            parameters.tuning = acustra::Tuning::DropD;
+            apply([&] (auto& engine) { engine.setParameters(parameters); });
+            apply([] (auto& engine) { engine.setLowerZoneMemberCount(2); });
+            apply([] (auto& engine) { engine.noteOn(52, 0.6f, 2); });
+            for (const float bend : { 0.0005f, 0.02f, 2.0f, 0.0f })
+            {
+                apply([&] (auto& engine) { engine.setPitchBend(bend, 2); });
+                render(context + " member bend " + std::to_string(bend));
+            }
+            apply([] (auto& engine) { engine.setPitchBend(-0.03f, 1); });
+            render(context + " manager slide");
+            apply([] (auto& engine) { engine.reset(); });
+        }
+    }
+    expect(heardSignal, "dispersion cache comparison rendered no signal");
 }
 
 void testDispersionAcrossRatesMaterialsAndNotes()
@@ -6478,6 +6568,7 @@ int main()
     testPhysicalSustainSettlesNearRequestedPitch();
     testLoadedE2IsCentredAndNotSplit();
     testSteelDispersionTracksTheStiffStringLaw();
+    testDispersionSolveCacheMatchesForcedRecomputation();
     testDispersionAcrossRatesMaterialsAndNotes();
     testTheFractionalDelayReadIsLossless();
     testASlewingDelayDoesNotClickAboveFourteenKilohertz();

@@ -512,6 +512,9 @@ private:
         float dispersionDesignInharmonicity { -1.0f };
         float dispersionDesignAge { -1.0f };
         float dispersionDesignFrequencyLossScale { -1.0f };
+        // Exact arguments of the last completed dispersion solve. Frequency
+        // is positive, so the zero-initialized key cannot be a valid hit.
+        std::array<double, 7> dispersionDesignArguments {};
         float dispersionDecayRatio { 10.0f };
         float dispersionPoleRatio { 4.0f };
         float level { 0.0f };
