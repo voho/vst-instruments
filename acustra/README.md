@@ -806,7 +806,10 @@ anchors, solves static equilibrium under a stated 1 N point force, then releases
 it with zero initial velocity. At 128 string modes, static displacement is
 within 0.20% of the infinite pinned stiff-string reference for both materials;
 free-release energy balance passes at 44.1, 48 and 96 kHz. The tool reports modal
-convergence and time-integration error separately. It has no acoustic radiation,
+convergence and time-integration error separately. It also observes the force
+on the free body, including the fixed anchors, and checks separate string,
+body and anchor work balances. Its finite-mode release-force jump is quantified
+as a truncation effect, not a measured contact transient. It has no acoustic radiation,
 MIDI-force calibration or runtime role; it is a reference for future source
 changes, not a validated audible improvement. Compile/export/run instructions
 are in the two files.
@@ -1307,7 +1310,12 @@ VST3, Audio Unit and Standalone targets are built from the same engine.
   this is a limitation of the high-frequency loss approximation, not something
   filter priming can repair. The modal preload reference above retains the
   static elastic term and checks release energy, but mapping that state into
-  the shipping waveguide remains unresolved.
+  the shipping waveguide remains unresolved. The pressure bank is fitted over
+  80 Hz–10 kHz and has nonzero static force-to-microphone transfer. Its constant
+  force history has an algebraically defined filter state, but that does not
+  identify a real microphone's acoustic equilibrium before release. This is a
+  limit on a new preload model; it does not establish an audible DC fault in
+  the current differentiated-wave drive.
 - Above H12 the loop's single second-order allpass is not collocated at all,
   and drift there reaches 29.6 cents by H24 on an open steel low E. A
   multi-biquad cascade sized by the published group-delay-area method (Abel

@@ -8,6 +8,9 @@ system for every integrator rate. All figures are SI mechanical quantities.
 Damping is diagonal in this chosen basis, not exact distributed viscous drag.
 Native scalar+shelf attenuation sets approximate modal decay per physical round
 trip; no fitting, clipping, EQ, contact trajectory or radiation bank is used.
+The observed force drives the free mechanical body in its normal/normalized-
+moment coordinates. It includes speaking-string and fixed-anchor reactions;
+it does not specify an acoustic pressure state.
 
 Requires NumPy and SciPy. From the repository root:
   mkdir -p build
@@ -197,8 +200,61 @@ def build(rows, variant, count):
     observe = np.zeros((3, len(M)))
     observe[0] = b
     observe[1:, count:] = V
-    observe = observe @ linalg.solve_triangular(LK.T, np.eye(len(M)), lower=False)
+    inverse_displacement_factor = linalg.solve_triangular(
+        LK.T, np.eye(len(M)), lower=False)
+    observe = observe @ inverse_displacement_factor
     O = np.hstack([observe, np.zeros_like(observe)])
+
+    # Observe physical energy and force from the existing modal state. These
+    # closures retain the matrices already built, without another model solve.
+    string_damping = 2 * alphas
+    body_damping = np.array(body_damping)
+    m0, k0 = mu * L / 3, T / L
+    dimension = len(M)
+
+    def energy_parts(u):
+        q = inverse_displacement_factor @ u[:dimension]
+        v = inverse_velocity_factor @ u[dimension:]
+        qs, qb, vs, vb = q[:count], q[count:], v[:count], v[count:]
+        y, velocity = B @ qb, B @ vb
+        string_energy = (.5 * vs @ vs + (cross @ vs) * velocity
+                         + .5 * m0 * velocity * velocity
+                         + .5 * (string_omega ** 2 * qs) @ qs + .5 * k0 * y * y)
+        body_energy = .5 * vb @ vb + .5 * (omega ** 2 * qb) @ qb
+        x = V @ qb
+        return np.array([string_energy, body_energy, .5 * x @ Ktail @ x])
+
+    def force_observation(u, derivative, point_force=0.):
+        q = inverse_displacement_factor @ u[:dimension]
+        v = inverse_velocity_factor @ u[dimension:]
+        acceleration = inverse_velocity_factor @ derivative[dimension:]
+        qb, vs, vb = q[count:], v[:count], v[count:]
+        speaking = arm * (xi * point_force - cross @ acceleration[:count]
+                          - m0 * (B @ acceleration[count:]) - k0 * (B @ qb))
+        anchors = -Ktail @ (V @ qb)
+        net = speaking + anchors
+        lhs = acceleration[count:] + body_damping * vb + omega ** 2 * qb
+        rhs = V.T @ net
+        residual = np.linalg.norm(lhs - rhs) / max(1, np.linalg.norm(lhs), np.linalg.norm(rhs))
+        velocity = V @ vb
+        power = np.array([
+            point_force * (b @ v) - velocity @ speaking - (string_damping * vs) @ vs,
+            velocity @ net - (body_damping * vb) @ vb,
+            -velocity @ anchors,
+        ])
+        return np.r_[net, speaking, anchors], power, float(residual)
+
+    held, _, held_residual = force_observation(u0, np.zeros_like(u0), force)
+    released, _, released_residual = force_observation(u0, A @ u0)
+    beta, remainder = m0 - cross @ cross, xi - cross @ b[:count]
+    predicted_jump = -arm * remainder * force / (1 + beta * (B @ B))
+    require(beta >= 0, "Finite constraint-mode residual mass must be nonnegative")
+    require(max(held_residual, released_residual) < 1e-11,
+            "Initial free-body force balance failed")
+    require(np.max(abs(released[:2] - held[:2] - predicted_jump)) < 1e-11,
+            "Finite-basis release-force jump disagrees with its prediction")
+    require(abs(sum(energy_parts(u0)) - energy0) / energy0 < 1e-12,
+            "Independent energy components disagree with total preload energy")
     metadata = {
         "material": ["nylon", "steel"][variant],
         "string_modes": count,
@@ -225,22 +281,41 @@ def build(rows, variant, count):
         "pluck_fraction_from_bridge": .2,
         "body_constraint_force_vector": (xi * arm).tolist(),
         "all_tail_anchor_K": Ktail.tolist(),
+        "mechanical_force": {
+            "columns": ["body_normal_N", "body_normalized_moment_N",
+                        "speaking_normal_N", "speaking_normalized_moment_N",
+                        "anchors_normal_N", "anchors_normalized_moment_N"],
+            "held": held.tolist(),
+            "immediately_after_release": released.tolist(),
+            "release_jump_N": (released[:2] - held[:2]).tolist(),
+            "predicted_release_jump_N": predicted_jump.tolist(),
+            "finite_basis_residual_mass_kg": float(beta),
+            "point_constraint_remainder": float(remainder),
+            "maximum_initial_body_ODE_relative_residual": max(held_residual, released_residual),
+        },
     }
-    return A, u0, O, dissipative, metadata
+    return A, u0, O, dissipative, metadata, energy_parts, force_observation
 
 
 def run(rows, variant, count):
     start = time.perf_counter()
-    A, u0, O, D, metadata = build(rows, variant, count)
+    A, u0, O, D, metadata, energy_parts, force_observation = build(rows, variant, count)
     dimension = len(u0) // 2
     energy0 = .5 * u0 @ u0
     times = np.array([.001, .005, .01, .02])
-    exact = [O @ (linalg.expm(A * t) @ u0) for t in times]
+    exact_states = [linalg.expm(A * t) @ u0 for t in times]
+    exact = [O @ state for state in exact_states]
     metadata["expm_observations"] = {
         "times_s": times.tolist(),
         "columns": ["point_m", "bridge_heave_m", "bridge_normalized_rock_m"],
         "values": np.array(exact).tolist(),
     }
+    exact_forces = [force_observation(state, A @ state) for state in exact_states]
+    maximum_force_residual = max(result[2] for result in exact_forces)
+    require(maximum_force_residual < 1e-11, "Continuous free-body ODE force balance failed")
+    metadata["mechanical_force"]["expm_times_s"] = times.tolist()
+    metadata["mechanical_force"]["expm_values"] = [result[0].tolist() for result in exact_forces]
+    metadata["mechanical_force"]["maximum_continuous_body_ODE_relative_residual"] = maximum_force_residual
     metadata["integrators"] = []
     for rate in ([48000] if count < 128 else [44100, 48000, 96000]):
         dt = 1 / rate
@@ -249,6 +324,12 @@ def run(rows, variant, count):
         u = u0.copy()
         max_residual, positive_step, loss = 0., 0., 0.
         observations = []
+        force_samples = []
+        initial_parts = energy_parts(u0)
+        previous_parts = initial_parts
+        component_work = np.zeros(3)
+        maximum_work_residual = np.zeros(3)
+        maximum_body_residual = 0.
         wanted = {int(round(t * rate)) for t in times}
         for step in range(1, int(round(times[-1] * rate)) + 1):
             next_u = G @ u
@@ -258,9 +339,19 @@ def run(rows, variant, count):
             max_residual = max(max_residual, abs(delta_energy + dissipation) / energy0)
             positive_step = max(positive_step, delta_energy / energy0)
             loss += dissipation
+            # Actual trapezoidal acceleration, not a derivative inferred from
+            # the force being checked. Interface work cancels across components.
+            _, power, body_residual = force_observation(.5 * (u + next_u), (next_u - u) / dt)
+            next_parts = energy_parts(next_u)
+            maximum_work_residual = np.maximum(
+                maximum_work_residual, abs(next_parts - previous_parts - dt * power) / energy0)
+            component_work += dt * power
+            maximum_body_residual = max(maximum_body_residual, body_residual)
+            previous_parts = next_parts
             u = next_u
             if step in wanted:
                 observations.append(O @ u)
+                force_samples.append(force_observation(u, A @ u)[0].tolist())
         observations = np.array(observations)
         reference = np.array(exact)
         # Compare actual sampled times, without dividing by observation zeros.
@@ -272,6 +363,10 @@ def run(rows, variant, count):
                 "Trapezoidal per-step energy identity failed")
         require(abs((energy + loss - energy0) / energy0) < 1e-9,
                 "Trapezoidal cumulative energy identity failed")
+        component_balance = (previous_parts - initial_parts - component_work) / energy0
+        require(maximum_body_residual < 1e-9, "Trapezoidal free-body ODE force balance failed")
+        require(max(maximum_work_residual) < 1e-10 and max(abs(component_balance)) < 1e-9,
+                "Independent string/body/anchor work closure failed")
         metadata["integrators"].append({
             "rate": rate, "steps": step,
             "maximum_step_energy_identity_residual_over_initial_energy": max_residual,
@@ -286,6 +381,11 @@ def run(rows, variant, count):
                 max(abs(observations[:, 0] - reference[:, 0]))),
             "maximum_absolute_bridge_vector_error_m": float(
                 max(np.linalg.norm(observations[:, 1:] - reference[:, 1:], axis=1))),
+            "mechanical_force_values": force_samples,
+            "maximum_body_ODE_relative_residual": maximum_body_residual,
+            "energy_component_order": ["speaking_string", "free_body", "fixed_anchors"],
+            "maximum_component_step_work_residual_over_initial_energy": maximum_work_residual.tolist(),
+            "cumulative_component_work_residual_over_initial_energy": component_balance.tolist(),
         })
     metadata["elapsed_seconds"] = time.perf_counter() - start
     print(f"{metadata['material']}: {count} string modes, checks passed", flush=True)
@@ -323,8 +423,12 @@ def make_report(rows, provenance):
             "release": "M*qdd+D*qdot+K*q=0 after external holding force removal. Body is preloaded mechanically; no pressure bank or acoustic DC equilibrium is assumed.",
             "energy": "E=.5*(v^T*M*v+q^T*K*q). Trapezoidal update obeys E_next-E=-dt*v_mid^T*D*v_mid, checked each step.",
             "static_reference": "Pinned stiff string C(xp,xp)=[L*xi*(1-xi)-sinh(eta*xp)*sinh(eta*(L-xp))/(eta*sinh(eta*L))]/T, eta=sqrt(T/EI), plus xi^2*arm^T*C_body_with_tails_and_one_string*arm.",
+            "body_force": "f=arm*(xi*Fp-c^T*a_ddot-(muL/3)*yB_ddot-(T/L)*yB)-Ktail*x; x=V*qb, yB=arm^T*x, c_n=sqrt(2muL)*(-1)^(n+1)/(n*pi). This drives qb_ddot+Db*qb_dot+Omega_b^2*qb=V^T*f.",
+            "release_force_jump": "Delta f=-arm*r*Fp/(1+beta*B*B^T), beta=muL/3-c^T*c, r=xi-c^T*phi. The finite-basis jump vanishes in the complete-basis limit and does not imply a contact impulse or energy jump.",
         },
         "checks": "M/K Cholesky SPD, positive diagonal D, static algebra, positive preload energy, zero initial velocity by construction, dense expm reference at1/5/10/20ms, trapezoidal free energy balance at every sample. Mode counts32/64/128; rate comparison44.1/48/96k uses the SAME exported48k continuous system.",
+        "force_checks": "Every free-body modal ODE: l2 residual/max(1,||lhs||,||rhs||)<1e-11 at exact states and<1e-9 at every trapezoidal midpoint. The unit floor is a diagnostic mass-normalized force scale. Separate string/body/anchor energy-work residuals divided by initial total energy are<1e-10 per step and<1e-9 cumulatively. Reported sampled force rows use the continuous derivative at their actual observation times; work checks use midpoint finite differences.",
+        "force_scope": "Forces are [normal N, normalized moment N], not displacement or pressure. A held load is balanced by the free body's static restoring force. Elastic/bending endpoint stress alone differs from this Galerkin reaction by c^T*Ds*a_dot-beta*yB_ddot+r*Fp: the damping reaction belongs to the chosen diagonal modal damping model; beta/r reflect basis truncation. No pressure-filter equilibrium or MIDI-force mapping is established.",
         "limitations": [
             "Other speaking strings, second transverse polarization, contact motion, noise, longitudinal waves and acoustic radiation are omitted. This is not the production guitar or a listening candidate.",
             "The measured bridge bank and extrapolated static compliance retain their existing measurement/geometry limitations. Only float-rounding negative residue eigenvalues are projected to zero; numerical changes are recorded.",

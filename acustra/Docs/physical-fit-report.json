@@ -85316,5 +85316,270 @@
   "validation_scope": "Compiled and exported the standalone probe, reproduced six modal references, passed unchanged mechanical gates and invalid-input/no-overwrite checks. Production source hashes unchanged; no full plugin-suite rerun or canonical-demo regeneration for tools/docs-only work.",
   "recording_and_listening_boundary": "No new real-guitar audio reads, training fit, validation/blind scoring, recording descriptor updates or listener preference. User-selected wider stereo body remains shipping. Pleasantness and market superiority remain unvalidated.",
   "preserved_prior_ledger_sha256": "e69bec31ec53beca637e5b90e338e33b19744c5112078787468cce29f580adca"
+ },
+ "modal_force_and_pressure_preload_2026_09_05": {
+  "status": "Extended the standalone preload reference with validated mechanical force observations. No production sound, defaults, GUI, calibration or target-audio changes.",
+  "builds_on_commit": "58070544bdd69c7f49a50c341c224c2dad3b8181",
+  "mechanical_force": {
+   "notation": {
+    "a": "mass-normalized fixed-string sine coordinates",
+    "qb": "mass-normalized free-body coordinates",
+    "V": "2 by Nb body modal displacement matrix; each original PSD bridge residue is V_mode V_mode^T",
+    "x": "V qb, physical [heave, normalized rock] displacement",
+    "arm": "[1,u] column, B=arm^T V, yB=B qb",
+    "c": "sqrt(2 mu L)*(-1)^(n+1)/(n pi) mass-coupling column",
+    "m0": "mu L/3",
+    "k0": "T/L",
+    "phi": "sin(n pi xi)/sqrt(mu L/2)",
+    "Ds,Db": "positive diagonal damping in the chosen normalized string/body basis"
+   },
+   "equations": {
+    "string_force": "f_string=arm*(xi*Fp-c^T*a_ddot-m0*yB_ddot-k0*yB).",
+    "fixed_anchor_force": "f_anchor=-Ktail*x; Ktail contains all six original fixed tails.",
+    "free_body_force": "f=f_string+f_anchor, in [normal N, normalized moment N]. Free body: qb_ddot+Db*qb_dot+Omega_b^2*qb=V^T*f.",
+    "endpoint_stress": "f_endpoint_scalar=-T*y_x(L)+EI*y_xxx(L)=-k0*yB+c^T*Omega_s^2*a for the finite pinned sine basis.",
+    "difference": "f_string_scalar-f_endpoint_scalar=c^T*Ds*a_dot-beta*yB_ddot+r*Fp, beta=m0-c^T*c>=0, r=xi-c^T*phi.",
+    "held_state": "q0=K^-1*b*Fp, qdot0=qddot0=0 while held. f_hold=arm*(xi*Fp-k0*yB)-Ktail*x; Omega_b^2*qb=V^T*f_hold. This is external load on the free body; adding its internal restoring force gives zero acceleration.",
+    "release_jump": "q and qdot are continuous at release; qddot=M^-1*(-K*q0). f(0+)-f(0-)=-arm*r*Fp/(1+beta*(B*B^T)). This finite-basis jump vanishes as N->infinity because beta and r tend to zero.",
+    "body_energy": "Ebody=.5*|qb_dot|^2+.5*qb^T*Omega_b^2*qb; Ebody_dot=x_dot^T*f-qb_dot^T*Db*qb_dot.",
+    "anchor_energy": "Eanchor=.5*x^T*Ktail*x; Eanchor_dot=-x_dot^T*f_anchor.",
+    "string_energy": "Estring=.5*|a_dot|^2+(c^T*a_dot)*yB_dot+.5*m0*yB_dot^2+.5*a^T*Omega_s^2*a+.5*k0*yB^2; Estring_dot=Fp*y_point_dot-x_dot^T*f_string-a_dot^T*Ds*a_dot.",
+    "trapezoidal_work": "At midpoint use q_mid,v_mid and acceleration=(v_next-v)/dt in the force formula. Each component energy difference equals dt times its midpoint work/loss expression; checked for all modes at every sample."
+   },
+   "interpretation": [
+    "The Galerkin force is the correct external input to THIS free mechanical body, not q or qdot passed into a force-to-pressure filter.",
+    "Elastic/bending endpoint stress alone omits both finite-basis terms and the reaction implied by the chosen diagonal damping basis. The damping contribution generally remains as mode count grows; it is not just numerical differentiation error.",
+    "The held body force is generally nonzero, balanced by its own static restoring force. At release the finite model has the explicitly quantified basis-truncation force jump; do not silently interpret it as a measured contact transient.",
+    "The force is in normalized heave/rock coordinates inherited from the measured bridge map, not the missing second transverse string axis. The actual moment is a times the normalized second component only under the same assumed geometry.",
+    "A static force balance or mechanical ODE identity does not identify static acoustic pressure, pressure-filter prehistory, force-to-MIDI scaling or a perceptual improvement. No acoustic render or DC offset was introduced."
+   ],
+   "numeric_gate_protocol": {
+    "continuous_body_ODE": "Relative l2 residual normalized by max(1, ||left||, ||right||); threshold1e-11. The unit floor is a diagnostic modal-force scale, not an acoustic gain.",
+    "trapezoidal_body_ODE": "Same normalization, threshold1e-9 at all samples; acceleration is a sample velocity difference, so roundoff exceeds the continuous residual.",
+    "component_work": "Each per-step string/body/anchor energy-work residual divided by the total initial energy <1e-10; cumulative <1e-9. No gates are chosen from the observed values.",
+    "body_ODE_component_units": "Body modal residual has units N/sqrt(kg) for mass-normalized coordinates; the exported two-coordinate force is in N."
+   },
+   "independent_audit_summary": {
+    "report_sha256": "8d9cd797938c67287cfd2dbc391e466a8a12fd841794672be5d566e64d940e66",
+    "force_check_source_sha256": "860feb7a92dcd635d14d9fe587e9fa04eaad5cdb2d67324f771f8361c607d567",
+    "cases": 6,
+    "integrator_cases": 10,
+    "maximum_continuous_body_ODE_relative_residual": 7.845450025315718e-15,
+    "maximum_trapezoidal_body_ODE_relative_residual": 5.7878162514132855e-12,
+    "maximum_component_step_energy_work_residual_over_initial_total_energy": 3.707517565886539e-15,
+    "maximum_component_cumulative_energy_work_residual_over_initial_total_energy": 6.891012492963848e-13,
+    "N128": [
+     {
+      "material": "nylon",
+      "held_force_N": [
+       0.2614648977320859,
+       -0.8464026515294165
+      ],
+      "force_immediately_after_release_N": [
+       0.2568684292566773,
+       -0.8406570659351558
+      ],
+      "release_jump_N": [
+       -0.004596468475408622,
+       0.005745585594260749
+      ],
+      "predicted_release_jump_N": [
+       -0.00459646847540921,
+       0.005745585594261512
+      ],
+      "point_constraint_remainder": 0.004632751238866417,
+      "beta_kg": 6.281681015379197e-06,
+      "48k_endpoint_stress_RMS_difference_over_galerkin_string_force": 0.005680567117022744
+     },
+     {
+      "material": "steel",
+      "held_force_N": [
+       0.10043536400135455,
+       -0.6486181930861479
+      ],
+      "force_immediately_after_release_N": [
+       0.09586095758805002,
+       -0.6429001850695173
+      ],
+      "release_jump_N": [
+       -0.004574406413304533,
+       0.0057180080166305824
+      ],
+      "predicted_release_jump_N": [
+       -0.0045744064133055335,
+       0.005718008016631917
+      ],
+      "point_constraint_remainder": 0.004632751238866639,
+      "beta_kg": 9.922976583500581e-06,
+      "48k_endpoint_stress_RMS_difference_over_galerkin_string_force": 0.0025580570092020036
+     }
+    ],
+    "interpretation": "Force vectors are [normal force, normalized moment] in N, driving the free mechanical body. The finite-basis release jump is not a measured contact transient. Endpoint elastic stress misses the selected modal damping reaction. No pressure state, acoustic DC, audio or MIDI-force mapping is inferred.",
+    "independent_review": "benchmark_audit independently confirmed block force extraction, endpoint sign including EI, damping reaction and beta/r finite-basis interpretation before numerical checks.",
+    "native_pressure_audit_context": {
+     "path": "/tmp/acustra-pressure-preload-review/report.json",
+     "sha256": "48a03e4d6f17ee1a9174e0aa34644071dc28bc7afb4025c9ad443feffdf22a91",
+     "scope": "Parent reports native pressure-bank steady-state algebra; this mechanical audit did not modify or validate acoustic initialization."
+    }
+   },
+   "portable_scope": "Forces are [normal N, normalized moment N], not displacement or pressure. A held load is balanced by the free body's static restoring force. Elastic/bending endpoint stress alone differs from this Galerkin reaction by c^T*Ds*a_dot-beta*yB_ddot+r*Fp: the damping reaction belongs to the chosen diagonal modal damping model; beta/r reflect basis truncation. No pressure-filter equilibrium or MIDI-force mapping is established.",
+   "portable_checks": "Every free-body modal ODE: l2 residual/max(1,||lhs||,||rhs||)<1e-11 at exact states and<1e-9 at every trapezoidal midpoint. The unit floor is a diagnostic mass-normalized force scale. Separate string/body/anchor energy-work residuals divided by initial total energy are<1e-10 per step and<1e-9 cumulatively. Reported sampled force rows use the continuous derivative at their actual observation times; work checks use midpoint finite differences.",
+   "verification": {
+    "old_report_sha256": "b35ae59ddeb932f9a245098891af3a41af770266a0dee8a17d41f8eb2ca28000",
+    "off_tree_force_report_sha256": "8d9cd797938c67287cfd2dbc391e466a8a12fd841794672be5d566e64d940e66",
+    "new_report_sha256": "9023512210c63bebbe56d06805e5c6579dd2c10e96681da55a10d9f37a013841",
+    "tool_sha256": "47673358fc22d7b440e3a1f665794b307d90d0e92d94f6a1a25c534103e82bf2",
+    "original_numeric_fields_checked": 1060,
+    "original_results_preserved_within_double_roundoff": true,
+    "max_original_numeric_difference": 8.673617379884035e-18,
+    "max_original_displacement_difference_m": 8.673617379884035e-18,
+    "new_force_values_compared": 192,
+    "max_force_difference_from_independent_audit_N": 7.993605777301127e-15,
+    "max_new_body_ODE_relative_residual": 3.7838704218177614e-12,
+    "max_component_step_work_relative_residual": 3.858324952966311e-15,
+    "max_component_cumulative_work_relative_residual": 6.898941139839164e-13
+   },
+   "evidence": [
+    {
+     "path": "/tmp/acustra-modal-body-force-review/report.json",
+     "sha256": "8d9cd797938c67287cfd2dbc391e466a8a12fd841794672be5d566e64d940e66"
+    },
+    {
+     "path": "/tmp/acustra-modal-body-force-review/summary.json",
+     "sha256": "e6558e32d87f6b1bcfc9507fe6b762acde26e56c1330f6b0f0204c4d62089ff7"
+    },
+    {
+     "path": "/tmp/acustra-modal-force-repository-check/report.json",
+     "sha256": "9023512210c63bebbe56d06805e5c6579dd2c10e96681da55a10d9f37a013841"
+    },
+    {
+     "path": "/tmp/acustra-modal-force-repository-check/verification.json",
+     "sha256": "60e2daa9022644ae0eb58c531509083253536b0ae5fb33c1a68d8c01872d4eee"
+    }
+   ]
+  },
+  "native_pressure_preload": {
+   "scope": "48k, both string materials, default Dreadnought/Spruce and shipping fitted force/moment pressure bank. Unit force and normalized moment supplied separately to renderBody; all three native microphones retained. Native units, not absolute Pa/N calibration.",
+   "recurrence": "q_next=p*q+F, qM_next=p*qM+M; output=2Re(sum R*q_next+RM*qM_next). Hence H(z)=sum[R/(1-p*z^-1)+conj(R)/(1-conj(p)*z^-1)], and H(1)=2Re(sum R/(1-p)).",
+   "steady_initialization": "For constant prehistory F0/M0, assign q0=F0/(1-p), qM0=M0/(1-p). A128-sample native render with continued unit input checks this algebra against float recurrence and summation. No external target audio, fitting, normalization or output limiter involved.",
+   "finding": "All twelve default DC input/output transfers are nonzero. Steady modal priming defines a native filter state but would produce a nonzero steady microphone value; no final DC blocker exists in process(). The finite-band radiation fit therefore does not identify static acoustic equilibrium for a new preloaded mechanical reference.",
+   "limits": [
+    "This does not establish an audible DC fault in current note rendering, which drives the pressure bank from differentiated wave forces.",
+    "Subtracting a constant only from post-release output would leave a nonzero final value when the modal response decays. Resetting the pressure state to zero would instead discard its prescribed force prehistory. Neither is adopted as a physical correction.",
+    "No new high-pass cutoff, feedthrough, residue constraint or low-frequency acoustic model is inferred here. A sound candidate needs an explicit observation model compatible with the chosen mechanical initialization.",
+    "Shape/wood morphs and other sample rates are outside this bounded audit."
+   ],
+   "case_summaries": [
+    {
+     "material": "nylon",
+     "input": "force",
+     "output_channels": [
+      "left",
+      "right",
+      "upper"
+     ],
+     "DC_transfer": [
+      0.0615925979177752,
+      0.058422897991021266,
+      -0.01403185453270651
+     ],
+     "maximum_native_steady_error": [
+      4.057480902652788e-08,
+      5.862466515016429e-08,
+      8.016829467979991e-08
+     ],
+     "maximum_native_steady_error_over_mode_sum": [
+      8.62573460423355e-09,
+      1.2413263099118546e-08,
+      1.1746095063622711e-08
+     ]
+    },
+    {
+     "material": "nylon",
+     "input": "moment",
+     "output_channels": [
+      "left",
+      "right",
+      "upper"
+     ],
+     "DC_transfer": [
+      0.07662207399120603,
+      -0.08810625388494749,
+      -0.056434546137950514
+     ],
+     "maximum_native_steady_error": [
+      2.4693104880291195e-08,
+      1.0267623644366619e-07,
+      6.978609468077934e-09
+     ],
+     "maximum_native_steady_error_over_mode_sum": [
+      6.467882017295666e-09,
+      3.1197057238477553e-08,
+      1.4555385779806844e-09
+     ]
+    },
+    {
+     "material": "steel",
+     "input": "force",
+     "output_channels": [
+      "left",
+      "right",
+      "upper"
+     ],
+     "DC_transfer": [
+      0.025916961826449935,
+      0.0012486800472675808,
+      -0.44670750466883763
+     ],
+     "maximum_native_steady_error": [
+      3.851884301103725e-09,
+      9.127748618054099e-08,
+      7.716715916261663e-08
+     ],
+     "maximum_native_steady_error_over_mode_sum": [
+      7.671978901620775e-10,
+      1.6737161179394965e-08,
+      1.0606589631255711e-08
+     ]
+    },
+    {
+     "material": "steel",
+     "input": "moment",
+     "output_channels": [
+      "left",
+      "right",
+      "upper"
+     ],
+     "DC_transfer": [
+      -0.04571703365048898,
+      0.02089867073800479,
+      0.07574282994434296
+     ],
+     "maximum_native_steady_error": [
+      7.739266884992935e-08,
+      4.1758083449416894e-08,
+      4.87820809996764e-08
+     ],
+     "maximum_native_steady_error_over_mode_sum": [
+      1.9110932058137817e-08,
+      1.1930492832696539e-08,
+      9.461629803848287e-09
+     ]
+    }
+   ],
+   "evidence": {
+    "path": "/tmp/acustra-pressure-preload-review/report.json",
+    "sha256": "48a03e4d6f17ee1a9174e0aa34644071dc28bc7afb4025c9ad443feffdf22a91"
+   },
+   "no_audio_correction": "No offset subtraction, high-pass cutoff, residue change or pressure-state priming adopted. All twelve unit input/output DC transfers are nonzero, but this audit does not establish an audible fault in current differentiated-wave note rendering."
+  },
+  "reproducible_tool_sha256": "47673358fc22d7b440e3a1f665794b307d90d0e92d94f6a1a25c534103e82bf2",
+  "production_source_sha256": {
+   "Source/DSP/AcustraEngine.cpp": "5d4b45148b61a90fb175ea80aff5d83ee53939ab8514c5e645b00110909298d8",
+   "Source/DSP/AcustraEngine.h": "0d7bc71d09e61d2e0be1c145c8999a2f909e2503aeda079d11a37e250c4b2f18"
+  },
+  "validation_scope": "One extended six-case/ten-integrator reference run, comparison against the preceding portable reference and independent off-tree force audit, and native pressure steady-state algebra. No production/plugin tests repeated for this analysis-only change.",
+  "recording_and_listening_boundary": "No new real-recording access, scoring, fitting or listener verdict. Wider user-selected stereo remains shipping; these tools do not themselves improve the audible instrument.",
+  "preserved_prior_ledger_sha256": "2db6fdb0c4492cd574a7c7812244ff12a634585b75dbe232da8209adeac6355c"
  }
 }
