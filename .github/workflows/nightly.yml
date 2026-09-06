@@ -54,7 +54,7 @@ jobs:
             "drumalor:DrumalorRenderDemos:7"
             "acustra:AcustraRenderDemos:12"
             "septum:SeptumRenderDemos:11"
-            "ghostar:GhostarRenderDemos:12"
+            "ghostar:GhostarRenderDemos:13"
           )
 
           # A failed instrument contributes nothing to the commit below. The
