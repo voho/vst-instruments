@@ -1,8 +1,0 @@
-# Taikor woodblock background
-
-Generated with the built-in imagegen tool for Taikor's instrument panel.
-Asset: `Assets/taikor-woodblock-background.png`.
-
-## Generation prompt
-
-Create a finished vintage Japanese woodblock and sumi-e painting to be used as the background of a professional Japanese taiko musical instrument interface. Use-case: texture-asset. Landscape aspect ratio approximately 3:2 (interface 1280 by 880). Full-bleed flat scanned aged warm ivory washi paper, visibly handmade fibres, subtle foxing, soft uneven ink impressions and faded indigo, warm charcoal, muted ochre, with very restrained vermilion accents. Authentic antique Edo-period print sensibility, elegant and quiet. Subject: a Japanese taiko drum on its wooden stand with bachi sticks, pine boughs and misty mountain landscape, delicate sweeping ink clouds and faint wind lines. Composition based on interface needs: the main beautifully hand-drawn taiko and pine scene concentrated around upper LEFT edge and upper third, fine misty ridges flow along the RIGHT outer edge. Most of central area and especially bottom half must remain very light paper with extremely faint washed ink details to support legible controls drawn by software. Top title strip mostly quiet ivory. This must look like a single old Japanese artwork that controls can sit on, not a dark software dashboard. Fine museum-quality print texture, no glossy surfaces, no gradients suggestive of digital UI, no panel boxes, no knobs, no switches, no buttons, no charts, no lettering, no logos, no calligraphy, no borders, no watermark. Art only, no interface rendered in the image.

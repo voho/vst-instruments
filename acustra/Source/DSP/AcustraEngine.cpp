@@ -1971,8 +1971,9 @@ void AcustraEngine::configureVoice(Voice& voice, int stringIndex,
     // absorber in parallel with the string's own loss, so the rates add:
     // 1/T60 = 1/T60_string + 1/T60_hand. The hand's mapped time and the 0.62
     // ratio by which it shortens the top relative to the fundamental are
-    // Electry's calibrated bridge-hand endpoints in this repository. They
-    // transfer because the absorber is the player's hand, not the instrument's
+    // Electry's calibrated bridge-hand endpoints, measured in what is now the
+    // protocodus/virtual-instrument-electry repository. They transfer because
+    // the absorber is the player's hand, not the instrument's
     // string set; they are not refitted here, since the reference corpus holds
     // no muted notes. Pressure scales the rate, so zero is an exact no-op
     // rather than a four-second floor.

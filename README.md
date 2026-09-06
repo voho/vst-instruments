@@ -3,7 +3,7 @@
 [![CI](https://github.com/voho/vst-instruments/actions/workflows/ci.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/ci.yml)
 [![Nightly](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml)
 
-Seven original virtual instruments built with C++20 and JUCE 8: VST3 and
+Four original virtual instruments built with C++20 and JUCE 8: VST3 and
 Standalone for macOS, Linux and Windows, plus Audio Unit for macOS.
 
 Each instrument has one README covering how it works block by block, what it
@@ -33,37 +33,6 @@ machine.
 
 ---
 
-## [Electry](electry/README.md)
-
-[![Electry](electry/Docs/screenshots/electry-standalone.png)](electry/README.md)
-
-Oversampled physically modeled Drop-E eight-string guitar: eight
-dual-polarisation waveguides, fitted stiff-string dispersion, sympathetic
-strings, continuous palm mute, induced-EMF pickups, modal body loss,
-Mono/divided-pickup Stereo, two independent keyswitch banks, a pitch wheel that
-bends every string like a vibrato bar, a resonance wheel that reaches
-self-sustaining feedback, and a 4×-oversampled amplifier with supply sag, output
-transformer and modeled cabinet.
-
-[Twenty-three audio demos](electry/README.md#audio-demos) · [How it works](electry/README.md#how-it-works)
-
----
-
-## [Taikor](taikor/README.md)
-
-[![Taikor](taikor/Docs/screenshots/taikor-standalone.png)](taikor/README.md)
-
-Physically modeled taiko drum suite: struck circular membranes solved from
-Bessel-zero modes with air loading, two heads coupled through an enclosed body,
-a thin-cylinder wooden shell, and Hertzian stick contact scaling duration with
-impact speed. Sixteen pads cover four distinct instruments — ō-daiko, chū-daiko,
-okedo and shime — each with its own head tension, diameter, body depth, hide and
-shell, across four octaves.
-
-[Twenty-seven audio demos](taikor/README.md#audio-demos) · [How it works](taikor/README.md#how-it-works)
-
----
-
 ## [Acustra](acustra/README.md)
 
 [![Acustra](acustra/Docs/screenshots/acustra-standalone.png)](acustra/README.md)
@@ -82,22 +51,6 @@ fret/tuning allocator enforces guitar playability while bounded Shape,
 Material, String Age, Touch and Position controls keep the surface simple.
 
 [Ten audio demos](acustra/README.md#audio-demos) · [How it works](acustra/README.md#how-it-works)
-
----
-
-## [YouKnow](youknow/README.md)
-
-[![YouKnow](youknow/Docs/screenshots/youknow-standalone.png)](youknow/README.md)
-
-Circuit-modelled six-voice DCO polysynth: integer-divided note timers with true
-pitch quantisation, a scanned control converter with per-hold slew and 7-bit
-patch digitisation, firmware envelopes with exponential decay into a measured
-quasi-linear amplifier, a four-pole transconductor filter with implicitly solved
-resonance loop and input-side compensation, a non-stealing key assigner, and an
-uncompanded two-line bucket-brigade chorus with authentic saturation and MN3009
-noise.
-
-[Ten audio demos](youknow/README.md#audio-demos) · [How it works](youknow/README.md#how-it-works)
 
 ---
 

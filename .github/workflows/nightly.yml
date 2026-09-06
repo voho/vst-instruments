@@ -38,7 +38,7 @@ jobs:
 
       # Every instrument is built and rendered independently, and a failure is
       # recorded rather than thrown: one broken renderer must not cost the
-      # other six their refreshed audio. The job still fails at the end, so a
+      # other three their refreshed audio. The job still fails at the end, so a
       # broken renderer is never silently tolerated.
       - name: Render every instrument's demo audio
         run: |
@@ -52,10 +52,7 @@ jobs:
           # updating the number here in the same change.
           instruments=(
             "drumalor:DrumalorRenderDemos:7"
-            "electry:ElectryRenderDemos:23"
-            "taikor:TaikorRenderDemos:27"
             "acustra:AcustraRenderDemos:12"
-            "youknow:YouKnowRenderDemos:10"
             "septum:SeptumRenderDemos:11"
             "ghostar:GhostarRenderDemos:12"
           )
@@ -128,11 +125,9 @@ jobs:
           set -euo pipefail
           # Stage before checking: a newly added demo is an untracked file,
           # which git diff alone would not see.
-          git add -A drumalor/Docs/audio electry/Docs/audio \
-            taikor/Docs/audio acustra/Docs/audio youknow/Docs/audio \
+          git add -A drumalor/Docs/audio acustra/Docs/audio \
             septum/Docs/audio ghostar/Docs/audio \
-            drumalor/README.md electry/README.md taikor/README.md \
-            acustra/README.md youknow/README.md septum/README.md \
+            drumalor/README.md acustra/README.md septum/README.md \
             ghostar/README.md
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
@@ -148,10 +143,8 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor electry taikor acustra youknow septum ghostar \
-                ':(exclude)drumalor/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)acustra/Docs' \
-                ':(exclude)youknow/Docs' \
+                drumalor acustra septum ghostar \
+                ':(exclude)drumalor/Docs' ':(exclude)acustra/Docs' \
                 ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
@@ -181,9 +174,9 @@ jobs:
           fi
           echo "Every instrument rendered its full set of demo audio."
 
-  # One job per instrument. Building all seven in sequence meant a single flaky
+  # One job per instrument. Building all four in sequence meant a single flaky
   # test cost every instrument after it its screenshot and package; now a
-  # failure is contained to its own instrument, and the seven
+  # failure is contained to its own instrument, and the four
   # builds run concurrently instead of end to end.
   build-macos:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -196,18 +189,9 @@ jobs:
           - name: Drumalor
             directory: drumalor
             snapshot_variable: DRUMALOR_EDITOR_SNAPSHOT
-          - name: Electry
-            directory: electry
-            snapshot_variable: ELECTRY_EDITOR_SNAPSHOT
-          - name: Taikor
-            directory: taikor
-            snapshot_variable: TAIKOR_EDITOR_SNAPSHOT
           - name: Acustra
             directory: acustra
             snapshot_variable: ACUSTRA_EDITOR_SNAPSHOT
-          - name: YouKnow
-            directory: youknow
-            snapshot_variable: YOUKNOW_EDITOR_SNAPSHOT
           - name: Septum
             directory: septum
             snapshot_variable: SEPTUM_EDITOR_SNAPSHOT
@@ -260,7 +244,7 @@ jobs:
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
 
-      # Handed to the commit job rather than committed here, so that all seven
+      # Handed to the commit job rather than committed here, so that all four
       # land in one commit. It is uploaded before packaging so that a packaging
       # failure cannot cost an instrument the screenshot it has already
       # rendered: the two are independent, and the commit job preserves
@@ -330,18 +314,9 @@ jobs:
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
-          - name: Electry
-            directory: electry
-            build_plugin_option: ELECTRY_BUILD_PLUGIN
-          - name: Taikor
-            directory: taikor
-            build_plugin_option: TAIKOR_BUILD_PLUGIN
           - name: Acustra
             directory: acustra
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
-          - name: YouKnow
-            directory: youknow
-            build_plugin_option: YOUKNOW_BUILD_PLUGIN
           - name: Septum
             directory: septum
             build_plugin_option: SEPTUM_BUILD_PLUGIN
@@ -426,18 +401,9 @@ jobs:
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
-          - name: Electry
-            directory: electry
-            build_plugin_option: ELECTRY_BUILD_PLUGIN
-          - name: Taikor
-            directory: taikor
-            build_plugin_option: TAIKOR_BUILD_PLUGIN
           - name: Acustra
             directory: acustra
             build_plugin_option: ACUSTRA_BUILD_PLUGIN
-          - name: YouKnow
-            directory: youknow
-            build_plugin_option: YOUKNOW_BUILD_PLUGIN
           - name: Septum
             directory: septum
             build_plugin_option: SEPTUM_BUILD_PLUGIN
@@ -537,7 +503,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in drumalor electry taikor acustra youknow septum ghostar; do
+          for directory in drumalor acustra septum ghostar; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -566,7 +532,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in drumalor electry taikor acustra youknow septum ghostar; do
+          for directory in drumalor acustra septum ghostar; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -593,10 +559,8 @@ jobs:
             # churn (including the audio job's own commit) does not invalidate a
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor electry taikor acustra youknow septum ghostar \
-                ':(exclude)drumalor/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)acustra/Docs' \
-                ':(exclude)youknow/Docs' \
+                drumalor acustra septum ghostar \
+                ':(exclude)drumalor/Docs' ':(exclude)acustra/Docs' \
                 ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
@@ -647,11 +611,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the twenty-eight-file manifest
+      - name: Check the sixteen-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Drumalor Electry Taikor Acustra YouKnow Septum Ghostar; do
+          for product in Drumalor Acustra Septum Ghostar; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
@@ -681,15 +645,15 @@ jobs:
             done
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 28 )); then
-            echo "error: expected exactly twenty-eight release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 16 )); then
+            echo "error: expected exactly sixteen release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
           printf 'Release asset: %s\n' "${assets[@]}"
 
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access), as one complete set rather than seven per-instrument artifacts.
+      # access), as one complete set rather than four per-instrument artifacts.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

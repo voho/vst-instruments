@@ -1167,7 +1167,8 @@ large part of the steel-string repertoire, so this is a playability gap rather
 than a taste question. The design question — whether it earns a panel control
 against "keep controls simple" — is answered by not adding one. It is a playing
 pressure, so it arrives on CC2 and the panel keeps its ten controls, which is
-also how Electry exposes the same gesture in this repository.
+also how Electry exposes the same gesture, in what is now the
+protocodus/virtual-instrument-electry repository.
 
 The model is Electry's, not a new one. The heel of the picking hand resting by
 the saddle is a soft lossy absorber in parallel with the string's own loss, so
